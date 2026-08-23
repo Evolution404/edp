@@ -29,6 +29,10 @@ pub struct DaemonState {
     pub mounted: Mutex<HashMap<String, String>>,
     /// 识别到的 EDP 盘（bsd → device_id）
     pub edp_disks: Mutex<HashMap<String, String>>,
+    /// daemon.shutdown 置位；主线程据此退出
+    pub shutdown: Arc<std::sync::atomic::AtomicBool>,
+    /// 主线程句柄（shutdown 时 unpark）
+    pub main_thread: std::thread::Thread,
 }
 
 /// 运行配置。
@@ -108,6 +112,8 @@ pub fn run_with(
         started_at: std::time::Instant::now(),
         mounted: Mutex::new(HashMap::new()),
         edp_disks: Mutex::new(HashMap::new()),
+        shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        main_thread: std::thread::current(),
     });
 
     // 启动磁盘监听线程（轮询 diskutil diff；DiskArbitration 后续补）
@@ -138,9 +144,12 @@ pub fn run_with(
         cfg.socket_path, cfg.auto_mount_enabled
     );
 
-    // 主线程常驻（launchd 管理生命周期；收到 SIGTERM 由系统处理）
+    // 主线程常驻（launchd 管理生命周期；daemon.shutdown 或 SIGTERM 退出）
     let mut handle = handle;
-    std::thread::park();
+    while !state.shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+        std::thread::park();
+    }
+    info!("usbcore daemon 收到 shutdown，退出");
     handle.shutdown();
     Ok(())
 }
@@ -166,6 +175,8 @@ fn build_methods() -> Result<HashMap<String, Handler>> {
     map.insert(m::KEYS_UPDATE.to_string(), Arc::new(handle_keys_update));
     map.insert(m::CONFIG_GET.to_string(), Arc::new(handle_config_get));
     map.insert(m::CONFIG_SET.to_string(), Arc::new(handle_config_set));
+    map.insert(m::LOGS_READ.to_string(), Arc::new(handle_logs_read));
+    map.insert(m::DAEMON_SHUTDOWN.to_string(), Arc::new(handle_shutdown));
     map.insert(
         m::SUBSCRIBE.to_string(),
         Arc::new(|_c, _p| Ok(json!({"ok": true}))),
@@ -513,6 +524,42 @@ fn handle_config_set(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_pr
         let _ = std::fs::write(path, text);
     }
     Ok(cfg_json)
+}
+
+/// 读 daemon 日志尾部（launchd 重定向到 /var/db/edp-usbcore/logs/）。
+fn handle_logs_read(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
+    let lines = p.get("lines").and_then(|x| x.as_u64()).unwrap_or(100) as usize;
+    let mut logs = Vec::new();
+    for name in ["daemon.err", "daemon.out"] {
+        let path = Path::new("/var/db/edp-usbcore/logs").join(name);
+        if let Some(tail) = tail_file(&path, lines) {
+            logs.push(json!({ "file": name, "lines": tail }));
+        }
+    }
+    let _ = ctx;
+    Ok(json!({ "logs": logs }))
+}
+
+fn tail_file(path: &Path, n: usize) -> Option<Vec<String>> {
+    let data = std::fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&data);
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(n);
+    Some(lines[start..].iter().map(|s| s.to_string()).collect())
+}
+
+/// 停止 daemon（仅 root）。
+fn handle_shutdown(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_proto::RpcError> {
+    let d = daemon(ctx)?;
+    if !ctx.is_root() {
+        return Err(edp_proto::RpcError::new(
+            edp_proto::codes::PERMISSION_DENIED,
+            "仅 root 可停止 daemon",
+        ));
+    }
+    d.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+    d.main_thread.unpark();
+    Ok(json!({ "ok": true }))
 }
 
 fn rpc_io(e: std::io::Error) -> edp_proto::RpcError {

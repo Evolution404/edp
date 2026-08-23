@@ -187,3 +187,34 @@ fn daemon_status_command() {
     let _ = daemon.wait();
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn daemon_rpc_aux_methods() {
+    let tmp = temp_dir("aux");
+    let (mut daemon, socket) = start_daemon(&tmp);
+    let mut c = edp_proto::Client::connect(socket.to_str().unwrap()).unwrap();
+
+    // logs.read：测试 daemon 无 launchd 日志目录 → 空列表（不报错）
+    let r = c
+        .call(
+            edp_proto::method::LOGS_READ,
+            serde_json::json!({ "lines": 50 }),
+        )
+        .unwrap();
+    assert!(r["logs"].is_array());
+
+    // daemon.shutdown：非 root 拒绝
+    let err = c
+        .call(edp_proto::method::DAEMON_SHUTDOWN, serde_json::json!({}))
+        .unwrap_err();
+    match err {
+        edp_proto::ClientError::Rpc(code, _) => {
+            assert_eq!(code, edp_proto::codes::PERMISSION_DENIED)
+        }
+        other => panic!("应返回 Rpc 错误，实际 {other:?}"),
+    }
+
+    daemon.kill().ok();
+    let _ = daemon.wait();
+    let _ = std::fs::remove_dir_all(&tmp);
+}

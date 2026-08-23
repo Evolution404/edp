@@ -34,3 +34,4 @@ plist.workspace = true
 hex.workspace = true
 uuid.workspace = true
 serde_json.workspace = true
+edp-proto.workspace = true
