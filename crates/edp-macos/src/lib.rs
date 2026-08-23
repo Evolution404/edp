@@ -11,6 +11,52 @@ pub mod ioreg;
 
 use serde::Serialize;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// 带超时地运行命令并收集输出。
+///
+/// 必要性：diskutil/hdiutil 在盘状态异常（如残留磁盘镜像、拔盘中）时可能
+/// 挂起不返回，若 daemon 在磁盘 watcher / RPC 热路径上无限等待会整体卡死
+/// （实测 GUI「密码库」页 list_disks 卡住即由此导致）。
+fn cmd_output_timeout(
+    mut cmd: Command,
+    timeout: Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait()? {
+            Some(status) => {
+                let mut out = Vec::new();
+                let mut err = Vec::new();
+                if let Some(mut so) = child.stdout.take() {
+                    let _ = so.read_to_end(&mut out);
+                }
+                if let Some(mut se) = child.stderr.take() {
+                    let _ = se.read_to_end(&mut err);
+                }
+                return Ok(std::process::Output {
+                    status,
+                    stdout: out,
+                    stderr: err,
+                });
+            }
+            None => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("命令超时（>{:.0}s）", timeout.as_secs()),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
 
 /// 磁盘摘要。
 #[derive(Debug, Clone, Serialize)]
@@ -28,12 +74,12 @@ pub struct DiskInfo {
 
 /// `diskutil list -plist [external physical]` 解析。
 pub fn list_disks(all: bool) -> std::io::Result<Vec<DiskInfo>> {
-    let mut cmd = std::process::Command::new("diskutil");
+    let mut cmd = Command::new("diskutil");
     cmd.args(["list", "-plist"]);
     if !all {
         cmd.args(["external", "physical"]);
     }
-    let out = cmd.output()?;
+    let out = cmd_output_timeout(cmd, Duration::from_secs(5))?;
     if !out.status.success() {
         return Err(std::io::Error::other(format!(
             "diskutil list 失败: {}",
@@ -86,10 +132,9 @@ pub fn list_disks(all: bool) -> std::io::Result<Vec<DiskInfo>> {
 
 /// `diskutil info -plist` 的关键字段：(TotalSize, MediaName, MountPoint)。
 fn disk_info_full(bsd: &str) -> std::io::Result<(u64, String, Option<String>)> {
-    let out = std::process::Command::new("diskutil")
-        .args(["info", "-plist"])
-        .arg(bsd)
-        .output()?;
+    let mut cmd = Command::new("diskutil");
+    cmd.args(["info", "-plist"]).arg(bsd);
+    let out = cmd_output_timeout(cmd, Duration::from_secs(5))?;
     let v: plist::Value = plist::from_bytes(&out.stdout)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     let d = v.as_dictionary();
@@ -116,10 +161,9 @@ pub fn disk_size(bsd: &str) -> std::io::Result<u64> {
 
 /// `diskutil unmountDisk`（挂载前清掉系统自动挂载的公共区）。
 pub fn unmount_disk(bsd: &str) -> std::io::Result<()> {
-    let out = std::process::Command::new("diskutil")
-        .args(["unmountDisk"])
-        .arg(bsd)
-        .output()?;
+    let mut cmd = Command::new("diskutil");
+    cmd.args(["unmountDisk"]).arg(bsd);
+    let out = cmd_output_timeout(cmd, Duration::from_secs(10))?;
     if !out.status.success() {
         return Err(std::io::Error::other(format!(
             "unmountDisk 失败: {}",
@@ -131,10 +175,9 @@ pub fn unmount_disk(bsd: &str) -> std::io::Result<()> {
 
 /// `diskutil mount`（挂载指定分区，返回挂载点）。
 pub fn mount_partition(bsd: &str) -> std::io::Result<String> {
-    let out = std::process::Command::new("diskutil")
-        .args(["mount"])
-        .arg(bsd)
-        .output()?;
+    let mut cmd = Command::new("diskutil");
+    cmd.args(["mount"]).arg(bsd);
+    let out = cmd_output_timeout(cmd, Duration::from_secs(10))?;
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() {
         return Err(std::io::Error::other(format!(
@@ -158,7 +201,7 @@ pub fn hdiutil_attach_raw(
     readonly: bool,
     mountpoint: Option<&Path>,
 ) -> std::io::Result<(Vec<String>, Vec<String>)> {
-    let mut cmd = std::process::Command::new("hdiutil");
+    let mut cmd = Command::new("hdiutil");
     cmd.args(["attach", "-plist", "-nobrowse", "-owners", "off"])
         .arg("-imagekey")
         .arg("diskimage-class=CRawDiskImage");
@@ -169,7 +212,7 @@ pub fn hdiutil_attach_raw(
         cmd.arg("-mountpoint").arg(mp);
     }
     cmd.arg(virtual_file);
-    let out = cmd.output()?;
+    let out = cmd_output_timeout(cmd, Duration::from_secs(30))?;
     if !out.status.success() {
         return Err(std::io::Error::other(format!(
             "hdiutil attach 失败: {}",
@@ -201,13 +244,13 @@ pub fn hdiutil_attach_raw(
 
 /// `hdiutil detach`（可选 -force）。
 pub fn hdiutil_detach(bsd: &str, force: bool) -> std::io::Result<()> {
-    let mut cmd = std::process::Command::new("hdiutil");
+    let mut cmd = Command::new("hdiutil");
     cmd.arg("detach");
     if force {
         cmd.arg("-force");
     }
     cmd.arg(bsd);
-    let out = cmd.output()?;
+    let out = cmd_output_timeout(cmd, Duration::from_secs(30))?;
     if !out.status.success() {
         return Err(std::io::Error::other(format!(
             "hdiutil detach 失败: {}",
@@ -219,9 +262,9 @@ pub fn hdiutil_detach(bsd: &str, force: bool) -> std::io::Result<()> {
 
 /// `/sbin/umount`（卸载 bridge 挂载点）。
 pub fn umount_path(path: &Path) {
-    let _ = std::process::Command::new("/sbin/umount")
-        .arg(path)
-        .output();
+    let mut cmd = Command::new("/sbin/umount");
+    cmd.arg(path);
+    let _ = cmd_output_timeout(cmd, Duration::from_secs(5));
 }
 
 /// macFUSE 版本（未安装返回 None）。
