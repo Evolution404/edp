@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use std::os::unix::fs::PermissionsExt;
 use tracing::{info, warn};
 
 use edp_core::discovery::{discover_volume, filesystem_magic};
@@ -503,10 +504,14 @@ fn handle_config_get(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_p
 
 fn handle_config_set(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
     let d = daemon(ctx)?;
-    if !ctx.is_root() {
+    // 敏感字段（授权白名单/socket 路径）仅 root 可改；常规设置（自动挂载开关、
+    // 默认分区类型）是 GUI 设置页要用的，已授权用户（白名单=控制台用户）可改。
+    // 注意：到这里调用者已通过 allowed_uids 白名单鉴权，此处只做字段级权限分级。
+    let touches_sensitive = p.get("allowed_uids").is_some() || p.get("socket_path").is_some();
+    if touches_sensitive && !ctx.is_root() {
         return Err(edp_proto::RpcError::new(
             edp_proto::codes::PERMISSION_DENIED,
-            "仅 root 可改配置",
+            "仅 root 可修改授权白名单 / socket 路径",
         ));
     }
     let mut cfg = d.config.lock().unwrap();
@@ -519,6 +524,18 @@ fn handle_config_set(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_pr
             .filter_map(|x| x.as_u64())
             .map(|x| x as u32)
             .collect();
+    }
+    if ctx.is_root() {
+        if let Some(v) = p.get("allowed_uids").and_then(|x| x.as_array()) {
+            cfg.allowed_uids = v
+                .iter()
+                .filter_map(|x| x.as_u64())
+                .map(|x| x as u32)
+                .collect();
+        }
+        if let Some(s) = p.get("socket_path").and_then(|x| x.as_str()) {
+            cfg.socket_path = s.to_string();
+        }
     }
     let cfg_json = serde_json::to_value(&*cfg).unwrap();
     drop(cfg);
@@ -588,6 +605,13 @@ pub fn install() -> Result<()> {
     std::fs::create_dir_all("/usr/local/libexec")?;
     std::fs::create_dir_all("/usr/local/bin")?;
     std::fs::copy(&self_exe, BIN_INSTALL_PATH)?;
+    // 硬化：校验落盘文件非空，且权限 755（防之后被非 root 身份截断成空文件，
+    // 实测 2026-08-23 曾出现 libexec/usbcore 被截断为 0 字节导致 launchd 重启即崩）
+    let meta = std::fs::metadata(BIN_INSTALL_PATH)?;
+    if meta.len() == 0 {
+        bail!("二进制复制结果为空（{} 字节）：安装中止", meta.len());
+    }
+    std::fs::set_permissions(BIN_INSTALL_PATH, std::fs::Permissions::from_mode(0o755))?;
     let _ = std::fs::remove_file(BIN_SYMLINK);
     std::os::unix::fs::symlink(BIN_INSTALL_PATH, BIN_SYMLINK)?;
     // 初始化数据目录

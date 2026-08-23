@@ -188,6 +188,50 @@ fn daemon_status_command() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// config.set 权限分级：常规字段（自动挂载开关/分区类型）已授权非 root 用户可改；
+/// 敏感字段（allowed_uids/socket_path）仅 root。
+#[test]
+fn config_set_permissions() {
+    let tmp = temp_dir("cfg");
+    let (mut daemon, socket) = start_daemon(&tmp);
+    let mut c = edp_proto::Client::connect(socket.to_str().unwrap()).unwrap();
+
+    // 常规字段：非 root 可改并持久化到内存配置
+    let r = c
+        .call(
+            edp_proto::method::CONFIG_SET,
+            serde_json::json!({ "auto_mount_enabled": false }),
+        )
+        .unwrap();
+    assert_eq!(r["auto_mount_enabled"], serde_json::json!(false));
+
+    // 敏感字段：非 root 拒绝
+    let err = c
+        .call(
+            edp_proto::method::CONFIG_SET,
+            serde_json::json!({ "allowed_uids": [1234] }),
+        )
+        .unwrap_err();
+    match err {
+        edp_proto::ClientError::Rpc(code, msg) => {
+            assert_eq!(code, edp_proto::codes::PERMISSION_DENIED);
+            assert!(msg.contains("仅 root"), "错误信息应说明仅 root: {msg}");
+        }
+        other => panic!("应返回 Rpc 错误，实际 {other:?}"),
+    }
+
+    // 恢复默认（避免影响同 daemon 后续断言，本测试独立无碍，但保持整洁）
+    c.call(
+        edp_proto::method::CONFIG_SET,
+        serde_json::json!({ "auto_mount_enabled": true }),
+    )
+    .unwrap();
+
+    daemon.kill().ok();
+    let _ = daemon.wait();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[test]
 fn daemon_rpc_aux_methods() {
     let tmp = temp_dir("aux");
