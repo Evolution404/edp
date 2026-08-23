@@ -58,3 +58,4 @@ file_key = SM4_Decrypt(salt16, MD5(password))       ← 路径B（修改后密�
 | 发现路径 | LBA11 | identify 兜底 |
 | key_crc | 418c1a0c | 67f6fdf1 |
 | 密码 | 0000aaaa | 0000aaaa |
+| 文件系统 | EXFAT（读写） | **NTFS**（开发机装「赤友 NTFS」驱动故可写；原生 macOS 只读） |

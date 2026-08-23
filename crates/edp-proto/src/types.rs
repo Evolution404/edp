@@ -1,0 +1,151 @@
+//! 协议帧类型与命令集。
+
+use serde::{Deserialize, Serialize};
+
+/// 请求帧。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Request {
+    pub id: u64,
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+/// 响应帧。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Response {
+    pub id: u64,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RpcError>,
+}
+
+/// RPC 错误。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcError {
+    pub code: String,
+    pub message: String,
+}
+
+impl RpcError {
+    pub fn new(code: &str, message: impl Into<String>) -> Self {
+        RpcError {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+}
+
+/// 事件帧（服务端主动推送）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Event {
+    pub event: String,
+    pub data: serde_json::Value,
+}
+
+/// 常用错误码。
+pub mod codes {
+    pub const PERMISSION_DENIED: &str = "PERMISSION_DENIED";
+    pub const METHOD_NOT_FOUND: &str = "METHOD_NOT_FOUND";
+    pub const BAD_PARAMS: &str = "BAD_PARAMS";
+    pub const PASSWORD_MISMATCH: &str = "PASSWORD_MISMATCH";
+    pub const NOT_FOUND: &str = "NOT_FOUND";
+    pub const INTERNAL: &str = "INTERNAL";
+    pub const ALREADY_EXISTS: &str = "ALREADY_EXISTS";
+    pub const BUSY: &str = "BUSY";
+}
+
+/// 方法名常量。
+pub mod method {
+    pub const STATUS: &str = "status";
+    pub const LIST_DISKS: &str = "list_disks";
+    pub const PROBE: &str = "probe";
+    pub const MOUNT: &str = "mount";
+    pub const UNMOUNT: &str = "unmount";
+    pub const SESSIONS: &str = "sessions";
+    pub const KEYS_LS: &str = "keys.ls";
+    pub const KEYS_ADD: &str = "keys.add";
+    pub const KEYS_RM: &str = "keys.rm";
+    pub const KEYS_UPDATE: &str = "keys.update";
+    pub const CONFIG_GET: &str = "config.get";
+    pub const CONFIG_SET: &str = "config.set";
+    pub const LOGS_READ: &str = "logs.read";
+    pub const SUBSCRIBE: &str = "subscribe";
+    pub const UNSUBSCRIBE: &str = "unsubscribe";
+    pub const DAEMON_SHUTDOWN: &str = "daemon.shutdown";
+}
+
+/// 事件名常量。
+pub mod event {
+    pub const DISK_APPEARED: &str = "disk_appeared";
+    pub const MOUNTED: &str = "mounted";
+    pub const MOUNT_FAILED: &str = "mount_failed";
+    pub const PASSWORD_NEEDED: &str = "password_needed";
+    pub const UNMOUNTED: &str = "unmounted";
+    pub const DISK_REMOVED: &str = "disk_removed";
+}
+
+/// 服务端状态摘要。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusInfo {
+    pub version: String,
+    pub uptime_s: u64,
+    pub macfuse: Option<String>,
+    pub keystore_ok: bool,
+    pub auto_mount_enabled: bool,
+}
+
+/// 磁盘摘要（对外返回）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskSummary {
+    pub bsd: String,
+    pub rbsd: String,
+    pub size: u64,
+    pub media_name: String,
+    pub is_edp: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// 密码库条目（对外返回：**绝不含明文密码**）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyEntry {
+    pub id: String,
+    pub label: String,
+    pub device_id: String,
+    pub partition_type: u32,
+    pub password_crc: String,
+    /// 首尾提示（如 `"00…aa"`），便于区分多条同盘密码。
+    pub password_hint: String,
+    pub auto_mount: bool,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+}
+
+/// 新增密码库条目参数（含明文密码，仅走 UDS 加密通道）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyAddParams {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    pub partition_type: u32,
+    pub password: String,
+    pub auto_mount: bool,
+}
+
+/// mount 参数。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MountParams {
+    pub disk: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_type: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readonly: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
