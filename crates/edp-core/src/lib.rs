@@ -23,6 +23,7 @@ pub mod lba11;
 pub mod lba12;
 pub mod lba7;
 pub mod sm4_ecb;
+pub mod synthetic;
 pub mod volume;
 pub mod xor;
 
