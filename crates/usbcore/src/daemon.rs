@@ -654,36 +654,50 @@ pub fn install() -> Result<()> {
         .context("launchctl bootstrap 失败")?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        // 已加载时 bootstrap 会报错，尝试 bootout 后重载
+        // 已加载时 bootstrap 会报错，尝试 bootout 后重载。bootout 是异步停止：
+        // 旧进程（含 keepalive 期间的清理、socket 释放）退出慢时，紧接的
+        // bootstrap 会报 "Bootstrap failed: 5: Input/output error"。因此
+        // 「bootout → 等待 job 与 socket 释放 → bootstrap」整轮最多重试 3 次。
         if !err.contains("already loaded") && !err.contains("Bootstrap failed: 5") {
             bail!("launchctl bootstrap: {err}");
         }
-        let _ = std::process::Command::new("launchctl")
-            .args(["bootout", "system", LAUNCHD_LABEL])
-            .output();
-        // bootout 是异步停止：等待服务彻底退出（socket 释放）再 bootstrap，
-        // 否则紧接的 bootstrap 会报 "Bootstrap failed: 5: Input/output error"
-        for _ in 0..20 {
-            let probe = std::process::Command::new("launchctl")
-                .args(["print", "system/com.edp.usbcore"])
+        let mut bootstrapped = false;
+        for _ in 0..3 {
+            let _ = std::process::Command::new("launchctl")
+                .args(["bootout", "system", LAUNCHD_LABEL])
                 .output();
-            let gone = match probe {
-                Ok(o) => !o.status.success(),
-                Err(_) => true,
-            };
-            if gone {
+            // 等待 launchd job 消失（≤5s）
+            let mut gone = false;
+            for _ in 0..50 {
+                let probe = std::process::Command::new("launchctl")
+                    .args(["print", "system/com.edp.usbcore"])
+                    .output();
+                if matches!(probe, Ok(o) if !o.status.success()) {
+                    gone = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            // job 已注销但进程可能仍在清理（卸载会话等），再等 socket 释放（≤3s）
+            if !gone {
+                for _ in 0..30 {
+                    if !Path::new("/var/run/edp-usbcore.sock").exists() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+            let out = std::process::Command::new("launchctl")
+                .args(["bootstrap", "system", PLIST_PATH])
+                .output()?;
+            if out.status.success() {
+                bootstrapped = true;
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        let out = std::process::Command::new("launchctl")
-            .args(["bootstrap", "system", PLIST_PATH])
-            .output()?;
-        if !out.status.success() {
-            bail!(
-                "重新 bootstrap 失败: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
+        if !bootstrapped {
+            bail!("重新 bootstrap 失败（3 轮重试后仍失败），请手动运行 launchctl bootstrap system {PLIST_PATH}");
         }
     }
     // 健康检查：等 socket 出现
