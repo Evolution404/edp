@@ -52,7 +52,9 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             auto_mount_enabled: true,
-            default_partition_types: vec![4],
+            // 用户明确要求：默认挂载交换区，交换区逻辑在前、保密区在后（[2,4]）。
+            // install() 会用此默认重写 config.json，务必与产品语义一致。
+            default_partition_types: vec![2, 4],
             socket_path: "/var/run/edp-usbcore.sock".to_string(),
             allowed_uids: Vec::new(),
         }
