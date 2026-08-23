@@ -601,15 +601,25 @@ pub fn install() -> Result<()> {
         bail!("安装守护进程需要 root：请用 sudo 运行 usbcore daemon install");
     }
     let self_exe = std::env::current_exe()?;
-    // 复制二进制到 /usr/local/libexec
+    // 复制二进制到 /usr/local/libexec。
+    // ⚠ macOS 下 Rust fs::copy 用 fcopyfile(COPYFILE_ALL)，会连同源文件属主一起复制
+    // （源是用户构建的 target/release/usbcore → 落盘即 zhangyuxi 属主）。必须显式
+    // chown root:wheel + 置 755：否则文件被非 root 拥有后，任何用户态进程都能把
+    // 运行中的 daemon 二进制截断成空文件（实测 2026-08-23 发生过，launchd 重启即崩）。
     std::fs::create_dir_all("/usr/local/libexec")?;
     std::fs::create_dir_all("/usr/local/bin")?;
     std::fs::copy(&self_exe, BIN_INSTALL_PATH)?;
-    // 硬化：校验落盘文件非空，且权限 755（防之后被非 root 身份截断成空文件，
-    // 实测 2026-08-23 曾出现 libexec/usbcore 被截断为 0 字节导致 launchd 重启即崩）
     let meta = std::fs::metadata(BIN_INSTALL_PATH)?;
     if meta.len() == 0 {
         bail!("二进制复制结果为空（{} 字节）：安装中止", meta.len());
+    }
+    let cpath = std::ffi::CString::new(BIN_INSTALL_PATH).expect("BIN_INSTALL_PATH 不含 NUL");
+    if unsafe { libc::chown(cpath.as_ptr(), 0, 0) } != 0 {
+        bail!(
+            "chown root:wheel {} 失败: {}",
+            BIN_INSTALL_PATH,
+            std::io::Error::last_os_error()
+        );
     }
     std::fs::set_permissions(BIN_INSTALL_PATH, std::fs::Permissions::from_mode(0o755))?;
     let _ = std::fs::remove_file(BIN_SYMLINK);
@@ -647,57 +657,50 @@ pub fn install() -> Result<()> {
         BIN = BIN_INSTALL_PATH
     );
     std::fs::write(PLIST_PATH, plist)?;
-    // 加载
-    let out = std::process::Command::new("launchctl")
-        .args(["bootstrap", "system", PLIST_PATH])
-        .output()
-        .context("launchctl bootstrap 失败")?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        // 已加载时 bootstrap 会报错，尝试 bootout 后重载。bootout 是异步停止：
-        // 旧进程（含 keepalive 期间的清理、socket 释放）退出慢时，紧接的
-        // bootstrap 会报 "Bootstrap failed: 5: Input/output error"。因此
-        // 「bootout → 等待 job 与 socket 释放 → bootstrap」整轮最多重试 3 次。
-        if !err.contains("already loaded") && !err.contains("Bootstrap failed: 5") {
-            bail!("launchctl bootstrap: {err}");
+    // 加载：job 已加载时用 kickstart -k 强制重启（运行新二进制）；未加载时 bootstrap。
+    // （实测「bootout → bootstrap」序列在部分 macOS 状态会报 "Bootstrap failed: 5:
+    //  Input/output error"，而 kickstart -k 稳定成功——重装 daemon 走此路径。）
+    let job_loaded = matches!(
+        std::process::Command::new("launchctl")
+            .args(["print", "system/com.edp.usbcore"])
+            .output(),
+        Ok(o) if o.status.success()
+    );
+    if job_loaded {
+        let out = std::process::Command::new("launchctl")
+            .args(["kickstart", "-k", "system/com.edp.usbcore"])
+            .output()?;
+        if !out.status.success() {
+            bail!(
+                "launchctl kickstart -k 失败: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
-        let mut bootstrapped = false;
-        for _ in 0..3 {
-            let _ = std::process::Command::new("launchctl")
-                .args(["bootout", "system", LAUNCHD_LABEL])
-                .output();
-            // 等待 launchd job 消失（≤5s）
-            let mut gone = false;
-            for _ in 0..50 {
-                let probe = std::process::Command::new("launchctl")
-                    .args(["print", "system/com.edp.usbcore"])
+    } else {
+        let out = std::process::Command::new("launchctl")
+            .args(["bootstrap", "system", PLIST_PATH])
+            .output()?;
+        if !out.status.success() {
+            // 残留 job 会使 bootstrap 报 "Bootstrap failed: 5"：bootout 后重试（≤3 轮）
+            let mut loaded = false;
+            let mut last_err = String::new();
+            for _ in 0..3 {
+                let _ = std::process::Command::new("launchctl")
+                    .args(["bootout", "system", LAUNCHD_LABEL])
                     .output();
-                if matches!(probe, Ok(o) if !o.status.success()) {
-                    gone = true;
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                let out = std::process::Command::new("launchctl")
+                    .args(["bootstrap", "system", PLIST_PATH])
+                    .output()?;
+                if out.status.success() {
+                    loaded = true;
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                last_err = String::from_utf8_lossy(&out.stderr).trim().to_string();
             }
-            // job 已注销但进程可能仍在清理（卸载会话等），再等 socket 释放（≤3s）
-            if !gone {
-                for _ in 0..30 {
-                    if !Path::new("/var/run/edp-usbcore.sock").exists() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
+            if !loaded {
+                bail!("launchctl bootstrap 失败：{last_err}\n请手动运行：launchctl bootstrap system {PLIST_PATH}");
             }
-            let out = std::process::Command::new("launchctl")
-                .args(["bootstrap", "system", PLIST_PATH])
-                .output()?;
-            if out.status.success() {
-                bootstrapped = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-        if !bootstrapped {
-            bail!("重新 bootstrap 失败（3 轮重试后仍失败），请手动运行 launchctl bootstrap system {PLIST_PATH}");
         }
     }
     // 健康检查：等 socket 出现
@@ -720,9 +723,24 @@ pub fn uninstall() -> Result<()> {
     if unsafe { libc::getuid() } != 0 {
         bail!("卸载守护进程需要 root：请用 sudo 运行 usbcore daemon uninstall");
     }
-    let _ = std::process::Command::new("launchctl")
+    // 实测部分 macOS 状态下 bootout 会报 "Boot-out failed: 5"，job 残留——
+    // 失败时用 kill SIGKILL 兜底终止进程（与 install 的 kickstart 对应）。
+    match std::process::Command::new("launchctl")
         .args(["bootout", "system", LAUNCHD_LABEL])
-        .output();
+        .output()
+    {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            warn!(
+                "launchctl bootout 失败（{}），改用 kill SIGKILL 兜底",
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
+            let _ = std::process::Command::new("launchctl")
+                .args(["kill", "SIGKILL", "system/com.edp.usbcore"])
+                .output();
+        }
+        Err(e) => warn!("launchctl bootout 启动失败: {e}"),
+    }
     let _ = std::fs::remove_file(PLIST_PATH);
     let _ = std::fs::remove_file("/var/run/edp-usbcore.sock");
     println!("daemon 已卸载");
