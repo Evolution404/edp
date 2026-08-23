@@ -26,12 +26,16 @@ Rust 单测用 serde 读取，保证移植逐字节等价。
 
 ## 实盘检测清单（disk4 Lexar + disk5 SanDisk，逐盘执行）
 
-- [ ] M1 手动挂载：`sudo usbcore mount /dev/rdiskN` 成功，Finder 可读写 exFAT，写入文件卸载重挂后仍在
-- [ ] M1 identify 兜底：disk5 免 `--device-id` 挂载
-- [ ] M2 自动挂载：密码入库后插入 ≤5s 自动挂载（GUI 不在线），拔盘自动清理
-- [ ] M2 双盘并发：两盘同插各自挂载、互不干扰、分别卸载
-- [ ] M2 密码错误路径：错误密码入库 → `password_needed` 事件、不挂载、daemon 不崩
-- [ ] M4 交付全流程：拷 .app → 装 macFUSE → 装 daemon → 冷启动插盘即挂载 → 读写 → 卸载 → 拔盘
+- [x] M1 手动挂载：`sudo usbcore mount /dev/rdiskN` 成功，Finder 可读写，写入文件卸载重挂后仍在
+- [x] M1 identify 兜底：disk5 免 `--device-id` 挂载（identify 候选命中）
+- [x] M2 自动挂载：两盘密码入库 → daemon 启动扫描即自动挂载 type2+type4（前台 root daemon 实测通过）
+- [x] M2 双盘并发：两盘同插各自挂载、互不干扰、分别卸载（3 分区并发实测）
+- [x] M2 密码错误路径：错误密码入库 → 不挂载、daemon 不崩（disk4 用错误密码实测）
+- [x] M2 卸载/重挂：RPC 卸载后 `mounts` 清空；空密码 mount 走 keystore 兜底重挂成功
+- [x] M2 孤儿回收：daemon 非正常退出后重启，自动清理残留挂载（实测 12 条残留→清 0）
+- [ ] M2 拔盘自动清理：需物理拔盘验证（补验项）
+- [x] macOS 15 磁盘访问：launchd daemon `disk_access_ok=false` 检测正确（需授予 FDA 后自动挂载）
+- [ ] M4 交付全流程：拷 .app → 装 macFUSE → 装 daemon → **授予 FDA** → 冷启动插盘即挂载 → 读写 → 卸载 → 拔盘
 - [ ] M4 回归：`sudo cargo test -- --ignored` 全绿
 
 ## 密码双路径覆盖

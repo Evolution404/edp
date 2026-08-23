@@ -97,6 +97,8 @@ pub fn run_with(
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from(DEFAULT_SESSION_ROOT));
     std::fs::create_dir_all(&session_root)?;
+    // 回收上次非正常退出的孤儿挂载（daemon 重启后重新触发磁盘出现→自动挂载）
+    session::cleanup_all_force(&session_root);
 
     let keystore_dir = session_root
         .parent()
@@ -207,6 +209,9 @@ fn handle_status(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_proto
         "keystore_entries": ks.all().len(),
         "auto_mount_enabled": cfg.auto_mount_enabled,
         "mounted_sessions": d.mounted.lock().unwrap().len(),
+        // macOS 15 起 launchd 守护进程默认无权访问可移动磁盘（TCC），
+        // 需在系统设置授予“完整磁盘访问权限”。为 false 时自动挂载不可用。
+        "disk_access_ok": std::fs::File::open("/dev/rdisk0").is_ok(),
     }))
 }
 
@@ -748,6 +753,7 @@ fn maybe_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
     let _ = edp_macos::unmount_disk(bsd);
 
     // 对每个默认分区类型，尝试 keystore 匹配
+    let mut any_mounted = false;
     for ptype in types {
         let io = match FileRawIo::open(&source, true) {
             Ok(f) => std::sync::Arc::new(f),
@@ -792,6 +798,7 @@ fn maybe_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
                 ) {
                     Ok(s) => {
                         if let Some(sid) = s["session_id"].as_str() {
+                            any_mounted = true;
                             state
                                 .mounted
                                 .lock()
@@ -815,6 +822,12 @@ fn maybe_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
                 break;
             }
         }
+    }
+    // 已确认 EDP 盘但全部密码不匹配/无条目 → 通知 GUI 需要密码
+    if !any_mounted {
+        state
+            .broadcaster
+            .broadcast(edp_proto::event::PASSWORD_NEEDED, json!({ "bsd": bsd }));
     }
 }
 

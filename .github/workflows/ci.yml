@@ -58,5 +58,9 @@ jobs:
         run: cargo clippy --manifest-path gui/src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: GUI 后端构建
         run: cargo build --manifest-path gui/src-tauri/Cargo.toml
+      - name: usbcore release 构建（装入 .app）
+        run: cargo build --release -p usbcore
       - name: GUI 打包 .app
-        run: cd gui && npx tauri build
+        run: |
+          cd gui && npx tauri build
+          cp ../target/release/usbcore "src-tauri/target/release/bundle/macos/EDP USB Client.app/Contents/MacOS/usbcore"

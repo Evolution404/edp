@@ -248,6 +248,31 @@ pub fn mount_and_attach(
 
 /// 卸载会话。
 pub fn unmount(session_id: &str, force: bool, session_root: &Path) -> Result<()> {
+    unmount_impl(session_id, force, session_root, true)
+}
+
+/// 卸载全部残留活动会话（daemon 启动时回收上次非正常退出的孤儿挂载）。
+pub fn cleanup_all_force(session_root: &Path) {
+    if let Ok(entries) = std::fs::read_dir(session_root) {
+        for e in entries.flatten() {
+            let sp = e.path().join("session.json");
+            let Ok(text) = std::fs::read_to_string(&sp) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            if v["active"].as_bool() != Some(true) {
+                continue;
+            }
+            if let Some(sid) = v["session_id"].as_str() {
+                let _ = unmount_impl(sid, true, session_root, false);
+            }
+        }
+    }
+}
+
+fn unmount_impl(session_id: &str, force: bool, session_root: &Path, emit: bool) -> Result<()> {
     prepare_session_root(session_root)?;
     let session_dir = session_dir_valid(session_root, session_id)?;
     let state_path = session_dir.join("session.json");
@@ -291,7 +316,9 @@ pub fn unmount(session_id: &str, force: bool, session_root: &Path) -> Result<()>
         .format("%Y-%m-%dT%H:%M:%S%z")
         .to_string());
     std::fs::write(&state_path, serde_json::to_vec_pretty(&state)?)?;
-    println!("{}", serde_json::to_string_pretty(&state)?);
+    if emit {
+        println!("{}", serde_json::to_string_pretty(&state)?);
+    }
     Ok(())
 }
 

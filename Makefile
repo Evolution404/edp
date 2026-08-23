@@ -33,9 +33,11 @@ install:
 gui:
 	cd gui && npm ci && npm run build && cargo build --manifest-path src-tauri/Cargo.toml
 
-# 打包 .app（M4；产物在 gui/src-tauri/target/release/bundle/）
+# 打包 .app（产物在 gui/src-tauri/target/release/bundle/；usbcore 一并装入 .app）
 bundle:
+	cargo build --release -p usbcore
 	cd gui && npm ci && npx tauri build
+	cp target/release/usbcore "gui/src-tauri/target/release/bundle/macos/EDP USB Client.app/Contents/MacOS/usbcore"
 
 clean:
 	cargo clean

@@ -7,6 +7,7 @@ export interface DaemonStatus {
   keystore_entries: number;
   auto_mount_enabled: boolean;
   mounted_sessions: number;
+  disk_access_ok: boolean;
   uptime_s?: number;
 }
 

@@ -49,6 +49,11 @@ cd gui && npm ci && npx tauri dev     # 开发运行
 GUI 首次使用：打开主窗口 → 设置页「安装 daemon」（弹系统授权）→ 密码库页录入密码 →
 插入 EDP U 盘即自动挂载。daemon 安装后，**GUI 退出也不影响自动挂载**。
 
+> **macOS 15（Sequoia）注意**：系统默认禁止后台守护进程访问可移动磁盘。安装 daemon 后
+> 需**一次性**在「系统设置 → 隐私与安全性 → 完整磁盘访问权限」中添加
+> `/usr/local/libexec/usbcore`，否则 daemon 无法读取 U 盘（GUI 设置页会提示）。
+> `usbcore status` 输出 `disk_access_ok: false` 即表示未授予。
+
 **CLI**：
 
 ```bash

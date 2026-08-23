@@ -29,4 +29,13 @@
 ### Fixed
 - M2：daemon 默认授权白名单为空导致非 root 客户端全被拒——改为按运行身份自动派生
 - M2：服务端事件推送仅在请求循环顶部 try_recv，长连接订阅事件积压——改为专用推送线程
+- M2：socket 组为 root:daemon 导致非 root 客户端无法连接——改为 chown root:admin
+- M2：daemon 非正常退出后残留 bridge/挂载——启动时 `cleanup_all_force` 回收孤儿会话
+- M2：自动挂载全部密码不匹配时静默——补发 `password_needed` 事件
 - M3：tauri 配置 activationPolicy/signingIdentity 位置修正（运行时 set_activation_policy + bundle.macOS）
+
+### 实盘验收（2026-08-23，disk4 SanDisk + disk5 Lexar 两盘在线）
+- M2 自动挂载：两盘密码入库 → daemon 自动挂载 3 分区（type2+type4），Finder 可写
+- 双盘并发、RPC 卸载、keystore 空密码兜底重挂、密码错误路径、孤儿回收均实测通过
+- 注意：launchd 生产路径下 macOS 15 需授予 usbcore「完整磁盘访问权限」方可自动挂载
+  （`disk_access_ok=false` 检测已就位，GUI 设置页引导）

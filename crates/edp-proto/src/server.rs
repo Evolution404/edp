@@ -113,6 +113,21 @@ pub fn serve(
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
+    // chown 到 root:admin：daemon（launchd root:daemon）创建的 socket 组默认为
+    // daemon，控制台用户不在 daemon 组会无法连接。admin 组放行控制台用户
+    // （GUI/CLI 免 sudo 走 RPC 的前提），具体授权仍由 LOCAL_PEERCRED 白名单决定。
+    #[cfg(unix)]
+    unsafe {
+        use std::ffi::CString;
+        let gname = CString::new("admin").unwrap();
+        let gr = libc::getgrnam(gname.as_ptr());
+        if !gr.is_null() {
+            let gid = (*gr).gr_gid;
+            let path = CString::new(socket_path).unwrap();
+            // 非 root 下 chown 会 EPERM，忽略（测试用临时 socket 由属主直接连接）
+            libc::chown(path.as_ptr(), 0, gid);
+        }
+    }
 
     let broadcaster = EventBroadcaster::new();
     let broadcaster_loop = broadcaster.clone();
