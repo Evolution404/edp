@@ -94,8 +94,8 @@ pub fn discover_volume(
                 available.push(entry.partition_type);
             }
             if entry.partition_type == want_type {
-                // 镜像文件（非 /dev）做边界检查
-                if entry.start_bytes() + entry.size_bytes > io_size {
+                // 镜像文件做边界检查；真实设备由调用方经 diskutil 容量校验
+                if !io.is_device() && entry.start_bytes() + entry.size_bytes > io_size {
                     return Err(CoreError::Parse("EDPF 分区范围超过镜像大小".into()).into());
                 }
                 return Ok((entry, cand.clone()));

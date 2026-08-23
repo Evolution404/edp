@@ -20,6 +20,10 @@ pub trait RawIo: Send + Sync {
     fn pwrite_all(&self, off: u64, data: &[u8]) -> std::io::Result<()>;
     fn size(&self) -> u64;
     fn fsync(&self) -> std::io::Result<()>;
+    /// 是否为块设备（设备不做镜像式边界检查，容量由 diskutil 层校验）。
+    fn is_device(&self) -> bool {
+        false
+    }
 }
 
 /// 镜像文件 / 整盘 `/dev/rdiskN` 的实现（read+write 双向打开）。
@@ -27,14 +31,17 @@ pub struct FileRawIo {
     file: std::sync::Mutex<std::fs::File>,
     path: std::path::PathBuf,
     size: u64,
+    is_device: bool,
 }
 
 impl FileRawIo {
     /// 以指定模式打开（readonly=true 时 O_RDONLY）。
     pub fn open(path: &Path, readonly: bool) -> std::io::Result<Self> {
         let file = OpenOptions::new().read(true).write(!readonly).open(path)?;
-        let size = if path.starts_with("/dev/") {
-            // 块设备的 st_size 不可靠，用 seek End 取容量。
+        let is_device = path.starts_with("/dev/");
+        let size = if is_device {
+            // 块设备的 st_size 不可靠，seek End 取容量（失败为 0——
+            // 设备不做镜像式边界检查，容量由调用方经 diskutil 校验）。
             use std::io::Seek;
             let mut f = &file;
             f.seek(SeekFrom::End(0)).unwrap_or(0)
@@ -45,6 +52,7 @@ impl FileRawIo {
             file: Mutex::new(file),
             path: path.to_path_buf(),
             size,
+            is_device,
         })
     }
 
@@ -55,6 +63,10 @@ impl FileRawIo {
 }
 
 impl RawIo for FileRawIo {
+    fn is_device(&self) -> bool {
+        self.is_device
+    }
+
     fn pread_exact(&self, off: u64, buf: &mut [u8]) -> std::io::Result<()> {
         use std::os::unix::fs::FileExt;
         let f = self.file.lock().unwrap();
