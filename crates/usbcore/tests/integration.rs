@@ -118,7 +118,13 @@ fn synthetic_full_pipeline() {
     let plain = make_plain_exfat(&td);
     let img = make_synthetic(&td, &plain);
 
-    let env_vars = [("EDP_USB_SESSION_ROOT", session_root.to_str().unwrap())];
+    // 强制离线模式：CLI mount 在线优先，但测试用 --device-id/--session-id
+    // 等仅离线支持参数，必须绕过已运行的 daemon
+    let offline_sock = td.join("no-daemon.sock");
+    let env_vars = [
+        ("EDP_USB_SESSION_ROOT", session_root.to_str().unwrap()),
+        ("EDP_USB_SOCKET", offline_sock.to_str().unwrap()),
+    ];
     let run_env = |args: &[&str]| {
         let mut cmd = Command::new(exe());
         cmd.args(args);
