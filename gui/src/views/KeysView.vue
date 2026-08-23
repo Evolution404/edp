@@ -155,8 +155,8 @@ async function toggleAuto(rec: any) {
         </label>
         <label>分区类型
           <select v-model.number="form.partition_type">
-            <option :value="2">2 · 交换区</option>
             <option :value="4">4 · 保密区</option>
+            <option :value="2">2 · 交换区</option>
           </select>
         </label>
         <label>密码<input v-model="form.password" type="password" /></label>
