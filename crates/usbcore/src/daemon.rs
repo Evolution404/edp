@@ -30,6 +30,8 @@ pub struct DaemonState {
     pub mounted: Mutex<HashMap<String, String>>,
     /// 识别到的 EDP 盘（bsd → device_id）
     pub edp_disks: Mutex<HashMap<String, String>>,
+    /// 正在尝试自动挂载的盘（bsd），防并发重复尝试
+    pub auto_mount_inflight: Mutex<std::collections::HashSet<String>>,
     /// daemon.shutdown 置位；主线程据此退出
     pub shutdown: Arc<std::sync::atomic::AtomicBool>,
     /// 主线程句柄（shutdown 时 unpark）
@@ -115,6 +117,7 @@ pub fn run_with(
         started_at: std::time::Instant::now(),
         mounted: Mutex::new(HashMap::new()),
         edp_disks: Mutex::new(HashMap::new()),
+        auto_mount_inflight: Mutex::new(std::collections::HashSet::new()),
         shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         main_thread: std::thread::current(),
     });
@@ -219,7 +222,10 @@ fn handle_status(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_proto
 fn handle_list_disks(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
     let d = daemon(ctx)?;
     let all = p.get("all").and_then(|x| x.as_bool()).unwrap_or(false);
-    let disks = edp_macos::list_disks(!all).map_err(rpc_io)?;
+    // 直接透传 all：此前 `!all` 反转导致 GUI 请求"外置盘"时反而枚举全部盘
+    // （含 hdiutil FUSE 镜像盘），逐盘 diskutil info 对镜像盘挂起 → list_disks
+    // RPC 卡 ~10s（密码库页卡顿根因）。
+    let disks = edp_macos::list_disks(all).map_err(rpc_io)?;
     let mounted = d.mounted.lock().unwrap();
     let edp = d.edp_disks.lock().unwrap();
     let out: Vec<Value> = disks
@@ -768,8 +774,30 @@ pub fn status(socket: &str) -> Result<()> {
 
 // ---------- 磁盘监听（轮询 diff） ----------
 
+/// 自动挂载重试上限与间隔（设备插入后 /dev/rdiskN 可能未就绪，LBA4 首读会瞬态失败）。
+const AUTO_MOUNT_MAX_RETRIES: u32 = 12;
+const AUTO_MOUNT_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// 异步尝试自动挂载（同盘去重；不同盘并行，双盘可同时挂载）。
+fn spawn_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
+    {
+        let mut inflight = state.auto_mount_inflight.lock().unwrap();
+        if !inflight.insert(bsd.to_string()) {
+            return; // 已有尝试进行中
+        }
+    }
+    let state = state.clone();
+    let bsd = bsd.to_string();
+    std::thread::spawn(move || {
+        maybe_auto_mount(&state, &bsd);
+        state.auto_mount_inflight.lock().unwrap().remove(&bsd);
+    });
+}
+
 fn disk_watcher_loop(state: Arc<DaemonState>) {
     let mut prev: HashMap<String, bool> = HashMap::new();
+    // bsd → (重试次数, 上次尝试时刻)：出现时尝试失败后的重试（设备就绪竞态）。
+    let mut pending: HashMap<String, (u32, std::time::Instant)> = HashMap::new();
     loop {
         let disks = edp_macos::list_disks(false).unwrap_or_default();
         let cur: HashMap<String, bool> = disks.iter().map(|d| (d.bsd.clone(), true)).collect();
@@ -780,7 +808,29 @@ fn disk_watcher_loop(state: Arc<DaemonState>) {
                 state
                     .broadcaster
                     .broadcast(edp_proto::event::DISK_APPEARED, json!({ "bsd": bsd }));
-                maybe_auto_mount(&state, bsd);
+                spawn_auto_mount(&state, bsd);
+                pending.insert(bsd.clone(), (0, std::time::Instant::now()));
+            }
+        }
+        // retry：已出现但未挂载的盘，冷却后重试（≤上限）
+        {
+            let mounted = state.mounted.lock().unwrap();
+            let retry: Vec<String> = cur
+                .keys()
+                .filter(|bsd| !mounted.contains_key(*bsd))
+                .filter_map(|bsd| {
+                    let (n, last) = pending.get_mut(bsd)?;
+                    if *n >= AUTO_MOUNT_MAX_RETRIES || last.elapsed() < AUTO_MOUNT_RETRY_INTERVAL {
+                        return None;
+                    }
+                    *n += 1;
+                    *last = std::time::Instant::now();
+                    Some(bsd.clone())
+                })
+                .collect();
+            drop(mounted);
+            for bsd in &retry {
+                spawn_auto_mount(&state, bsd);
             }
         }
         // disappeared
@@ -788,6 +838,7 @@ fn disk_watcher_loop(state: Arc<DaemonState>) {
             if !cur.contains_key(bsd) {
                 info!("磁盘消失: {bsd}");
                 cleanup_disappeared(&state, bsd);
+                pending.remove(bsd);
             }
         }
         prev = cur;

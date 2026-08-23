@@ -101,7 +101,10 @@ fn nix_gid() -> u32 {
 }
 
 impl Filesystem for RawVolumeBridge {
-    fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), libc::c_int> {
+    fn init(&mut self, _req: &Request<'_>, config: &mut KernelConfig) -> Result<(), libc::c_int> {
+        // 放宽 FUSE 单次读写上限（默认偏小会把 hdiutil/exFAT 的成块写碎片化，
+        // 实测限制拷贝吞吐）。set_max_write 失败（内核不认可）时静默用默认。
+        let _ = config.set_max_write(128 * 1024);
         info!("bridge: 已挂载（readonly={}）", self.readonly);
         Ok(())
     }

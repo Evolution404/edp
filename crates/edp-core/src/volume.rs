@@ -170,7 +170,11 @@ impl EncryptedPartitionIO {
         Ok(())
     }
 
-    /// 写明文（RMW：读边界块 → 解密 → 改 → 重加密写回）。
+    /// 写明文。
+    ///
+    /// 16B 对齐整块写走快路径：ECB 各块独立，直接加密写回，免读-改-写
+    /// （修复实盘写放大：exFAT 等文件系统写均为 512B 对齐，此前每次写都
+    /// 多一次 USB 读+解密，实测拷贝仅 ~8MB/s）。非对齐写才做 RMW。
     pub fn write(&self, offset: u64, data: &[u8]) -> Result<usize, CoreError> {
         if self.readonly {
             return Err(CoreError::InvalidInput("卷以只读模式打开".into()));
@@ -180,6 +184,13 @@ impl EncryptedPartitionIO {
         }
         let (begin, end) = self.range(offset, data.len() as u64)?;
         let _guard = self.lock.lock().unwrap();
+        if offset == begin && end == offset + data.len() as u64 {
+            // 对齐快路径
+            let reenc = self.sm4.encrypt_aligned(data)?;
+            self.pwrite_cipher(offset, &reenc)?;
+            return Ok(data.len());
+        }
+        // 非对齐写：读-改-写
         let mut cipher = vec![0u8; (end - begin) as usize];
         self.pread_cipher(begin, &mut cipher)?;
         let mut plain = self.sm4.decrypt_aligned(&cipher)?;
