@@ -3,7 +3,14 @@
 本项目的所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [Unreleased]（v1.0.0 待办）
+
+- 密码路径B（用户修改密码后）实盘校准：已实现 + 合成向量自洽测试，待改密盘黄金数据回归
+- macOS 15 完整磁盘访问授予后，launchd 生产路径实盘自动挂载复验（`disk_access_ok=true`）
+- 拔盘自动清理实盘补验
+- 全量回归：`sudo cargo test -- --ignored`（当前已绿）
+
+## [0.4.0] - 2026-08-23
 
 ### Added
 - M0：Cargo workspace 骨架（edp-core / edp-macos / edp-proto / usbcore）
