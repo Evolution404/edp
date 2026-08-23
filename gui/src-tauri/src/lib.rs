@@ -15,6 +15,17 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
+/// 会话 JSON 的首个挂载点。daemon 会话字段是 `mountpoints`（数组，可能多挂载点），
+/// GUI 侧此前误用单数 `mountpoint` 导致 Finder 按钮/托盘/通知取到 undefined（显示 ?）。
+fn first_mountpoint(v: &Value) -> String {
+    v.get("mountpoints")
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.as_str())
+        .unwrap_or("?")
+        .to_string()
+}
+
 /// daemon socket 路径（客户端侧；测试可用 EDP_USB_SOCKET 覆盖）。
 #[derive(Default)]
 pub struct Rpc {
@@ -88,6 +99,9 @@ fn uninstall_daemon() -> Result<Value, String> {
 /// Finder 打开挂载点。
 #[tauri::command]
 fn open_in_finder(path: String) -> Result<(), String> {
+    if path.is_empty() {
+        return Ok(()); // 无挂载点时静默忽略
+    }
     std::process::Command::new("open")
         .arg(&path)
         .output()
@@ -123,7 +137,7 @@ fn build_tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, tauri::Error> {
     } else {
         for s in sessions_arr {
             let sid = s["session_id"].as_str().unwrap_or("?").to_string();
-            let mp = s["mountpoint"].as_str().unwrap_or("?").to_string();
+            let mp = first_mountpoint(&s);
             let item = MenuItem::with_id(
                 app,
                 format!("sess-{sid}"),
@@ -203,12 +217,14 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 let sid = id.trim_start_matches("sess-");
                 let rpc = Rpc::new();
                 if let Ok(v) = rpc.call(edp_proto::method::SESSIONS, json!({})) {
-                    if let Some(mp) = v["sessions"]
+                    let found = v["sessions"]
                         .as_array()
-                        .and_then(|a| a.iter().find(|s| s["session_id"] == sid))
-                        .and_then(|s| s["mountpoint"].as_str())
-                    {
-                        let _ = std::process::Command::new("open").arg(mp).spawn();
+                        .and_then(|a| a.iter().find(|s| s["session_id"] == sid));
+                    if let Some(s) = found {
+                        let mp = first_mountpoint(s);
+                        if mp != "?" {
+                            let _ = std::process::Command::new("open").arg(&mp).spawn();
+                        }
                     }
                 }
             }
@@ -265,12 +281,8 @@ fn spawn_subscriber(app: AppHandle) {
                     edp_proto::event::PASSWORD_NEEDED => "需要密码",
                     _ => "EDP 事件",
                 };
-                let body = ev
-                    .data
-                    .get("mountpoint")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&ev.event)
-                    .to_string();
+                let mp = first_mountpoint(&ev.data);
+                let body = if mp != "?" { mp } else { ev.event.clone() };
                 let _ = app2.notification().builder().title(title).body(body).show();
             });
             std::thread::sleep(Duration::from_secs(2));

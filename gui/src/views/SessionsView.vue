@@ -47,11 +47,11 @@ async function doUnmount(sid: string, force = false) {
         <tr v-for="s in store.sessions" :key="s.session_id">
           <td class="mono">{{ s.session_id }}</td>
           <td>
-            <a @click="api.openInFinder(s.mountpoint)" class="link">{{ s.mountpoint }}</a>
+            <a @click="api.openInFinder(s.mountpoints?.[0])" class="link">{{ s.mountpoints?.[0] }}</a>
           </td>
           <td class="mono">{{ s.source ?? "—" }}</td>
           <td class="row">
-            <button @click="api.openInFinder(s.mountpoint)">Finder</button>
+            <button @click="api.openInFinder(s.mountpoints?.[0])">Finder</button>
             <button class="danger" @click="doUnmount(s.session_id)" :disabled="busy">卸载</button>
             <button class="ghost" @click="doUnmount(s.session_id, true)" :disabled="busy">
               强制卸载
