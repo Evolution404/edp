@@ -55,6 +55,54 @@ impl Client {
         resp.result
             .ok_or_else(|| ClientError::Protocol("成功响应缺少 result".into()))
     }
+
+    /// 订阅事件并阻塞读取，逐条回调（GUI 侧专用线程）。
+    ///
+    /// 内部自己写 SUBSCRIBE 请求并直接读行（不复用 `call`，避免 BufReader
+    /// 缓冲导致事件帧丢失）。连接断开或服务端下线时返回。
+    pub fn subscribe<F>(&mut self, mut on_event: F) -> Result<(), ClientError>
+    where
+        F: FnMut(crate::types::Event),
+    {
+        let id = self.next_id;
+        self.next_id += 1;
+        let req = Request {
+            id,
+            method: crate::types::method::SUBSCRIBE.to_string(),
+            params: serde_json::json!({}),
+        };
+        let mut line = serde_json::to_string(&req)?;
+        line.push('\n');
+        self.stream.write_all(line.as_bytes())?;
+        self.stream.flush()?;
+
+        let mut reader = BufReader::new(&mut self.stream);
+        let mut buf = String::new();
+        buf.clear();
+        reader.read_line(&mut buf)?;
+        let resp: Response = serde_json::from_str(&buf)?;
+        if !resp.ok {
+            let e = resp.error.unwrap_or_else(|| crate::types::RpcError {
+                code: "UNKNOWN".into(),
+                message: "未知错误".into(),
+            });
+            return Err(ClientError::Rpc(e.code, e.message));
+        }
+        loop {
+            buf.clear();
+            if reader.read_line(&mut buf)? == 0 {
+                break;
+            }
+            let line = buf.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(ev) = serde_json::from_str::<crate::types::Event>(line) {
+                on_event(ev);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// 客户端错误。

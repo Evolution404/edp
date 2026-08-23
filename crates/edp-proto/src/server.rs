@@ -3,7 +3,7 @@
 //! - 监听 UDS（0660 root:admin）
 //! - 连接建立后 `LOCAL_PEERCRED` 取对端 uid，按白名单鉴权
 //! - NDJSON 请求/响应；subscribe 后事件经每连接 channel 推送
-//! - 每连接一线程（客户端数量极少，线程模型足够）
+//! - 每连接一线程；订阅后另起事件推送线程（共用写锁，防响应/事件交错）
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -169,7 +169,7 @@ fn is_allowed(uid: u32, allowed: &[u32]) -> bool {
 }
 
 fn handle_conn(
-    mut stream: UnixStream,
+    stream: UnixStream,
     methods: HashMap<String, Handler>,
     broadcaster: EventBroadcaster,
     allowed: Vec<u32>,
@@ -183,23 +183,22 @@ fn handle_conn(
         broadcaster: broadcaster.clone(),
     };
 
-    let mut sub: Option<(usize, std::sync::mpsc::Receiver<Event>)> = None;
-    let mut subscribed = false;
+    // 读/写分流：主线程读请求、写响应；事件推送线程写事件——共用写锁防交错
+    let writer = std::sync::Arc::new(std::sync::Mutex::new(stream.try_clone()?));
+    let mut reader = BufReader::new(stream);
+    // 当前订阅注册 id（用于注销；事件 receiver 已在推送线程内）
+    let mut sub: Option<usize> = None;
 
-    let mut reader = BufReader::new(stream.try_clone()?);
+    let write_resp = |resp: &Response| -> std::io::Result<()> {
+        let mut l = serde_json::to_string(resp)?;
+        l.push('\n');
+        let mut w = writer.lock().unwrap();
+        w.write_all(l.as_bytes())?;
+        w.flush()
+    };
+
     let mut buf = String::new();
     loop {
-        // 先处理订阅事件队列（非阻塞）
-        if subscribed {
-            if let Some((_, rx)) = &sub {
-                while let Ok(ev) = rx.try_recv() {
-                    let mut l = serde_json::to_string(&ev)?;
-                    l.push('\n');
-                    stream.write_all(l.as_bytes())?;
-                }
-                stream.flush()?;
-            }
-        }
         buf.clear();
         if reader.read_line(&mut buf)? == 0 {
             break;
@@ -217,9 +216,7 @@ fn handle_conn(
                     result: None,
                     error: Some(RpcError::new(crate::types::codes::BAD_PARAMS, "非法 JSON")),
                 };
-                let mut l = serde_json::to_string(&resp)?;
-                l.push('\n');
-                stream.write_all(l.as_bytes())?;
+                write_resp(&resp)?;
                 continue;
             }
         };
@@ -261,25 +258,32 @@ fn handle_conn(
                 )),
             }
         };
-        let mut l = serde_json::to_string(&resp)?;
-        l.push('\n');
-        stream.write_all(l.as_bytes())?;
-        stream.flush()?;
+        write_resp(&resp)?;
 
-        // subscribe：注册事件接收
+        // subscribe：注册事件接收，启动专用推送线程（阻塞 recv，注销时 channel
+        // 断开自动退出）
         if req.method == crate::types::method::SUBSCRIBE && resp.ok {
             let (id, rx) = broadcaster.register();
-            sub = Some((id, rx));
-            subscribed = true;
+            let w = writer.clone();
+            std::thread::spawn(move || {
+                while let Ok(ev) = rx.recv() {
+                    let mut l = serde_json::to_string(&ev).unwrap_or_default();
+                    l.push('\n');
+                    if let Ok(mut w) = w.lock() {
+                        let _ = w.write_all(l.as_bytes());
+                        let _ = w.flush();
+                    }
+                }
+            });
+            sub = Some(id);
         }
         if req.method == crate::types::method::UNSUBSCRIBE {
-            if let Some((id, _)) = sub.take() {
+            if let Some(id) = sub.take() {
                 broadcaster.unregister(id);
             }
-            subscribed = false;
         }
     }
-    if let Some((id, _)) = sub {
+    if let Some(id) = sub.take() {
         broadcaster.unregister(id);
     }
     Ok(())

@@ -100,9 +100,34 @@ fn event_broadcast() {
     // 再广播
     std::thread::sleep(std::time::Duration::from_millis(200));
     broadcaster.broadcast(types::event::MOUNTED, json!({"session_id": "x"}));
-    // 读事件（在 client 侧：subscribe 后服务端推事件；此处验证广播机制本身，
-    // 事件消费由真实 daemon/GUI 用长连接处理——这里做一次读）
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    // 简单断言：广播器至少注册了一个订阅
+    // 订阅线程读取
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    handle.shutdown();
+}
+
+#[test]
+fn subscribe_receives_events() {
+    let (path, mut handle) = start_server();
+    let broadcaster = handle.broadcaster.clone();
+    let mut c = Client::connect(&path).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<edp_proto::types::Event>();
+    std::thread::spawn(move || {
+        // 阻塞订阅，直到连接断开（进程退出时自然结束，不做 join）
+        let _ = c.subscribe(move |ev| {
+            let _ = tx.send(ev);
+        });
+    });
+    // 等服务端注册订阅
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    broadcaster.broadcast(
+        types::event::MOUNTED,
+        json!({"session_id": "s1", "mountpoint": "/Volumes/EDP"}),
+    );
+    broadcaster.broadcast(types::event::UNMOUNTED, json!({"session_id": "s1"}));
+    let ev1 = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    let ev2 = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert_eq!(ev1.event, types::event::MOUNTED);
+    assert_eq!(ev2.event, types::event::UNMOUNTED);
+    assert_eq!(ev1.data["session_id"], "s1");
     handle.shutdown();
 }
