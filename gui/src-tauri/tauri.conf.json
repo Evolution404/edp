@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "gui",
+  "productName": "EDP USB Client",
   "version": "0.1.0",
   "identifier": "com.edp.usbcore",
   "build": {
@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "gui",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "EDP 加密 U 盘客户端",
+        "width": 860,
+        "height": 640,
+        "minWidth": 720,
+        "minHeight": 520,
+        "visible": false
       }
     ],
     "security": {
@@ -30,6 +34,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": null
+    }
   }
 }

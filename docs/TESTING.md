@@ -7,7 +7,17 @@
 | 单元测试 | `make test` | 纯算法层；真实盘 fixture 黄金对照；无需 root |
 | 集成测试 | `make test-integration` | sudo + macFUSE；合成盘全链路（probe/mount/写/unmount/重挂/readonly/错误密码） |
 | 协议测试 | `make test`（daemon 测试模块） | 非 root 跑 daemon，socket 序列断言 |
+| CLI 在线模式 | `cargo test -p usbcore --test online_mode` | 非 root / 无 macFUSE：临时 daemon + CLI 走 RPC |
+| GUI | `cargo build --manifest-path gui/src-tauri/Cargo.toml` + `npm run build` | 前端 vue-tsc + 后端编译；CI 门禁 |
 | 实盘检测 | 手动（下表） | 每里程碑必做，交付前完整执行 |
+
+## GUI 手工验收（M3 起）
+
+- [ ] `npx tauri dev` 启动：状态栏出现图标，无 Dock 图标；窗口默认隐藏，点托盘/左键打开
+- [ ] 密码库页：添加密码（选插入的盘→输密码→保存）→ 密码库列出（脱敏）
+- [ ] 设置页：daemon 未运行提示 + 「安装 daemon」提权成功；macFUSE 状态正确显示
+- [ ] 插入已登记密码盘 ≤5s 自动挂载，系统通知弹出，托盘菜单出现挂载项
+- [ ] 托盘点击挂载项 → Finder 打开；卸载后托盘菜单更新；GUI 退出后 daemon 仍自动挂载
 
 ## 黄金对照
 

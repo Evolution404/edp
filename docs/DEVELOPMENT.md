@@ -19,6 +19,22 @@ cargo test -p usbcore --test online_mode
 make docs               # rustdoc
 ```
 
+## GUI（`gui/`，独立 workspace）
+
+- 前端：Vue 3 + Pinia + Vue Router + Vite（`gui/src/`）；后端：Tauri 2（`gui/src-tauri/`）
+- **不并入根 cargo workspace**（tauri 依赖过重），经 path 依赖 `edp-proto`/`edp-macos`
+- 常用命令：
+  ```bash
+  make gui           # npm ci + 前端构建 + 后端 build
+  make bundle        # npx tauri build（产物 .app / dmg）
+  cd gui && npx tauri dev          # 开发运行（热重载）
+  cargo clippy --manifest-path gui/src-tauri/Cargo.toml --all-targets -- -D warnings
+  ```
+- GUI 所有数据经 UDS RPC 访问 daemon（不直接读盘、不接触密码库文件）；
+  事件订阅走 `edp-proto::Client::subscribe`（长连接推送线程）
+- 新增命令：`gui/src-tauri/src/lib.rs` 加 `#[tauri::command]` + `invoke_handler` 注册，
+  前端 `gui/src/api.ts` 封装
+
 ## 代码结构
 
 见 [ARCHITECTURE.md](ARCHITECTURE.md)。约定：

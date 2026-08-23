@@ -37,21 +37,30 @@ EDP USB Client.app（菜单栏）──┴── 走 UDS socket 免 sudo
 - [macFUSE](https://macfuse.github.io/)（**唯一**需要单独安装的组件，一次性；GUI 内置检测与引导）
 - Rust 1.75+（仅构建期）
 
-## 快速上手（M1 后可用）
+## 快速上手
+
+**GUI（推荐）**——构建并运行状态栏客户端：
+
+```bash
+cd gui && npm ci && npx tauri dev     # 开发运行
+# 或打包 .app：npx tauri build       # 产物在 gui/src-tauri/target/release/bundle/
+```
+
+GUI 首次使用：打开主窗口 → 设置页「安装 daemon」（弹系统授权）→ 密码库页录入密码 →
+插入 EDP U 盘即自动挂载。daemon 安装后，**GUI 退出也不影响自动挂载**。
+
+**CLI**：
 
 ```bash
 make build
 sudo target/release/usbcore mount /dev/rdisk4        # 手动挂载（输密码）
 target/release/usbcore probe /dev/rdisk4             # 只读探测（密码/key/分区闭环）
+target/release/usbcore status                        # daemon 在线状态
+sudo make install                                    # 安装 launchd 守护进程（自动挂载）
+target/release/usbcore keys add --disk /dev/rdisk4   # 录入密码（daemon 闭环验证）
 ```
 
-自动挂载（M2 后）：
-
-```bash
-sudo make install                                     # 安装 launchd 守护进程
-target/release/usbcore keys add                       # 录入密码（daemon 闭环验证）
-# 插入 U 盘 → 自动挂载
-```
+daemon 在线时，`mount/unmount/mounts/keys` 等命令走 RPC，**无需 sudo**。
 
 ## 文档
 

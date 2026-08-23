@@ -1,17 +1,17 @@
 # 架构
 
-> 状态：M0 骨架，随里程碑更新。
+> 状态：M3（Tauri GUI 已接入）。GUI 独立 cargo workspace，经 UDS socket 纯 RPC 访问 daemon。
 
 ## 进程模型
 
-单一多角色二进制 `usbcore`：
+单一多角色二进制 `usbcore` + 独立 Tauri GUI：
 
 | 角色 | 入口 | 职责 |
 |---|---|---|
 | CLI | `usbcore <cmd>` | 终端操作；daemon 在线走 socket 免 sudo，离线 sudo 直跑 |
 | daemon | `usbcore daemon run` | launchd 常驻（root）：磁盘监听、密码库、自动挂载、RPC server |
 | bridge | `usbcore bridge` | macFUSE 单文件桥（daemon/CLI spawn，file_key 走匿名管道） |
-| GUI | `EDP USB Client.app` | Tauri 2 菜单栏应用，纯 RPC 客户端 |
+| GUI | `EDP USB Client.app` | Tauri 2 菜单栏应用（accessory，无 Dock），纯 RPC 客户端 |
 
 ## 模块划分
 
@@ -19,10 +19,19 @@
 crates/
 ├── edp-core/     纯算法与格式层（跨平台，零系统依赖）
 ├── edp-macos/    macOS 系统集成（diskutil/ioreg/hdiutil/DiskArbitration）
-├── edp-proto/    UDS JSON-RPC 协议（Client/Server）
+├── edp-proto/    UDS JSON-RPC 协议（Client/Server，含事件订阅流）
 └── usbcore/      多角色二进制（cli + daemon + bridge）
-gui/              Tauri 2 + Vue 3（M3）
+gui/
+├── src/          Vue 3 + Pinia + Vue Router（Keys/Sessions/Settings/Logs 四页）
+└── src-tauri/    独立 workspace：RPC 命令 + 托盘 + 事件订阅 + 通知 + daemon 安装
 ```
+
+## GUI ↔ daemon
+
+- 所有数据走 UDS JSON-RPC（`edp-proto`），**GUI 不直接读盘、不接触密码库文件**
+- `subscribe` 长连接实时接收 `mounted/unmounted/disk_appeared/…` → 前端事件 + 系统通知 + 托盘菜单重建
+- daemon 离线时 GUI 显示引导（设置页可提权安装 daemon、macFUSE 引导）
+- 唯一提权动作：`install_daemon` 经 `osascript … with administrator privileges` 执行 `usbcore daemon install`
 
 ## 挂载数据流
 

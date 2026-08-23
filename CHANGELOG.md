@@ -21,6 +21,12 @@
 - M2：CLI 在线模式（mount/unmount/mounts/status/doctor 走 RPC 免 sudo，离线降级）
 - M2：daemon 授权白名单自动派生（root 守护进程放行控制台用户；非 root 放行自身）
 - M2：CLI 在线模式协议测试（`online_mode`，非 root 可跑，无 macFUSE 依赖）
+- M3：Tauri 2 + Vue 3 状态栏 GUI（tray 常驻 / 无 Dock / 四页面：挂载、密码库、设置、日志）
+- M3：GUI 事件订阅（mounted/unmounted/… → 前端 + 系统通知 + 托盘动态菜单）
+- M3：macFUSE 检测引导 / daemon 提权安装 / 密码库一键挂载
+- M3：GUI 独立 cargo workspace + CI GUI job（前端构建 + 后端 clippy/build/bundle）
 
 ### Fixed
 - M2：daemon 默认授权白名单为空导致非 root 客户端全被拒——改为按运行身份自动派生
+- M2：服务端事件推送仅在请求循环顶部 try_recv，长连接订阅事件积压——改为专用推送线程
+- M3：tauri 配置 activationPolicy/signingIdentity 位置修正（运行时 set_activation_policy + bundle.macOS）

@@ -1,5 +1,5 @@
 {
-  "name": "gui",
+  "name": "edp-usb-client",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -12,7 +12,8 @@
   "dependencies": {
     "vue": "^3.5.13",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "vue-router": "^4",
+    "pinia": "^2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",

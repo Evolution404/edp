@@ -1,7 +1,7 @@
 # usbcore 构建入口
-.PHONY: build test test-integration lint fmt docs install bundle clean
+.PHONY: build test test-integration lint fmt docs install bundle gui clean
 
-# 默认并行构建全部 crate
+# 默认并行构建全部内核 crate（GUI 独立，见 gui 目标）
 build:
 	cargo build --workspace
 
@@ -13,7 +13,7 @@ test:
 test-integration:
 	sudo cargo test --workspace -- --ignored
 
-# CI 同款门禁：格式 + clippy
+# CI 同款门禁：格式 + clippy（内核 workspace）
 lint:
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
@@ -29,7 +29,11 @@ docs:
 install:
 	sudo target/release/usbcore daemon install
 
-# 打包 .app（M4）
+# GUI：前端依赖 + 前端构建 + Rust 后端（独立 workspace）
+gui:
+	cd gui && npm ci && npm run build && cargo build --manifest-path src-tauri/Cargo.toml
+
+# 打包 .app（M4；产物在 gui/src-tauri/target/release/bundle/）
 bundle:
 	cd gui && npm ci && npx tauri build
 

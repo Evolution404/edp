@@ -39,13 +39,24 @@ jobs:
         run: cargo test -p edp-core
 
   frontend:
-    name: 前端构建（M3 起启用）
+    name: GUI（Vue 前端 + Tauri 后端）
     runs-on: macos-latest
-    if: false  # gui/ 就位后改为 `hashFiles('gui/package.json') != ''`
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: 构建前端
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: gui/src-tauri
+      - name: 前端构建（vue-tsc + vite）
         run: cd gui && npm ci && npm run build
+      - name: GUI 后端 Clippy
+        run: cargo clippy --manifest-path gui/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: GUI 后端构建
+        run: cargo build --manifest-path gui/src-tauri/Cargo.toml
+      - name: GUI 打包 .app
+        run: cd gui && npx tauri build
