@@ -39,8 +39,8 @@ function toggleType(t: number) {
   const cur = new Set(types.value);
   if (cur.has(t)) cur.delete(t);
   else cur.add(t);
-  // 保密区(4)优先：降序排列保证 [4,2]（自动挂载按此顺序，保密区先挂）
-  types.value = [...cur].sort((a, b) => b - a);
+  // 交换区(2)优先：升序排列保证 [2,4]（自动挂载按此顺序，交换区先挂）
+  types.value = [...cur].sort((a, b) => a - b);
 }
 
 async function runInstall() {
@@ -117,8 +117,8 @@ async function runUninstall() {
       </label>
       <div class="row">
         <span>自动挂载的分区类型：</span>
-        <label class="chk"><input type="checkbox" :checked="types.includes(4)" @change="toggleType(4)" /> 4 · 保密区</label>
         <label class="chk"><input type="checkbox" :checked="types.includes(2)" @change="toggleType(2)" /> 2 · 交换区</label>
+        <label class="chk"><input type="checkbox" :checked="types.includes(4)" @change="toggleType(4)" /> 4 · 保密区</label>
       </div>
     </section>
 
