@@ -96,10 +96,15 @@ async function runUninstall() {
       </div>
       <p class="hint">安装会弹出系统授权（管理员密码），并把二进制装入 /usr/local/libexec。</p>
       <div v-if="store.daemonOnline && store.status && store.status.disk_access_ok === false" class="warn">
-        ⚠️ daemon 无法访问磁盘（macOS 15 权限）：请到
-        系统设置 → 隐私与安全性 → <b>完整磁盘访问权限</b> → 添加
-        <span class="mono">/usr/local/libexec/usbcore</span>，然后重启 daemon。
-        不授予则插入 U 盘不会自动挂载。
+        ⚠️ daemon 无法访问磁盘（macOS 15 权限）。请一次性授予后重启 daemon：
+        <ol class="steps">
+          <li>系统设置 → 隐私与安全性 → <b>完整磁盘访问权限</b> → ＋</li>
+          <li>在文件选择器按 <b>Cmd+Shift+G</b>，输入
+            <span class="mono">/usr/local/libexec/usbcore</span> → 打开 → 勾选开启</li>
+          <li>若仍不行，再到 隐私与安全性 → <b>文件和文件夹 → 可移动卷</b> 添加同一路径</li>
+          <li>重新启动 daemon（本页「卸载 daemon」再「安装 daemon」）</li>
+        </ol>
+        <span class="hint">注意：升级 usbcore 后需重新授权（二进制签名变化会使旧授权失效）。</span>
       </div>
     </section>
 
