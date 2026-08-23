@@ -196,13 +196,16 @@ pub fn mount_partition(bsd: &str) -> std::io::Result<String> {
 }
 
 /// hdiutil attach 明文 raw 镜像（参数逐字沿用已验证链路，`-owners off` 必须保留）。
+///
+/// 注意：不加 `-nobrowse`——否则挂载的卷被标记 nobrowse，Finder 打开的是
+/// 无侧栏/工具栏的精简窗口，也无法出现在侧栏（实测 2026-08-23 用户反馈）。
 pub fn hdiutil_attach_raw(
     virtual_file: &Path,
     readonly: bool,
     mountpoint: Option<&Path>,
 ) -> std::io::Result<(Vec<String>, Vec<String>)> {
     let mut cmd = Command::new("hdiutil");
-    cmd.args(["attach", "-plist", "-nobrowse", "-owners", "off"])
+    cmd.args(["attach", "-plist", "-owners", "off"])
         .arg("-imagekey")
         .arg("diskimage-class=CRawDiskImage");
     if readonly {
