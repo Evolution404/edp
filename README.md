@@ -1,0 +1,76 @@
+# disk_client — EDP 加密 U 盘 macOS 客户端
+
+VRV/CEMS **EDP 加密 U 盘**的 macOS 互操作客户端：**Rust 内核（CLI + 常驻守护进程）+ Tauri 状态栏 GUI**。
+插入已登记密码的 EDP U 盘即**自动解密挂载**，无需每次 sudo、无需手输密码。
+
+> ⚠️ **私有仓库，请勿公开**：本仓库包含 EDP 格式逆向知识与真实盘 fixture（含 wrapped key 材料与测试密码）。
+
+## 功能特性
+
+- **U 盘密码记录**：root-only AES-256-GCM 加密密码库，按 `(device_id, 分区类型)` 管理多条密码
+- **插入自动挂载**：launchd 常驻守护进程监听磁盘事件，GUI 不在线也能自动挂载
+- **状态栏 GUI**：Tauri 2 常驻 macOS 菜单栏，密码管理 / 会话管理 / 设置 / 日志
+- **终端 CLI**：`usbcore` 一套命令完成 list/probe/mount/unmount/keys 等全部操作
+- **透明读写**：SM4-ECB 透明解密 + macFUSE 桥 + 原生 exFAT 驱动，Finder 直接读写
+- **密码双路径**：默认密码与用户修改后密码的验证逻辑分别实现（见 `docs/EDP-FORMAT.md`）
+
+## 架构
+
+```
+launchd (root, KeepAlive)
+ └─ usbcore daemon run              ← 守护进程（磁盘监听/密码库/自动挂载）
+     ├─ DiskArbitration 监听
+     ├─ 密码库 /var/db/edp-usbcore/store.enc（AES-256-GCM）
+     ├─ UDS JSON-RPC /var/run/edp-usbcore.sock
+     ├─ spawn: usbcore bridge       ← macFUSE 单文件桥（file_key 走匿名管道）
+     └─ hdiutil attach → 原生 exFAT → /Volumes/...
+
+usbcore <cmd>（终端 CLI）──┐
+EDP USB Client.app（菜单栏）──┴── 走 UDS socket 免 sudo
+```
+
+详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+## 环境要求
+
+- macOS 13+
+- [macFUSE](https://macfuse.github.io/)（**唯一**需要单独安装的组件，一次性；GUI 内置检测与引导）
+- Rust 1.75+（仅构建期）
+
+## 快速上手（M1 后可用）
+
+```bash
+make build
+sudo target/release/usbcore mount /dev/rdisk4        # 手动挂载（输密码）
+target/release/usbcore probe /dev/rdisk4             # 只读探测（密码/key/分区闭环）
+```
+
+自动挂载（M2 后）：
+
+```bash
+sudo make install                                     # 安装 launchd 守护进程
+target/release/usbcore keys add                       # 录入密码（daemon 闭环验证）
+# 插入 U 盘 → 自动挂载
+```
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 进程模型、模块划分、数据流、安全模型 |
+| [docs/EDP-FORMAT.md](docs/EDP-FORMAT.md) | EDP 格式逆向知识（LBA 布局/EDPF/算法/密码双路径） |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | UDS JSON-RPC 协议规范 |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 构建环境、代码结构、测试指南 |
+| [docs/TESTING.md](docs/TESTING.md) | 测试策略与实盘检测清单 |
+
+## 开发
+
+```bash
+make lint      # fmt + clippy（CI 同款门禁）
+make test      # 单元测试
+make test-integration  # 集成测试（sudo + macFUSE）
+```
+
+## License
+
+私有项目，仅供研究与个人使用。

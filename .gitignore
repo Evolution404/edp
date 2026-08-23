@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / Tauri
+node_modules/
+gui/dist/
+gui/src-tauri/target/
+gui/src-tauri/gen/
+
+# macOS
+.DS_Store
+
+# 日志与本地文件
+*.log
+fixtures/**/*.local.*
+
+# IDE
+.idea/
+.vscode/

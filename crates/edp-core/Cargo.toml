@@ -1,0 +1,17 @@
+[package]
+name = "edp-core"
+description = "EDP 加密 U 盘格式核心库：算法、扇区解析、透明加解密 IO（纯算法层，零系统依赖）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+md-5.workspace = true
+
+[dev-dependencies]
+aes.workspace = true
+hex.workspace = true
+hex-literal = "0.4"
+serde_json.workspace = true

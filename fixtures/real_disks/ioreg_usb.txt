@@ -1,0 +1,664 @@
++-o USB Flash Drive     @00200000  <class IOUSBHostDevice, id 0x1000578c5, registered, matched, active, busy 0 (551 ms), retain 44>
+  | {
+  |   "sessionID" = 948739325272
+  |   "USBSpeed" = 4
+  |   "idProduct" = 3281
+  |   "iManufacturer" = 1
+  |   "bDeviceClass" = 0
+  |   "IOPowerManagement" = {"PowerOverrideOn"=Yes,"CapabilityFlags"=32768,"MaxPowerState"=2,"DevicePowerState"=2,"DriverPowerState"=0,"ChildrenPowerState"=2,"CurrentPowerState"=2}
+  |   "bcdDevice" = 4352
+  |   "bMaxPacketSize0" = 9
+  |   "iProduct" = 2
+  |   "iSerialNumber" = 3
+  |   "bNumConfigurations" = 1
+  |   "UsbDeviceSignature" = <c421d10c001130313330373131313234353143333237000000080650080662>
+  |   "USB Product Name" = "USB Flash Drive     "
+  |   "locationID" = 2097152
+  |   "bDeviceSubClass" = 0
+  |   "bcdUSB" = 800
+  |   "kUSBSerialNumberString" = "013071112451C327"
+  |   "USB Address" = 1
+  |   "IOCFPlugInTypes" = {"9dc7b780-9ec0-11d4-a54f-000a27052861"="IOUSBHostFamily.kext/Contents/PlugIns/IOUSBLib.bundle"}
+  |   "kUSBCurrentConfiguration" = 1
+  |   "bDeviceProtocol" = 0
+  |   "USBPortType" = 0
+  |   "IOServiceDEXTEntitlements" = (("com.apple.developer.driverkit.transport.usb"))
+  |   "USB Vendor Name" = "Lexar               "
+  |   "Device Speed" = 3
+  |   "idVendor" = 8644
+  |   "kUSBProductString" = "USB Flash Drive     "
+  |   "USB Serial Number" = "013071112451C327"
+  |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |   "kUSBAddress" = 1
+  |   "kUSBVendorString" = "Lexar               "
+  | }
+  | 
+  +-o AppleUSBHostCompositeDevice  <class AppleUSBHostCompositeDevice, id 0x1000578c9, !registered, !matched, active, busy 0, retain 4>
+  |   {
+  |     "IOProbeScore" = 50000
+  |     "CFBundleIdentifier" = "com.apple.driver.usb.AppleUSBHostCompositeDevice"
+  |     "IOProviderClass" = "IOUSBHostDevice"
+  |     "IOClass" = "AppleUSBHostCompositeDevice"
+  |     "IOPersonalityPublisher" = "com.apple.driver.usb.AppleUSBHostCompositeDevice"
+  |     "bDeviceSubClass" = 0
+  |     "CFBundleIdentifierKernel" = "com.apple.driver.usb.AppleUSBHostCompositeDevice"
+  |     "IOMatchedAtBoot" = Yes
+  |     "IOMatchCategory" = "IODefaultMatchCategory"
+  |     "IOPrimaryDriverTerminateOptions" = Yes
+  |     "bDeviceClass" = 0
+  |   }
+  |   
+  +-o IOUSBHostInterface@0  <class IOUSBHostInterface, id 0x1000578ca, registered, matched, active, busy 0 (483 ms), retain 13>
+  | | {
+  | |   "USBSpeed" = 4
+  | |   "iInterface" = 0
+  | |   "bInterfaceProtocol" = 98
+  | |   "bAlternateSetting" = 1
+  | |   "idProduct" = 3281
+  | |   "bcdDevice" = 4352
+  | |   "USB Product Name" = "USB Flash Drive     "
+  | |   "locationID" = 2097152
+  | |   "bInterfaceClass" = 8
+  | |   "bInterfaceSubClass" = 6
+  | |   "IOCFPlugInTypes" = {"2d9786c6-9ef3-11d4-ad51-000a27052861"="IOUSBHostFamily.kext/Contents/PlugIns/IOUSBLib.bundle"}
+  | |   "UsbExclusiveOwner" = "IOUSBMassStorageInterfaceNub"
+  | |   "USBPortType" = 0
+  | |   "bConfigurationValue" = 1
+  | |   "bInterfaceNumber" = 0
+  | |   "USB Vendor Name" = "Lexar               "
+  | |   "IOServiceDEXTEntitlements" = (("com.apple.developer.driverkit.transport.usb"))
+  | |   "idVendor" = 8644
+  | |   "bNumEndpoints" = 4
+  | |   "USB Serial Number" = "013071112451C327"
+  | | }
+  | | 
+  | +-o IOUSBMassStorageInterfaceNub  <class IOUSBMassStorageInterfaceNub, id 0x1000578d2, registered, matched, active, busy 0 (462 ms), retain 10>
+  |   | {
+  |   |   "IOClass" = "IOUSBMassStorageInterfaceNub"
+  |   |   "IOPersonalityPublisher" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |   |   "IOMatchedAtBoot" = Yes
+  |   |   "idProduct" = 3281
+  |   |   "bcdDevice" = 4352
+  |   |   "IOProviderClass" = "IOUSBHostInterface"
+  |   |   "Physical Interconnect Location" = "External"
+  |   |   "bInterfaceProtocol" = 80
+  |   |   "bNumConfigurations" = 1
+  |   |   "USB Product Name" = "USB Flash Drive     "
+  |   |   "IOProbeScore" = 50000
+  |   |   "USB Device Info" = {"bcdDevice"=4352,"idProduct"=3281,"bInterfaceSubClass"=6,"locationID"=2097152,"bConfigurationValue"=1,"kUSBVendorString"="Lexar               ","kUSBSerialNumberString"="013071112451C327","USB Product Name"="USB Flash Drive     ","kUSBProductString"="USB Flash Drive     ","idVendor"=8644,"bInterfaceProtocol"=98,"bInterfaceNumber"=0,"bInterfaceClass"=8,"bNumConfigurations"=1}
+  |   |   "locationID" = 2097152
+  |   |   "kUSBSerialNumberString" = "013071112451C327"
+  |   |   "IOPowerManagement" = {"DevicePowerState"=1,"CurrentPowerState"=1,"CapabilityFlags"=32768,"MaxPowerState"=1,"DriverPowerState"=1}
+  |   |   "bInterfaceClass" = 8
+  |   |   "bInterfaceSubClass" = 6
+  |   |   "Physical Interconnect" = "USB"
+  |   |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |   |   "bConfigurationValue" = 1
+  |   |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |   |   "CFBundleIdentifier" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |   |   "bInterfaceNumber" = 0
+  |   |   "idVendor" = 8644
+  |   |   "USB Mass Storage Trace ID" = 2433083790476705792
+  |   |   "kUSBProductString" = "USB Flash Drive     "
+  |   |   "kUSBVendorString" = "Lexar               "
+  |   | }
+  |   | 
+  |   +-o IOUSBMassStorageDriverNub  <class IOUSBMassStorageDriverNub, id 0x1000578d5, registered, matched, active, busy 0 (458 ms), retain 13>
+  |     | {
+  |     |   "IOClass" = "IOUSBMassStorageDriverNub"
+  |     |   "IOPersonalityPublisher" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |     |   "IOMatchedAtBoot" = Yes
+  |     |   "idProduct" = 3281
+  |     |   "bInterfaceProtocol" = 98
+  |     |   "IOProviderClass" = "IOUSBMassStorageInterfaceNub"
+  |     |   "USB Device Info" = {"bcdDevice"=4352,"idProduct"=3281,"bInterfaceSubClass"=6,"locationID"=2097152,"bConfigurationValue"=1,"kUSBVendorString"="Lexar               ","kUSBSerialNumberString"="013071112451C327","USB Product Name"="USB Flash Drive     ","kUSBProductString"="USB Flash Drive     ","idVendor"=8644,"bInterfaceProtocol"=98,"bInterfaceNumber"=0,"bInterfaceClass"=8,"bNumConfigurations"=1}
+  |     |   "USB Product Name" = "USB Flash Drive     "
+  |     |   "NumInterfaceNubs" = 1
+  |     |   "Physical Interconnect Location" = "External"
+  |     |   "IOProbeScore" = 0
+  |     |   "IOPowerManagement" = {"ChildrenPowerState"=1,"DevicePowerState"=1,"CurrentPowerState"=1,"CapabilityFlags"=32768,"MaxPowerState"=1,"DriverPowerState"=1}
+  |     |   "bInterfaceClass" = 8
+  |     |   "bInterfaceSubClass" = 6
+  |     |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |     |   "Physical Interconnect" = "USB"
+  |     |   "bConfigurationValue" = 1
+  |     |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |     |   "CFBundleIdentifier" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |     |   "USB Mass Storage Trace ID" = 2433083790476705792
+  |     |   "idVendor" = 8644
+  |     |   "bInterfaceNumber" = 0
+  |     |   "kUSBVendorString" = "Lexar               "
+  |     | }
+  |     | 
+  |     +-o IOUSBMassStorageUASDriver  <class IOUSBMassStorageUASDriver, id 0x1000578d7, registered, matched, active, busy 0 (32 ms), retain 9>
+  |       | {
+  |       |   "IOClass" = "IOUSBMassStorageUASDriver"
+  |       |   "Write Time Out Duration" = 30000
+  |       |   "IOMaximumSegmentByteCountRead" = 65536
+  |       |   "IOPersonalityPublisher" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |       |   "bInterfaceProtocol" = 98
+  |       |   "IOMatchedAtBoot" = Yes
+  |       |   "IOPowerManagement" = {"ChildrenPowerState"=1,"DevicePowerState"=1,"CurrentPowerState"=1,"CapabilityFlags"=49152,"MaxPowerState"=1,"DriverPowerState"=1}
+  |       |   "IOProviderClass" = "IOUSBMassStorageDriverNub"
+  |       |   "Physical Interconnect Location" = "External"
+  |       |   "IOMaximumSegmentByteCountWrite" = 65536
+  |       |   "IOMaximumSegmentCountRead" = 128
+  |       |   "IOProbeScore" = 0
+  |       |   "Queue Depth" = 3
+  |       |   "Supports Streams" = Yes
+  |       |   "IOMaximumSegmentCountWrite" = 128
+  |       |   "Read Time Out Duration" = 30000
+  |       |   "IOUnit" = 1
+  |       |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |       |   "IOServiceBusyTimeoutExtensions" = 2
+  |       |   "Physical Interconnect" = "USB"
+  |       |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |       |   "CFBundleIdentifier" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |       |   "USB Mass Storage Trace ID" = 2433083790476705792
+  |       |   "Protocol Characteristics" = {"Retry Count"=20}
+  |       |   "Retry Count" = 20
+  |       |   "UAS Version" = "Version .04"
+  |       | }
+  |       | 
+  |       +-o IOSCSITargetDevice  <class IOSCSITargetDevice, id 0x1000578d9, registered, matched, active, busy 0 (32 ms), retain 10>
+  |         | {
+  |         |   "Hierarchical LUN Support" = No
+  |         |   "IOPowerManagement" = {"CapabilityFlags"=0,"ChildProxyPowerState"=1,"MaxPowerState"=1,"ActivityTickles"=0,"DevicePowerState"=1,"IdleTimerPeriod"=600000,"IdleTimerElapsedTime"=468707,"DriverPowerState"=1,"ChildrenPowerState"=1,"CurrentPowerState"=1}
+  |         |   "Peripheral Device Type" = 0
+  |         |   "Protocol Characteristics" = {"Physical Interconnect"="USB","Read Time Out Duration"=30000,"Retry Count"=20,"Physical Interconnect Location"="External","Write Time Out Duration"=30000}
+  |         |   "Vendor Identification" = "Lexar"
+  |         |   "IOServiceBusyTimeoutExtensions" = 2
+  |         |   "Product Revision Level" = "1.0"
+  |         |   "Product Identification" = "USB Flash Drive"
+  |         |   "INQUIRY Unit Serial Number" = "AA00000000000489"
+  |         |   "INQUIRY Device Identification" = ({"Identifier Type"=3,"Code Set"=1,"Identifier"=<"SMI","3280">,"Association"=0})
+  |         |   "IOMaximumByteCountRead" = 1048576
+  |         |   "IOMaximumByteCountWrite" = 1048576
+  |         | }
+  |         | 
+  |         +-o IOSCSIHierarchicalLogicalUnit@0000000000000000  <class IOSCSIHierarchicalLogicalUnit, id 0x1000578db, registered, matched, active, busy 0 (32 ms), retain 10>
+  |           | {
+  |           |   "SCSI Logical Unit Bytes" = <0000000000000000>
+  |           |   "IOPowerManagement" = {"CapabilityFlags"=49152,"ChildProxyPowerState"=1,"MaxPowerState"=1,"DevicePowerState"=1,"DriverPowerState"=1,"ChildrenPowerState"=1,"CurrentPowerState"=1}
+  |           |   "CurrentPowerState" = 1
+  |           |   "Peripheral Device Type" = 0
+  |           |   "SCSI Logical Unit Number" = 0
+  |           |   "IOMatchCategory" = "SCSITaskUserClientIniter"
+  |           |   "Protocol Characteristics" = {"Write Time Out Duration"=30000,"Read Time Out Duration"=30000,"Physical Interconnect"="USB","SCSI Logical Unit Number"=0,"Physical Interconnect Location"="External","SCSI Logical Unit Bytes"=<0000000000000000>,"Retry Count"=20}
+  |           |   "Vendor Identification" = "Lexar"
+  |           |   "INQUIRY Device Identification" = ({"Identifier Type"=3,"Code Set"=1,"Identifier"=<"SMI","3280">,"Association"=0})
+  |           |   "IOServiceBusyTimeoutExtensions" = 2
+  |           |   "Product Identification" = "USB Flash Drive"
+  |           |   "Product Revision Level" = "1.0"
+  |           |   "IOUnitLUN" = 0
+  |           |   "TPGS Information" = 0
+  |           |   "IOUnitLUNBytes" = <0000000000000000>
+  |           | }
+  |           | 
+  |           +-o IOSCSIPeripheralDeviceType00  <class IOSCSIPeripheralDeviceType00, id 0x1000578dd, !registered, !matched, active, busy 0 (10 ms), retain 9>
+  |             | {
+  |             |   "IOClass" = "IOSCSIPeripheralDeviceType00"
+  |             |   "CFBundleIdentifier" = "com.apple.iokit.IOSCSIBlockCommandsDevice"
+  |             |   "IOProviderClass" = "IOSCSIPeripheralDeviceNub"
+  |             |   "IOMaximumBlockCountRead" = 2048
+  |             |   "IOPowerManagement" = {"CapabilityFlags"=49216,"MaxPowerState"=4,"ActivityTickles"=6,"DevicePowerState"=4,"IdleTimerPeriod"=200000,"TimeSinceLastTickle"=122,"DriverPowerState"=1,"IdleTimerElapsedTime"=58089,"CurrentPowerState"=4}
+  |             |   "IOMaximumBlockCountWrite" = 2048
+  |             |   "IOMediaIcon" = {"IOBundleResourceFile"="USBHD.icns","CFBundleIdentifier"="com.apple.iokit.IOSCSIArchitectureModelFamily"}
+  |             |   "IOProbeScore" = 5000
+  |             |   "Peripheral Device Type" = 0
+  |             |   "IOMatchedAtBoot" = Yes
+  |             |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |             |   "IOServiceBusyTimeoutExtensions" = 2
+  |             |   "IOPersonalityPublisher" = "com.apple.iokit.IOSCSIBlockCommandsDevice"
+  |             |   "IOMaximumByteCountWrite" = 1048576
+  |             |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOSCSIBlockCommandsDevice"
+  |             |   "IOStorageFeatures" = {"Unmap"=Yes,"UnmapCapable"=Yes}
+  |             |   "WriteCacheState" = Yes
+  |             |   "IOMaximumByteCountRead" = 1048576
+  |             |   "IOPrimaryDriverTerminateOptions" = Yes
+  |             | }
+  |             | 
+  |             +-o IOBlockStorageServices  <class IOBlockStorageServices, id 0x1000578e1, registered, matched, active, busy 0 (10 ms), retain 6>
+  |               | {
+  |               |   "IOMinimumSegmentAlignmentByteCount" = 4
+  |               |   "device-type" = "Generic"
+  |               |   "Protocol Characteristics" = {"Write Time Out Duration"=30000,"Read Time Out Duration"=30000,"Physical Interconnect"="USB","SCSI Logical Unit Number"=0,"Physical Interconnect Location"="External","SCSI Logical Unit Bytes"=<0000000000000000>,"Retry Count"=20}
+  |               |   "Device Characteristics" = {"Vendor Name"="Lexar","Product Name"="USB Flash Drive","Product Revision Level"="1.0"}
+  |               | }
+  |               | 
+  |               +-o IOBlockStorageDriver  <class IOBlockStorageDriver, id 0x1000578e2, registered, matched, active, busy 0 (8 ms), retain 8>
+  |                 | {
+  |                 |   "IOClass" = "IOBlockStorageDriver"
+  |                 |   "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |                 |   "IOProviderClass" = "IOBlockStorageDevice"
+  |                 |   "IOPropertyMatch" = {"device-type"="Generic"}
+  |                 |   "IOPowerManagement" = {"CapabilityFlags"=0,"CurrentPowerState"=0}
+  |                 |   "IOProbeScore" = 0
+  |                 |   "IOMatchedAtBoot" = Yes
+  |                 |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |                 |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |                 |   "Statistics" = {"Operations (Write)"=14,"Latency Time (Write)"=0,"Bytes (Read)"=188416,"Errors (Write)"=0,"Total Time (Read)"=11538864,"Latency Time (Read)"=0,"Retries (Read)"=0,"Errors (Read)"=0,"Total Time (Write)"=12817078,"Bytes (Write)"=62464,"Operations (Read)"=38,"Retries (Write)"=0}
+  |                 |   "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |                 |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |                 | }
+  |                 | 
+  |                 +-o Lexar USB Flash Drive Media  <class IOMedia, id 0x1000578e4, registered, matched, active, busy 0 (7 ms), retain 12>
+  |                   | {
+  |                   |   "Content" = "FDisk_partition_scheme"
+  |                   |   "Removable" = No
+  |                   |   "Whole" = Yes
+  |                   |   "Leaf" = No
+  |                   |   "BSD Name" = "disk4"
+  |                   |   "Ejectable" = No
+  |                   |   "Preferred Block Size" = 512
+  |                   |   "BSD Minor" = 20
+  |                   |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |                   |   "Writable" = Yes
+  |                   |   "BSD Major" = 1
+  |                   |   "Size" = 124736503808
+  |                   |   "IOBusyInterest" = "IOCommand is not serializable"
+  |                   |   "Open" = Yes
+  |                   |   "Content Hint" = ""
+  |                   |   "BSD Unit" = 4
+  |                   | }
+  |                   | 
+  |                   +-o IOMediaBSDClient  <class IOMediaBSDClient, id 0x1000578e5, registered, matched, active, busy 0 (2 ms), retain 6>
+  |                   |   {
+  |                   |     "IOProbeScore" = 30000
+  |                   |     "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |                   |     "IOMatchCategory" = "IOMediaBSDClient"
+  |                   |     "IOClass" = "IOMediaBSDClient"
+  |                   |     "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |                   |     "IOProviderClass" = "IOMedia"
+  |                   |     "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |                   |     "IOMatchedAtBoot" = Yes
+  |                   |     "IOResourceMatch" = "IOBSD"
+  |                   |   }
+  |                   |   
+  |                   +-o IOFDiskPartitionScheme  <class IOFDiskPartitionScheme, id 0x1000578e8, !registered, !matched, active, busy 0 (3 ms), retain 6>
+  |                     | {
+  |                     |   "IOProbeScore" = 3000
+  |                     |   "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |                     |   "IOMatchCategory" = "IOStorage"
+  |                     |   "IOClass" = "IOFDiskPartitionScheme"
+  |                     |   "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |                     |   "IOPropertyMatch" = {"Whole"=Yes}
+  |                     |   "IOProviderClass" = "IOMedia"
+  |                     |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |                     |   "Content Mask" = "FDisk_partition_scheme"
+  |                     |   "IOMatchedAtBoot" = Yes
+  |                     |   "Content Table" = {"0xA9"="NetBSD","0x82"="Linux_Swap","0x01"="DOS_FAT_12","0xA7"="Apple_Rhapsody_UFS","0x0B"="DOS_FAT_32","0x06"="DOS_FAT_16","0xA5"="FreeBSD","0xFD"="Linux_RAID","0x04"="DOS_FAT_16_S","0xAF"="Apple_HFS","0x0E"="Windows_FAT_16","0x83"="Linux","0xA8"="Apple_UFS","0x0C"="Windows_FAT_32","0x07"="Windows_NTFS","0xAB"="Apple_Boot","0xA6"="OpenBSD","0x16"="DOS_FAT_16_Hidden","0x42"="Windows_LDM","0x8E"="Linux_LVM","0x14"="DOS_FAT_16_S_Hidden","0xAE"="Apple_Encrypted"}
+  |                     | }
+  |                     | 
+  |                     +-o Untitled 1@1  <class IOMedia, id 0x1000578eb, registered, matched, active, busy 0 (3 ms), retain 11>
+  |                       | {
+  |                       |   "Content" = "Windows_FAT_16"
+  |                       |   "Removable" = No
+  |                       |   "Whole" = No
+  |                       |   "Leaf" = Yes
+  |                       |   "BSD Name" = "disk4s1"
+  |                       |   "Ejectable" = No
+  |                       |   "Preferred Block Size" = 512
+  |                       |   "Base" = 32256
+  |                       |   "BSD Minor" = 21
+  |                       |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |                       |   "Writable" = Yes
+  |                       |   "Partition ID" = 1
+  |                       |   "BSD Major" = 1
+  |                       |   "Size" = 10453504
+  |                       |   "IOBusyInterest" = "IOCommand is not serializable"
+  |                       |   "Open" = Yes
+  |                       |   "Content Hint" = "Windows_FAT_16"
+  |                       |   "BSD Unit" = 4
+  |                       | }
+  |                       | 
+  |                       +-o IOMediaBSDClient  <class IOMediaBSDClient, id 0x1000578ec, registered, matched, active, busy 0 (2 ms), retain 7>
+  |                           {
+  |                             "IOProbeScore" = 30000
+  |                             "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |                             "IOMatchCategory" = "IOMediaBSDClient"
+  |                             "IOClass" = "IOMediaBSDClient"
+  |                             "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |                             "IOProviderClass" = "IOMedia"
+  |                             "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |                             "IOMatchedAtBoot" = Yes
+  |                             "IOResourceMatch" = "IOBSD"
+  |                           }
+  |                           
+  +-o Google Chrome  <class AppleUSBHostDeviceUserClient, id 0x1000578cb, !registered, !matched, active, busy 0, retain 7>
+  |   {
+  |     "IOUserClientCreator" = "pid 7341, Google Chrome"
+  |     "IOUserClientDefaultLocking" = Yes
+  |   }
+  |   
+  +-o ChatGPT  <class AppleUSBHostDeviceUserClient, id 0x1000578cc, !registered, !matched, active, busy 0, retain 7>
+  |   {
+  |     "IOUserClientCreator" = "pid 6766, ChatGPT"
+  |     "IOUserClientDefaultLocking" = Yes
+  |   }
+  |   
+  +-o WeChat  <class AppleUSBHostDeviceUserClient, id 0x1000578d0, !registered, !matched, active, busy 0, retain 6>
+      {
+        "IOUserClientCreator" = "pid 502, WeChat"
+        "IOUserClientDefaultLocking" = Yes
+      }
+      
+
++-o Ultra USB 3.0@02200000  <class IOUSBHostDevice, id 0x1000578f5, registered, matched, active, busy 0 (160 ms), retain 33>
+  | {
+  |   "sessionID" = 948814765630
+  |   "USBSpeed" = 4
+  |   "idProduct" = 21905
+  |   "iManufacturer" = 1
+  |   "bDeviceClass" = 0
+  |   "IOPowerManagement" = {"PowerOverrideOn"=Yes,"CapabilityFlags"=32768,"MaxPowerState"=2,"DevicePowerState"=2,"DriverPowerState"=0,"ChildrenPowerState"=2,"CurrentPowerState"=2}
+  |   "bcdDevice" = 256
+  |   "bMaxPacketSize0" = 9
+  |   "iProduct" = 2
+  |   "iSerialNumber" = 3
+  |   "bNumConfigurations" = 1
+  |   "UsbDeviceSignature" = <8107915500013443353330303030313730353134313231313031000000080650>
+  |   "USB Product Name" = "Ultra USB 3.0"
+  |   "locationID" = 35651584
+  |   "bDeviceSubClass" = 0
+  |   "bcdUSB" = 768
+  |   "kUSBSerialNumberString" = "4C530000170514121101"
+  |   "USB Address" = 1
+  |   "IOCFPlugInTypes" = {"9dc7b780-9ec0-11d4-a54f-000a27052861"="IOUSBHostFamily.kext/Contents/PlugIns/IOUSBLib.bundle"}
+  |   "kUSBCurrentConfiguration" = 1
+  |   "bDeviceProtocol" = 0
+  |   "USBPortType" = 0
+  |   "IOServiceDEXTEntitlements" = (("com.apple.developer.driverkit.transport.usb"))
+  |   "USB Vendor Name" = "SanDisk"
+  |   "Device Speed" = 3
+  |   "idVendor" = 1921
+  |   "kUSBProductString" = "Ultra USB 3.0"
+  |   "USB Serial Number" = "4C530000170514121101"
+  |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |   "kUSBAddress" = 1
+  |   "kUSBVendorString" = "SanDisk"
+  | }
+  | 
+  +-o AppleUSBHostCompositeDevice  <class AppleUSBHostCompositeDevice, id 0x1000578f9, !registered, !matched, active, busy 0, retain 4>
+  |   {
+  |     "IOProbeScore" = 50000
+  |     "CFBundleIdentifier" = "com.apple.driver.usb.AppleUSBHostCompositeDevice"
+  |     "IOProviderClass" = "IOUSBHostDevice"
+  |     "IOClass" = "AppleUSBHostCompositeDevice"
+  |     "IOPersonalityPublisher" = "com.apple.driver.usb.AppleUSBHostCompositeDevice"
+  |     "bDeviceSubClass" = 0
+  |     "CFBundleIdentifierKernel" = "com.apple.driver.usb.AppleUSBHostCompositeDevice"
+  |     "IOMatchedAtBoot" = Yes
+  |     "IOMatchCategory" = "IODefaultMatchCategory"
+  |     "IOPrimaryDriverTerminateOptions" = Yes
+  |     "bDeviceClass" = 0
+  |   }
+  |   
+  +-o IOUSBHostInterface@0  <class IOUSBHostInterface, id 0x1000578fa, registered, matched, active, busy 0 (152 ms), retain 11>
+  | | {
+  | |   "USBSpeed" = 4
+  | |   "iInterface" = 0
+  | |   "bInterfaceProtocol" = 80
+  | |   "bAlternateSetting" = 0
+  | |   "idProduct" = 21905
+  | |   "bcdDevice" = 256
+  | |   "USB Product Name" = "Ultra USB 3.0"
+  | |   "locationID" = 35651584
+  | |   "bInterfaceClass" = 8
+  | |   "bInterfaceSubClass" = 6
+  | |   "IOCFPlugInTypes" = {"2d9786c6-9ef3-11d4-ad51-000a27052861"="IOUSBHostFamily.kext/Contents/PlugIns/IOUSBLib.bundle"}
+  | |   "UsbExclusiveOwner" = "IOUSBMassStorageInterfaceNub"
+  | |   "USBPortType" = 0
+  | |   "bConfigurationValue" = 1
+  | |   "bInterfaceNumber" = 0
+  | |   "USB Vendor Name" = "SanDisk"
+  | |   "IOServiceDEXTEntitlements" = (("com.apple.developer.driverkit.transport.usb"))
+  | |   "idVendor" = 1921
+  | |   "bNumEndpoints" = 2
+  | |   "USB Serial Number" = "4C530000170514121101"
+  | | }
+  | | 
+  | +-o IOUSBMassStorageInterfaceNub  <class IOUSBMassStorageInterfaceNub, id 0x1000578fe, registered, matched, active, busy 0 (136 ms), retain 10>
+  |   | {
+  |   |   "IOClass" = "IOUSBMassStorageInterfaceNub"
+  |   |   "IOPersonalityPublisher" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |   |   "IOMatchedAtBoot" = Yes
+  |   |   "idProduct" = 21905
+  |   |   "bcdDevice" = 256
+  |   |   "IOProviderClass" = "IOUSBHostInterface"
+  |   |   "Physical Interconnect Location" = "External"
+  |   |   "bInterfaceProtocol" = 80
+  |   |   "bNumConfigurations" = 1
+  |   |   "USB Product Name" = "Ultra USB 3.0"
+  |   |   "IOProbeScore" = 50000
+  |   |   "USB Device Info" = {"bcdDevice"=256,"idProduct"=21905,"bInterfaceSubClass"=6,"locationID"=35651584,"bConfigurationValue"=1,"kUSBVendorString"="SanDisk","kUSBSerialNumberString"="4C530000170514121101","USB Product Name"="Ultra USB 3.0","kUSBProductString"="Ultra USB 3.0","idVendor"=1921,"bInterfaceProtocol"=80,"bInterfaceNumber"=0,"bInterfaceClass"=8,"bNumConfigurations"=1}
+  |   |   "locationID" = 35651584
+  |   |   "kUSBSerialNumberString" = "4C530000170514121101"
+  |   |   "IOPowerManagement" = {"DevicePowerState"=1,"CurrentPowerState"=1,"CapabilityFlags"=32768,"MaxPowerState"=1,"DriverPowerState"=1}
+  |   |   "bInterfaceClass" = 8
+  |   |   "bInterfaceSubClass" = 6
+  |   |   "Physical Interconnect" = "USB"
+  |   |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |   |   "bConfigurationValue" = 1
+  |   |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |   |   "CFBundleIdentifier" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |   |   "bInterfaceNumber" = 0
+  |   |   "idVendor" = 1921
+  |   |   "USB Mass Storage Trace ID" = 540807511555440640
+  |   |   "kUSBProductString" = "Ultra USB 3.0"
+  |   |   "kUSBVendorString" = "SanDisk"
+  |   | }
+  |   | 
+  |   +-o IOUSBMassStorageDriverNub  <class IOUSBMassStorageDriverNub, id 0x100057901, registered, matched, active, busy 0 (134 ms), retain 13>
+  |     | {
+  |     |   "IOClass" = "IOUSBMassStorageDriverNub"
+  |     |   "IOPersonalityPublisher" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |     |   "IOMatchedAtBoot" = Yes
+  |     |   "idProduct" = 21905
+  |     |   "bInterfaceProtocol" = 80
+  |     |   "IOProviderClass" = "IOUSBMassStorageInterfaceNub"
+  |     |   "USB Device Info" = {"bcdDevice"=256,"idProduct"=21905,"bInterfaceSubClass"=6,"locationID"=35651584,"bConfigurationValue"=1,"kUSBVendorString"="SanDisk","kUSBSerialNumberString"="4C530000170514121101","USB Product Name"="Ultra USB 3.0","kUSBProductString"="Ultra USB 3.0","idVendor"=1921,"bInterfaceProtocol"=80,"bInterfaceNumber"=0,"bInterfaceClass"=8,"bNumConfigurations"=1}
+  |     |   "USB Product Name" = "Ultra USB 3.0"
+  |     |   "NumInterfaceNubs" = 1
+  |     |   "Physical Interconnect Location" = "External"
+  |     |   "IOProbeScore" = 0
+  |     |   "IOPowerManagement" = {"ChildrenPowerState"=1,"DevicePowerState"=1,"CurrentPowerState"=1,"CapabilityFlags"=32768,"MaxPowerState"=1,"DriverPowerState"=1}
+  |     |   "bInterfaceClass" = 8
+  |     |   "bInterfaceSubClass" = 6
+  |     |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |     |   "Physical Interconnect" = "USB"
+  |     |   "bConfigurationValue" = 1
+  |     |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |     |   "CFBundleIdentifier" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |     |   "USB Mass Storage Trace ID" = 540807511555440640
+  |     |   "idVendor" = 1921
+  |     |   "bInterfaceNumber" = 0
+  |     |   "Requested Speed" = 4
+  |     |   "kUSBVendorString" = "SanDisk"
+  |     | }
+  |     | 
+  |     +-o IOUSBMassStorageDriver  <class IOUSBMassStorageDriver, id 0x100057903, !registered, !matched, active, busy 0 (130 ms), retain 9>
+  |       | {
+  |       |   "IOClass" = "IOUSBMassStorageDriver"
+  |       |   "CFBundleIdentifier" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |       |   "IOProviderClass" = "IOUSBMassStorageDriverNub"
+  |       |   "Write Time Out Duration" = 30000
+  |       |   "USB Mass Storage Trace ID" = 540807511555440640
+  |       |   "IOPowerManagement" = {"ChildrenPowerState"=1,"DevicePowerState"=1,"CurrentPowerState"=1,"CapabilityFlags"=32768,"MaxPowerState"=1,"DriverPowerState"=1}
+  |       |   "Read Time Out Duration" = 30000
+  |       |   "IOProbeScore" = 0
+  |       |   "IOMatchedAtBoot" = Yes
+  |       |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |       |   "Retry Count" = 20
+  |       |   "IOUnit" = 1
+  |       |   "Protocol Characteristics" = {"Physical Interconnect"="USB","Read Time Out Duration"=30000,"Physical Interconnect Location"="External","Write Time Out Duration"=30000,"Retry Count"=20}
+  |       |   "IOServiceBusyTimeoutExtensions" = 2
+  |       |   "IOPersonalityPublisher" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |       |   "bInterfaceProtocol" = 80
+  |       |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOUSBMassStorageDriver"
+  |       |   "Physical Interconnect Location" = "External"
+  |       |   "No INQUIRY VPD Pages" = Yes
+  |       | }
+  |       | 
+  |       +-o IOSCSILogicalUnitNub@0  <class IOSCSILogicalUnitNub, id 0x100057905, registered, matched, active, busy 0 (27 ms), retain 8>
+  |         | {
+  |         |   "TPGS Information" = 0
+  |         |   "Peripheral Device Type" = 0
+  |         |   "Vendor Identification" = "SanDisk"
+  |         |   "SCSI Logical Unit Number" = 0
+  |         |   "IOMatchCategory" = "SCSITaskUserClientIniter"
+  |         |   "IOServiceBusyTimeoutExtensions" = 2
+  |         |   "Product Identification" = "Ultra USB 3.0"
+  |         |   "Protocol Characteristics" = {"Physical Interconnect"="USB","Read Time Out Duration"=30000,"SCSI Logical Unit Number"=0,"Physical Interconnect Location"="External","Write Time Out Duration"=30000,"Retry Count"=20}
+  |         |   "IOUnitLUN" = 0
+  |         |   "Product Revision Level" = "1.00"
+  |         | }
+  |         | 
+  |         +-o IOSCSIPeripheralDeviceType00  <class IOSCSIPeripheralDeviceType00, id 0x100057909, !registered, !matched, active, busy 0 (19 ms), retain 10>
+  |           | {
+  |           |   "IOClass" = "IOSCSIPeripheralDeviceType00"
+  |           |   "CFBundleIdentifier" = "com.apple.iokit.IOSCSIBlockCommandsDevice"
+  |           |   "IOProviderClass" = "IOSCSIPeripheralDeviceNub"
+  |           |   "IOMaximumBlockCountRead" = 2048
+  |           |   "IOPowerManagement" = {"CapabilityFlags"=49216,"MaxPowerState"=4,"ActivityTickles"=6,"DevicePowerState"=4,"IdleTimerPeriod"=200000,"TimeSinceLastTickle"=16,"DriverPowerState"=1,"IdleTimerElapsedTime"=840,"CurrentPowerState"=4}
+  |           |   "IOMaximumBlockCountWrite" = 2048
+  |           |   "IOProbeScore" = 5000
+  |           |   "Peripheral Device Type" = 0
+  |           |   "IOMatchedAtBoot" = Yes
+  |           |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |           |   "IOServiceBusyTimeoutExtensions" = 2
+  |           |   "IOPersonalityPublisher" = "com.apple.iokit.IOSCSIBlockCommandsDevice"
+  |           |   "IOMaximumByteCountWrite" = 1048576
+  |           |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOSCSIBlockCommandsDevice"
+  |           |   "WriteCacheState" = No
+  |           |   "IOMaximumByteCountRead" = 1048576
+  |           |   "IOPrimaryDriverTerminateOptions" = Yes
+  |           | }
+  |           | 
+  |           +-o IOBlockStorageServices  <class IOBlockStorageServices, id 0x10005790c, registered, matched, active, busy 0 (19 ms), retain 6>
+  |             | {
+  |             |   "IOMinimumSegmentAlignmentByteCount" = 4
+  |             |   "device-type" = "Generic"
+  |             |   "Protocol Characteristics" = {"Physical Interconnect"="USB","Read Time Out Duration"=30000,"SCSI Logical Unit Number"=0,"Physical Interconnect Location"="External","Write Time Out Duration"=30000,"Retry Count"=20}
+  |             |   "Device Characteristics" = {"Vendor Name"="SanDisk","Product Name"="Ultra USB 3.0","Product Revision Level"="1.00"}
+  |             | }
+  |             | 
+  |             +-o IOBlockStorageDriver  <class IOBlockStorageDriver, id 0x10005790d, registered, matched, active, busy 0 (17 ms), retain 8>
+  |               | {
+  |               |   "IOClass" = "IOBlockStorageDriver"
+  |               |   "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |               |   "IOProviderClass" = "IOBlockStorageDevice"
+  |               |   "IOPropertyMatch" = {"device-type"="Generic"}
+  |               |   "IOPowerManagement" = {"CapabilityFlags"=0,"CurrentPowerState"=0}
+  |               |   "IOProbeScore" = 0
+  |               |   "IOMatchedAtBoot" = Yes
+  |               |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |               |   "IOMatchCategory" = "IODefaultMatchCategory"
+  |               |   "Statistics" = {"Operations (Write)"=25,"Latency Time (Write)"=0,"Bytes (Read)"=216576,"Errors (Write)"=0,"Total Time (Read)"=43692857,"Latency Time (Read)"=0,"Retries (Read)"=0,"Errors (Read)"=0,"Total Time (Write)"=248897032,"Bytes (Write)"=123392,"Operations (Read)"=47,"Retries (Write)"=0}
+  |               |   "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |               |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |               | }
+  |               | 
+  |               +-o SanDisk Ultra USB 3.0 Media  <class IOMedia, id 0x10005790f, registered, matched, active, busy 0 (16 ms), retain 12>
+  |                 | {
+  |                 |   "Content" = "FDisk_partition_scheme"
+  |                 |   "Removable" = Yes
+  |                 |   "Whole" = Yes
+  |                 |   "Leaf" = No
+  |                 |   "BSD Name" = "disk5"
+  |                 |   "Ejectable" = Yes
+  |                 |   "Preferred Block Size" = 512
+  |                 |   "IOMediaIcon" = {"IOBundleResourceFile"="Removable.icns","CFBundleIdentifier"="com.apple.iokit.IOStorageFamily"}
+  |                 |   "BSD Minor" = 22
+  |                 |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |                 |   "Writable" = Yes
+  |                 |   "BSD Major" = 1
+  |                 |   "Size" = 123010547712
+  |                 |   "IOBusyInterest" = "IOCommand is not serializable"
+  |                 |   "Open" = Yes
+  |                 |   "Content Hint" = ""
+  |                 |   "BSD Unit" = 5
+  |                 | }
+  |                 | 
+  |                 +-o IOMediaBSDClient  <class IOMediaBSDClient, id 0x100057910, registered, matched, active, busy 0 (2 ms), retain 6>
+  |                 |   {
+  |                 |     "IOProbeScore" = 30000
+  |                 |     "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |                 |     "IOMatchCategory" = "IOMediaBSDClient"
+  |                 |     "IOClass" = "IOMediaBSDClient"
+  |                 |     "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |                 |     "IOProviderClass" = "IOMedia"
+  |                 |     "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |                 |     "IOMatchedAtBoot" = Yes
+  |                 |     "IOResourceMatch" = "IOBSD"
+  |                 |   }
+  |                 |   
+  |                 +-o IOFDiskPartitionScheme  <class IOFDiskPartitionScheme, id 0x100057913, !registered, !matched, active, busy 0 (3 ms), retain 6>
+  |                   | {
+  |                   |   "IOProbeScore" = 3000
+  |                   |   "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |                   |   "IOMatchCategory" = "IOStorage"
+  |                   |   "IOClass" = "IOFDiskPartitionScheme"
+  |                   |   "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |                   |   "IOPropertyMatch" = {"Whole"=Yes}
+  |                   |   "IOProviderClass" = "IOMedia"
+  |                   |   "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |                   |   "Content Mask" = "FDisk_partition_scheme"
+  |                   |   "IOMatchedAtBoot" = Yes
+  |                   |   "Content Table" = {"0xA9"="NetBSD","0x82"="Linux_Swap","0x01"="DOS_FAT_12","0xA7"="Apple_Rhapsody_UFS","0x0B"="DOS_FAT_32","0x06"="DOS_FAT_16","0xA5"="FreeBSD","0xFD"="Linux_RAID","0x04"="DOS_FAT_16_S","0xAF"="Apple_HFS","0x0E"="Windows_FAT_16","0x83"="Linux","0xA8"="Apple_UFS","0x0C"="Windows_FAT_32","0x07"="Windows_NTFS","0xAB"="Apple_Boot","0xA6"="OpenBSD","0x16"="DOS_FAT_16_Hidden","0x42"="Windows_LDM","0x8E"="Linux_LVM","0x14"="DOS_FAT_16_S_Hidden","0xAE"="Apple_Encrypted"}
+  |                   | }
+  |                   | 
+  |                   +-o Untitled 1@1  <class IOMedia, id 0x100057916, registered, matched, active, busy 0 (3 ms), retain 11>
+  |                     | {
+  |                     |   "Content" = "Windows_FAT_16"
+  |                     |   "Removable" = Yes
+  |                     |   "Whole" = No
+  |                     |   "Leaf" = Yes
+  |                     |   "BSD Name" = "disk5s1"
+  |                     |   "Ejectable" = Yes
+  |                     |   "Preferred Block Size" = 512
+  |                     |   "Base" = 32256
+  |                     |   "BSD Minor" = 23
+  |                     |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |                     |   "Writable" = Yes
+  |                     |   "Partition ID" = 1
+  |                     |   "BSD Major" = 1
+  |                     |   "Size" = 10453504
+  |                     |   "IOBusyInterest" = "IOCommand is not serializable"
+  |                     |   "Open" = Yes
+  |                     |   "Content Hint" = "Windows_FAT_16"
+  |                     |   "BSD Unit" = 5
+  |                     | }
+  |                     | 
+  |                     +-o IOMediaBSDClient  <class IOMediaBSDClient, id 0x100057917, registered, matched, active, busy 0 (1 ms), retain 7>
+  |                         {
+  |                           "IOProbeScore" = 30000
+  |                           "CFBundleIdentifier" = "com.apple.iokit.IOStorageFamily"
+  |                           "IOMatchCategory" = "IOMediaBSDClient"
+  |                           "IOClass" = "IOMediaBSDClient"
+  |                           "IOPersonalityPublisher" = "com.apple.iokit.IOStorageFamily"
+  |                           "IOProviderClass" = "IOMedia"
+  |                           "CFBundleIdentifierKernel" = "com.apple.iokit.IOStorageFamily"
+  |                           "IOMatchedAtBoot" = Yes
+  |                           "IOResourceMatch" = "IOBSD"
+  |                         }
+  |                         
+  +-o Google Chrome  <class AppleUSBHostDeviceUserClient, id 0x1000578fb, !registered, !matched, active, busy 0, retain 7>
+  |   {
+  |     "IOUserClientCreator" = "pid 7341, Google Chrome"
+  |     "IOUserClientDefaultLocking" = Yes
+  |   }
+  |   
+  +-o ChatGPT  <class AppleUSBHostDeviceUserClient, id 0x1000578fc, !registered, !matched, active, busy 0, retain 7>
+  |   {
+  |     "IOUserClientCreator" = "pid 6766, ChatGPT"
+  |     "IOUserClientDefaultLocking" = Yes
+  |   }
+  |   
+  +-o WeChat  <class AppleUSBHostDeviceUserClient, id 0x100057907, !registered, !matched, active, busy 0, retain 6>
+      {
+        "IOUserClientCreator" = "pid 502, WeChat"
+        "IOUserClientDefaultLocking" = Yes
+      }
+      
+
