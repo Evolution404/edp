@@ -271,15 +271,51 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
         .get("password")
         .and_then(|x| x.as_str())
         .unwrap_or_default();
-    if password.is_empty() {
-        // 从 keystore 取
-        // 简化：先要求显式密码或 keystore 匹配
-    }
     let source = PathBuf::from(disk);
     let io = std::sync::Arc::new(FileRawIo::open(&source, true).map_err(rpc_io)?);
     let hints = crate::build_hints_for(&source);
-    let (desc, hit_id) = discover_volume(io.as_ref(), &hints, password, ptype)
-        .map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
+
+    // 密码：显式优先；空则从密码库匹配 (device_id, ptype) 逐条尝试
+    // 三元组第三位为命中的密码库条目 id（无则空串）
+    let (desc, hit_id, touched_id): (_, String, String) = if password.is_empty() {
+        let device_id = p
+            .get("device_id")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                edp_core::discovery::candidate_device_ids(io.as_ref(), &hints)
+                    .into_iter()
+                    .next()
+            });
+        let Some(device_id) = device_id else {
+            return Err(edp_proto::RpcError::new(
+                edp_proto::codes::BAD_PARAMS,
+                "无法解析 device_id：请提供密码或 device_id",
+            ));
+        };
+        let candidates = d.keystore.lock().unwrap().candidates(&device_id, ptype);
+        let mut found: Option<(_, String, String)> = None;
+        for rec in candidates {
+            match discover_volume(io.as_ref(), &hints, &rec.password, ptype) {
+                Ok((desc, id)) => {
+                    found = Some((desc, id, rec.id.clone()));
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+        found.ok_or_else(|| {
+            edp_proto::RpcError::new(
+                edp_proto::codes::PASSWORD_MISMATCH,
+                "密码库无匹配条目或密码均不匹配",
+            )
+        })?
+    } else {
+        let (desc, id) = discover_volume(io.as_ref(), &hints, password, ptype)
+            .map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
+        (desc, id, String::new())
+    };
+
     let session_root = d.session_root.clone();
     let state =
         session::mount_and_attach(&source, &desc, &hit_id, readonly, None, None, &session_root)
@@ -291,6 +327,12 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
             .insert(disk.to_string(), sid.to_string());
         d.broadcaster
             .broadcast(edp_proto::event::MOUNTED, state.clone());
+        // 命中密码库条目 → 标记最近使用
+        if !touched_id.is_empty() {
+            if let Ok(mut ks) = d.keystore.try_lock() {
+                ks.touch(&touched_id);
+            }
+        }
     }
     Ok(state)
 }
