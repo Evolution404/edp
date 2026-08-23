@@ -27,6 +27,7 @@ rpassword.workspace = true
 fuser = "0.15.1"
 libc = "0.2.189"
 plist.workspace = true
+aes-gcm.workspace = true
 
 [dev-dependencies]
 plist.workspace = true

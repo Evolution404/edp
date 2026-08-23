@@ -6,6 +6,8 @@
 //! - `usbcore bridge`：macFUSE 单文件桥（daemon/CLI 内部 spawn）
 
 mod bridge;
+mod daemon;
+mod keystore;
 mod session;
 
 use std::path::{Path, PathBuf};
@@ -101,6 +103,30 @@ enum Commands {
         #[arg(long)]
         readonly: bool,
     },
+    /// 守护进程子命令
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonCmd,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DaemonCmd {
+    /// 前台运行 daemon（launchd 调用）
+    Run {
+        /// 会话根目录（测试用）
+        #[arg(long)]
+        session_root: Option<PathBuf>,
+        /// socket 路径覆盖（测试用）
+        #[arg(long)]
+        socket: Option<String>,
+    },
+    /// 安装 launchd 守护进程
+    Install,
+    /// 卸载 launchd 守护进程
+    Uninstall,
+    /// daemon 状态（在线/离线）
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -158,6 +184,19 @@ fn main() -> Result<()> {
             key_fd,
             readonly,
         ),
+        Commands::Daemon { action } => cmd_daemon(action),
+    }
+}
+
+fn cmd_daemon(action: DaemonCmd) -> Result<()> {
+    match action {
+        DaemonCmd::Run {
+            session_root,
+            socket,
+        } => daemon::run_with(socket.as_deref(), None, session_root.as_deref()),
+        DaemonCmd::Install => daemon::install(),
+        DaemonCmd::Uninstall => daemon::uninstall(),
+        DaemonCmd::Status => daemon::status(),
     }
 }
 
@@ -227,6 +266,11 @@ fn require_mount_support() -> Result<()> {
         bail!("未检测到 macFUSE（/Library/Filesystems/macfuse.fs）；请先安装 macFUSE");
     }
     Ok(())
+}
+
+/// 组装 device_id 发现提示（显式 → LBA11 → identify 候选）。
+pub(crate) fn build_hints_for(source: &Path) -> DeviceIdHints {
+    build_hints(source, None)
 }
 
 /// 组装 device_id 发现提示（显式 → LBA11 → identify 候选）。
