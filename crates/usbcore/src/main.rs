@@ -87,6 +87,13 @@ enum Commands {
     },
     /// 列出活动会话
     Mounts,
+    /// daemon 在线状态摘要
+    Status,
+    /// 密码库管理（需 daemon 在线）
+    Keys {
+        #[command(subcommand)]
+        action: KeysCmd,
+    },
     /// 内部子命令：macFUSE 单文件桥（daemon spawn）
     #[command(hide = true)]
     Bridge {
@@ -108,6 +115,29 @@ enum Commands {
         #[command(subcommand)]
         action: DaemonCmd,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum KeysCmd {
+    /// 列出密码库条目（脱敏）
+    Ls,
+    /// 添加密码
+    Add {
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        device_id: Option<String>,
+        #[arg(long)]
+        disk: Option<String>,
+        #[arg(long, default_value_t = 4)]
+        partition_type: u32,
+        #[arg(long)]
+        password: Option<String>,
+        #[arg(long)]
+        no_auto_mount: bool,
+    },
+    /// 删除密码
+    Rm { id: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -167,6 +197,8 @@ fn main() -> Result<()> {
         ),
         Commands::Unmount { session_id, force } => cmd_unmount(&session_id, force),
         Commands::Mounts => cmd_mounts(),
+        Commands::Status => cmd_status(),
+        Commands::Keys { action } => cmd_keys(action),
         Commands::Bridge {
             source,
             mountpoint,
@@ -188,6 +220,46 @@ fn main() -> Result<()> {
     }
 }
 
+fn cmd_keys(action: KeysCmd) -> Result<()> {
+    let Some(mut c) = try_online() else {
+        bail!(
+            "daemon 未运行（{}）；请先 `sudo usbcore daemon install` 或 `sudo usbcore daemon run`",
+            daemon_socket()
+        );
+    };
+    match action {
+        KeysCmd::Ls => {
+            let r = c.call(edp_proto::method::KEYS_LS, serde_json::json!({}))?;
+            println!("{}", serde_json::to_string_pretty(&r)?);
+        }
+        KeysCmd::Add {
+            label,
+            device_id,
+            disk,
+            partition_type,
+            password,
+            no_auto_mount,
+        } => {
+            let password = get_password(password)?;
+            let params = serde_json::json!({
+                "label": label.unwrap_or_else(|| "EDP 盘".into()),
+                "device_id": device_id,
+                "disk": disk,
+                "partition_type": partition_type,
+                "password": password,
+                "auto_mount": !no_auto_mount,
+            });
+            let r = c.call(edp_proto::method::KEYS_ADD, params)?;
+            println!("{}", serde_json::to_string_pretty(&r)?);
+        }
+        KeysCmd::Rm { id } => {
+            let r = c.call(edp_proto::method::KEYS_RM, serde_json::json!({ "id": id }))?;
+            println!("{}", serde_json::to_string_pretty(&r)?);
+        }
+    }
+    Ok(())
+}
+
 fn cmd_daemon(action: DaemonCmd) -> Result<()> {
     match action {
         DaemonCmd::Run {
@@ -196,7 +268,7 @@ fn cmd_daemon(action: DaemonCmd) -> Result<()> {
         } => daemon::run_with(socket.as_deref(), None, session_root.as_deref()),
         DaemonCmd::Install => daemon::install(),
         DaemonCmd::Uninstall => daemon::uninstall(),
-        DaemonCmd::Status => daemon::status(),
+        DaemonCmd::Status => daemon::status(&daemon_socket()),
     }
 }
 
@@ -258,6 +330,22 @@ fn get_password(provided: Option<String>) -> Result<String> {
     }
 }
 
+/// daemon socket 路径（可用环境变量覆盖测试）。
+fn daemon_socket() -> String {
+    std::env::var_os("EDP_USB_SOCKET")
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/var/run/edp-usbcore.sock".to_string())
+}
+
+/// 尝试连接 daemon；成功返回 Client。
+fn try_online() -> Option<edp_proto::Client> {
+    let sock = daemon_socket();
+    if !Path::new(&sock).exists() {
+        return None;
+    }
+    edp_proto::Client::connect(&sock).ok()
+}
+
 fn require_mount_support() -> Result<()> {
     if !cfg!(target_os = "macos") {
         bail!("仅支持 macOS");
@@ -298,7 +386,10 @@ fn cmd_list(all: bool) -> Result<()> {
 
 fn cmd_doctor() -> Result<()> {
     let macfuse = edp_macos::macfuse_version();
-    let daemon_sock = std::path::Path::new("/var/run/edp-usbcore.sock").exists();
+    let daemon = try_online().and_then(|mut c| {
+        c.call(edp_proto::method::STATUS, serde_json::json!({}))
+            .ok()
+    });
     let report = serde_json::json!({
         "ok": true,
         "macos": true,
@@ -306,7 +397,9 @@ fn cmd_doctor() -> Result<()> {
         "hdiutil": which("hdiutil"),
         "diskutil": which("diskutil"),
         "root": unsafe { libc::getuid() } == 0,
-        "daemon_online": daemon_sock,
+        "daemon_online": daemon.is_some(),
+        "daemon": daemon,
+        "daemon_socket": daemon_socket(),
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
     if macfuse.is_none() {
@@ -389,9 +482,28 @@ fn cmd_mount(
     let source = source
         .canonicalize()
         .unwrap_or_else(|_| source.to_path_buf());
+    // 在线优先：daemon（root）代为挂载，免 sudo
+    if let Some(mut c) = try_online() {
+        if device_id.is_some() || mountpoint.is_some() || session_id.is_some() {
+            bail!(
+                "在线模式不支持 --device-id/--mountpoint/--session-id \
+                 （daemon 自行发现与命名）；请卸载 daemon 后离线挂载"
+            );
+        }
+        let password = get_password(password)?;
+        let params = edp_proto::MountParams {
+            disk: source.to_string_lossy().into_owned(),
+            partition_type: Some(partition_type),
+            readonly: Some(readonly),
+            password: Some(password),
+        };
+        let r = c.call(edp_proto::method::MOUNT, serde_json::to_value(params)?)?;
+        println!("{}", serde_json::to_string_pretty(&r)?);
+        return Ok(());
+    }
     validate_whole_disk_or_image(&source)?;
     if source.starts_with("/dev/") && !readonly && unsafe { libc::getuid() } != 0 {
-        bail!("真实 U 盘读写挂载需要 sudo");
+        bail!("真实 U 盘读写挂载需要 sudo（或先启动 daemon 走在线模式）");
     }
     let password = get_password(password)?;
     let io = std::sync::Arc::new(FileRawIo::open(&source, true)?);
@@ -429,10 +541,41 @@ fn cmd_mount(
 }
 
 fn cmd_unmount(session_id: &str, force: bool) -> Result<()> {
+    // 在线优先：daemon 维护的会话，免 sudo
+    if let Some(mut c) = try_online() {
+        let r = c.call(
+            edp_proto::method::UNMOUNT,
+            serde_json::json!({ "session_id": session_id, "force": force }),
+        )?;
+        println!("{}", serde_json::to_string_pretty(&r)?);
+        return Ok(());
+    }
     session::unmount(session_id, force, &session_root())
 }
 
+fn cmd_status() -> Result<()> {
+    let mut report = serde_json::json!({
+        "daemon_online": false,
+        "version": env!("CARGO_PKG_VERSION"),
+    });
+    let Some(mut c) = try_online() else {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        std::process::exit(4);
+    };
+    let s = c.call(edp_proto::method::STATUS, serde_json::json!({}))?;
+    report["daemon_online"] = serde_json::json!(true);
+    report["daemon"] = s;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
 fn cmd_mounts() -> Result<()> {
+    // 在线优先：daemon 维护的会话
+    if let Some(mut c) = try_online() {
+        let r = c.call(edp_proto::method::SESSIONS, serde_json::json!({}))?;
+        println!("{}", serde_json::to_string_pretty(&r)?);
+        return Ok(());
+    }
     let sessions = session::list_active(&session_root())?;
     println!("{}", serde_json::to_string_pretty(&sessions)?);
     Ok(())

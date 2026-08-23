@@ -14,6 +14,8 @@ make build              # 构建全部 crate
 make lint               # fmt --check + clippy -D warnings（CI 同款）
 make test               # 单元测试（无需 root）
 make test-integration   # 集成测试（sudo + macFUSE，合成盘全链路）
+# 在线模式协议测试（无需 root / macFUSE）：启动临时 daemon + CLI 走 RPC
+cargo test -p usbcore --test online_mode
 make docs               # rustdoc
 ```
 

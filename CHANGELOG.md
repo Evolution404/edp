@@ -10,4 +10,17 @@
 - M0：CI（macOS 全 workspace + Ubuntu edp-core 跨平台回归）、Makefile、rustfmt/clippy 门禁
 - M0：文档骨架（README + docs 五篇 + CHANGELOG）
 - M0：真实盘 fixture（disk4 Lexar / disk5 SanDisk）与黄金测试数据（Python 参考实现一次性离线生成，项目本身零 Python 依赖）
-- edp-core：裸 CRC32（crc32_bare / crc_key / k0_from_crc）与已知值单测
+- M1：edp-core 加密格式层（crc32 / rolling-XOR / 手写 A6B0/A7F0 AES / 手写 SM4-ECB）与黄金逐字节对照
+- M1：LBA7 密码认证（双路径：默认密码 CRC + 固定种子 file_key）、LBA11 PDKB device_id、LBA12 EDPF 解析与 file_key 解包
+- M1：device_id 三级发现（explicit → LBA11 → identify 兜底；disk5 天然回归用例）
+- M1：usbcore CLI 离线模式（list/doctor/login/probe/mount/unmount/mounts）+ fuser 单文件桥 + `-owners off` 挂载链
+- M1：合成盘集成测试（`#[ignore]`，sudo + macFUSE）+ 两块真实盘 4 分区挂载验收
+- M2：edp-proto UDS JSON-RPC（PEERCRED 鉴权 / 事件广播 / 协议测试）
+- M2：usbcore daemon（磁盘轮询 diff、AES-256-GCM 密码库、自动挂载状态机、RPC server、launchd 安装）
+- M2：密码库 `keys` 子命令（在线，脱敏输出，store.enc 无明文）
+- M2：CLI 在线模式（mount/unmount/mounts/status/doctor 走 RPC 免 sudo，离线降级）
+- M2：daemon 授权白名单自动派生（root 守护进程放行控制台用户；非 root 放行自身）
+- M2：CLI 在线模式协议测试（`online_mode`，非 root 可跑，无 macFUSE 依赖）
+
+### Fixed
+- M2：daemon 默认授权白名单为空导致非 root 客户端全被拒——改为按运行身份自动派生

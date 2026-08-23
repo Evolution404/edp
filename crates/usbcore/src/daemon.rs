@@ -54,6 +54,31 @@ impl Default for Config {
 
 const DEFAULT_SESSION_ROOT: &str = "/var/db/edp-usbcore/sessions";
 
+/// 默认授权用户白名单：
+/// - root 守护进程：放行控制台登录用户（GUI/CLI 免 sudo 走 RPC）
+/// - 非 root（测试/开发）：放行自身 euid
+fn default_allowed_uids() -> Vec<u32> {
+    let euid = unsafe { libc::geteuid() };
+    if euid == 0 {
+        // macOS：`stat -f %u /dev/console` 取当前控制台用户 uid
+        if let Ok(out) = std::process::Command::new("stat")
+            .args(["-f", "%u", "/dev/console"])
+            .output()
+        {
+            if let Ok(s) = String::from_utf8(out.stdout) {
+                if let Ok(uid) = s.trim().parse::<u32>() {
+                    if uid != 0 {
+                        return vec![uid];
+                    }
+                }
+            }
+        }
+        Vec::new()
+    } else {
+        vec![euid]
+    }
+}
+
 /// 启动 daemon（socket 可覆盖，测试用；launchd 调用 `daemon run`）。
 pub fn run_with(
     socket_override: Option<&str>,
@@ -93,12 +118,17 @@ pub fn run_with(
         });
     }
 
-    // RPC server
+    // RPC server（白名单为空时按运行身份派生默认授权用户）
+    let allowed_uids = if cfg.allowed_uids.is_empty() {
+        default_allowed_uids()
+    } else {
+        cfg.allowed_uids.clone()
+    };
     let methods = build_methods()?;
     let handle = serve(
         &cfg.socket_path,
         methods,
-        cfg.allowed_uids.clone(),
+        allowed_uids,
         state.clone() as Arc<dyn std::any::Any + Send + Sync>,
     )
     .with_context(|| format!("监听 {} 失败", cfg.socket_path))?;
@@ -469,6 +499,16 @@ pub fn install() -> Result<()> {
     // 初始化数据目录
     std::fs::create_dir_all("/var/db/edp-usbcore/logs")?;
     std::fs::create_dir_all("/var/db/edp-usbcore/sessions")?;
+    // 持久化初始配置（授权控制台用户；socket 用系统默认路径）
+    let initial_cfg = Config {
+        socket_path: "/var/run/edp-usbcore.sock".to_string(),
+        allowed_uids: default_allowed_uids(),
+        ..Config::default()
+    };
+    let _ = std::fs::write(
+        "/var/db/edp-usbcore/config.json",
+        serde_json::to_string_pretty(&initial_cfg)?,
+    );
     // 写 plist
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -543,20 +583,19 @@ pub fn uninstall() -> Result<()> {
 }
 
 /// daemon 状态。
-pub fn status() -> Result<()> {
-    let sock = "/var/run/edp-usbcore.sock";
-    let online = Path::new(sock).exists();
+pub fn status(socket: &str) -> Result<()> {
+    // 真实连通性检查（socket 文件存在但 daemon 已死 → 视为离线）
+    let live = match edp_proto::Client::connect(socket) {
+        Ok(mut c) => c.call(edp_proto::method::STATUS, json!({})).ok(),
+        Err(_) => None,
+    };
     let mut report = json!({
-        "online": online,
-        "socket": sock,
+        "online": live.is_some(),
+        "socket": socket,
         "macfuse": edp_macos::macfuse_version(),
     });
-    if online {
-        if let Ok(mut c) = edp_proto::Client::connect(sock) {
-            if let Ok(r) = c.call(edp_proto::method::STATUS, json!({})) {
-                report["status"] = r;
-            }
-        }
+    if let Some(r) = live {
+        report["status"] = r;
     }
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
