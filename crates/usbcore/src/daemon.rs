@@ -637,6 +637,21 @@ pub fn install() -> Result<()> {
         let _ = std::process::Command::new("launchctl")
             .args(["bootout", "system", LAUNCHD_LABEL])
             .output();
+        // bootout 是异步停止：等待服务彻底退出（socket 释放）再 bootstrap，
+        // 否则紧接的 bootstrap 会报 "Bootstrap failed: 5: Input/output error"
+        for _ in 0..20 {
+            let probe = std::process::Command::new("launchctl")
+                .args(["print", "system/com.edp.usbcore"])
+                .output();
+            let gone = match probe {
+                Ok(o) => !o.status.success(),
+                Err(_) => true,
+            };
+            if gone {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         let out = std::process::Command::new("launchctl")
             .args(["bootstrap", "system", PLIST_PATH])
             .output()?;

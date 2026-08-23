@@ -869,7 +869,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "edp-core"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "md-5",
  "serde",
@@ -879,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "edp-macos"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "edp-core",
  "plist",
@@ -892,7 +892,7 @@ dependencies = [
 
 [[package]]
 name = "edp-proto"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "serde",
