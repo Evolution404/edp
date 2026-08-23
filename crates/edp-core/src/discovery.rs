@@ -4,6 +4,7 @@
 //! 1. 调用方显式传入
 //! 2. LBA11 PDKB 标准路径（VID/PID + 容量两候选）
 //! 3. identify 候选（INQUIRY/USB 描述符/MediaName 构造的长短版）
+//!
 //! 每个候选用其 CRC32 派生 key 解 LBA12，EDPF magic 即判真。
 
 use std::sync::Arc;
@@ -28,7 +29,7 @@ pub struct DeviceIdHints {
 /// 生成去重后的 device_id 候选列表（按优先级）。
 pub fn candidate_device_ids(io: &dyn RawIo, hints: &DeviceIdHints) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let mut push = |c: String, out: &mut Vec<String>| {
+    let push = |c: String, out: &mut Vec<String>| {
         if !c.is_empty() && !out.contains(&c) {
             out.push(c);
         }

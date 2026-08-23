@@ -58,7 +58,7 @@ pub struct InquirySources {
 /// 两候选都试、由 LBA7 EDPF magic 判真——与厂商 DLL sub_10034680 同款机制）。
 pub fn candidates(src: &InquirySources) -> Vec<String> {
     let mut cs: Vec<String> = Vec::new();
-    let mut add = |c: String, cs: &mut Vec<String>| {
+    let add = |c: String, cs: &mut Vec<String>| {
         if !c.is_empty() && !cs.contains(&c) {
             cs.push(c);
         }
