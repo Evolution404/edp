@@ -61,15 +61,18 @@ jobs:
           hdiutil detach -quiet "${MACFUSE_VOLUME}"
           pkg-config --modversion fuse
 
-      - name: Apply FSKit preview bridge patch
+      - name: Apply FSKit preview mountpoint
         run: |
           set -euo pipefail
           python3 installer/apply-fskit-preview.py
-          grep -F 'backend=fskit' crates/usbcore/src/bridge.rs
+          grep -F 'backend=fskit' crates/usbcore/src/bridge_libfuse.c
           grep -F '/Volumes' crates/usbcore/src/session.rs
 
       - name: Build usbcore
-        run: cargo build -p usbcore --release --locked
+        run: |
+          set -euo pipefail
+          cargo build -p usbcore --release
+          otool -L target/release/usbcore | grep -i 'libfuse'
 
       - name: Build Tauri app
         working-directory: gui
@@ -80,6 +83,7 @@ jobs:
           set -euo pipefail
           APP_PATH="gui/src-tauri/target/release/bundle/macos/EDP USB Vault.app"
           test -x "${APP_PATH}/Contents/Resources/usbcore"
+          otool -L "${APP_PATH}/Contents/Resources/usbcore" | grep -i 'libfuse'
           codesign --force --options runtime --sign - \
             --entitlements gui/src-tauri/embedded/usbcore.entitlements.plist \
             --identifier com.edp.usbvault.daemon.v2 \
@@ -145,5 +149,5 @@ jobs:
           gh release create "${RELEASE_TAG}" release-assets/* \
             --verify-tag \
             --prerelease \
-            --title "Installer Preview — FSKit" \
-            --notes "One-click installer test build from install/one-click-installer. Includes EDP USB Vault, macFUSE ${MACFUSE_VERSION}, installer-managed LaunchDaemon fallback, and an FSKit-backed hidden raw bridge under /Volumes so clean Apple Silicon systems do not require the macFUSE kernel extension. Requires macOS 15.4+ for this preview path. Commit: ${SHORT_SHA}."
+            --title "Installer Preview — FSKit/libfuse" \
+            --notes "One-click installer test build from install/one-click-installer. The hidden raw bridge now uses macFUSE ${MACFUSE_VERSION}'s official libfuse FSKit/MFMount transport instead of fuser's legacy fd transport. Includes installer-managed LaunchDaemon and self-contained installer launcher. Requires macOS 15.4+ for this preview path. Commit: ${SHORT_SHA}."
