@@ -39,7 +39,9 @@ PLIST="/Library/LaunchDaemons/${LABEL}.plist"
 USB_CORE="/Applications/EDP USB Vault.app/Contents/Resources/usbcore"
 
 if [[ ! -x "$USB_CORE" ]]; then
-  echo "EDP USB Vault usbcore not found: $USB_CORE" >&2
+  echo "EDP USB Vault usbcore not found after installation: $USB_CORE" >&2
+  echo "Installed EDP app candidates:" >&2
+  /usr/bin/find /Applications -maxdepth 2 -name 'EDP USB Vault.app' -print >&2 || true
   exit 1
 fi
 
@@ -78,14 +80,58 @@ exit 0
 POSTINSTALL
 chmod 0755 "$SCRIPTS/postinstall"
 
+# `pkgbuild --component` makes app bundles relocatable by default. PackageKit can
+# then discover a development copy with the same bundle id anywhere on disk and
+# silently install/upgrade that copy instead of /Applications. Besides being wrong,
+# that can trigger Desktop/Documents TCC prompts if a source checkout lives there.
+# Generate the component plist explicitly and disable relocation.
+APP_COMPONENT_PLIST="$WORK/app-component.plist"
+pkgbuild --analyze --component "$APP_PATH" "$APP_COMPONENT_PLIST"
+python3 - "$APP_COMPONENT_PLIST" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+
+p = Path(sys.argv[1])
+with p.open('rb') as f:
+    items = plistlib.load(f)
+if not items:
+    raise SystemExit('pkgbuild produced an empty component plist')
+for item in items:
+    item['BundleIsRelocatable'] = False
+    item['BundleOverwriteAction'] = 'upgrade'
+with p.open('wb') as f:
+    plistlib.dump(items, f, sort_keys=False)
+PY
+
 APP_COMPONENT="$WORK/EDP-USB-Vault-App.pkg"
 pkgbuild \
   --component "$APP_PATH" \
+  --component-plist "$APP_COMPONENT_PLIST" \
   --install-location /Applications \
   --identifier com.edp.usbvault.app-package \
   --version "$APP_VERSION" \
   --scripts "$SCRIPTS" \
   "$APP_COMPONENT"
+
+# Assert the generated component package really carries the no-relocation policy.
+APP_COMPONENT_EXPANDED="$WORK/app-component-expanded"
+pkgutil --expand "$APP_COMPONENT" "$APP_COMPONENT_EXPANDED"
+python3 - "$APP_COMPONENT_EXPANDED/PackageInfo" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+bundles = root.findall('.//bundle')
+if not bundles:
+    raise SystemExit('EDP component package has no bundle metadata')
+for bundle in bundles:
+    reloc = bundle.attrib.get('relocatable')
+    if reloc not in ('false', '0'):
+        raise SystemExit(f'EDP app is still relocatable in PackageInfo: {reloc!r}')
+print('Verified: EDP app bundle relocation is disabled')
+PY
+rm -rf "$APP_COMPONENT_EXPANDED"
 
 mkdir -p "$MOUNT_POINT"
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT_POINT" "$MACFUSE_DMG"
@@ -156,10 +202,8 @@ productbuild \
 
 pkgutil --check-signature "$PKG_OUTPUT" || true
 
-# Ship the PKG inside a read-only DMG. When users run a PKG directly from Desktop,
-# macOS may ask Installer.app for Desktop-folder access; denying that prompt makes
-# installation fail before our package runs. A mounted DMG avoids that unrelated
-# TCC prompt and gives first-time users a deterministic entry point.
+# Ship the combined installer inside a read-only DMG. This gives first-time users
+# one deterministic entry point and keeps the package separate from Downloads/Desktop.
 DMG_STAGE="$WORK/dmg-stage"
 mkdir -p "$DMG_STAGE"
 cp "$PKG_OUTPUT" "$DMG_STAGE/$PKG_NAME"
