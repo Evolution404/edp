@@ -16,7 +16,9 @@
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <!-- 加密桥是前台文件 I/O 的热路径，不能被 launchd 以 Background CPU/QoS
+       节流；Standard 仍保持普通系统优先级，不抢占交互式进程。 -->
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Standard</string>
 </dict>
 </plist>
