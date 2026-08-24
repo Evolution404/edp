@@ -17,7 +17,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  MACFUSE_VERSION: "5.2.0"
+  MACFUSE_VERSION: "5.3.3"
 
 jobs:
   build:
@@ -139,4 +139,4 @@ jobs:
             --verify-tag \
             --prerelease \
             --title "Installer Preview" \
-            --notes "One-click installer test build from install/one-click-installer. Includes EDP USB Vault, macFUSE 5.2.0 components, and installer-managed LaunchDaemon fallback for unsigned/ad-hoc distribution. Commit: ${SHORT_SHA}."
+            --notes "One-click installer test build from install/one-click-installer. Includes EDP USB Vault, macFUSE ${MACFUSE_VERSION} components, and installer-managed LaunchDaemon fallback for unsigned/ad-hoc distribution. Commit: ${SHORT_SHA}."
