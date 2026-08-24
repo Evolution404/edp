@@ -5,16 +5,17 @@ Target model:
 
   root LaunchDaemon
       -> opens /dev/rdiskN while privileged
-      -> clears FD_CLOEXEC on that already-open raw-device descriptor
-      -> launchctl asuser <console uid>
-      -> launchctl itself is exec'd as the console uid/gid
-      -> usbcore bridge therefore starts life as the real logged-in user
-      -> bridge consumes the inherited raw-device FD instead of reopening /dev/rdiskN
-      -> libfuse/MFMount/FSKit sees a genuine user process from exec start
+      -> clears FD_CLOEXEC on the already-open raw-device descriptor
+      -> root `launchctl asuser <console uid>` enters the user's GUI/audit session
+      -> hidden usbcore bridge-exec-user helper still starts as root in that session
+      -> helper drops groups/gid/uid, then execs a NEW usbcore bridge image
+      -> final bridge therefore starts from exec as the real logged-in user
+      -> bridge consumes inherited raw-device FD instead of reopening /dev/rdiskN
+      -> libfuse/MFMount/FSKit sees user uid + user audit/bootstrap context together
 
 This is intentionally a preview transformation until real hardware testing proves
 macFUSE FSKit accepts the model. Run once after `git pull` before a local build.
-The script is idempotent.
+The script is idempotent on a clean checkout.
 """
 from pathlib import Path
 import subprocess
@@ -24,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 subprocess.run([sys.executable, str(ROOT / "installer/apply-fskit-preview.py")], cwd=ROOT, check=True)
 
 # ---------------------------------------------------------------------------
-# usbcore CLI: allow the hidden bridge command to receive an inherited source FD
+# usbcore CLI: inherited source FD + hidden user-exec trampoline
 # ---------------------------------------------------------------------------
 main = ROOT / "crates/usbcore/src/main.rs"
 text = main.read_text()
@@ -47,6 +48,32 @@ if old in text:
 elif new not in text:
     raise SystemExit("bridge source_fd CLI anchor not found")
 
+bridge_variant_end = '''        #[arg(long)]
+        performance_path: Option<PathBuf>,
+    },
+    /// 守护进程子命令
+'''
+bridge_variant_new = '''        #[arg(long)]
+        performance_path: Option<PathBuf>,
+    },
+    /// 内部子命令：在 launchctl asuser 建立的用户 audit/bootstrap 中降权并 exec bridge。
+    #[command(hide = true)]
+    BridgeExecUser {
+        #[arg(long)]
+        uid: u32,
+        #[arg(long)]
+        gid: u32,
+        /// `--` 之后是传给新 usbcore 进程的完整参数，首项必须为 bridge。
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// 守护进程子命令
+'''
+if bridge_variant_end in text:
+    text = text.replace(bridge_variant_end, bridge_variant_new, 1)
+elif bridge_variant_new not in text:
+    raise SystemExit("BridgeExecUser variant anchor not found")
+
 old = '''            partition_type,
             key_fd,
             readonly,
@@ -68,6 +95,8 @@ old = '''            partition_type,
             readonly,
             ready_fd,
             performance_path.as_deref(),
+        ),
+        Commands::Daemon { action } => cmd_daemon(action),
 '''
 new = '''            partition_type,
             key_fd,
@@ -75,16 +104,58 @@ new = '''            partition_type,
             readonly,
             ready_fd,
             performance_path.as_deref(),
+        ),
+        Commands::BridgeExecUser { uid, gid, args } => exec_bridge_as_user(uid, gid, args),
+        Commands::Daemon { action } => cmd_daemon(action),
 '''
 if old in text:
     text = text.replace(old, new, 1)
 elif new not in text:
-    raise SystemExit("bridge::run source_fd anchor not found")
+    raise SystemExit("bridge::run / BridgeExecUser match anchor not found")
+
+main_helper_anchor = '''fn cmd_keys(action: KeysCmd) -> Result<()> {
+'''
+main_helper = '''/// Root-only trampoline used after `launchctl asuser` has switched the Mach
+/// bootstrap/audit session. Drop process credentials, then exec a fresh usbcore
+/// image so MFMount never observes a bridge image that started life as uid 0.
+fn exec_bridge_as_user(uid: u32, gid: u32, args: Vec<String>) -> Result<()> {
+    if unsafe { libc::geteuid() } != 0 {
+        bail!("bridge-exec-user 必须由 root launchctl asuser 启动");
+    }
+    if uid == 0 || args.first().map(String::as_str) != Some("bridge") {
+        bail!("bridge-exec-user 参数非法");
+    }
+
+    if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("bridge-exec-user setgroups 失败");
+    }
+    if unsafe { libc::setgid(gid as libc::gid_t) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("bridge-exec-user setgid 失败");
+    }
+    if unsafe { libc::setuid(uid as libc::uid_t) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("bridge-exec-user setuid 失败");
+    }
+    if unsafe { libc::geteuid() } != uid || unsafe { libc::getegid() } != gid {
+        bail!("bridge-exec-user 降权后 uid/gid 校验失败");
+    }
+
+    use std::os::unix::process::CommandExt;
+    let exe = std::env::current_exe()?;
+    let error = std::process::Command::new(exe).args(args).exec();
+    Err(error).context("exec 最终用户 bridge 失败")
+}
+
+fn cmd_keys(action: KeysCmd) -> Result<()> {
+'''
+if main_helper_anchor in text and "fn exec_bridge_as_user(" not in text:
+    text = text.replace(main_helper_anchor, main_helper, 1)
+elif "fn exec_bridge_as_user(" not in text:
+    raise SystemExit("main helper anchor not found")
 
 main.write_text(text)
 
 # ---------------------------------------------------------------------------
-# bridge: consume inherited FD; do not change credentials after process start
+# bridge: consume inherited FD; never open /dev/rdiskN itself
 # ---------------------------------------------------------------------------
 bridge = ROOT / "crates/usbcore/src/bridge.rs"
 text = bridge.read_text()
@@ -93,7 +164,7 @@ helper_start = text.find("/// Preview-only bridge identity")
 run_marker = text.find("#[allow(clippy::too_many_arguments)]", helper_start)
 if helper_start >= 0 and run_marker > helper_start:
     helper = '''/// Open the source through an inherited descriptor when supplied by the root daemon.
-/// The bridge process itself is already the logged-in user from exec start.
+/// The final bridge image is already the logged-in user from exec start.
 fn open_source_io(source: &Path, readonly: bool, source_fd: Option<i32>) -> anyhow::Result<FileRawIo> {
     if let Some(fd) = source_fd {
         if fd < 0 {
@@ -131,8 +202,8 @@ block_start = text.find("    // IMPORTANT: open the raw device while still privi
 info_start = text.find("    info!(", block_start)
 info_end = text.find("    );", info_start)
 if block_start >= 0 and info_start > block_start and info_end > info_start:
-    replacement = '''    // The root daemon already performed open(2). This process starts as the
-    // real console user and only consumes the inherited descriptor.
+    replacement = '''    // The root daemon already performed open(2). This final bridge image starts
+    // as the real console user and consumes only the inherited descriptor.
     let process_euid = unsafe { libc::geteuid() };
     let process_egid = unsafe { libc::getegid() };
     let io = Arc::new(open_source_io(source, readonly, source_fd)?);
@@ -149,15 +220,14 @@ if block_start >= 0 and info_start > block_start and info_end > info_start:
 elif "inherited_source_fd={:?}" not in text:
     raise SystemExit("bridge root-open/drop block not found")
 
-# Update stale module-level explanation if present.
 text = text.replace(
     "//! root LaunchDaemon 启动 bridge 时，bridge 会先以 root 身份打开 `/dev/rdiskN`，\n//! 然后在进入 libfuse/FSKit 前真正降权到当前控制台用户。已经打开的原始磁盘\n//! FD 在降权后继续有效，因此可以同时满足原始磁盘访问和 FSKit 用户授权模型。\n",
-    "//! root LaunchDaemon 先打开 `/dev/rdiskN`，再把该 FD 继承给从 exec 开始就\n//! 以当前控制台用户身份运行的 bridge。bridge 不重新打开设备，只使用继承 FD，\n//! 从而把 raw-disk 权限与 MFMount/FSKit 用户授权上下文彻底分离。\n",
+    "//! root LaunchDaemon 先打开 `/dev/rdiskN`；root launchctl asuser 建立用户 audit/bootstrap，\n//! 隐藏 helper 再降权并 exec 新的 bridge。最终 bridge 从 exec 起就是当前登录用户，\n//! 只使用继承的 raw-disk FD，从而把磁盘权限与 MFMount 用户身份彻底分离。\n",
 )
 bridge.write_text(text)
 
 # ---------------------------------------------------------------------------
-# session: root-open source, make descriptor inheritable, then exec launchctl as user
+# session: root-open source, root launchctl asuser, then helper setuid+exec
 # ---------------------------------------------------------------------------
 session = ROOT / "crates/usbcore/src/session.rs"
 text = session.read_text()
@@ -179,8 +249,8 @@ fn console_gui_uid() -> Option<u32> {
     (uid != 0).then_some(uid)
 }
 '''
-new_helper = '''/// Current console user's real uid/gid. The bridge must be exec'd with this
-/// identity; changing euid only after bridge startup is not sufficient for MFMount.
+new_helper = '''/// Current console user's real uid/gid. Root `launchctl asuser` first enters
+/// this user's GUI/audit session; a helper then drops credentials and execs bridge.
 fn console_gui_identity() -> Option<(u32, u32)> {
     if unsafe { libc::geteuid() } != 0 {
         return None;
@@ -199,8 +269,7 @@ fn console_gui_identity() -> Option<(u32, u32)> {
     (uid != 0).then_some((uid, gid))
 }
 
-/// std::fs opens descriptors with FD_CLOEXEC. The raw source must survive the
-/// exec into launchctl and then into usbcore bridge, so clear only that flag.
+/// Preserve descriptors across launchctl -> bridge-exec-user -> bridge exec chain.
 fn make_fd_inheritable(fd: i32) -> std::io::Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags < 0 {
@@ -217,7 +286,6 @@ if old_helper in text:
 elif new_helper not in text:
     raise SystemExit("console GUI helper not found after base preview")
 
-# User bridge writes performance data outside root-only session storage.
 old_perf = '    let performance_path = session_dir.join("performance.json");'
 new_perf = '''    let performance_path = PathBuf::from("/tmp")
         .join(format!("com.edp.usbvault-{session_id}-performance.json"));'''
@@ -262,10 +330,9 @@ old_spawn = '''    let self_exe = std::env::current_exe()?;
 new_spawn = '''    let self_exe = std::env::current_exe()?;
     let bridge_gui_identity = console_gui_identity();
 
-    // Open the raw source while the daemon is still root. The bridge will inherit
-    // this descriptor and therefore never needs TCC/raw-device permission itself.
+    // Root daemon opens the raw source. The final user bridge inherits this FD and
+    // never performs open(2) on /dev/rdiskN itself.
     use std::os::unix::io::AsRawFd;
-    use std::os::unix::process::CommandExt;
     let source_file = std::fs::OpenOptions::new()
         .read(true)
         .write(!readonly)
@@ -273,9 +340,10 @@ new_spawn = '''    let self_exe = std::env::current_exe()?;
         .with_context(|| format!("root daemon 打开原始设备 {} 失败", source.display()))?;
     let source_fd = source_file.as_raw_fd();
     make_fd_inheritable(source_fd).context("设置 raw source FD 可继承失败")?;
+    make_fd_inheritable(fds[0]).context("设置 key FD 可继承失败")?;
+    make_fd_inheritable(ready_fds[1]).context("设置 ready FD 可继承失败")?;
 
-    // /Volumes itself is root-owned. Create/chown the hidden mountpoint before
-    // dropping the child to the real console identity.
+    // /Volumes is root-owned; prepare the hidden mountpoint for the final user bridge.
     std::fs::create_dir_all(&bridge_mount)?;
     if let Some((uid, gid)) = bridge_gui_identity {
         let owner = format!("{uid}:{gid}");
@@ -290,18 +358,23 @@ new_spawn = '''    let self_exe = std::env::current_exe()?;
         std::fs::set_permissions(&bridge_mount, std::fs::Permissions::from_mode(0o700))?;
     }
 
+    // IMPORTANT: launchctl asuser must remain root; otherwise macOS refuses the
+    // audit-session switch with EPERM. A hidden helper performs setuid then execs
+    // a fresh bridge image after launchctl has established the user session.
     let mut command = if let Some((uid, gid)) = bridge_gui_identity {
         let mut command = Command::new("/bin/launchctl");
-        command.arg("asuser").arg(uid.to_string()).arg(&self_exe);
-        // Crucial: launchctl itself is exec'd as the real user, so the later
-        // usbcore bridge process is born in the correct uid/audit context.
-        command.gid(gid).uid(uid);
+        command
+            .arg("asuser")
+            .arg(uid.to_string())
+            .arg(&self_exe)
+            .arg("bridge-exec-user")
+            .args(["--uid", &uid.to_string(), "--gid", &gid.to_string(), "--"]);
         command
     } else {
         Command::new(&self_exe)
     };
     info!(
-        "bridge spawn: daemon_euid={} exec_identity={:?} inherited_source_fd={source_fd}",
+        "bridge spawn: daemon_euid={} audit_identity={:?} inherited_source_fd={source_fd}",
         unsafe { libc::geteuid() },
         bridge_gui_identity
     );
@@ -333,17 +406,16 @@ elif new_spawn not in text:
 
 session.write_text(text)
 
-# Installer-facing diagnostic text for this experiment.
 installer = ROOT / "installer/build-one-click.sh"
 installer_text = installer.read_text()
 installer_text = installer_text.replace(
     "root daemon installed; FSKit bridge will enter gui/${CONSOLE_UID:-unknown} via launchctl asuser",
-    "root daemon installed; raw disk is opened by root and inherited by a real-user FSKit bridge",
+    "root daemon installed; raw disk FD is inherited by a fresh real-user FSKit bridge",
 )
 installer_text = installer_text.replace(
     "后台服务保持管理员权限访问原始 U 盘，仅 macFUSE/FSKit 桥接进程进入当前用户会话。",
-    "后台服务以管理员权限打开原始 U 盘；macFUSE/FSKit 桥接进程从启动起即为当前登录用户。",
+    "后台服务以管理员权限打开原始 U 盘；macFUSE/FSKit 桥接进程在用户 audit 会话中以当前用户身份重新 exec。",
 )
 installer.write_text(installer_text)
 
-print("Applied FSKit exec-user preview: root open raw FD -> real-user launchctl/bridge exec -> MFMount")
+print("Applied FSKit exec-user preview: root open FD -> root launchctl asuser -> setuid helper -> fresh user bridge exec")
