@@ -3,8 +3,6 @@ name: Installer Preview
 on:
   push:
     branches: ["install/one-click-installer"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
