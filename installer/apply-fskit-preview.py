@@ -198,9 +198,72 @@ POSTINSTALL
 chmod 0755 "$SCRIPTS/postinstall"'''
 text = text[:start_i] + postinstall + text[end_i + len(end):]
 
-old_dialog = 'EDP USB Vault 已安装完成。首次使用请启用 macFUSE 文件系统扩展，并在“系统设置 → 隐私与安全性 → 完整磁盘访问权限”中允许 EDP USB Vault。后台服务已改为当前用户会话运行，以兼容 FSKit。'
-new_dialog = 'EDP USB Vault 已安装完成。后台服务保持管理员权限访问原始 U 盘，仅 macFUSE/FSKit 桥接进程进入当前用户会话。请保持 macFUSE 文件系统扩展为启用状态。'
-text = text.replace(old_dialog, new_dialog)
+# Keep the launcher visibly alive throughout installation. AppleScript applets
+# expose native progress properties, so the user sees an active progress window
+# instead of an apparently dead app while /usr/sbin/installer is running.
+launcher_start = 'cat > "$LAUNCHER_SOURCE" <<APPLESCRIPT\n'
+launcher_end = 'APPLESCRIPT\n\nosacompile -o "$LAUNCHER_APP" "$LAUNCHER_SOURCE"'
+ls_i = text.find(launcher_start)
+le_i = text.find(launcher_end, ls_i + len(launcher_start))
+if ls_i < 0 or le_i < 0:
+    raise SystemExit("installer launcher AppleScript heredoc not found")
+launcher = r'''cat > "$LAUNCHER_SOURCE" <<APPLESCRIPT
+on run
+    activate
+    set appBundle to POSIX path of (path to me)
+    set pkgPath to appBundle & "Contents/Resources/${PKG_NAME}"
+    set tempPkg to "${TEMP_PKG}"
+
+    try
+        set answer to display dialog "将安装 EDP USB Vault、macFUSE 5.3.3 和后台服务。安装过程中会要求输入 Mac 管理员密码。" buttons {"取消", "开始安装"} default button "开始安装" cancel button "取消" with title "EDP USB Vault 安装" with icon note
+
+        set progress total steps to 4
+        set progress completed steps to 0
+        set progress description to "正在准备安装"
+        set progress additional description to "正在准备 EDP USB Vault 安装包…"
+        delay 0.2
+
+        do shell script "/bin/rm -f " & quoted form of tempPkg & "; /usr/bin/ditto " & quoted form of pkgPath & " " & quoted form of tempPkg
+        set progress completed steps to 1
+        set progress description to "等待管理员授权"
+        set progress additional description to "请输入 Mac 管理员密码以继续安装。"
+        delay 0.2
+
+        set progress completed steps to 2
+        set progress description to "正在安装"
+        set progress additional description to "正在安装 macFUSE、EDP USB Vault 和后台服务，请勿关闭此窗口…"
+        set installCommand to "/usr/sbin/installer -pkg " & quoted form of tempPkg & " -target / && /bin/rm -f " & quoted form of tempPkg
+        do shell script installCommand with administrator privileges
+
+        set progress completed steps to 3
+        set progress description to "正在完成配置"
+        set progress additional description to "正在启动后台服务并完成系统配置…"
+        delay 0.5
+
+        do shell script "/usr/bin/test -d " & quoted form of "/Applications/EDP USB Vault.app"
+        set progress completed steps to 4
+        set progress description to "安装完成"
+        set progress additional description to "EDP USB Vault 已成功安装。"
+        delay 0.4
+
+        set answer to display dialog "EDP USB Vault 已安装完成。后台服务保持管理员权限访问原始 U 盘，仅 macFUSE/FSKit 桥接进程进入当前用户会话。请保持 macFUSE 文件系统扩展为启用状态。" buttons {"稍后", "打开 EDP USB Vault"} default button "打开 EDP USB Vault" with title "安装完成" with icon note
+        if button returned of answer is "打开 EDP USB Vault" then
+            do shell script "/usr/bin/open -a " & quoted form of "/Applications/EDP USB Vault.app"
+        end if
+    on error errMsg number errNum
+        try
+            do shell script "/bin/rm -f " & quoted form of tempPkg
+        end try
+        if errNum is not -128 then
+            display dialog "安装失败：" & errMsg buttons {"关闭"} default button "关闭" with title "EDP USB Vault" with icon stop
+        end if
+    end try
+end run
+APPLESCRIPT
+
+osacompile -o "$LAUNCHER_APP" "$LAUNCHER_SOURCE"'''
+text = text[:ls_i] + launcher + text[le_i + len(launcher_end):]
+
 installer.write_text(text)
 
-print("Applied FSKit hybrid preview: root daemon + root bridge in console GUI bootstrap")
+print("Applied FSKit hybrid preview: root daemon + root bridge in console GUI bootstrap + visible installer progress")
