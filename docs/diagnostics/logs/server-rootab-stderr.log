@@ -1,0 +1,2 @@
+MFMount: MFMount(_:_:_:_:): File system extension not enabled
+fuse: mount failed with error: 4
