@@ -658,6 +658,40 @@ fn prepare_daemon_stop(purge_data: bool) -> Result<(), UiError> {
         })
 }
 
+fn prepare_daemon_restart() -> Result<(), UiError> {
+    let old_uptime = Rpc::new()
+        .call(edp_proto::method::STATUS, json!({}))
+        .ok()
+        .and_then(|status| status["uptime_s"].as_u64())
+        .unwrap_or(u64::MAX);
+    let mut client = edp_proto::Client::connect(SOCKET_PATH).map_err(|error| {
+        UiError::new("DAEMON_OFFLINE", "后台服务未连接").with_detail(error.to_string())
+    })?;
+    client
+        .call(
+            edp_proto::method::DAEMON_SHUTDOWN,
+            json!({ "exit": true, "purge_data": false }),
+        )
+        .map_err(|error| {
+            UiError::new("SAFE_RESTART_FAILED", "加密卷安全卸载失败，服务保持运行")
+                .with_detail(error.to_string())
+        })?;
+
+    for _ in 0..100 {
+        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(status) = Rpc::new().call(edp_proto::method::STATUS, json!({})) {
+            let uptime = status["uptime_s"].as_u64().unwrap_or(u64::MAX);
+            if uptime < old_uptime {
+                return Ok(());
+            }
+        }
+    }
+    Err(UiError::new(
+        "RESTART_TIMEOUT",
+        "后台服务退出后未被 launchd 重新拉起",
+    ))
+}
+
 fn service_action_complete(action: &str, status: &Value) -> bool {
     let installed = status["installed"].as_bool().unwrap_or(false);
     let running = status["running"].as_bool().unwrap_or(false);
@@ -733,7 +767,11 @@ async fn run_service_action(
         &id,
         &action,
         "authorizing",
-        "正在更新 macOS 后台项目…",
+        match action.as_str() {
+            "restart" => "正在安全卸载并重启后台服务…",
+            "stop" | "uninstall" => "正在安全卸载加密卷…",
+            _ => "正在更新 macOS 后台项目…",
+        },
         None,
     );
     let current = service_status_impl()?;
@@ -759,16 +797,9 @@ async fn run_service_action(
             }
             "restart" => {
                 if running {
-                    prepare_daemon_stop(false)?;
+                    prepare_daemon_restart()?;
                 }
-                service_management::unregister().map_err(|message| {
-                    UiError::new("SERVICE_UNREGISTER_FAILED", "无法重新注册后台服务")
-                        .with_detail(message)
-                })?;
-                service_management::register().map_err(|message| {
-                    UiError::new("SERVICE_REGISTER_FAILED", "无法重新启用后台服务")
-                        .with_detail(message)
-                })
+                Ok(())
             }
             "uninstall" => {
                 if running {
