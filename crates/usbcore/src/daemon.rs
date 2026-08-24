@@ -43,7 +43,7 @@ pub struct DaemonState {
     pub mounted: Mutex<HashMap<String, HashSet<String>>>,
     /// 当前外置盘的只读识别结果。
     disk_inventory: Mutex<HashMap<String, DetectedDisk>>,
-    /// 正在尝试自动挂载的盘（bsd），防并发重复尝试
+    /// 正在执行挂载的盘（bsd）。自动与手动挂载共用，防止同盘并发创建重复会话。
     pub auto_mount_inflight: Mutex<std::collections::HashSet<String>>,
     /// 用户手动卸载后，本次连接周期不再立即自动挂载；拔盘或手动挂载时清除。
     pub auto_mount_suppressed: Mutex<std::collections::HashSet<String>>,
@@ -375,6 +375,27 @@ fn register_session(d: &DaemonState, bsd: &str, sid: &str) {
         .insert(sid.to_string());
 }
 
+struct ManualMountGuard<'a> {
+    inflight: &'a Mutex<HashSet<String>>,
+    bsd: String,
+}
+
+impl<'a> ManualMountGuard<'a> {
+    fn acquire(d: &'a DaemonState, bsd: &str) -> Option<Self> {
+        let mut inflight = d.auto_mount_inflight.lock().unwrap();
+        inflight.insert(bsd.to_string()).then(|| Self {
+            inflight: &d.auto_mount_inflight,
+            bsd: bsd.to_string(),
+        })
+    }
+}
+
+impl Drop for ManualMountGuard<'_> {
+    fn drop(&mut self) {
+        self.inflight.lock().unwrap().remove(&self.bsd);
+    }
+}
+
 fn unregister_session(d: &DaemonState, sid: &str) -> Option<(String, bool)> {
     let mut mounted = d.mounted.lock().unwrap();
     let bsd = mounted
@@ -388,6 +409,36 @@ fn unregister_session(d: &DaemonState, sid: &str) -> Option<(String, bool)> {
         mounted.remove(&bsd);
     }
     Some((bsd, last))
+}
+
+fn find_session_for_partition(
+    sessions: &Value,
+    source: &Path,
+    partition_type: u32,
+) -> Option<Value> {
+    let source = source.to_string_lossy();
+    sessions
+        .get("sessions")?
+        .as_array()?
+        .iter()
+        .find(|session| {
+            session.get("source").and_then(Value::as_str) == Some(source.as_ref())
+                && session
+                    .get("partition")
+                    .and_then(|partition| partition.get("partition_type"))
+                    .and_then(Value::as_u64)
+                    == Some(partition_type as u64)
+        })
+        .cloned()
+}
+
+fn active_session_for_partition(
+    d: &DaemonState,
+    source: &Path,
+    partition_type: u32,
+) -> Option<Value> {
+    let sessions = session::list_active(&d.session_root).ok()?;
+    find_session_for_partition(&sessions, source, partition_type)
 }
 
 fn record_timing(d: &DaemonState, timing: edp_proto::OperationTiming) {
@@ -437,6 +488,25 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
         .and_then(|x| x.as_str())
         .unwrap_or_default();
     let source = PathBuf::from(disk);
+    let bsd = disk
+        .trim_start_matches("/dev/")
+        .trim_start_matches('r')
+        .to_string();
+
+    // Mount is idempotent for a physical partition. This also closes the small
+    // window after attach succeeds but before an event-driven UI refresh arrives.
+    if let Some(existing) = active_session_for_partition(d, &source, ptype) {
+        return Ok(existing);
+    }
+    let _mount_guard = ManualMountGuard::acquire(d, &bsd).ok_or_else(|| {
+        edp_proto::RpcError::new(edp_proto::codes::BUSY, "该物理盘正在执行挂载，请稍候")
+    })?;
+    // An automatic mount may have completed immediately before we acquired the
+    // guard. Recheck under ownership before performing discovery or unmounting.
+    if let Some(existing) = active_session_for_partition(d, &source, ptype) {
+        return Ok(existing);
+    }
+
     let io = std::sync::Arc::new(FileRawIo::open(&source, true).map_err(rpc_io)?);
     let hints = crate::build_hints_for(&source);
 
@@ -482,10 +552,6 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
     };
 
     let session_root = d.session_root.clone();
-    let bsd = disk
-        .trim_start_matches("/dev/")
-        .trim_start_matches('r')
-        .to_string();
     d.auto_mount_suppressed.lock().unwrap().remove(&bsd);
     let physical_already_prepared = d
         .mounted
@@ -1617,5 +1683,29 @@ mod safety_tests {
         .unwrap();
         let lba7: [u8; 512] = bytes.try_into().unwrap();
         assert!(lba7_is_structurally_edp(&lba7, 124_736_503_808));
+    }
+
+    #[test]
+    fn mounted_partition_lookup_is_idempotent_per_source_and_type() {
+        let sessions = json!({
+            "sessions": [
+                {
+                    "session_id": "exchange",
+                    "source": "/dev/rdisk4",
+                    "partition": { "partition_type": 2 }
+                },
+                {
+                    "session_id": "secret",
+                    "source": "/dev/rdisk4",
+                    "partition": { "partition_type": 4 }
+                }
+            ]
+        });
+
+        let exchange = find_session_for_partition(&sessions, Path::new("/dev/rdisk4"), 2)
+            .expect("exchange session");
+        assert_eq!(exchange["session_id"], "exchange");
+        assert!(find_session_for_partition(&sessions, Path::new("/dev/rdisk5"), 2).is_none());
+        assert!(find_session_for_partition(&sessions, Path::new("/dev/rdisk4"), 3).is_none());
     }
 }
