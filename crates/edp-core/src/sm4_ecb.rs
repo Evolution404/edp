@@ -23,6 +23,7 @@ fn crypto_pool() -> &'static rayon::ThreadPool {
         rayon::ThreadPoolBuilder::new()
             .num_threads(workers)
             .thread_name(|index| format!("edp-sm4-{index}"))
+            .start_handler(|_| crate::qos::set_current_thread_user_initiated())
             .build()
             .expect("创建 SM4 工作线程池失败")
     })

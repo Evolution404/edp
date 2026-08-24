@@ -49,15 +49,18 @@ impl JobPool {
             let pending = pending.clone();
             std::thread::Builder::new()
                 .name(format!("edp-io-{index}"))
-                .spawn(move || loop {
-                    let job = receiver.lock().unwrap().recv();
-                    let Ok(job) = job else { break };
-                    job();
-                    let (lock, wake) = &*pending;
-                    let mut count = lock.lock().unwrap();
-                    *count -= 1;
-                    if *count == 0 {
-                        wake.notify_all();
+                .spawn(move || {
+                    edp_core::qos::set_current_thread_user_initiated();
+                    loop {
+                        let job = receiver.lock().unwrap().recv();
+                        let Ok(job) = job else { break };
+                        job();
+                        let (lock, wake) = &*pending;
+                        let mut count = lock.lock().unwrap();
+                        *count -= 1;
+                        if *count == 0 {
+                            wake.notify_all();
+                        }
                     }
                 })
                 .expect("创建 bridge I/O 工作线程失败");
@@ -442,6 +445,7 @@ pub fn run(
     ready_fd: Option<i32>,
     performance_path: Option<&Path>,
 ) -> anyhow::Result<()> {
+    edp_core::qos::set_current_thread_user_initiated();
     let key = read_key_from_fd(key_fd)?;
     let desc = VolumeDescriptor {
         partition_type,
