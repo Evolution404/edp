@@ -92,6 +92,7 @@ section "Prepare FSClient helper"
 #import <Foundation/Foundation.h>
 #import <dispatch/dispatch.h>
 #import <objc/message.h>
+#import <objc/runtime.h>
 #import <dlfcn.h>
 #import <unistd.h>
 
@@ -99,12 +100,43 @@ static id callObjectNoArgs(id object, SEL selector) {
     return ((id (*)(id, SEL))objc_msgSend)(object, selector);
 }
 
-static NSString *safeString(id object) {
-    if (!object || object == [NSNull null]) return @"unknown";
-    return [object description];
+static BOOL callBoolNoArgs(id object, SEL selector) {
+    return ((BOOL (*)(id, SEL))objc_msgSend)(object, selector);
 }
 
-int main(int argc, const char *argv[]) {
+static NSString *oneLine(id object) {
+    if (!object || object == [NSNull null]) return @"unknown";
+    NSString *s = [object description] ?: @"unknown";
+    s = [s stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    s = [s stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+    return s;
+}
+
+static id objectForFirstSelector(id object, NSArray<NSString *> *names, NSString **usedName) {
+    for (NSString *name in names) {
+        SEL sel = NSSelectorFromString(name);
+        if ([object respondsToSelector:sel]) {
+            if (usedName) *usedName = name;
+            return callObjectNoArgs(object, sel);
+        }
+    }
+    if (usedName) *usedName = nil;
+    return nil;
+}
+
+static NSNumber *boolForFirstSelector(id object, NSArray<NSString *> *names, NSString **usedName) {
+    for (NSString *name in names) {
+        SEL sel = NSSelectorFromString(name);
+        if ([object respondsToSelector:sel]) {
+            if (usedName) *usedName = name;
+            return @(callBoolNoArgs(object, sel));
+        }
+    }
+    if (usedName) *usedName = nil;
+    return nil;
+}
+
+int main(void) {
     @autoreleasepool {
         NSString *targetBundle = @"io.macfuse.app.fsmodule.macfuse-local";
 
@@ -117,49 +149,34 @@ int main(int argc, const char *argv[]) {
 
         void *handle = dlopen("/System/Library/Frameworks/FSKit.framework/FSKit", RTLD_NOW | RTLD_LOCAL);
         if (!handle) {
-            printf("query_status=error\n");
-            printf("error_domain=dlopen\n");
-            printf("error_code=1\n");
+            printf("query_status=error\nerror_domain=dlopen\nerror_code=1\n");
             printf("error_description=%s\n", dlerror() ?: "unable to load FSKit");
-            printf("target_found=unknown\n");
-            printf("target_enabled=unknown\n");
+            printf("target_found=unknown\ntarget_enabled=unknown\n");
             return 2;
         }
 
         Class FSClientClass = NSClassFromString(@"FSClient");
         if (!FSClientClass) {
-            printf("query_status=error\n");
-            printf("error_domain=runtime\n");
-            printf("error_code=2\n");
+            printf("query_status=error\nerror_domain=runtime\nerror_code=2\n");
             printf("error_description=FSClient class not found\n");
-            printf("target_found=unknown\n");
-            printf("target_enabled=unknown\n");
-            dlclose(handle);
+            printf("target_found=unknown\ntarget_enabled=unknown\n");
             return 2;
         }
 
         SEL sharedSel = NSSelectorFromString(@"sharedInstance");
         SEL fetchSel = NSSelectorFromString(@"fetchInstalledExtensionsWithCompletionHandler:");
         if (![FSClientClass respondsToSelector:sharedSel]) {
-            printf("query_status=error\n");
-            printf("error_domain=runtime\n");
-            printf("error_code=3\n");
+            printf("query_status=error\nerror_domain=runtime\nerror_code=3\n");
             printf("error_description=FSClient sharedInstance selector missing\n");
-            printf("target_found=unknown\n");
-            printf("target_enabled=unknown\n");
-            dlclose(handle);
+            printf("target_found=unknown\ntarget_enabled=unknown\n");
             return 2;
         }
 
         id client = callObjectNoArgs(FSClientClass, sharedSel);
         if (!client || ![client respondsToSelector:fetchSel]) {
-            printf("query_status=error\n");
-            printf("error_domain=runtime\n");
-            printf("error_code=4\n");
+            printf("query_status=error\nerror_domain=runtime\nerror_code=4\n");
             printf("error_description=fetchInstalledExtensions selector missing\n");
-            printf("target_found=unknown\n");
-            printf("target_enabled=unknown\n");
-            dlclose(handle);
+            printf("target_found=unknown\ntarget_enabled=unknown\n");
             return 2;
         }
 
@@ -169,13 +186,11 @@ int main(int argc, const char *argv[]) {
         void (^completion)(NSArray *, NSError *) = ^(NSArray *identities, NSError *error) {
             callbackRan = YES;
             if (error) {
-                NSString *desc = [[error localizedDescription] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
                 printf("query_status=error\n");
                 printf("error_domain=%s\n", error.domain.UTF8String ?: "unknown");
                 printf("error_code=%ld\n", (long)error.code);
-                printf("error_description=%s\n", desc.UTF8String ?: "unknown");
-                printf("target_found=unknown\n");
-                printf("target_enabled=unknown\n");
+                printf("error_description=%s\n", oneLine(error.localizedDescription).UTF8String ?: "unknown");
+                printf("target_found=unknown\ntarget_enabled=unknown\n");
                 dispatch_semaphore_signal(semaphore);
                 return;
             }
@@ -185,34 +200,59 @@ int main(int argc, const char *argv[]) {
             printf("module_count=%lu\n", (unsigned long)modules.count);
 
             BOOL found = NO;
+            NSUInteger decodedIDs = 0;
+            NSUInteger decodeFailures = 0;
+            NSUInteger index = 0;
+
             for (id module in modules) {
-                NSString *bundleID = nil;
-                NSNumber *enabled = nil;
-                NSURL *url = nil;
-                @try {
-                    bundleID = [module valueForKey:@"bundleIdentifier"];
-                    enabled = [module valueForKey:@"enabled"];
-                    url = [module valueForKey:@"url"];
-                } @catch (NSException *exception) {
-                    continue;
+                index++;
+                NSString *className = NSStringFromClass([module class]) ?: @"unknown";
+                NSString *bundleSelName = nil;
+                NSString *enabledSelName = nil;
+                NSString *urlSelName = nil;
+
+                id bundleObject = objectForFirstSelector(module,
+                    @[@"bundleIdentifier", @"bundleID", @"identifier"], &bundleSelName);
+                NSNumber *enabledObject = boolForFirstSelector(module,
+                    @[@"isEnabled", @"enabled"], &enabledSelName);
+                id urlObject = objectForFirstSelector(module,
+                    @[@"url", @"URL"], &urlSelName);
+
+                NSString *bundleID = [bundleObject isKindOfClass:[NSString class]] ? bundleObject : nil;
+                NSString *path = nil;
+                if ([urlObject isKindOfClass:[NSURL class]]) {
+                    path = [(NSURL *)urlObject path];
+                } else if (urlObject) {
+                    path = oneLine(urlObject);
                 }
 
-                NSString *path = [url isKindOfClass:[NSURL class]] ? url.path : safeString(url);
-                int enabledInt = [enabled respondsToSelector:@selector(boolValue)] && enabled.boolValue ? 1 : 0;
-                const char *marker = [bundleID isEqualToString:targetBundle] ? "target" : "module";
-                printf("%s_entry=%s|enabled=%d|url=%s\n",
-                       marker,
-                       bundleID.UTF8String ?: "unknown",
-                       enabledInt,
-                       path.UTF8String ?: "unknown");
+                printf("module_%lu_class=%s\n", (unsigned long)index, className.UTF8String ?: "unknown");
+                printf("module_%lu_description=%s\n", (unsigned long)index, oneLine(module).UTF8String ?: "unknown");
+                printf("module_%lu_bundle_selector=%s\n", (unsigned long)index, bundleSelName.UTF8String ?: "none");
+                printf("module_%lu_enabled_selector=%s\n", (unsigned long)index, enabledSelName.UTF8String ?: "none");
+                printf("module_%lu_url_selector=%s\n", (unsigned long)index, urlSelName.UTF8String ?: "none");
+                printf("module_%lu_bundle=%s\n", (unsigned long)index, bundleID.UTF8String ?: "unknown");
+                printf("module_%lu_enabled=%s\n", (unsigned long)index,
+                       enabledObject ? (enabledObject.boolValue ? "1" : "0") : "unknown");
+                printf("module_%lu_url=%s\n", (unsigned long)index, path.UTF8String ?: "unknown");
 
-                if ([bundleID isEqualToString:targetBundle]) {
+                if (bundleID) {
+                    decodedIDs++;
+                } else {
+                    decodeFailures++;
+                }
+
+                if (bundleID && [bundleID isEqualToString:targetBundle]) {
                     found = YES;
                     printf("target_found=1\n");
-                    printf("target_enabled=%d\n", enabledInt);
+                    printf("target_enabled=%s\n",
+                           enabledObject ? (enabledObject.boolValue ? "1" : "0") : "unknown");
                     printf("target_url=%s\n", path.UTF8String ?: "unknown");
                 }
             }
+
+            printf("decoded_id_count=%lu\n", (unsigned long)decodedIDs);
+            printf("decode_failure_count=%lu\n", (unsigned long)decodeFailures);
 
             if (!found) {
                 printf("target_found=0\n");
@@ -229,14 +269,11 @@ int main(int argc, const char *argv[]) {
         long waitResult = dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC));
         if (waitResult != 0 || !callbackRan) {
             printf("query_status=timeout\n");
-            printf("target_found=unknown\n");
-            printf("target_enabled=unknown\n");
+            printf("target_found=unknown\ntarget_enabled=unknown\n");
             fflush(stdout);
-            dlclose(handle);
             return 124;
         }
 
-        dlclose(handle);
         return 0;
     }
 }
@@ -277,6 +314,21 @@ ROOT_STATUS="$(extract_value "$ROOT_OUT" query_status)"
 ASUSER_STATUS="$(extract_value "$ASUSER_OUT" query_status)"
 BACKUSER_STATUS="$(extract_value "$BACKUSER_OUT" query_status)"
 
+USER_COUNT="$(extract_value "$USER_OUT" module_count)"
+ROOT_COUNT="$(extract_value "$ROOT_OUT" module_count)"
+ASUSER_COUNT="$(extract_value "$ASUSER_OUT" module_count)"
+BACKUSER_COUNT="$(extract_value "$BACKUSER_OUT" module_count)"
+
+USER_DECODED="$(extract_value "$USER_OUT" decoded_id_count)"
+ROOT_DECODED="$(extract_value "$ROOT_OUT" decoded_id_count)"
+ASUSER_DECODED="$(extract_value "$ASUSER_OUT" decoded_id_count)"
+BACKUSER_DECODED="$(extract_value "$BACKUSER_OUT" decoded_id_count)"
+
+USER_FAILED="$(extract_value "$USER_OUT" decode_failure_count)"
+ROOT_FAILED="$(extract_value "$ROOT_OUT" decode_failure_count)"
+ASUSER_FAILED="$(extract_value "$ASUSER_OUT" decode_failure_count)"
+BACKUSER_FAILED="$(extract_value "$BACKUSER_OUT" decode_failure_count)"
+
 USER_FOUND="$(extract_value "$USER_OUT" target_found)"
 ROOT_FOUND="$(extract_value "$ROOT_OUT" target_found)"
 ASUSER_FOUND="$(extract_value "$ASUSER_OUT" target_found)"
@@ -288,32 +340,32 @@ ASUSER_ENABLED="$(extract_value "$ASUSER_OUT" target_enabled)"
 BACKUSER_ENABLED="$(extract_value "$BACKUSER_OUT" target_enabled)"
 
 section "SUMMARY"
-log "user_direct_status=${USER_STATUS:-missing} user_direct_found=${USER_FOUND:-missing} user_direct_enabled=${USER_ENABLED:-missing}"
-log "root_sudo_status=${ROOT_STATUS:-missing} root_sudo_found=${ROOT_FOUND:-missing} root_sudo_enabled=${ROOT_ENABLED:-missing}"
-log "root_asuser_status=${ASUSER_STATUS:-missing} root_asuser_found=${ASUSER_FOUND:-missing} root_asuser_enabled=${ASUSER_ENABLED:-missing}"
-log "sudo_back_user_status=${BACKUSER_STATUS:-missing} sudo_back_user_found=${BACKUSER_FOUND:-missing} sudo_back_user_enabled=${BACKUSER_ENABLED:-missing}"
+log "user_direct_status=${USER_STATUS:-missing} module_count=${USER_COUNT:-missing} decoded=${USER_DECODED:-missing} decode_failed=${USER_FAILED:-missing} found=${USER_FOUND:-missing} enabled=${USER_ENABLED:-missing}"
+log "root_sudo_status=${ROOT_STATUS:-missing} module_count=${ROOT_COUNT:-missing} decoded=${ROOT_DECODED:-missing} decode_failed=${ROOT_FAILED:-missing} found=${ROOT_FOUND:-missing} enabled=${ROOT_ENABLED:-missing}"
+log "root_asuser_status=${ASUSER_STATUS:-missing} module_count=${ASUSER_COUNT:-missing} decoded=${ASUSER_DECODED:-missing} decode_failed=${ASUSER_FAILED:-missing} found=${ASUSER_FOUND:-missing} enabled=${ASUSER_ENABLED:-missing}"
+log "sudo_back_user_status=${BACKUSER_STATUS:-missing} module_count=${BACKUSER_COUNT:-missing} decoded=${BACKUSER_DECODED:-missing} decode_failed=${BACKUSER_FAILED:-missing} found=${BACKUSER_FOUND:-missing} enabled=${BACKUSER_ENABLED:-missing}"
 
 if [[ "$USER_STATUS" != "ok" ]]; then
   log "RESULT=FSCLIENT_USER_QUERY_FAILED"
-  log "Interpretation: FSClient itself could not return the installed-module list in the normal login-user context. Inspect the user query error before drawing conclusions about approval state."
+elif [[ "${USER_COUNT:-0}" != "0" && "${USER_DECODED:-0}" == "0" ]]; then
+  log "RESULT=FSCLIENT_IDENTITY_DECODE_INCONCLUSIVE"
+  log "Interpretation: FSClient returned module objects, but this diagnostic could not decode their bundle identifiers. Do not infer an FSKit/PlugInKit discovery split from target_found=0."
+elif [[ "${USER_FAILED:-0}" != "0" ]]; then
+  log "RESULT=FSCLIENT_IDENTITY_DECODE_PARTIAL"
+  log "Interpretation: FSClient returned one or more module objects whose identity could not be decoded. Inspect the per-module class/description/selector output before treating target_found=0 as authoritative."
 elif [[ "$USER_FOUND" != "1" ]]; then
-  log "RESULT=FSCLIENT_USER_CANNOT_SEE_MACFUSE_LOCAL"
-  log "Interpretation: PlugInKit knows the extension, but FSKit's own FSClient does not expose macfuse-local to the login user. This is direct evidence of a discovery/state split."
+  log "RESULT=FSCLIENT_USER_GENUINELY_CANNOT_SEE_MACFUSE_LOCAL"
+  log "Interpretation: FSClient returned a decodable module list in the login-user context and macfuse-local was absent. This is strong evidence that FSKit's public discovery view differs from PlugInKit's registered/approved view."
 elif [[ "$USER_ENABLED" == "0" ]]; then
   log "RESULT=FSCLIENT_USER_REPORTS_DISABLED"
-  log "Interpretation: FSKit's own public API reports macfuse-local disabled for the login user. If PlugInKit shows '+', the two state views are inconsistent."
 elif [[ "$USER_ENABLED" == "1" && "$ROOT_ENABLED" == "0" && "$ASUSER_ENABLED" == "1" ]]; then
   log "RESULT=FSCLIENT_ENABLEMENT_DEPENDS_ON_USER_BOOTSTRAP"
-  log "Interpretation: root sees the module disabled in the normal sudo context but enabled inside the login user's launchd bootstrap. This points to per-user/bootstrap state."
 elif [[ "$USER_ENABLED" == "1" && "$ROOT_ENABLED" == "0" && "$BACKUSER_ENABLED" == "1" ]]; then
   log "RESULT=FSCLIENT_ROOT_CONTEXT_REPORTS_DISABLED"
-  log "Interpretation: FSKit reports the module enabled for the login UID but disabled for root. This matches the root-only MFMount preflight warning and supports a per-user enablement source."
 elif [[ "$USER_ENABLED" == "1" && "$ROOT_ENABLED" == "1" ]]; then
   log "RESULT=FSCLIENT_ENABLED_IN_USER_AND_ROOT"
-  log "Interpretation: FSKit's public state reports macfuse-local enabled in both primary contexts. If a clean mount still returns requiresApproval, isEnabled is not the final LiveFiles authorization predicate."
 else
   log "RESULT=FSCLIENT_CONTEXT_MATRIX_MIXED"
-  log "Interpretation: inspect the four context outputs to distinguish effective UID, login-user bootstrap and per-user FSKit state."
 fi
 
 log "REPORT=$REPORT"
