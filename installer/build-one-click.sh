@@ -80,10 +80,9 @@ exit 0
 POSTINSTALL
 chmod 0755 "$SCRIPTS/postinstall"
 
-# Stage the app under its final absolute location, then ask pkgbuild to analyze that
-# root. This lets us explicitly disable bundle relocation. Without this, PackageKit
-# may discover a development copy with the same bundle id elsewhere on disk and
-# install there instead of /Applications.
+# Stage the app under its final absolute location and explicitly disable bundle
+# relocation. Otherwise PackageKit can discover a development copy with the same
+# bundle id and install there instead of /Applications.
 APP_ROOT="$WORK/app-root"
 mkdir -p "$APP_ROOT/Applications"
 /usr/bin/ditto "$APP_PATH" "$APP_ROOT/Applications/EDP USB Vault.app"
@@ -195,11 +194,10 @@ productbuild \
 
 pkgutil --check-signature "$PKG_OUTPUT" || true
 
-# Do not expose the PKG directly to Finder/Installer.app. macOS can ask Installer.app
-# for Downloads/Desktop TCC access even when the PKG is opened from a DMG whose backing
-# image lives in Downloads. Instead, ship a self-contained AppleScript launcher app.
-# The launcher copies its embedded PKG to /private/tmp, then invokes the command-line
-# /usr/sbin/installer with administrator privileges. Installer.app is never launched.
+# Do not expose the PKG directly to Finder/Installer.app. macOS can ask the GUI
+# Installer for Downloads/Desktop TCC access even when the PKG is opened from a DMG.
+# Instead ship a self-contained launcher that copies its embedded PKG to /private/tmp
+# and invokes /usr/sbin/installer with administrator privileges.
 DMG_STAGE="$WORK/dmg-stage"
 mkdir -p "$DMG_STAGE"
 LAUNCHER_APP="$DMG_STAGE/安装 EDP USB Vault.app"
@@ -217,7 +215,7 @@ on run
 
         do shell script "/bin/rm -f " & quoted form of tempPkg & "; /usr/bin/ditto " & quoted form of pkgPath & " " & quoted form of tempPkg
 
-        set installCommand to "/usr/sbin/installer -pkg " & quoted form of tempPkg & " -target /; status=\\$?; /bin/rm -f " & quoted form of tempPkg & "; exit \\$status"
+        set installCommand to "/usr/sbin/installer -pkg " & quoted form of tempPkg & " -target / && /bin/rm -f " & quoted form of tempPkg
         do shell script installCommand with administrator privileges
 
         set answer to display dialog "EDP USB Vault 已安装完成。首次使用请在“系统设置 → 隐私与安全性 → 完整磁盘访问权限”中允许 EDP USB Vault。" buttons {"稍后", "打开 EDP USB Vault"} default button "打开 EDP USB Vault" with title "安装完成" with icon note
@@ -239,7 +237,6 @@ osacompile -o "$LAUNCHER_APP" "$LAUNCHER_SOURCE"
 mkdir -p "$LAUNCHER_APP/Contents/Resources"
 cp "$PKG_OUTPUT" "$LAUNCHER_APP/Contents/Resources/$PKG_NAME"
 
-# Give the launcher a stable identity and reuse the product icon when available.
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.edp.usbvault.installer" "$LAUNCHER_APP/Contents/Info.plist" || true
 /usr/libexec/PlistBuddy -c "Set :CFBundleName 安装 EDP USB Vault" "$LAUNCHER_APP/Contents/Info.plist" || true
 /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 安装 EDP USB Vault" "$LAUNCHER_APP/Contents/Info.plist" 2>/dev/null || \
