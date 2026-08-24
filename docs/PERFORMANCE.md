@@ -26,16 +26,36 @@ Lexar EDP 交换区使用 iBoysoft NTFS。只创建并删除独立隐藏测试�
 
 | 指标 | 优化前 | 优化后 |
 |---|---:|---:|
-| 1 GiB 顺序冷读 | 20.9 MB/s | 68.7 MB/s |
-| 1 GiB 持久化顺序写 | 未建立同口径基线 | 68.5 MB/s |
-| 自动挂载总耗时 | 3.700 s | 最好 2.038 s |
+| 1 GiB 顺序冷读 | 20.9 MB/s | 178.2 MB/s（重新挂载，校验通过） |
+| 1 GiB 持久化顺序写 | 未建立同口径基线 | 135.9 MB/s |
+| 自动挂载总耗时 | 3.700 s | 最好 0.660 s |
 | 正常卸载 | — | 1.43–1.48 s |
 | 1 MiB SM4 加/解密 | 约 296 MB/s（旧批量后端） | 711/678 MB/s |
 
-冷读提升约 3.29 倍。最终 1 GiB 读写均完成数据校验；iBoysoft 不支持文件级 `fsync`，诊断工具使用 macOS `sync` 屏障并将耗时计入写吞吐。bridge 正常卸载仍直接对底层裸设备执行一次持久化屏障。
+本轮定位并修复了自动与手动挂载竞态：同一个 Lexar 交换区此前可能同时创建两个 bridge（`/Volumes/交换区` 与 `/Volumes/交换区 1`），竞争同一裸设备时实测仅有 37.4/43.6 MB/s。现在同盘同分区的挂载请求幂等返回现有 session，自动与手动挂载共用同一物理盘进行中锁。
+
+最终 1 GiB 读取完成确定性数据逐块校验；iBoysoft 不支持文件级 `fsync`，诊断工具使用 macOS `sync` 屏障并将耗时计入写吞吐。bridge 正常卸载仍直接对底层裸设备执行一次持久化屏障。
+
+严格冷读需要分两阶段执行，避免紧接写入后命中 bridge 页缓存：
+
+```bash
+# 第一阶段：创建确定性测试文件并持久化写入
+target/release/usbcore perf file '/Volumes/交换区/.edp-vault-benchmark.tmp' \
+  --mode write --gib 1 --block-kib 1024 --queue-depth 1 \
+  --access-pattern sequential --filesystem iboysoft-ntfs \
+  --layer mounted-filesystem --destructive --json
+
+# 正常卸载交换区并重新挂载后执行第二阶段
+target/release/usbcore perf file '/Volumes/交换区/.edp-vault-benchmark.tmp' \
+  --mode read --verify --gib 1 --block-kib 1024 --queue-depth 1 \
+  --access-pattern sequential --filesystem iboysoft-ntfs \
+  --layer mounted-filesystem --json
+```
+
+`read-write` 模式仍适合单次写入加即时读取校验，但即时读取不再标注为冷读。
 
 ## 尚未通过的验收门槛
 
-当前不能宣告“同盘同文件系统原生速度 85%”已经通过：HIKSEMI 尚未制作同格式的 EDP+iBoysoft NTFS 测试卷，因此缺少严格的同盘 A/B 对照。Lexar bridge 统计显示约 1.08 GiB 数据的裸设备读取累计约 3.7 秒，而加密累计约 11.4 秒；Finder 路径仍受 SMAppService 调度、DiskImages 和 iBoysoft 串行请求影响。
+当前不能宣告“同盘同文件系统原生速度 85%”已经通过：HIKSEMI 尚未制作同格式的 EDP+iBoysoft NTFS 测试卷，因此缺少严格的同盘 A/B 对照。Finder 路径仍受 SMAppService 调度、DiskImages 和 iBoysoft 请求模型影响。
 
 若同盘 A/B 后仍低于 85%，下一架构门槛是替换 DiskImages/文件系统驱动之间的虚拟块设备后端，而不是放宽落盘语义或增加不安全的延迟写回。

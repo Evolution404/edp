@@ -63,6 +63,9 @@ pub enum PerfCmd {
         /// 写测试必须显式确认；目标文件会被覆盖。
         #[arg(long)]
         destructive: bool,
+        /// 读取时按工具的确定性数据模式逐块校验；用于写入后重新挂载的冷读测试。
+        #[arg(long)]
+        verify: bool,
         #[arg(long)]
         json: bool,
     },
@@ -127,6 +130,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
             filesystem,
             layer,
             destructive,
+            verify,
             json,
         } => {
             if matches!(mode, BenchMode::Write | BenchMode::ReadWrite) && !destructive {
@@ -143,6 +147,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
                 queue_depth,
                 access_pattern,
                 mode,
+                verify || matches!(mode, BenchMode::ReadWrite),
                 path.display().to_string(),
                 &layer,
                 filesystem,
@@ -247,6 +252,7 @@ pub fn hiksemi_raw_reports(
         queue_depth,
         access_pattern,
         mode,
+        matches!(mode, BenchMode::ReadWrite),
         format!("HIKSEMI serial={serial} bsd={}", identity.bsd),
         "raw_device",
         None,
@@ -327,6 +333,7 @@ fn benchmark_io(
     queue_depth: usize,
     access_pattern: AccessPattern,
     mode: BenchMode,
+    verify_reads: bool,
     identity: String,
     layer: &str,
     filesystem: Option<String>,
@@ -371,7 +378,7 @@ fn benchmark_io(
             queue_depth,
             access_pattern,
             false,
-            matches!(mode, BenchMode::ReadWrite),
+            verify_reads,
             identity,
             layer,
             filesystem,
