@@ -166,9 +166,13 @@ int edp_fuse_run(void *ctx, const char *mountpoint, uint64_t size, int readonly)
     ops.fsync = edp_fsync;
     ops.statfs = edp_statfs;
 
+    /* On macOS 15.x, macFUSE automatically selects the local FSKit module.
+     * Do not force the experimental `local` option. Match the known-good
+     * macFUSE 5.3.3 / macOS 15.7 path and make the mount owner explicit. */
     char options[512];
     snprintf(options, sizeof(options),
-             "backend=fskit,local,nobrowse,noappledouble,volname=EDP Raw Bridge");
+             "backend=fskit,uid=%u,gid=%u,nobrowse,noappledouble,volname=EDP Raw Bridge",
+             (unsigned)getuid(), (unsigned)getgid());
 
     char *argv[] = {
         (char *)"edp-usb-bridge",
