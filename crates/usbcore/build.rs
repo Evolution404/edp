@@ -57,7 +57,8 @@ fn main() {
             String::from_utf8_lossy(&libs.stderr)
         );
     }
-    let mut iter = String::from_utf8_lossy(&libs.stdout)
+    let libs_text = String::from_utf8_lossy(&libs.stdout);
+    let mut iter = libs_text
         .split_whitespace()
         .map(str::to_string)
         .peekable();
