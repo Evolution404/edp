@@ -4,6 +4,10 @@
 //! `fuser::Session`：fuser 的 Rust 会话层仍依赖传统 FUSE 设备 fd，而
 //! macFUSE FSKit 通过 MFMount 的消息通道传输。C shim 仅负责 libfuse 回调，
 //! 实际加解密 I/O 仍由 Rust `EncryptedPartitionIO` 完成。
+//!
+//! root LaunchDaemon 启动 bridge 时，bridge 会先以 root 身份打开 `/dev/rdiskN`，
+//! 然后在进入 libfuse/FSKit 前真正降权到当前控制台用户。已经打开的原始磁盘
+//! FD 在降权后继续有效，因此可以同时满足原始磁盘访问和 FSKit 用户授权模型。
 
 use std::ffi::{c_void, CString};
 use std::os::unix::ffi::OsStrExt;
@@ -110,6 +114,72 @@ fn read_key_from_fd(fd: i32) -> anyhow::Result<SecretKey16> {
     Ok(SecretKey16::from(buf))
 }
 
+/// Preview-only bridge identity, supplied by the privileged session launcher.
+/// Both values must be present together; otherwise the bridge keeps its current uid/gid.
+fn requested_run_identity() -> anyhow::Result<Option<(libc::uid_t, libc::gid_t)>> {
+    let uid = std::env::var("EDP_BRIDGE_RUN_UID").ok();
+    let gid = std::env::var("EDP_BRIDGE_RUN_GID").ok();
+    match (uid, gid) {
+        (None, None) => Ok(None),
+        (Some(uid), Some(gid)) => {
+            let uid = uid.parse::<libc::uid_t>().context("EDP_BRIDGE_RUN_UID 非法")?;
+            let gid = gid.parse::<libc::gid_t>().context("EDP_BRIDGE_RUN_GID 非法")?;
+            if uid == 0 {
+                bail!("EDP_BRIDGE_RUN_UID 不能为 0");
+            }
+            Ok(Some((uid, gid)))
+        }
+        _ => bail!("EDP_BRIDGE_RUN_UID/EDP_BRIDGE_RUN_GID 必须同时设置"),
+    }
+}
+
+fn prepare_user_mountpoint(
+    mountpoint: &Path,
+    identity: Option<(libc::uid_t, libc::gid_t)>,
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(mountpoint)?;
+    if let Some((uid, gid)) = identity {
+        let mountpoint_c = CString::new(mountpoint.as_os_str().as_bytes())
+            .context("bridge mountpoint 包含 NUL")?;
+        if unsafe { libc::chown(mountpoint_c.as_ptr(), uid, gid) } != 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| {
+                format!("chown bridge mountpoint {} -> {uid}:{gid}", mountpoint.display())
+            });
+        }
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(mountpoint, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Keep the raw disk File opened by root, but make MFMount/FSKit itself run with the
+/// real console user's credentials. `launchctl asuser` has already selected the GUI
+/// bootstrap before this function is called; this function changes only credentials.
+fn drop_to_user(uid: libc::uid_t, gid: libc::gid_t) -> anyhow::Result<()> {
+    let current = unsafe { libc::geteuid() };
+    if current == uid {
+        return Ok(());
+    }
+    if current != 0 {
+        bail!("bridge 无法从 euid={current} 降权到 uid={uid}");
+    }
+
+    // Do not retain root supplementary groups in the user-space file-system server.
+    if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("bridge setgroups 失败");
+    }
+    if unsafe { libc::setgid(gid) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("bridge setgid 失败");
+    }
+    if unsafe { libc::setuid(uid) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("bridge setuid 失败");
+    }
+    if unsafe { libc::geteuid() } != uid || unsafe { libc::getegid() } != gid {
+        bail!("bridge 降权后 uid/gid 校验失败");
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     source: &Path,
@@ -134,12 +204,23 @@ pub fn run(
         password_crc: 0,
         key_crc: 0,
     };
+
+    // IMPORTANT: open the raw device while still privileged. The File stays open
+    // across setuid/setgid and all later encrypted random I/O uses this descriptor.
     let io = Arc::new(FileRawIo::open(source, readonly)?);
     let volume = Arc::new(EncryptedPartitionIO::open(io, desc, readonly)?);
-    std::fs::create_dir_all(mountpoint)?;
+    let run_identity = requested_run_identity()?;
+    prepare_user_mountpoint(mountpoint, run_identity)?;
+
+    let privileged_euid = unsafe { libc::geteuid() };
+    if let Some((uid, gid)) = run_identity {
+        drop_to_user(uid, gid)?;
+    }
+    let fuse_euid = unsafe { libc::geteuid() };
+    let fuse_egid = unsafe { libc::getegid() };
 
     info!(
-        "bridge(libfuse/FSKit): source={} mount={} start_sector={start_sector} size={size_bytes} priority_raised={priority_raised}",
+        "bridge(libfuse/FSKit): source={} mount={} start_sector={start_sector} size={size_bytes} priority_raised={priority_raised} open_euid={privileged_euid} fuse_euid={fuse_euid} fuse_egid={fuse_egid}",
         source.display(),
         mountpoint.display()
     );
@@ -150,7 +231,7 @@ pub fn run(
         let virtual_file = mountpoint.join(VIRTUAL_NAME);
         std::thread::spawn(move || {
             let mut ready = unsafe { std::fs::File::from_raw_fd(fd) };
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
             while std::time::Instant::now() < deadline {
                 if std::fs::metadata(&virtual_file).is_ok() {
                     let _ = ready.write_all(&[1]);
