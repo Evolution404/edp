@@ -3,6 +3,8 @@ name: Installer Preview
 on:
   push:
     branches: ["install/one-click-installer"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -100,6 +102,7 @@ jobs:
 
   publish:
     name: Publish installer preview release
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
