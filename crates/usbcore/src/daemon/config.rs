@@ -42,6 +42,10 @@ impl DevicePolicy {
         {
             bail!("partition_types 仅允许 2（交换区）或 4（保密区）");
         }
+        // `authorized` remains serialized for schema/RPC compatibility, but is no
+        // longer an independent user decision. Selecting at least one partition is
+        // the complete per-device auto-mount policy.
+        self.authorized = !self.partition_types.is_empty();
         Ok(())
     }
 }
@@ -195,5 +199,17 @@ mod tests {
             })
             .unwrap();
         assert_eq!(config.device_policies[0].partition_types, vec![2, 4]);
+        assert!(config.device_policies[0].authorized);
+
+        config
+            .set_policy(DevicePolicy {
+                device_id: "disk-id".into(),
+                label: "My disk".into(),
+                authorized: true,
+                partition_types: vec![],
+                last_media_name: None,
+            })
+            .unwrap();
+        assert!(!config.device_policies[0].authorized);
     }
 }

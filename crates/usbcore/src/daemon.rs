@@ -714,7 +714,7 @@ fn handle_devices_policy_set(
             format!("设备策略格式错误: {error}"),
         )
     })?;
-    let should_evaluate = policy.authorized;
+    let should_evaluate = !policy.partition_types.is_empty();
     let device_id = policy.device_id.clone();
     let mut next = d.config.lock().unwrap().clone();
     next.set_policy(policy).map_err(rpc_internal)?;

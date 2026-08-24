@@ -17,11 +17,12 @@ const device = computed(() => store.selectedDevice);
 const autoPaused = computed(() => store.snapshot?.auto_mount_mode === "paused");
 
 function policyFor(item: DeviceInfo): DevicePolicy {
+  const partitionTypes = [...(item.policy?.partition_types ?? [])];
   return {
     device_id: item.device_id ?? "",
     label: item.policy?.label || item.media_name || "EDP 设备",
-    authorized: item.policy?.authorized ?? false,
-    partition_types: [...(item.policy?.partition_types ?? [])],
+    authorized: partitionTypes.length > 0,
+    partition_types: partitionTypes,
     last_media_name: item.media_name || item.policy?.last_media_name || null,
   };
 }
@@ -31,21 +32,17 @@ function savePolicy(item: DeviceInfo, policy: DevicePolicy) {
   void store.savePolicy(policy).catch(() => undefined);
 }
 
-function setAuthorized(item: DeviceInfo, authorized: boolean) {
-  const policy = policyFor(item);
-  if (authorized && policy.partition_types.length === 0) {
-    store.toast("neutral", "请先选择至少一个自动挂载分区");
-    return;
-  }
-  savePolicy(item, { ...policy, authorized });
-}
-
 function setPartitionSelected(item: DeviceInfo, type: PartitionType, selected: boolean) {
   const policy = policyFor(item);
   const types = new Set(policy.partition_types);
   if (selected) types.add(type);
   else types.delete(type);
-  savePolicy(item, { ...policy, partition_types: [...types].sort() as PartitionType[] });
+  const partitionTypes = [...types].sort() as PartitionType[];
+  savePolicy(item, {
+    ...policy,
+    authorized: partitionTypes.length > 0,
+    partition_types: partitionTypes,
+  });
 }
 
 function credentialsFor(item: DeviceInfo, type: PartitionType) {
@@ -114,7 +111,8 @@ function deviceState(item: DeviceInfo) {
   if (!item.connected) return "已保存 · 离线";
   if (item.session_ids.length) return `已挂载 ${item.session_ids.length} 个分区`;
   if (!item.policy) return "待配置";
-  return item.policy.authorized ? "已授权" : "未授权";
+  const selected = item.policy.partition_types.length;
+  return selected ? `已设置 ${selected} 个分区` : "未设置自动挂载";
 }
 
 function runMount(item: DeviceInfo, type: PartitionType) {
@@ -135,7 +133,7 @@ function openFinder(item: DeviceInfo, type: PartitionType) {
 <template>
   <div class="view devices-view">
     <header class="view-title">
-      <div><h1>设备</h1><p>选择一台 EDP 设备，集中管理授权、凭据与加密分区。</p></div>
+      <div><h1>设备</h1><p>选择一台 EDP 设备，集中管理分区自动挂载、凭据与当前会话。</p></div>
       <button class="button icon-only" :disabled="!!store.busy.refresh" aria-label="刷新设备状态" @click="store.refresh">
         <AppIcon name="refresh" />
       </button>
@@ -229,18 +227,8 @@ function openFinder(item: DeviceInfo, type: PartitionType) {
           </header>
 
           <div v-if="autoPaused" class="notice warning compact">
-            <AppIcon name="info" /><div><strong>全局自动挂载已暂停</strong><span>下方逐盘授权保持不变，手动操作仍可使用。</span></div>
+            <AppIcon name="info" /><div><strong>全局自动挂载已暂停</strong><span>下方分区选择保持不变，手动操作仍可使用。</span></div>
           </div>
-
-          <section class="policy-panel">
-            <ToggleSwitch
-              :model-value="device.policy?.authorized ?? false"
-              :disabled="!device.device_id || !!store.busy[`policy-${device.device_id}`]"
-              label="允许此设备自动挂载"
-              description="只有已勾选且凭据验证成功的分区才会自动挂载。"
-              @update:model-value="setAuthorized(device, $event)"
-            />
-          </section>
 
           <section class="partition-list">
             <article v-for="type in ([2, 4] as PartitionType[])" :key="type" class="partition-row">
@@ -313,7 +301,7 @@ function openFinder(item: DeviceInfo, type: PartitionType) {
     </ModalSheet>
 
     <ModalSheet v-if="deleteTarget" title="删除凭据？" description="删除后，该分区将失去自动挂载资格；当前已挂载会话不会被卸载。" @close="deleteTarget = null">
-      <p>将删除“{{ deleteTarget.label }}”。此操作不会修改设备授权。</p>
+      <p>将删除“{{ deleteTarget.label }}”。此操作不会修改该分区的自动挂载选择。</p>
       <template #footer>
         <button class="button secondary" @click="deleteTarget = null">取消</button>
         <button class="button danger" :disabled="!!store.busy[`credential-delete-${deleteTarget.id}`]" @click="confirmCredentialDelete">删除凭据</button>

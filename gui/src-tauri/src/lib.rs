@@ -402,7 +402,7 @@ async fn set_device_policy(app: AppHandle, policy: Value) -> Result<AppSnapshot,
         Rpc::new()
             .call(edp_proto::method::DEVICES_POLICY_SET, policy)
             .map_err(|message| {
-                UiError::new("RPC_FAILED", "无法保存设备授权").with_detail(message)
+                UiError::new("RPC_FAILED", "无法保存分区自动挂载设置").with_detail(message)
             })?;
         Ok(publish_snapshot(&app))
     })
@@ -1221,7 +1221,7 @@ fn spawn_subscriber(app: AppHandle) {
                 let title = match event.event.as_str() {
                     edp_proto::event::MOUNTED => Some("EDP 卷已挂载"),
                     edp_proto::event::UNMOUNTED => Some("EDP 卷已卸载"),
-                    edp_proto::event::PASSWORD_NEEDED => Some("已授权设备需要密码"),
+                    edp_proto::event::PASSWORD_NEEDED => Some("已选择的自动挂载分区需要密码"),
                     edp_proto::event::DEVICE_NEEDS_SETUP => Some("发现待配置 EDP 设备"),
                     edp_proto::event::MOUNT_FAILED => Some("EDP 卷挂载失败"),
                     _ => None,

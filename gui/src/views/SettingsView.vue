@@ -100,7 +100,7 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
           <span class="settings-icon"><AppIcon name="info" /></span>
           <div><h2>EDP USB Vault</h2><p>简体中文 · Tauri + Vue · 客户端版本 0.4.0</p></div>
         </div>
-        <p>自动挂载总开关仅位于窗口顶部；每台设备的授权与分区选择在“设备”页面管理。</p>
+        <p>紧急暂停开关仅位于窗口顶部；每台设备只需在“设备”页面选择交换区或保密区。</p>
       </section>
 
       <section v-if="store.snapshot?.service.installed || store.snapshot?.service.legacy_installed" class="settings-card wide danger-zone">
@@ -127,7 +127,7 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
       </template>
     </ModalSheet>
 
-    <ModalSheet v-if="confirmation === 'uninstall'" title="完全清理 EDP USB Vault？" description="所有加密卷会先安全卸载，后台服务会被注销，配置、设备授权和密码库会永久删除。" @close="confirmation = null">
+    <ModalSheet v-if="confirmation === 'uninstall'" title="完全清理 EDP USB Vault？" description="所有加密卷会先安全卸载，后台服务会被注销，配置、分区设置和密码库会永久删除。" @close="confirmation = null">
       <p>此操作不可撤销。应用包仍会保留，可稍后重新启用并从空白状态开始。</p>
       <template #footer>
         <button class="button secondary" @click="confirmation = null">取消</button>

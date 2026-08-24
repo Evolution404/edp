@@ -144,7 +144,6 @@ code, .mono { font-family: var(--mono); }
 .safe-panel div { color: var(--text); }
 .safe-panel h2 { margin: 0 0 4px; font-size: 14px; }
 .safe-panel p { margin: 0; color: var(--muted); font-size: 11px; }
-.policy-panel { padding: 14px; margin-bottom: 14px; background: var(--surface-secondary); border: 1px solid var(--border); border-radius: 9px; }
 .partition-list { display: grid; gap: 10px; }
 .partition-row { display: grid; gap: 13px; padding: 15px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .partition-info { display: flex; gap: 11px; }

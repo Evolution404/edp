@@ -32,7 +32,7 @@ function eventPresentation(event: RawDaemonEvent): Omit<ActivityEntry, "id" | "t
     mount_failed: { title: "挂载失败", tone: "danger" },
     password_needed: { title: "设备需要有效密码", tone: "warning" },
     device_needs_setup: { title: "发现待配置 EDP 设备", tone: "warning" },
-    device_policy_changed: { title: "设备授权已更新", tone: "neutral" },
+    device_policy_changed: { title: "分区自动挂载设置已更新", tone: "neutral" },
     auto_mount_mode_changed: { title: "自动挂载状态已更新", tone: "neutral" },
     disk_appeared: { title: "检测到外置设备", tone: "neutral" },
     disk_removed: { title: "外置设备已移除", tone: "neutral" },
@@ -138,7 +138,7 @@ export const useStore = defineStore("ui-v2", {
       await this.run(
         `policy-${policy.device_id}`,
         async () => this.applySnapshot(await api.setDevicePolicy(policy)),
-        "设备授权已保存",
+        "分区自动挂载设置已保存",
       );
     },
     async mount(device: DeviceInfo, partitionType: PartitionType) {
