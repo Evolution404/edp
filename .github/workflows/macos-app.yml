@@ -98,6 +98,10 @@ jobs:
     name: Build arm64 app
     needs: quality
     runs-on: macos-15
+    env:
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -111,6 +115,31 @@ jobs:
 
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal
+
+      - name: Import Apple signing certificate
+        if: env.APPLE_CERTIFICATE_P12 != ''
+        run: |
+          set -euo pipefail
+          test -n "${APPLE_CERTIFICATE_PASSWORD}"
+          test -n "${APPLE_SIGNING_IDENTITY}"
+          CERTIFICATE_PATH="${RUNNER_TEMP}/edp-signing.p12"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/edp-signing.keychain-db"
+          KEYCHAIN_PASSWORD="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s' "${APPLE_CERTIFICATE_P12}" | base64 -D > "${CERTIFICATE_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERTIFICATE_PATH}" -k "${KEYCHAIN_PATH}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" login.keychain-db
+
+      - name: Require signed release artifacts
+        if: startsWith(github.ref, 'refs/tags/v') && env.APPLE_CERTIFICATE_P12 == ''
+        run: |
+          echo 'Release tags require APPLE_CERTIFICATE_P12, APPLE_CERTIFICATE_PASSWORD and APPLE_SIGNING_IDENTITY.' >&2
+          exit 1
 
       - name: Cache Rust build output
         uses: actions/cache@v5
@@ -163,14 +192,18 @@ jobs:
           APP_VERSION="$(node -p "require('./gui/package.json').version")"
           ARCHIVE_BASE="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}"
           PACKAGE_DIR="$(mktemp -d "${RUNNER_TEMP}/edp-dmg.XXXXXX")"
+          SIGNING_IDENTITY="-"
+          if [[ -n "${APPLE_CERTIFICATE_P12}" ]]; then
+            SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY}"
+          fi
 
           test -x "${APP_PATH}/Contents/Resources/usbcore"
           test -f "${APP_PATH}/Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist"
-          codesign --force --options runtime --sign - \
+          codesign --force --options runtime --sign "${SIGNING_IDENTITY}" \
             --entitlements gui/src-tauri/embedded/usbcore.entitlements.plist \
             --identifier com.edp.usbvault.daemon.v2 \
             "${APP_PATH}/Contents/Resources/usbcore"
-          codesign --force --options runtime --sign - \
+          codesign --force --options runtime --sign "${SIGNING_IDENTITY}" \
             --identifier com.edp.usbvault "${APP_PATH}"
           codesign -d --entitlements :- \
             "${APP_PATH}/Contents/Resources/usbcore" 2>&1 \
@@ -178,6 +211,11 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
           mkdir -p "${ARTIFACT_DIR}"
+          if [[ "${SIGNING_IDENTITY}" == "-" ]]; then
+            printf '%s\n' \
+              'Ad-hoc preview build: embedded SMAppService requires a Team-signed build.' \
+              > "${ARTIFACT_DIR}/UNSIGNED-PREVIEW.txt"
+          fi
           ditto -c -k --sequesterRsrc --keepParent \
             "${APP_PATH}" "${ARTIFACT_DIR}/${ARCHIVE_BASE}.app.zip"
 
