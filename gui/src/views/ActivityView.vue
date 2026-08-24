@@ -72,6 +72,10 @@ function unmount(sessionId: string) {
           <code>source: {{ session.source }}</code>
           <code v-for="path in session.mountpoints" :key="path">mountpoint: {{ path }}</code>
         </div>
+        <div class="log-section" v-if="diagnostics.performance.sessions.length">
+          <h3>挂载与 I/O 性能</h3>
+          <pre>{{ JSON.stringify(diagnostics.performance.sessions, null, 2) }}</pre>
+        </div>
         <div v-for="log in diagnostics.logs" :key="log.file" class="log-section">
           <h3>{{ log.file }}</h3><pre>{{ log.lines.join("\n") }}</pre>
         </div>

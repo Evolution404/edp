@@ -8,6 +8,7 @@
 mod bridge;
 mod daemon;
 mod keystore;
+mod perf;
 mod session;
 
 use std::path::{Path, PathBuf};
@@ -89,6 +90,11 @@ enum Commands {
     Mounts,
     /// daemon 在线状态摘要
     Status,
+    /// 开发/诊断性能基准。
+    Perf {
+        #[command(subcommand)]
+        action: perf::PerfCmd,
+    },
     /// 密码库管理（需 daemon 在线）
     Keys {
         #[command(subcommand)]
@@ -109,6 +115,10 @@ enum Commands {
         key_fd: i32,
         #[arg(long)]
         readonly: bool,
+        #[arg(long)]
+        ready_fd: Option<i32>,
+        #[arg(long)]
+        performance_path: Option<PathBuf>,
     },
     /// 守护进程子命令
     Daemon {
@@ -205,6 +215,7 @@ fn main() -> Result<()> {
         Commands::Unmount { session_id, force } => cmd_unmount(&session_id, force),
         Commands::Mounts => cmd_mounts(),
         Commands::Status => cmd_status(),
+        Commands::Perf { action } => perf::run(action),
         Commands::Keys { action } => cmd_keys(action),
         Commands::Bridge {
             source,
@@ -214,6 +225,8 @@ fn main() -> Result<()> {
             partition_type,
             key_fd,
             readonly,
+            ready_fd,
+            performance_path,
         } => bridge::run(
             &source,
             &mountpoint,
@@ -222,6 +235,8 @@ fn main() -> Result<()> {
             partition_type,
             key_fd,
             readonly,
+            ready_fd,
+            performance_path.as_deref(),
         ),
         Commands::Daemon { action } => cmd_daemon(action),
     }

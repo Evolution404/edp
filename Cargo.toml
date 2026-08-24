@@ -30,7 +30,9 @@ plist = "1"
 aes = "0.8"          # 仅用于 counter=0 交叉验证单测
 md-5 = "0.10"
 aes-gcm = "0.10"
+sm4 = "0.5.1"
 rand = "0.8"
+rayon = "1.10"
 
 # 工具
 clap = { version = "4", features = ["derive"] }

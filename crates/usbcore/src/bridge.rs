@@ -8,7 +8,8 @@
 
 use std::ffi::OsStr;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime};
 
 use fuser::{
@@ -26,12 +27,72 @@ pub const VIRTUAL_NAME: &str = "volume.raw";
 const ROOT_INO: u64 = 1;
 const FILE_INO: u64 = 2;
 const TTL: Duration = Duration::from_secs(1);
-/// FUSE FOPEN_DIRECT_IO（libfuse 语义，等价 fusepy 的 direct_io=True）。
-const FOPEN_DIRECT_IO: u32 = 0x2;
+const REQUEST_BYTES: u32 = 1024 * 1024;
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+struct JobPool {
+    sender: std::sync::mpsc::SyncSender<Job>,
+    pending: Arc<(Mutex<usize>, Condvar)>,
+}
+
+impl JobPool {
+    fn new() -> Self {
+        let workers = std::thread::available_parallelism()
+            .map(|value| value.get().min(4))
+            .unwrap_or(2);
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<Job>(workers * 4);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let pending = Arc::new((Mutex::new(0usize), Condvar::new()));
+        for index in 0..workers {
+            let receiver = receiver.clone();
+            let pending = pending.clone();
+            std::thread::Builder::new()
+                .name(format!("edp-io-{index}"))
+                .spawn(move || loop {
+                    let job = receiver.lock().unwrap().recv();
+                    let Ok(job) = job else { break };
+                    job();
+                    let (lock, wake) = &*pending;
+                    let mut count = lock.lock().unwrap();
+                    *count -= 1;
+                    if *count == 0 {
+                        wake.notify_all();
+                    }
+                })
+                .expect("创建 bridge I/O 工作线程失败");
+        }
+        info!("bridge: I/O workers={workers}");
+        Self { sender, pending }
+    }
+
+    fn execute(&self, job: Job) {
+        let (lock, _) = &*self.pending;
+        *lock.lock().unwrap() += 1;
+        if let Err(error) = self.sender.send(job) {
+            (error.0)();
+            let (lock, wake) = &*self.pending;
+            let mut count = lock.lock().unwrap();
+            *count -= 1;
+            if *count == 0 {
+                wake.notify_all();
+            }
+        }
+    }
+
+    fn drain(&self) {
+        let (lock, wake) = &*self.pending;
+        let mut count = lock.lock().unwrap();
+        while *count != 0 {
+            count = wake.wait(count).unwrap();
+        }
+    }
+}
 
 struct RawVolumeBridge {
-    volume: EncryptedPartitionIO,
+    volume: Arc<EncryptedPartitionIO>,
     readonly: bool,
+    jobs: JobPool,
 }
 
 fn now() -> SystemTime {
@@ -53,7 +114,7 @@ fn file_attr(volume_size: u64, readonly: bool) -> FileAttr {
         uid: nix_uid(),
         gid: nix_gid(),
         rdev: 0,
-        blksize: 128 * 1024,
+        blksize: REQUEST_BYTES,
         flags: 0,
     }
 }
@@ -73,7 +134,7 @@ fn root_attr() -> FileAttr {
         uid: nix_uid(),
         gid: nix_gid(),
         rdev: 0,
-        blksize: 128 * 1024,
+        blksize: REQUEST_BYTES,
         flags: 0,
     }
 }
@@ -104,14 +165,33 @@ impl Filesystem for RawVolumeBridge {
     fn init(&mut self, _req: &Request<'_>, config: &mut KernelConfig) -> Result<(), libc::c_int> {
         // 放宽 FUSE 单次读写上限（默认偏小会把 hdiutil/exFAT 的成块写碎片化，
         // 实测限制拷贝吞吐）。set_max_write 失败（内核不认可）时静默用默认。
-        let _ = config.set_max_write(128 * 1024);
-        info!("bridge: 已挂载（readonly={}）", self.readonly);
+        let max_write = config
+            .set_max_write(REQUEST_BYTES)
+            .map(|_| REQUEST_BYTES)
+            .unwrap_or_else(|limit| {
+                let _ = config.set_max_write(limit);
+                limit
+            });
+        let max_readahead = config
+            .set_max_readahead(REQUEST_BYTES)
+            .map(|_| REQUEST_BYTES)
+            .unwrap_or_else(|limit| {
+                if limit > 0 {
+                    let _ = config.set_max_readahead(limit);
+                }
+                limit
+            });
+        info!(
+            "bridge: 已挂载 readonly={} max_write={} max_readahead={}",
+            self.readonly, max_write, max_readahead
+        );
         Ok(())
     }
 
     fn destroy(&mut self) {
-        if let Err(e) = self.volume.flush() {
-            warn!("bridge: destroy flush 失败: {e}");
+        self.jobs.drain();
+        if let Err(e) = self.volume.sync() {
+            warn!("bridge: destroy sync 失败: {e}");
         }
         info!("bridge: 已卸载");
     }
@@ -204,7 +284,8 @@ impl Filesystem for RawVolumeBridge {
             reply.error(libc::EPERM);
             return;
         }
-        reply.opened(0, FOPEN_DIRECT_IO);
+        // 使用 macFUSE 的缓存 I/O，让 hdiutil 获得顺序预读和写合并。
+        reply.opened(0, 0);
     }
 
     fn read(
@@ -229,14 +310,17 @@ impl Filesystem for RawVolumeBridge {
             return;
         }
         let want = (size as u64).min(total - offset) as usize;
-        let mut buf = vec![0u8; want];
-        match self.volume.read(offset, &mut buf) {
-            Ok(()) => reply.data(&buf),
-            Err(e) => {
-                warn!("bridge: read 失败 offset={offset}: {e}");
-                reply.error(libc::EIO);
+        let volume = self.volume.clone();
+        self.jobs.execute(Box::new(move || {
+            let mut buf = vec![0u8; want];
+            match volume.read(offset, &mut buf) {
+                Ok(()) => reply.data(&buf),
+                Err(e) => {
+                    warn!("bridge: read 失败 offset={offset}: {e}");
+                    reply.error(libc::EIO);
+                }
             }
-        }
+        }));
     }
 
     fn write(
@@ -264,13 +348,16 @@ impl Filesystem for RawVolumeBridge {
             reply.error(libc::ENOSPC);
             return;
         }
-        match self.volume.write(offset, data) {
-            Ok(n) => reply.written(n as u32),
-            Err(e) => {
-                warn!("bridge: write 失败 offset={offset}: {e}");
-                reply.error(libc::EIO);
-            }
-        }
+        let volume = self.volume.clone();
+        let data = data.to_vec();
+        self.jobs
+            .execute(Box::new(move || match volume.write(offset, &data) {
+                Ok(n) => reply.written(n as u32),
+                Err(e) => {
+                    warn!("bridge: write 失败 offset={offset}: {e}");
+                    reply.error(libc::EIO);
+                }
+            }));
     }
 
     fn flush(
@@ -282,6 +369,7 @@ impl Filesystem for RawVolumeBridge {
         reply: ReplyEmpty,
     ) {
         if ino == FILE_INO {
+            self.jobs.drain();
             if let Err(e) = self.volume.flush() {
                 warn!("bridge: flush 失败: {e}");
                 reply.error(libc::EIO);
@@ -300,7 +388,8 @@ impl Filesystem for RawVolumeBridge {
         reply: ReplyEmpty,
     ) {
         if ino == FILE_INO {
-            if let Err(e) = self.volume.flush() {
+            self.jobs.drain();
+            if let Err(e) = self.volume.sync() {
                 warn!("bridge: fsync 失败: {e}");
                 reply.error(libc::EIO);
                 return;
@@ -323,6 +412,7 @@ fn mount_options() -> Vec<MountOption> {
         MountOption::CUSTOM("local".into()),
         MountOption::CUSTOM("noappledouble".into()),
         MountOption::CUSTOM("nobrowse".into()),
+        MountOption::CUSTOM("async".into()),
         MountOption::DefaultPermissions,
     ]
 }
@@ -339,6 +429,7 @@ fn read_key_from_fd(fd: i32) -> anyhow::Result<SecretKey16> {
 }
 
 /// `usbcore bridge` 入口（daemon/CLI 内部 spawn，不面向最终用户文档）。
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     source: &Path,
     mountpoint: &Path,
@@ -347,6 +438,8 @@ pub fn run(
     partition_type: u32,
     key_fd: i32,
     readonly: bool,
+    ready_fd: Option<i32>,
+    performance_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     let key = read_key_from_fd(key_fd)?;
     let desc = VolumeDescriptor {
@@ -359,14 +452,55 @@ pub fn run(
         key_crc: 0,
     };
     let io = Arc::new(FileRawIo::open(source, readonly)?);
-    let volume = EncryptedPartitionIO::open(io, desc, readonly)?;
+    let volume = Arc::new(EncryptedPartitionIO::open(io, desc, readonly)?);
     std::fs::create_dir_all(mountpoint)?;
-    let bridge = RawVolumeBridge { volume, readonly };
+    let bridge = RawVolumeBridge {
+        volume: volume.clone(),
+        readonly,
+        jobs: JobPool::new(),
+    };
     info!(
         "bridge: source={} mount={} start_sector={start_sector} size={size_bytes}",
         source.display(),
         mountpoint.display()
     );
-    fuser::mount2(bridge, mountpoint, &mount_options())?;
+    let mut session = fuser::Session::new(bridge, mountpoint, &mount_options())?;
+    if let Some(fd) = ready_fd {
+        use std::io::Write;
+        use std::os::unix::io::FromRawFd;
+        let mut ready = unsafe { std::fs::File::from_raw_fd(fd) };
+        ready.write_all(&[1])?;
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let reporter = performance_path.map(|path| {
+        let path = path.to_path_buf();
+        let volume = volume.clone();
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                write_performance(&path, &volume.performance_snapshot());
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            write_performance(&path, &volume.performance_snapshot());
+        })
+    });
+    let result = session.run();
+    stop.store(true, Ordering::Relaxed);
+    if let Some(reporter) = reporter {
+        let _ = reporter.join();
+    }
+    result?;
     Ok(())
+}
+
+fn write_performance(path: &Path, snapshot: &edp_core::volume::IoPerformanceSnapshot) {
+    let temporary = path.with_extension("tmp");
+    let result = serde_json::to_vec(snapshot)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| std::fs::write(&temporary, bytes))
+        .and_then(|_| std::fs::rename(&temporary, path));
+    if let Err(error) = result {
+        warn!("bridge: 写入性能快照失败: {error}");
+    }
 }

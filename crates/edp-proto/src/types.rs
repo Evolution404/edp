@@ -79,6 +79,44 @@ pub mod method {
     pub const SUBSCRIBE: &str = "subscribe";
     pub const UNSUBSCRIBE: &str = "unsubscribe";
     pub const DAEMON_SHUTDOWN: &str = "daemon.shutdown";
+    pub const PERFORMANCE_SNAPSHOT: &str = "performance.snapshot";
+    pub const PERFORMANCE_RESET: &str = "performance.reset";
+}
+
+/// 挂载/卸载操作的单阶段计时。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationTiming {
+    pub operation_id: String,
+    pub kind: String,
+    pub stage: String,
+    pub duration_ms: u64,
+    pub outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 分层 I/O 基准报告。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BenchmarkReport {
+    pub device_identity: String,
+    pub layer: String,
+    pub filesystem: Option<String>,
+    pub mode: String,
+    pub bytes: u64,
+    pub block_size: u64,
+    pub queue_depth: usize,
+    pub duration_ms: u64,
+    pub throughput_bytes_s: u64,
+    pub iops: f64,
+    pub latency_p50_us: u64,
+    pub latency_p95_us: u64,
+    pub latency_p99_us: u64,
+    pub cpu_seconds: f64,
+    pub verified: bool,
 }
 
 /// 事件名常量。

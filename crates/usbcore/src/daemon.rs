@@ -5,7 +5,7 @@
 
 mod config;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -53,6 +53,8 @@ pub struct DaemonState {
     pub quiesced: std::sync::atomic::AtomicBool,
     /// 主线程句柄（shutdown 时 unpark）
     pub main_thread: std::thread::Thread,
+    /// 最近的挂载/卸载阶段计时（最多 256 条）。
+    pub performance_timings: Mutex<VecDeque<edp_proto::OperationTiming>>,
 }
 
 const DEFAULT_SESSION_ROOT: &str = "/var/db/com.edp.usbvault/sessions";
@@ -128,6 +130,7 @@ pub fn run_with(
         shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         quiesced: std::sync::atomic::AtomicBool::new(false),
         main_thread: std::thread::current(),
+        performance_timings: Mutex::new(VecDeque::with_capacity(256)),
     });
 
     // The daemon executable lives inside the app bundle. If Finder removes the
@@ -149,7 +152,12 @@ pub fn run_with(
         });
     }
 
-    // 启动磁盘监听线程（轮询 diskutil diff；DiskArbitration 后续补）
+    // diskutil activity 直接订阅 Disk Arbitration 事件；watcher 只在事件后
+    // 做一次合并扫描，并保留 10s 低频容错扫描。
+    {
+        let state = state.clone();
+        std::thread::spawn(move || disk_arbitration_event_loop(state));
+    }
     {
         let state = state.clone();
         std::thread::spawn(move || {
@@ -226,6 +234,14 @@ fn build_methods() -> Result<HashMap<String, Handler>> {
     );
     map.insert(m::LOGS_READ.to_string(), Arc::new(handle_logs_read));
     map.insert(m::DAEMON_SHUTDOWN.to_string(), Arc::new(handle_shutdown));
+    map.insert(
+        m::PERFORMANCE_SNAPSHOT.to_string(),
+        Arc::new(handle_performance_snapshot),
+    );
+    map.insert(
+        m::PERFORMANCE_RESET.to_string(),
+        Arc::new(handle_performance_reset),
+    );
     map.insert(
         m::SUBSCRIBE.to_string(),
         Arc::new(|_c, _p| Ok(json!({"ok": true}))),
@@ -364,8 +380,41 @@ fn unregister_session(d: &DaemonState, sid: &str) -> Option<(String, bool)> {
     Some((bsd, last))
 }
 
+fn record_timing(d: &DaemonState, timing: edp_proto::OperationTiming) {
+    let mut timings = d.performance_timings.lock().unwrap();
+    if timings.len() == 256 {
+        timings.pop_front();
+    }
+    timings.push_back(timing);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn timing(
+    operation_id: &str,
+    kind: &str,
+    stage: &str,
+    started: std::time::Instant,
+    outcome: &str,
+    device_id: Option<&str>,
+    session_id: Option<&str>,
+    error: Option<String>,
+) -> edp_proto::OperationTiming {
+    edp_proto::OperationTiming {
+        operation_id: operation_id.to_string(),
+        kind: kind.to_string(),
+        stage: stage.to_string(),
+        duration_ms: started.elapsed().as_millis() as u64,
+        outcome: outcome.to_string(),
+        device_id: device_id.map(str::to_string),
+        session_id: session_id.map(str::to_string),
+        error,
+    }
+}
+
 fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
     let d = daemon(ctx)?;
+    let operation_id = uuid::Uuid::new_v4().to_string();
+    let operation_started = std::time::Instant::now();
     let disk = p.get("disk").and_then(|x| x.as_str()).unwrap_or_default();
     let ptype = p
         .get("partition_type")
@@ -434,8 +483,24 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
         .get(&bsd)
         .is_some_and(|sessions| !sessions.is_empty());
     if source.starts_with("/dev/") && !physical_already_prepared {
-        edp_macos::unmount_disk(&bsd).map_err(rpc_io)?;
+        let started = std::time::Instant::now();
+        let result = edp_macos::unmount_disk(&bsd);
+        record_timing(
+            d,
+            timing(
+                &operation_id,
+                "mount",
+                "physical_unmount",
+                started,
+                if result.is_ok() { "ok" } else { "error" },
+                Some(&hit_id),
+                None,
+                result.as_ref().err().map(ToString::to_string),
+            ),
+        );
+        result.map_err(rpc_io)?;
     }
+    let attach_started = std::time::Instant::now();
     let state = match session::mount_and_attach(
         &source,
         &desc,
@@ -447,6 +512,19 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
     ) {
         Ok(state) => state,
         Err(error) => {
+            record_timing(
+                d,
+                timing(
+                    &operation_id,
+                    "mount",
+                    "bridge_attach",
+                    attach_started,
+                    "error",
+                    Some(&hit_id),
+                    None,
+                    Some(error.to_string()),
+                ),
+            );
             if source.starts_with("/dev/") && !physical_already_prepared {
                 let _ = edp_macos::mount_disk(&bsd);
             }
@@ -456,6 +534,33 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
             ));
         }
     };
+    let sid = state["session_id"].as_str();
+    record_timing(
+        d,
+        timing(
+            &operation_id,
+            "mount",
+            "bridge_attach",
+            attach_started,
+            "ok",
+            Some(&hit_id),
+            sid,
+            None,
+        ),
+    );
+    record_timing(
+        d,
+        timing(
+            &operation_id,
+            "mount",
+            "total",
+            operation_started,
+            "ok",
+            Some(&hit_id),
+            sid,
+            None,
+        ),
+    );
     if let Some(sid) = state["session_id"].as_str() {
         register_session(d, &bsd, sid);
         d.broadcaster
@@ -472,18 +577,47 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
 
 fn handle_unmount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
     let d = daemon(ctx)?;
+    let operation_id = uuid::Uuid::new_v4().to_string();
+    let operation_started = std::time::Instant::now();
     let sid = p
         .get("session_id")
         .and_then(|x| x.as_str())
         .unwrap_or_default();
     let force = p.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
     let session_root = d.session_root.clone();
-    session::unmount(sid, force, &session_root)
-        .map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
+    let result = session::unmount(sid, force, &session_root);
+    record_timing(
+        d,
+        timing(
+            &operation_id,
+            "unmount",
+            "detach_and_sync",
+            operation_started,
+            if result.is_ok() { "ok" } else { "error" },
+            None,
+            Some(sid),
+            result.as_ref().err().map(ToString::to_string),
+        ),
+    );
+    result.map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
+    let restore_started = std::time::Instant::now();
     if let Some((bsd, true)) = unregister_session(d, sid).filter(|(bsd, _)| bsd.starts_with("disk"))
     {
         let _ = edp_macos::mount_disk(&bsd);
     }
+    record_timing(
+        d,
+        timing(
+            &operation_id,
+            "unmount",
+            "restore_public_disk",
+            restore_started,
+            "ok",
+            None,
+            Some(sid),
+            None,
+        ),
+    );
     d.broadcaster
         .broadcast(edp_proto::event::UNMOUNTED, json!({ "session_id": sid }));
     Ok(json!({ "unmounted": sid }))
@@ -859,6 +993,34 @@ fn handle_logs_read(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_pro
     Ok(json!({ "logs": logs }))
 }
 
+fn handle_performance_snapshot(
+    ctx: &edp_proto::Context,
+    _p: Value,
+) -> Result<Value, edp_proto::RpcError> {
+    let d = daemon(ctx)?;
+    let mut snapshot = session::performance_snapshot(&d.session_root);
+    snapshot["operation_timings"] =
+        serde_json::to_value(d.performance_timings.lock().unwrap().clone())
+            .map_err(rpc_internal)?;
+    Ok(snapshot)
+}
+
+fn handle_performance_reset(
+    ctx: &edp_proto::Context,
+    _p: Value,
+) -> Result<Value, edp_proto::RpcError> {
+    if !ctx.is_root() {
+        return Err(edp_proto::RpcError::new(
+            edp_proto::codes::PERMISSION_DENIED,
+            "performance.reset 仅允许 root 调用",
+        ));
+    }
+    let d = daemon(ctx)?;
+    session::reset_performance(&d.session_root).map_err(rpc_internal)?;
+    d.performance_timings.lock().unwrap().clear();
+    Ok(json!({ "ok": true }))
+}
+
 fn tail_file(path: &Path, n: usize) -> Option<Vec<String>> {
     let data = std::fs::read(path).ok()?;
     let text = String::from_utf8_lossy(&data);
@@ -899,11 +1061,7 @@ fn quiesce(d: &DaemonState, purge_data: bool, exit: bool, reason: &str) -> Resul
             d.quiesced.store(false, std::sync::atomic::Ordering::SeqCst);
             bail!("安全卸载会话 {sid} 失败，daemon 保持运行: {error}");
         }
-        if let Some((bsd, true)) =
-            unregister_session(d, sid).filter(|(bsd, _)| bsd.starts_with("disk"))
-        {
-            let _ = edp_macos::mount_disk(&bsd);
-        }
+        let _ = unregister_session(d, sid);
         if let Some(source) = item["source"]
             .as_str()
             .filter(|source| source.starts_with("/dev/"))
@@ -1050,8 +1208,19 @@ fn spawn_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
 
 fn disk_watcher_loop(state: Arc<DaemonState>) {
     let mut prev: HashSet<String> = HashSet::new();
+    let mut last_fallback = std::time::Instant::now() - std::time::Duration::from_secs(10);
     while !state.shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+        let requested = state
+            .rescan_requested
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        if !requested && last_fallback.elapsed() < std::time::Duration::from_secs(10) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+        // 合并 Disk Arbitration 的同一批多条消息。
+        std::thread::sleep(std::time::Duration::from_millis(150));
         let disks = edp_macos::list_disks(false).unwrap_or_default();
+        last_fallback = std::time::Instant::now();
         let cur: HashSet<String> = disks.iter().map(|disk| disk.bsd.clone()).collect();
         for disk in &disks {
             if !prev.contains(&disk.bsd) {
@@ -1062,10 +1231,7 @@ fn disk_watcher_loop(state: Arc<DaemonState>) {
                 spawn_auto_mount(&state, &disk.bsd);
             }
         }
-        if state
-            .rescan_requested
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
+        if requested {
             for disk in &disks {
                 spawn_auto_mount(&state, &disk.bsd);
             }
@@ -1075,7 +1241,45 @@ fn disk_watcher_loop(state: Arc<DaemonState>) {
             cleanup_disappeared(&state, bsd);
         }
         prev = cur;
-        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+}
+
+fn disk_arbitration_event_loop(state: Arc<DaemonState>) {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    while !state.shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+        let mut child = match Command::new("/usr/sbin/diskutil")
+            .arg("activity")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                warn!("Disk Arbitration 监听启动失败: {error}");
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                continue;
+            }
+        };
+        if let Some(stdout) = child.stdout.take() {
+            for line in BufReader::new(stdout).lines() {
+                if state.shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                if line.is_ok() {
+                    state
+                        .rescan_requested
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        if !state.shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            warn!("Disk Arbitration 监听已退出，1s 后重连");
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
 }
 
@@ -1106,15 +1310,22 @@ fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
     let Some(disk_info) = disk_info else {
         return EvaluationOutcome::Retry;
     };
-    let detected = match inspect_disk(bsd, &disk_info.media_name, disk_info.total_size) {
-        Ok(detected) => detected,
-        Err(_) => return EvaluationOutcome::Retry,
+    let detected = state
+        .disk_inventory
+        .lock()
+        .unwrap()
+        .get(bsd)
+        .cloned()
+        .or_else(|| inspect_disk(bsd, &disk_info.media_name, disk_info.total_size).ok());
+    let Some(detected) = detected else {
+        return EvaluationOutcome::Retry;
     };
     state
         .disk_inventory
         .lock()
         .unwrap()
-        .insert(bsd.to_string(), detected.clone());
+        .entry(bsd.to_string())
+        .or_insert_with(|| detected.clone());
     state.broadcaster.broadcast(
         edp_proto::event::DEVICE_DETECTED,
         json!({ "bsd": bsd, "kind": detected.kind }),
@@ -1173,8 +1384,24 @@ fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
     }
 
     let physical_already_prepared = !already_mounted.is_empty();
+    let operation_id = uuid::Uuid::new_v4().to_string();
     if !physical_already_prepared {
-        if let Err(error) = edp_macos::unmount_disk(bsd) {
+        let started = std::time::Instant::now();
+        let result = edp_macos::unmount_disk(bsd);
+        record_timing(
+            state,
+            timing(
+                &operation_id,
+                "auto_mount",
+                "physical_unmount",
+                started,
+                if result.is_ok() { "ok" } else { "error" },
+                Some(&policy.device_id),
+                None,
+                result.as_ref().err().map(ToString::to_string),
+            ),
+        );
+        if let Err(error) = result {
             state.broadcaster.broadcast(
                 edp_proto::event::MOUNT_FAILED,
                 json!({ "bsd": bsd, "message": error.to_string() }),
@@ -1189,6 +1416,7 @@ fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
             "自动挂载 {bsd} type={} label={label}",
             descriptor.partition_type
         );
+        let started = std::time::Instant::now();
         match session::mount_and_attach(
             &source,
             &descriptor,
@@ -1200,6 +1428,19 @@ fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
         ) {
             Ok(session) => {
                 if let Some(sid) = session.get("session_id").and_then(Value::as_str) {
+                    record_timing(
+                        state,
+                        timing(
+                            &operation_id,
+                            "auto_mount",
+                            "bridge_attach",
+                            started,
+                            "ok",
+                            Some(&hit_id),
+                            Some(sid),
+                            None,
+                        ),
+                    );
                     mounted_any = true;
                     register_session(state, bsd, sid);
                     state
@@ -1210,14 +1451,29 @@ fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
                     }
                 }
             }
-            Err(error) => state.broadcaster.broadcast(
-                edp_proto::event::MOUNT_FAILED,
-                json!({
-                    "bsd": bsd,
-                    "partition_type": descriptor.partition_type,
-                    "message": error.to_string(),
-                }),
-            ),
+            Err(error) => {
+                record_timing(
+                    state,
+                    timing(
+                        &operation_id,
+                        "auto_mount",
+                        "bridge_attach",
+                        started,
+                        "error",
+                        Some(&hit_id),
+                        None,
+                        Some(error.to_string()),
+                    ),
+                );
+                state.broadcaster.broadcast(
+                    edp_proto::event::MOUNT_FAILED,
+                    json!({
+                        "bsd": bsd,
+                        "partition_type": descriptor.partition_type,
+                        "message": error.to_string(),
+                    }),
+                )
+            }
         }
     }
     if !mounted_any && !physical_already_prepared {

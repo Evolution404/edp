@@ -131,4 +131,25 @@ export interface CredentialInput {
 export interface DiagnosticsResult {
   snapshot: AppSnapshot;
   logs: Array<{ file: string; lines: string[] }>;
+  performance: {
+    sessions: Array<{
+      session_id: string;
+      device_id: string;
+      active: boolean;
+      mount_timings_ms?: Record<string, number> | null;
+      unmount_timings_ms?: Record<string, number> | null;
+      io?: Record<string, number> | null;
+    }>;
+    operation_timings?: Array<{
+      operation_id: string;
+      kind: string;
+      stage: string;
+      duration_ms: number;
+      outcome: string;
+      device_id?: string;
+      session_id?: string;
+      error?: string;
+    }>;
+    error?: string;
+  };
 }

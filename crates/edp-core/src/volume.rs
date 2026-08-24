@@ -3,12 +3,17 @@
 //! 语义与 `edp_volume.py::EncryptedPartitionIO` 逐行对应：
 //! - 读：扩展到 16B 边界解密后切片
 //! - 写：读-改-写（RMW）非对齐部分，重加密整个边界范围
-//! - 互斥锁保护；flush 下传 fsync
+//! - 读请求可并行，写请求仅对冲突范围加锁
+//! - flush 仅表示提交请求，fsync/安全卸载才下传持久化屏障
 
 use std::fs::OpenOptions;
 use std::io::SeekFrom;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
 
 use crate::lba12::VolumeDescriptor;
 use crate::sm4_ecb::Sm4Ecb;
@@ -28,7 +33,7 @@ pub trait RawIo: Send + Sync {
 
 /// 镜像文件 / 整盘 `/dev/rdiskN` 的实现（read+write 双向打开）。
 pub struct FileRawIo {
-    file: std::sync::Mutex<std::fs::File>,
+    file: std::fs::File,
     path: std::path::PathBuf,
     size: u64,
     is_device: bool,
@@ -43,13 +48,13 @@ impl FileRawIo {
             // 块设备的 st_size 不可靠，seek End 取容量（失败为 0——
             // 设备不做镜像式边界检查，容量由调用方经 diskutil 校验）。
             use std::io::Seek;
-            let mut f = &file;
+            let mut f = file.try_clone()?;
             f.seek(SeekFrom::End(0)).unwrap_or(0)
         } else {
             file.metadata()?.len()
         };
         Ok(Self {
-            file: Mutex::new(file),
+            file,
             path: path.to_path_buf(),
             size,
             is_device,
@@ -69,14 +74,12 @@ impl RawIo for FileRawIo {
 
     fn pread_exact(&self, off: u64, buf: &mut [u8]) -> std::io::Result<()> {
         use std::os::unix::fs::FileExt;
-        let f = self.file.lock().unwrap();
-        f.read_exact_at(buf, off)
+        self.file.read_exact_at(buf, off)
     }
 
     fn pwrite_all(&self, off: u64, data: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::FileExt;
-        let f = self.file.lock().unwrap();
-        f.write_all_at(data, off)
+        self.file.write_all_at(data, off)
     }
 
     fn size(&self) -> u64 {
@@ -84,8 +87,74 @@ impl RawIo for FileRawIo {
     }
 
     fn fsync(&self) -> std::io::Result<()> {
-        let f = self.file.lock().unwrap();
-        f.sync_all()
+        self.file.sync_all()
+    }
+}
+
+/// 透明卷 I/O 的无锁统计快照。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IoPerformanceSnapshot {
+    pub read_ops: u64,
+    pub read_bytes: u64,
+    pub write_ops: u64,
+    pub write_bytes: u64,
+    pub device_read_ns: u64,
+    pub device_write_ns: u64,
+    pub crypto_read_ns: u64,
+    pub crypto_write_ns: u64,
+    pub sync_ops: u64,
+    pub sync_ns: u64,
+    pub inflight: u64,
+    pub max_inflight: u64,
+}
+
+#[derive(Default)]
+struct IoPerformance {
+    read_ops: AtomicU64,
+    read_bytes: AtomicU64,
+    write_ops: AtomicU64,
+    write_bytes: AtomicU64,
+    device_read_ns: AtomicU64,
+    device_write_ns: AtomicU64,
+    crypto_read_ns: AtomicU64,
+    crypto_write_ns: AtomicU64,
+    sync_ops: AtomicU64,
+    sync_ns: AtomicU64,
+    inflight: AtomicU64,
+    max_inflight: AtomicU64,
+}
+
+impl IoPerformance {
+    fn enter(&self) -> InflightGuard<'_> {
+        let current = self.inflight.fetch_add(1, Ordering::Relaxed) + 1;
+        self.max_inflight.fetch_max(current, Ordering::Relaxed);
+        InflightGuard(self)
+    }
+
+    fn snapshot(&self) -> IoPerformanceSnapshot {
+        let load = |value: &AtomicU64| value.load(Ordering::Relaxed);
+        IoPerformanceSnapshot {
+            read_ops: load(&self.read_ops),
+            read_bytes: load(&self.read_bytes),
+            write_ops: load(&self.write_ops),
+            write_bytes: load(&self.write_bytes),
+            device_read_ns: load(&self.device_read_ns),
+            device_write_ns: load(&self.device_write_ns),
+            crypto_read_ns: load(&self.crypto_read_ns),
+            crypto_write_ns: load(&self.crypto_write_ns),
+            sync_ops: load(&self.sync_ops),
+            sync_ns: load(&self.sync_ns),
+            inflight: load(&self.inflight),
+            max_inflight: load(&self.max_inflight),
+        }
+    }
+}
+
+struct InflightGuard<'a>(&'a IoPerformance);
+
+impl Drop for InflightGuard<'_> {
+    fn drop(&mut self) {
+        self.0.inflight.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -95,7 +164,11 @@ pub struct EncryptedPartitionIO {
     desc: VolumeDescriptor,
     sm4: Sm4Ecb,
     readonly: bool,
-    lock: Mutex<()>,
+    write_locks: [Mutex<()>; 64],
+    sync_lock: Mutex<()>,
+    write_generation: AtomicU64,
+    synced_generation: AtomicU64,
+    performance: IoPerformance,
 }
 
 impl EncryptedPartitionIO {
@@ -114,7 +187,11 @@ impl EncryptedPartitionIO {
             sm4: Sm4Ecb::new(key.as_bytes()),
             desc,
             readonly,
-            lock: Mutex::new(()),
+            write_locks: std::array::from_fn(|_| Mutex::new(())),
+            sync_lock: Mutex::new(()),
+            write_generation: AtomicU64::new(0),
+            synced_generation: AtomicU64::new(0),
+            performance: IoPerformance::default(),
         })
     }
 
@@ -155,18 +232,64 @@ impl EncryptedPartitionIO {
         Ok(())
     }
 
+    fn lock_write_range(&self, begin: u64, end: u64) -> Vec<MutexGuard<'_, ()>> {
+        const STRIPE_BYTES: u64 = 64 * 1024;
+        let mut selected = [false; 64];
+        let mut cursor = begin;
+        while cursor < end {
+            selected[((cursor / STRIPE_BYTES) % selected.len() as u64) as usize] = true;
+            cursor = cursor.saturating_add(STRIPE_BYTES);
+        }
+        selected
+            .iter()
+            .enumerate()
+            .filter(|(_, selected)| **selected)
+            .map(|(index, _)| self.write_locks[index].lock().unwrap())
+            .collect()
+    }
+
+    /// 当前卷 I/O 统计。
+    pub fn performance_snapshot(&self) -> IoPerformanceSnapshot {
+        self.performance.snapshot()
+    }
+
     /// 读明文（任意偏移/长度，自动按 16B 对齐扩展解密）。
     pub fn read(&self, offset: u64, out: &mut [u8]) -> Result<(), CoreError> {
         if out.is_empty() {
             return Ok(());
         }
+        let _inflight = self.performance.enter();
         let (begin, end) = self.range(offset, out.len() as u64)?;
-        let _guard = self.lock.lock().unwrap();
-        let mut cipher = vec![0u8; (end - begin) as usize];
-        self.pread_cipher(begin, &mut cipher)?;
-        let plain = self.sm4.decrypt_aligned(&cipher)?;
-        let start = (offset - begin) as usize;
-        out.copy_from_slice(&plain[start..start + out.len()]);
+        if offset == begin && end == offset + out.len() as u64 {
+            let started = Instant::now();
+            self.pread_cipher(offset, out)?;
+            self.performance
+                .device_read_ns
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            let started = Instant::now();
+            self.sm4.decrypt_aligned_in_place(out)?;
+            self.performance
+                .crypto_read_ns
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        } else {
+            let mut buffer = vec![0u8; (end - begin) as usize];
+            let started = Instant::now();
+            self.pread_cipher(begin, &mut buffer)?;
+            self.performance
+                .device_read_ns
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            let started = Instant::now();
+            self.sm4.decrypt_aligned_in_place(&mut buffer)?;
+            self.performance
+                .crypto_read_ns
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            let start = (offset - begin) as usize;
+            out.copy_from_slice(&buffer[start..start + out.len()]);
+        }
+        self.performance.read_ops.fetch_add(1, Ordering::Relaxed);
+        self.performance
+            .read_bytes
+            .fetch_add(out.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 
@@ -182,29 +305,76 @@ impl EncryptedPartitionIO {
         if data.is_empty() {
             return Ok(0);
         }
+        let _inflight = self.performance.enter();
         let (begin, end) = self.range(offset, data.len() as u64)?;
-        let _guard = self.lock.lock().unwrap();
+        let _guards = self.lock_write_range(begin, end);
         if offset == begin && end == offset + data.len() as u64 {
             // 对齐快路径
-            let reenc = self.sm4.encrypt_aligned(data)?;
+            let mut reenc = data.to_vec();
+            let started = Instant::now();
+            self.sm4.encrypt_aligned_in_place(&mut reenc)?;
+            self.performance
+                .crypto_write_ns
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            let started = Instant::now();
             self.pwrite_cipher(offset, &reenc)?;
+            self.performance
+                .device_write_ns
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            self.performance.write_ops.fetch_add(1, Ordering::Relaxed);
+            self.performance
+                .write_bytes
+                .fetch_add(data.len() as u64, Ordering::Relaxed);
+            self.write_generation.fetch_add(1, Ordering::Release);
             return Ok(data.len());
         }
         // 非对齐写：读-改-写
-        let mut cipher = vec![0u8; (end - begin) as usize];
-        self.pread_cipher(begin, &mut cipher)?;
-        let mut plain = self.sm4.decrypt_aligned(&cipher)?;
+        let mut plain = vec![0u8; (end - begin) as usize];
+        let started = Instant::now();
+        self.pread_cipher(begin, &mut plain)?;
+        self.performance
+            .device_read_ns
+            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let started = Instant::now();
+        self.sm4.decrypt_aligned_in_place(&mut plain)?;
         let start = (offset - begin) as usize;
         plain[start..start + data.len()].copy_from_slice(data);
-        let reenc = self.sm4.encrypt_aligned(&plain)?;
-        self.pwrite_cipher(begin, &reenc)?;
+        self.sm4.encrypt_aligned_in_place(&mut plain)?;
+        self.performance
+            .crypto_write_ns
+            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let started = Instant::now();
+        self.pwrite_cipher(begin, &plain)?;
+        self.performance
+            .device_write_ns
+            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        self.performance.write_ops.fetch_add(1, Ordering::Relaxed);
+        self.performance
+            .write_bytes
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
+        self.write_generation.fetch_add(1, Ordering::Release);
         Ok(data.len())
     }
 
-    /// fsync 下传。
+    /// FUSE flush 只需要保证已提交的请求完成；同步实现中无需额外操作。
     pub fn flush(&self) -> Result<(), CoreError> {
-        let _guard = self.lock.lock().unwrap();
+        Ok(())
+    }
+
+    /// 强制底层介质持久化。
+    pub fn sync(&self) -> Result<(), CoreError> {
+        let _guard = self.sync_lock.lock().unwrap();
+        let generation = self.write_generation.load(Ordering::Acquire);
+        if generation == self.synced_generation.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let started = Instant::now();
         self.io.fsync()?;
+        self.synced_generation.store(generation, Ordering::Release);
+        self.performance.sync_ops.fetch_add(1, Ordering::Relaxed);
+        self.performance
+            .sync_ns
+            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -352,5 +522,46 @@ mod tests {
         };
         let vol = EncryptedPartitionIO::open(io, desc, true).unwrap();
         assert!(vol.write(0, &[1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn flush_is_not_a_durability_barrier() {
+        let (_io, vol) = make_volume();
+        vol.flush().unwrap();
+        assert_eq!(vol.performance_snapshot().sync_ops, 0);
+        vol.write(0, &[7u8; 16]).unwrap();
+        vol.sync().unwrap();
+        vol.sync().unwrap();
+        assert_eq!(vol.performance_snapshot().sync_ops, 1);
+    }
+
+    #[test]
+    fn independent_ranges_can_run_concurrently() {
+        let (_io, vol) = make_volume();
+        let vol = Arc::new(vol);
+        let barrier = Arc::new(std::sync::Barrier::new(5));
+        let threads: Vec<_> = (0..4u64)
+            .map(|index| {
+                let vol = vol.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let offset = index * 4096;
+                    let data = vec![index as u8 + 1; 4096];
+                    vol.write(offset, &data).unwrap();
+                    let mut out = vec![0u8; 4096];
+                    vol.read(offset, &mut out).unwrap();
+                    assert_eq!(out, data);
+                })
+            })
+            .collect();
+        barrier.wait();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let performance = vol.performance_snapshot();
+        assert_eq!(performance.write_ops, 4);
+        assert_eq!(performance.read_ops, 4);
+        assert!(performance.max_inflight >= 2);
     }
 }

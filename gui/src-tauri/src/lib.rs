@@ -511,9 +511,13 @@ async fn get_diagnostics(app: AppHandle) -> Result<Value, UiError> {
         let logs = Rpc::new()
             .call(edp_proto::method::LOGS_READ, json!({ "lines": 200 }))
             .unwrap_or_else(|error| json!({ "logs": [], "error": error }));
+        let performance = Rpc::new()
+            .call(edp_proto::method::PERFORMANCE_SNAPSHOT, json!({}))
+            .unwrap_or_else(|error| json!({ "sessions": [], "error": error }));
         Ok(json!({
             "snapshot": app.state::<UiStateCoordinator>().current(),
-            "logs": logs["logs"]
+            "logs": logs["logs"],
+            "performance": performance,
         }))
     })
     .await
@@ -1249,9 +1253,7 @@ fn spawn_health_check(app: AppHandle) {
         let service_changed = ["installed", "running", "enabled", "online"]
             .iter()
             .any(|key| current.service[*key] != service[*key]);
-        let daemon = Rpc::new()
-            .call(edp_proto::method::STATUS, json!({}))
-            .ok();
+        let daemon = Rpc::new().call(edp_proto::method::STATUS, json!({})).ok();
         let daemon_changed = match (&current.daemon, &daemon) {
             (Some(previous), Some(latest)) => {
                 previous["mounted_sessions"] != latest["mounted_sessions"]
