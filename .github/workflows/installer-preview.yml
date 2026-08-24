@@ -59,7 +59,7 @@ jobs:
           hdiutil detach -quiet "${MACFUSE_VOLUME}"
           pkg-config --modversion fuse
 
-      - name: Apply FSKit exec-user preview
+      - name: Apply FSKit audit-user preview
         run: |
           set -euo pipefail
           python3 installer/apply-fskit-real-user-preview.py
@@ -69,7 +69,11 @@ jobs:
           grep -F 'Command::new("/bin/launchctl")' crates/usbcore/src/session.rs
           grep -F '.arg("asuser")' crates/usbcore/src/session.rs
           grep -F 'make_fd_inheritable(source_fd)' crates/usbcore/src/session.rs
-          grep -F 'command.gid(gid).uid(uid)' crates/usbcore/src/session.rs
+          grep -F 'make_fd_inheritable(fds[0])' crates/usbcore/src/session.rs
+          grep -F 'bridge-exec-user' crates/usbcore/src/session.rs
+          grep -F 'BridgeExecUser' crates/usbcore/src/main.rs
+          grep -F 'fn exec_bridge_as_user' crates/usbcore/src/main.rs
+          grep -F 'Command::new(exe).args(args).exec()' crates/usbcore/src/main.rs
           grep -F '"--source-fd"' crates/usbcore/src/session.rs
           grep -F 'source_fd: Option<i32>' crates/usbcore/src/main.rs
           grep -F 'FileRawIo::from_open_file' crates/usbcore/src/bridge.rs
@@ -162,5 +166,5 @@ jobs:
           gh release create "${RELEASE_TAG}" release-assets/* \
             --verify-tag \
             --prerelease \
-            --title "Installer Preview — FSKit inherited raw FD" \
-            --notes "Experimental one-click installer from install/one-click-installer. The root LaunchDaemon opens the raw disk first and passes the already-open FD to a bridge that is exec'd as the logged-in console user inside that user's GUI bootstrap. The bridge never reopens /dev/rdiskN. This tests whether MFMount requires the bridge to be a real user process from exec start. Requires macOS 15.4+. Commit: ${SHORT_SHA}."
+            --title "Installer Preview — FSKit audit-user bridge" \
+            --notes "Experimental one-click installer from install/one-click-installer. Root opens the raw disk FD first. Root launchctl asuser then enters the logged-in user's GUI/audit session. A hidden helper drops uid/gid and execs a fresh usbcore bridge image, so the final bridge starts as the real user while retaining the inherited raw-disk FD. Requires macOS 15.4+. Commit: ${SHORT_SHA}."
