@@ -18,6 +18,8 @@ PLUGIN_ROOT_OUT="$BASE/pluginkit-root.txt"
 UID_NOW="$(id -u)"
 GID_NOW="$(id -g)"
 USER_NOW="$(id -un)"
+OS_VERSION="$(/usr/bin/sw_vers -productVersion)"
+OS_MAJOR="${OS_VERSION%%.*}"
 
 mkdir -p "$BASE"
 : > "$REPORT"
@@ -56,11 +58,9 @@ run_context() {
   local label="$1"
   local outfile="$2"
   shift 2
-
   : > "$outfile"
   "$@" > "$outfile" 2>&1
   local rc=$?
-
   section "$label"
   log "command_rc=$rc"
   show_file "$outfile"
@@ -139,7 +139,6 @@ static NSNumber *boolForFirstSelector(id object, NSArray<NSString *> *names, NSS
 int main(void) {
     @autoreleasepool {
         NSString *targetBundle = @"io.macfuse.app.fsmodule.macfuse-local";
-
         printf("process_uid=%u\n", getuid());
         printf("process_euid=%u\n", geteuid());
         printf("process_gid=%u\n", getgid());
@@ -211,12 +210,9 @@ int main(void) {
                 NSString *enabledSelName = nil;
                 NSString *urlSelName = nil;
 
-                id bundleObject = objectForFirstSelector(module,
-                    @[@"bundleIdentifier", @"bundleID", @"identifier"], &bundleSelName);
-                NSNumber *enabledObject = boolForFirstSelector(module,
-                    @[@"isEnabled", @"enabled"], &enabledSelName);
-                id urlObject = objectForFirstSelector(module,
-                    @[@"url", @"URL"], &urlSelName);
+                id bundleObject = objectForFirstSelector(module, @[@"bundleIdentifier", @"bundleID", @"identifier"], &bundleSelName);
+                NSNumber *enabledObject = boolForFirstSelector(module, @[@"isEnabled", @"enabled"], &enabledSelName);
+                id urlObject = objectForFirstSelector(module, @[@"url", @"URL"], &urlSelName);
 
                 NSString *bundleID = [bundleObject isKindOfClass:[NSString class]] ? bundleObject : nil;
                 NSString *path = nil;
@@ -232,28 +228,20 @@ int main(void) {
                 printf("module_%lu_enabled_selector=%s\n", (unsigned long)index, enabledSelName.UTF8String ?: "none");
                 printf("module_%lu_url_selector=%s\n", (unsigned long)index, urlSelName.UTF8String ?: "none");
                 printf("module_%lu_bundle=%s\n", (unsigned long)index, bundleID.UTF8String ?: "unknown");
-                printf("module_%lu_enabled=%s\n", (unsigned long)index,
-                       enabledObject ? (enabledObject.boolValue ? "1" : "0") : "unknown");
+                printf("module_%lu_enabled=%s\n", (unsigned long)index, enabledObject ? (enabledObject.boolValue ? "1" : "0") : "unknown");
                 printf("module_%lu_url=%s\n", (unsigned long)index, path.UTF8String ?: "unknown");
 
-                if (bundleID) {
-                    decodedIDs++;
-                } else {
-                    decodeFailures++;
-                }
-
+                if (bundleID) decodedIDs++; else decodeFailures++;
                 if (bundleID && [bundleID isEqualToString:targetBundle]) {
                     found = YES;
                     printf("target_found=1\n");
-                    printf("target_enabled=%s\n",
-                           enabledObject ? (enabledObject.boolValue ? "1" : "0") : "unknown");
+                    printf("target_enabled=%s\n", enabledObject ? (enabledObject.boolValue ? "1" : "0") : "unknown");
                     printf("target_url=%s\n", path.UTF8String ?: "unknown");
                 }
             }
 
             printf("decoded_id_count=%lu\n", (unsigned long)decodedIDs);
             printf("decode_failure_count=%lu\n", (unsigned long)decodeFailures);
-
             if (!found) {
                 printf("target_found=0\n");
                 printf("target_enabled=unknown\n");
@@ -273,7 +261,6 @@ int main(void) {
             fflush(stdout);
             return 124;
         }
-
         return 0;
     }
 }
@@ -313,27 +300,22 @@ USER_STATUS="$(extract_value "$USER_OUT" query_status)"
 ROOT_STATUS="$(extract_value "$ROOT_OUT" query_status)"
 ASUSER_STATUS="$(extract_value "$ASUSER_OUT" query_status)"
 BACKUSER_STATUS="$(extract_value "$BACKUSER_OUT" query_status)"
-
 USER_COUNT="$(extract_value "$USER_OUT" module_count)"
 ROOT_COUNT="$(extract_value "$ROOT_OUT" module_count)"
 ASUSER_COUNT="$(extract_value "$ASUSER_OUT" module_count)"
 BACKUSER_COUNT="$(extract_value "$BACKUSER_OUT" module_count)"
-
 USER_DECODED="$(extract_value "$USER_OUT" decoded_id_count)"
 ROOT_DECODED="$(extract_value "$ROOT_OUT" decoded_id_count)"
 ASUSER_DECODED="$(extract_value "$ASUSER_OUT" decoded_id_count)"
 BACKUSER_DECODED="$(extract_value "$BACKUSER_OUT" decoded_id_count)"
-
 USER_FAILED="$(extract_value "$USER_OUT" decode_failure_count)"
 ROOT_FAILED="$(extract_value "$ROOT_OUT" decode_failure_count)"
 ASUSER_FAILED="$(extract_value "$ASUSER_OUT" decode_failure_count)"
 BACKUSER_FAILED="$(extract_value "$BACKUSER_OUT" decode_failure_count)"
-
 USER_FOUND="$(extract_value "$USER_OUT" target_found)"
 ROOT_FOUND="$(extract_value "$ROOT_OUT" target_found)"
 ASUSER_FOUND="$(extract_value "$ASUSER_OUT" target_found)"
 BACKUSER_FOUND="$(extract_value "$BACKUSER_OUT" target_found)"
-
 USER_ENABLED="$(extract_value "$USER_OUT" target_enabled)"
 ROOT_ENABLED="$(extract_value "$ROOT_OUT" target_enabled)"
 ASUSER_ENABLED="$(extract_value "$ASUSER_OUT" target_enabled)"
@@ -349,13 +331,16 @@ if [[ "$USER_STATUS" != "ok" ]]; then
   log "RESULT=FSCLIENT_USER_QUERY_FAILED"
 elif [[ "${USER_COUNT:-0}" != "0" && "${USER_DECODED:-0}" == "0" ]]; then
   log "RESULT=FSCLIENT_IDENTITY_DECODE_INCONCLUSIVE"
-  log "Interpretation: FSClient returned module objects, but this diagnostic could not decode their bundle identifiers. Do not infer an FSKit/PlugInKit discovery split from target_found=0."
+  log "Interpretation: FSClient returned module objects, but this diagnostic could not decode their bundle identifiers."
 elif [[ "${USER_FAILED:-0}" != "0" ]]; then
   log "RESULT=FSCLIENT_IDENTITY_DECODE_PARTIAL"
-  log "Interpretation: FSClient returned one or more module objects whose identity could not be decoded. Inspect the per-module class/description/selector output before treating target_found=0 as authoritative."
+  log "Interpretation: one or more FSClient identities could not be decoded."
+elif [[ "$USER_FOUND" != "1" && "$OS_MAJOR" -lt 26 ]]; then
+  log "RESULT=FSCLIENT_THIRD_PARTY_ENUM_UNSUPPORTED_ON_MACOS15"
+  log "Interpretation: on macOS 15.x, absence of macfuse-local from FSClient is not evidence of a registration or approval split. macFUSE release notes state that macOS 26 added third-party FS extension information to FSClient. Use PlugInKit, the per-user enabledModules state and actual mount behavior instead."
 elif [[ "$USER_FOUND" != "1" ]]; then
-  log "RESULT=FSCLIENT_USER_GENUINELY_CANNOT_SEE_MACFUSE_LOCAL"
-  log "Interpretation: FSClient returned a decodable module list in the login-user context and macfuse-local was absent. This is strong evidence that FSKit's public discovery view differs from PlugInKit's registered/approved view."
+  log "RESULT=FSCLIENT_USER_CANNOT_SEE_MACFUSE_LOCAL"
+  log "Interpretation: on this OS generation FSClient is expected to expose third-party extensions, so target absence is relevant."
 elif [[ "$USER_ENABLED" == "0" ]]; then
   log "RESULT=FSCLIENT_USER_REPORTS_DISABLED"
 elif [[ "$USER_ENABLED" == "1" && "$ROOT_ENABLED" == "0" && "$ASUSER_ENABLED" == "1" ]]; then
