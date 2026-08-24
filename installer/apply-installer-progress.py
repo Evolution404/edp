@@ -52,7 +52,9 @@ on run
             set doneText to do shell script "/usr/bin/test -f " & quoted form of statusPath & " && /bin/echo yes || /bin/echo no"
 
             try
-                set pctText to do shell script "/usr/bin/grep 'installer:%' " & quoted form of logPath & " 2>/dev/null | /usr/bin/tail -1 | /usr/bin/sed -E 's/.*installer:%([0-9.]+).*/\\1/' | /usr/bin/cut -d. -f1"
+                -- Avoid sed backreferences here: this source passes through Python,
+                -- a Bash heredoc and AppleScript before reaching /bin/sh.
+                set pctText to do shell script "/usr/bin/grep -o 'installer:%[0-9.]*' " & quoted form of logPath & " 2>/dev/null | /usr/bin/tail -1 | /usr/bin/cut -d% -f2 | /usr/bin/cut -d. -f1"
                 if pctText is not "" then
                     set pct to pctText as integer
                     if pct < 5 then set pct to 5
