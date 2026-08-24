@@ -101,6 +101,6 @@ jobs:
         run: cargo build --manifest-path gui/src-tauri/Cargo.toml
       - name: GUI 打包 .app
         run: |
-          cd gui && npx tauri build
+          cd gui && npx tauri build --bundles app
           test -x "src-tauri/target/release/bundle/macos/EDP USB Vault.app/Contents/Resources/usbcore"
           test -f "src-tauri/target/release/bundle/macos/EDP USB Vault.app/Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist"
