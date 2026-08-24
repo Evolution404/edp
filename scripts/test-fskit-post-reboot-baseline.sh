@@ -19,10 +19,6 @@
 set -u
 set -o pipefail
 
-# All sudo calls go through -A + SUDO_ASKPASS so the script works without a
-# terminal (caller must export SUDO_ASKPASS pointing at an executable that
-# echoes the password; a normal interactive run without SUDO_ASKPASS degrades
-# gracefully because sudo -A falls back to the normal prompt path).
 SUDO="sudo"
 
 WORK="${TMPDIR:-/tmp}/edp-fskit-postreboot"
@@ -53,8 +49,6 @@ cleanup() {
   if [[ -n "$PID" ]] && kill -0 "$PID" >/dev/null 2>&1; then
     kill "$PID" >/dev/null 2>&1 || true
   fi
-  # Only umount if the mount table actually shows a successful mount, and
-  # only with a watchdog: a broken FSKit mountpoint can hang umount too.
   if /sbin/mount | /usr/bin/grep -F " on $MOUNT_POINT " >/dev/null 2>&1; then
     /usr/bin/perl -e 'alarm shift; exec @ARGV' 5 /sbin/umount "$MOUNT_POINT" \
       >/dev/null 2>&1 || true
@@ -69,6 +63,8 @@ count_images() {
 
 section "System"
 /usr/bin/sw_vers 2>&1 | tee -a "$REPORT"
+OS_VERSION="$(/usr/bin/sw_vers -productVersion)"
+OS_BUILD="$(/usr/bin/sw_vers -buildVersion)"
 log "uid=$(id -u) gid=$(id -g) user=$(id -un)"
 
 section "Pre-flight cleanliness"
@@ -129,7 +125,6 @@ PID=$!
 log "server_pid=$PID"
 
 MOUNT_SEEN=0
-# 60s watchdog: virtual device creation alone took >6s cold; allow ample time.
 for i in $(seq 1 60); do
   if ! kill -0 "$PID" >/dev/null 2>&1; then
     log "server_exited_after=${i}s"
@@ -149,12 +144,11 @@ log "mount_seen=$MOUNT_SEEN"
 log "hdiutil_images_after=$IMAGES_AFTER"
 
 if [[ "$MOUNT_SEEN" -eq 1 ]]; then
-  # Mount table confirms success; reading inside is now safe.
   CONTENT="$(/bin/cat "$MOUNT_POINT/probe.txt" 2>/dev/null || true)"
   log "probe_content=$CONTENT"
   log "RESULT=BASELINE_OK"
 else
-  sleep 2   # let daemon-side error lines land in the log
+  sleep 2
   MERR=$(/usr/bin/grep -o 'MFDaemon.MountError Code=[0-9]*' "$SYSTEM_LOG" | tail -1 || true)
   BERR=$(/usr/bin/grep -o 'Broker<[^>]*>*\.Error Code=[0-9]*' "$SYSTEM_LOG" | tail -1 || true)
   DERR=$(/usr/bin/grep -o 'MFDaemon.DiskImage.Error Code=[0-9]*' "$SYSTEM_LOG" | tail -1 || true)
@@ -162,7 +156,7 @@ else
   log "broker_error=${BERR:-none}"
   log "detach_error=${DERR:-none}"
   if [[ -n "$MERR" && "$MERR" = *'Code=4' ]]; then
-    log "VERDICT=fileSystemExtensionRequiresApproval (FSKit authorization denies the mount; macOS 15.7.7 path, not EDP)"
+    log "VERDICT=fileSystemExtensionRequiresApproval (final FSKit mount authorization rejected the baseline on macOS $OS_VERSION build $OS_BUILD; not specific to EDP)"
   elif [[ -n "$BERR" && "$BERR" = *'Code=1' ]]; then
     log "VERDICT=advertise timeout (extension never claimed the server)"
   else
