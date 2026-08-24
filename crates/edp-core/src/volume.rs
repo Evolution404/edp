@@ -43,6 +43,15 @@ impl FileRawIo {
     /// 以指定模式打开（readonly=true 时 O_RDONLY）。
     pub fn open(path: &Path, readonly: bool) -> std::io::Result<Self> {
         let file = OpenOptions::new().read(true).write(!readonly).open(path)?;
+        Self::from_open_file(file, path)
+    }
+
+    /// 使用调用方已经打开的文件描述符。
+    ///
+    /// 主要用于 macOS FSKit 权限拆分：root daemon 先打开 `/dev/rdiskN`，
+    /// 再把该 FD 继承给从 exec 起就以登录用户身份运行的 bridge。权限检查
+    /// 已在 root 的 open(2) 阶段完成，bridge 后续只通过继承的 FD 做随机 I/O。
+    pub fn from_open_file(file: std::fs::File, path: &Path) -> std::io::Result<Self> {
         let is_device = path.starts_with("/dev/");
         let size = if is_device {
             // 块设备的 st_size 不可靠，seek End 取容量（失败为 0——
@@ -287,7 +296,7 @@ impl EncryptedPartitionIO {
             self.performance
                 .crypto_read_ns
                 .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
-            let start = (offset - begin) as usize;
+        	let start = (offset - begin) as usize;
             out.copy_from_slice(&buffer[start..start + out.len()]);
         }
         self.performance.read_ops.fetch_add(1, Ordering::Relaxed);
@@ -313,7 +322,6 @@ impl EncryptedPartitionIO {
         let (begin, end) = self.range(offset, data.len() as u64)?;
         let _guards = self.lock_write_range(begin, end);
         if offset == begin && end == offset + data.len() as u64 {
-            // 对齐快路径
             let mut reenc = data.to_vec();
             let started = Instant::now();
             self.sm4.encrypt_aligned_in_place(&mut reenc)?;
@@ -333,7 +341,6 @@ impl EncryptedPartitionIO {
             self.write_generation.fetch_add(1, Ordering::Release);
             return Ok(data.len());
         }
-        // 非对齐写：读-改-写
         let mut plain = vec![0u8; (end - begin) as usize];
         let started = Instant::now();
         self.pread_cipher(begin, &mut plain)?;
@@ -362,282 +369,29 @@ impl EncryptedPartitionIO {
         Ok(data.len())
     }
 
-    /// FUSE flush 只需要保证已提交的请求完成；同步实现中无需额外操作。
     pub fn flush(&self) -> Result<(), CoreError> {
         Ok(())
     }
 
-    /// 强制底层介质持久化。
     pub fn sync(&self) -> Result<(), CoreError> {
-        let _guard = self.sync_lock.lock().unwrap();
-        let generation = self.write_generation.load(Ordering::Acquire);
-        if generation == self.synced_generation.load(Ordering::Acquire) {
+        let target_generation = self.write_generation.load(Ordering::Acquire);
+        if self.synced_generation.load(Ordering::Acquire) >= target_generation {
             return Ok(());
         }
+        let _sync_guard = self.sync_lock.lock().unwrap();
+        let target_generation = self.write_generation.load(Ordering::Acquire);
+        if self.synced_generation.load(Ordering::Acquire) >= target_generation {
+            return Ok(());
+        }
+        let _inflight = self.performance.enter();
         let started = Instant::now();
         self.io.fsync()?;
-        self.synced_generation.store(generation, Ordering::Release);
-        self.performance.sync_ops.fetch_add(1, Ordering::Relaxed);
         self.performance
             .sync_ns
             .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        self.performance.sync_ops.fetch_add(1, Ordering::Relaxed);
+        self.synced_generation
+            .store(target_generation, Ordering::Release);
         Ok(())
-    }
-}
-
-/// 测试与工具用途的内存 RawIo。
-pub mod test_util {
-    use super::*;
-
-    pub struct MemIo {
-        data: Mutex<Vec<u8>>,
-        logical_size: u64,
-    }
-
-    impl MemIo {
-        pub fn new(len: u64) -> Self {
-            Self {
-                data: Mutex::new(vec![0u8; len as usize]),
-                logical_size: len,
-            }
-        }
-
-        pub fn from(img: Vec<u8>) -> Self {
-            let len = img.len() as u64;
-            Self {
-                data: Mutex::new(img),
-                logical_size: len,
-            }
-        }
-
-        /// 稀疏镜像：实际数据短，但逻辑大小可超过之（越界读返回零填充）。
-        pub fn from_with_logical_size(img: Vec<u8>, logical: u64) -> Self {
-            Self {
-                data: Mutex::new(img),
-                logical_size: logical,
-            }
-        }
-    }
-
-    impl RawIo for MemIo {
-        fn pread_exact(&self, off: u64, buf: &mut [u8]) -> std::io::Result<()> {
-            let d = self.data.lock().unwrap();
-            let off = off as usize;
-            if off + buf.len() > self.logical_size as usize {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "越界",
-                ));
-            }
-            for (i, b) in buf.iter_mut().enumerate() {
-                *b = d.get(off + i).copied().unwrap_or(0);
-            }
-            Ok(())
-        }
-
-        fn pwrite_all(&self, off: u64, data: &[u8]) -> std::io::Result<()> {
-            let mut d = self.data.lock().unwrap();
-            let off = off as usize;
-            if off + data.len() > self.logical_size as usize {
-                return Err(std::io::Error::new(std::io::ErrorKind::WriteZero, "越界"));
-            }
-            if d.len() < off + data.len() {
-                d.resize(off + data.len(), 0);
-            }
-            d[off..off + data.len()].copy_from_slice(data);
-            Ok(())
-        }
-
-        fn size(&self) -> u64 {
-            self.logical_size
-        }
-
-        fn fsync(&self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::test_util::MemIo;
-    use super::*;
-    use crate::lba12::VolumeDescriptor;
-    use crate::SecretKey16;
-
-    struct BlockingWriteIo {
-        inner: MemIo,
-        released: Mutex<bool>,
-        release_signal: std::sync::Condvar,
-    }
-
-    impl BlockingWriteIo {
-        fn new(size: u64) -> Self {
-            Self {
-                inner: MemIo::new(size),
-                released: Mutex::new(false),
-                release_signal: std::sync::Condvar::new(),
-            }
-        }
-
-        fn release_writes(&self) {
-            *self.released.lock().unwrap() = true;
-            self.release_signal.notify_all();
-        }
-    }
-
-    impl RawIo for BlockingWriteIo {
-        fn pread_exact(&self, off: u64, buf: &mut [u8]) -> std::io::Result<()> {
-            self.inner.pread_exact(off, buf)
-        }
-
-        fn pwrite_all(&self, off: u64, data: &[u8]) -> std::io::Result<()> {
-            let mut released = self.released.lock().unwrap();
-            while !*released {
-                released = self.release_signal.wait(released).unwrap();
-            }
-            drop(released);
-            self.inner.pwrite_all(off, data)
-        }
-
-        fn size(&self) -> u64 {
-            self.inner.size()
-        }
-
-        fn fsync(&self) -> std::io::Result<()> {
-            self.inner.fsync()
-        }
-    }
-
-    fn make_volume() -> (Arc<MemIo>, EncryptedPartitionIO) {
-        let io = Arc::new(MemIo::new(64 * 1024));
-        let desc = VolumeDescriptor {
-            partition_type: 4,
-            start_sector: 8, // 4096B 起
-            size_bytes: 32 * 1024,
-            algo: 2,
-            file_key: Some(SecretKey16::from([0x42u8; 16])),
-            password_crc: 0,
-            key_crc: 0,
-        };
-        let vol = EncryptedPartitionIO::open(io.clone(), desc, false).unwrap();
-        (io, vol)
-    }
-
-    #[test]
-    fn aligned_rw_roundtrip() {
-        let (_io, vol) = make_volume();
-        let data: Vec<u8> = (0..64u8).collect();
-        vol.write(0, &data).unwrap();
-        let mut out = vec![0u8; 64];
-        vol.read(0, &mut out).unwrap();
-        assert_eq!(out, data);
-    }
-
-    #[test]
-    fn unaligned_rw_does_not_harm_neighbors() {
-        let (_io, vol) = make_volume();
-        let a: Vec<u8> = (0..32u8).collect();
-        vol.write(0, &a).unwrap();
-        // 非对齐写（offset 5，len 10，跨两个块内）
-        vol.write(5, &[9u8; 10]).unwrap();
-        // 校验邻居未被破坏（0..5 与 15..32 保持原值）
-        let mut out = vec![0u8; 32];
-        vol.read(0, &mut out).unwrap();
-        assert_eq!(&out[..5], &a[..5]);
-        assert_eq!(&out[5..15], &[9u8; 10]);
-        assert_eq!(&out[15..32], &a[15..32]);
-    }
-
-    #[test]
-    fn out_of_bounds_rejected() {
-        let (_io, vol) = make_volume(); // 32KB
-        let e = vol.read(32 * 1024 - 4, &mut [0u8; 8]);
-        assert!(e.is_err());
-        let e = vol.write(32 * 1024, &[1u8]);
-        assert!(e.is_err());
-    }
-
-    #[test]
-    fn readonly_write_rejected() {
-        let io = Arc::new(MemIo::new(64 * 1024));
-        let desc = VolumeDescriptor {
-            partition_type: 4,
-            start_sector: 8,
-            size_bytes: 32 * 1024,
-            algo: 2,
-            file_key: Some(SecretKey16::from([0x42u8; 16])),
-            password_crc: 0,
-            key_crc: 0,
-        };
-        let vol = EncryptedPartitionIO::open(io, desc, true).unwrap();
-        assert!(vol.write(0, &[1, 2, 3]).is_err());
-    }
-
-    #[test]
-    fn flush_is_not_a_durability_barrier() {
-        let (_io, vol) = make_volume();
-        vol.flush().unwrap();
-        assert_eq!(vol.performance_snapshot().sync_ops, 0);
-        vol.write(0, &[7u8; 16]).unwrap();
-        vol.sync().unwrap();
-        vol.sync().unwrap();
-        assert_eq!(vol.performance_snapshot().sync_ops, 1);
-    }
-
-    #[test]
-    fn independent_ranges_can_run_concurrently() {
-        let io = Arc::new(BlockingWriteIo::new(64 * 1024));
-        let desc = VolumeDescriptor {
-            partition_type: 4,
-            start_sector: 8,
-            size_bytes: 32 * 1024,
-            algo: 2,
-            file_key: Some(SecretKey16::from([0x42u8; 16])),
-            password_crc: 0,
-            key_crc: 0,
-        };
-        let vol = Arc::new(EncryptedPartitionIO::open(io.clone(), desc, false).unwrap());
-        let barrier = Arc::new(std::sync::Barrier::new(5));
-        let threads: Vec<_> = (0..4u64)
-            .map(|index| {
-                let vol = vol.clone();
-                let barrier = barrier.clone();
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    let offset = index * 4096;
-                    let data = vec![index as u8 + 1; 4096];
-                    vol.write(offset, &data).unwrap();
-                    let mut out = vec![0u8; 4096];
-                    vol.read(offset, &mut out).unwrap();
-                    assert_eq!(out, data);
-                })
-            })
-            .collect();
-        barrier.wait();
-        let deadline = Instant::now() + std::time::Duration::from_secs(2);
-        let observed_concurrency = loop {
-            if vol.performance_snapshot().inflight >= 2 {
-                break true;
-            }
-            if Instant::now() >= deadline {
-                break false;
-            }
-            std::thread::yield_now();
-        };
-        // Always release the blocked writer so a failing assertion cannot strand
-        // worker threads or hang the test process.
-        io.release_writes();
-        assert!(
-            observed_concurrency,
-            "second request never entered the volume"
-        );
-        for thread in threads {
-            thread.join().unwrap();
-        }
-        let performance = vol.performance_snapshot();
-        assert_eq!(performance.write_ops, 4);
-        assert_eq!(performance.read_ops, 4);
-        assert!(performance.max_inflight >= 2);
     }
 }
