@@ -95,17 +95,9 @@ jobs:
         run: cargo clippy --manifest-path gui/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
 
   build-app:
-    name: Build ${{ matrix.arch }} app
+    name: Build arm64 app
     needs: quality
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -129,8 +121,8 @@ jobs:
             ~/.cargo/git/db
             target
             gui/src-tauri/target
-          key: cargo-build-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-build-${{ runner.os }}-${{ matrix.arch }}-
+          key: cargo-build-${{ runner.os }}-arm64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-build-${{ runner.os }}-arm64-
 
       - name: Install frontend dependencies
         working-directory: gui
@@ -163,7 +155,7 @@ jobs:
 
       - name: Sign and package app
         env:
-          BUILD_ARCH: ${{ matrix.arch }}
+          BUILD_ARCH: arm64
         run: |
           set -euo pipefail
           APP_PATH="gui/src-tauri/target/release/bundle/macos/EDP USB Vault.app"
@@ -194,7 +186,7 @@ jobs:
       - name: Upload app artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: edp-usb-vault-${{ matrix.arch }}
+          name: edp-usb-vault-arm64
           path: artifacts/*
           if-no-files-found: error
           retention-days: 30
