@@ -147,12 +147,16 @@ if needle in s and '<title>' not in s:
 p.write_text(s)
 PY
 
-OUTPUT="$OUTPUT_DIR/EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}-Installer.pkg"
+OUTPUT_NAME="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}-Installer.pkg"
+OUTPUT="$OUTPUT_DIR/$OUTPUT_NAME"
 productbuild \
   --distribution "$DIST" \
   --package-path "$COMPONENT_DIR" \
   "$OUTPUT"
 
 pkgutil --check-signature "$OUTPUT" || true
-shasum -a 256 "$OUTPUT" > "$OUTPUT_DIR/SHA256SUMS-installer-${BUILD_ARCH}.txt"
+(
+  cd "$OUTPUT_DIR"
+  shasum -a 256 "$OUTPUT_NAME" > "SHA256SUMS-installer-${BUILD_ARCH}.txt"
+)
 echo "Built: $OUTPUT"
