@@ -157,6 +157,10 @@ export const useStore = defineStore("ui-v2", {
         `${partitionName(session.partition.partition_type)}已卸载`,
       );
     },
+    async openFinder(path: string) {
+      if (!path) return;
+      await this.run(`finder-${path}`, async () => api.openInFinder(path));
+    },
     async saveCredential(input: CredentialInput) {
       await this.run(
         `credential-${input.device_id}-${input.partition_type}`,

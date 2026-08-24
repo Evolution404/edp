@@ -5,6 +5,8 @@
 
 mod service_management;
 
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -12,9 +14,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 const SOCKET_PATH: &str = "/var/run/com.edp.usbvault.daemon.sock";
@@ -91,7 +93,8 @@ pub struct UiStateCoordinator {
     revision: AtomicU64,
     snapshot: Mutex<AppSnapshot>,
     refresh_lock: Mutex<()>,
-    refresh_pending: AtomicBool,
+    refresh_generation: AtomicU64,
+    refresh_worker_running: AtomicBool,
 }
 
 impl Default for UiStateCoordinator {
@@ -100,7 +103,8 @@ impl Default for UiStateCoordinator {
             revision: AtomicU64::new(0),
             snapshot: Mutex::new(AppSnapshot::default()),
             refresh_lock: Mutex::new(()),
-            refresh_pending: AtomicBool::new(false),
+            refresh_generation: AtomicU64::new(0),
+            refresh_worker_running: AtomicBool::new(false),
         }
     }
 }
@@ -182,7 +186,27 @@ impl UiStateCoordinator {
     }
 }
 
-pub struct TrayState(Mutex<Option<TrayIcon>>);
+#[derive(Debug, Clone, Hash)]
+enum TrayAction {
+    Mount {
+        disk: String,
+        device_id: String,
+        partition_type: u32,
+    },
+    Unmount {
+        session_id: String,
+        partition_type: u32,
+    },
+    OpenFinder {
+        path: String,
+    },
+}
+
+#[derive(Default)]
+pub struct TrayState {
+    icon: Mutex<Option<TrayIcon>>,
+    actions: Mutex<HashMap<String, TrayAction>>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 struct UiError {
@@ -259,14 +283,6 @@ fn first_mountpoint(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-fn partition_label(value: &Value) -> &'static str {
-    match value["partition"]["partition_type"].as_u64() {
-        Some(2) => "交换区",
-        Some(4) => "保密区",
-        _ => "EDP 卷",
-    }
-}
-
 fn publish_snapshot(app: &AppHandle) -> AppSnapshot {
     let snapshot = app.state::<UiStateCoordinator>().refresh();
     let _ = app.emit(SNAPSHOT_EVENT, snapshot.clone());
@@ -276,16 +292,53 @@ fn publish_snapshot(app: &AppHandle) -> AppSnapshot {
 
 fn schedule_snapshot_refresh(app: AppHandle) {
     let coordinator = app.state::<UiStateCoordinator>();
-    if coordinator.refresh_pending.swap(true, Ordering::SeqCst) {
+    coordinator
+        .refresh_generation
+        .fetch_add(1, Ordering::SeqCst);
+    if coordinator
+        .refresh_worker_running
+        .swap(true, Ordering::SeqCst)
+    {
         return;
     }
-    std::thread::spawn(move || {
+    std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(150));
+        let handled_generation = app
+            .state::<UiStateCoordinator>()
+            .refresh_generation
+            .load(Ordering::SeqCst);
         let _ = publish_snapshot(&app);
-        app.state::<UiStateCoordinator>()
-            .refresh_pending
+
+        let coordinator = app.state::<UiStateCoordinator>();
+        if coordinator.refresh_generation.load(Ordering::SeqCst) != handled_generation {
+            continue;
+        }
+        coordinator
+            .refresh_worker_running
             .store(false, Ordering::SeqCst);
+        if coordinator.refresh_generation.load(Ordering::SeqCst) == handled_generation {
+            break;
+        }
+        if coordinator
+            .refresh_worker_running
+            .swap(true, Ordering::SeqCst)
+        {
+            break;
+        }
     });
+}
+
+async fn blocking_ui_task<T, F>(task: F) -> Result<T, UiError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, UiError> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| {
+            UiError::new("BACKGROUND_TASK_FAILED", "后台操作异常退出")
+                .with_detail(error.to_string())
+        })?
 }
 
 fn emit_operation(
@@ -311,133 +364,159 @@ fn emit_operation(
 // ---------- typed commands ----------
 
 #[tauri::command]
-fn get_app_snapshot(coordinator: State<UiStateCoordinator>) -> AppSnapshot {
-    if coordinator.current().revision == 0 {
-        coordinator.refresh()
-    } else {
-        coordinator.current()
+async fn get_app_snapshot(app: AppHandle) -> Result<AppSnapshot, UiError> {
+    let current = app.state::<UiStateCoordinator>().current();
+    if current.revision != 0 {
+        return Ok(current);
     }
+    blocking_ui_task(move || Ok(publish_snapshot(&app))).await
 }
 
 #[tauri::command]
-fn refresh_app_snapshot(app: AppHandle) -> AppSnapshot {
-    publish_snapshot(&app)
+async fn refresh_app_snapshot(app: AppHandle) -> Result<AppSnapshot, UiError> {
+    blocking_ui_task(move || Ok(publish_snapshot(&app))).await
 }
 
 #[tauri::command]
-fn set_auto_mount_mode(app: AppHandle, mode: String) -> Result<AppSnapshot, UiError> {
+async fn set_auto_mount_mode(app: AppHandle, mode: String) -> Result<AppSnapshot, UiError> {
     if !matches!(mode.as_str(), "active" | "paused") {
         return Err(UiError::new("BAD_PARAMS", "自动挂载状态无效"));
     }
-    Rpc::new()
-        .call(
-            edp_proto::method::AUTO_MOUNT_SET_MODE,
-            json!({ "mode": mode }),
-        )
-        .map_err(|message| {
-            UiError::new("RPC_FAILED", "无法更新自动挂载状态").with_detail(message)
-        })?;
-    Ok(publish_snapshot(&app))
+    blocking_ui_task(move || {
+        Rpc::new()
+            .call(
+                edp_proto::method::AUTO_MOUNT_SET_MODE,
+                json!({ "mode": mode }),
+            )
+            .map_err(|message| {
+                UiError::new("RPC_FAILED", "无法更新自动挂载状态").with_detail(message)
+            })?;
+        Ok(publish_snapshot(&app))
+    })
+    .await
 }
 
 #[tauri::command]
-fn set_device_policy(app: AppHandle, policy: Value) -> Result<AppSnapshot, UiError> {
-    Rpc::new()
-        .call(edp_proto::method::DEVICES_POLICY_SET, policy)
-        .map_err(|message| UiError::new("RPC_FAILED", "无法保存设备授权").with_detail(message))?;
-    Ok(publish_snapshot(&app))
+async fn set_device_policy(app: AppHandle, policy: Value) -> Result<AppSnapshot, UiError> {
+    blocking_ui_task(move || {
+        Rpc::new()
+            .call(edp_proto::method::DEVICES_POLICY_SET, policy)
+            .map_err(|message| {
+                UiError::new("RPC_FAILED", "无法保存设备授权").with_detail(message)
+            })?;
+        Ok(publish_snapshot(&app))
+    })
+    .await
 }
 
 #[tauri::command]
-fn mount_partition(
+async fn mount_partition(
     app: AppHandle,
     disk: String,
     device_id: String,
     partition_type: u32,
 ) -> Result<AppSnapshot, UiError> {
-    Rpc::new()
-        .call(
-            edp_proto::method::MOUNT,
-            json!({ "disk": disk, "device_id": device_id, "partition_type": partition_type }),
-        )
-        .map_err(|message| UiError::new("MOUNT_FAILED", "挂载失败").with_detail(message))?;
-    Ok(publish_snapshot(&app))
+    blocking_ui_task(move || {
+        Rpc::new()
+            .call(
+                edp_proto::method::MOUNT,
+                json!({ "disk": disk, "device_id": device_id, "partition_type": partition_type }),
+            )
+            .map_err(|message| UiError::new("MOUNT_FAILED", "挂载失败").with_detail(message))?;
+        Ok(publish_snapshot(&app))
+    })
+    .await
 }
 
 #[tauri::command]
-fn unmount_session(
+async fn unmount_session(
     app: AppHandle,
     session_id: String,
     force: Option<bool>,
 ) -> Result<AppSnapshot, UiError> {
-    Rpc::new()
-        .call(
-            edp_proto::method::UNMOUNT,
-            json!({ "session_id": session_id, "force": force.unwrap_or(false) }),
-        )
-        .map_err(|message| UiError::new("UNMOUNT_FAILED", "卸载失败").with_detail(message))?;
-    Ok(publish_snapshot(&app))
+    blocking_ui_task(move || {
+        Rpc::new()
+            .call(
+                edp_proto::method::UNMOUNT,
+                json!({ "session_id": session_id, "force": force.unwrap_or(false) }),
+            )
+            .map_err(|message| UiError::new("UNMOUNT_FAILED", "卸载失败").with_detail(message))?;
+        Ok(publish_snapshot(&app))
+    })
+    .await
 }
 
 #[tauri::command]
-fn save_credential(app: AppHandle, input: CredentialInput) -> Result<AppSnapshot, UiError> {
+async fn save_credential(app: AppHandle, input: CredentialInput) -> Result<AppSnapshot, UiError> {
     if input.password.is_empty() {
         return Err(UiError::new("BAD_PARAMS", "密码不能为空"));
     }
-    let disk = input
-        .disk
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| UiError::new("DEVICE_OFFLINE", "设备离线，无法验证新密码"))?;
-    let rpc = Rpc::new();
-    rpc.call(
-        edp_proto::method::PROBE,
-        json!({
-            "disk": disk,
-            "password": input.password,
-            "partition_type": input.partition_type,
-        }),
-    )
-    .map_err(|message| UiError::new("PASSWORD_INVALID", "密码验证失败").with_detail(message))?;
-
-    if let Some(id) = input.id {
+    blocking_ui_task(move || {
+        let disk = input
+            .disk
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| UiError::new("DEVICE_OFFLINE", "设备离线，无法验证新密码"))?;
+        let rpc = Rpc::new();
         rpc.call(
-            edp_proto::method::KEYS_UPDATE,
-            json!({ "id": id, "label": input.label, "password": input.password }),
-        )
-    } else {
-        rpc.call(
-            edp_proto::method::KEYS_ADD,
+            edp_proto::method::PROBE,
             json!({
-                "label": input.label,
-                "device_id": input.device_id,
-                "partition_type": input.partition_type,
+                "disk": disk,
                 "password": input.password,
+                "partition_type": input.partition_type,
             }),
         )
-    }
-    .map_err(|message| {
-        UiError::new("CREDENTIAL_SAVE_FAILED", "无法保存凭据").with_detail(message)
-    })?;
-    Ok(publish_snapshot(&app))
-}
+        .map_err(|message| UiError::new("PASSWORD_INVALID", "密码验证失败").with_detail(message))?;
 
-#[tauri::command]
-fn delete_credential(app: AppHandle, id: String) -> Result<AppSnapshot, UiError> {
-    Rpc::new()
-        .call(edp_proto::method::KEYS_RM, json!({ "id": id }))
+        if let Some(id) = input.id {
+            rpc.call(
+                edp_proto::method::KEYS_UPDATE,
+                json!({ "id": id, "label": input.label, "password": input.password }),
+            )
+        } else {
+            rpc.call(
+                edp_proto::method::KEYS_ADD,
+                json!({
+                    "label": input.label,
+                    "device_id": input.device_id,
+                    "partition_type": input.partition_type,
+                    "password": input.password,
+                }),
+            )
+        }
         .map_err(|message| {
-            UiError::new("CREDENTIAL_DELETE_FAILED", "无法删除凭据").with_detail(message)
+            UiError::new("CREDENTIAL_SAVE_FAILED", "无法保存凭据").with_detail(message)
         })?;
-    Ok(publish_snapshot(&app))
+        Ok(publish_snapshot(&app))
+    })
+    .await
 }
 
 #[tauri::command]
-fn get_diagnostics(coordinator: State<UiStateCoordinator>) -> Value {
-    let logs = Rpc::new()
-        .call(edp_proto::method::LOGS_READ, json!({ "lines": 200 }))
-        .unwrap_or_else(|error| json!({ "logs": [], "error": error }));
-    json!({ "snapshot": coordinator.current(), "logs": logs["logs"] })
+async fn delete_credential(app: AppHandle, id: String) -> Result<AppSnapshot, UiError> {
+    blocking_ui_task(move || {
+        Rpc::new()
+            .call(edp_proto::method::KEYS_RM, json!({ "id": id }))
+            .map_err(|message| {
+                UiError::new("CREDENTIAL_DELETE_FAILED", "无法删除凭据").with_detail(message)
+            })?;
+        Ok(publish_snapshot(&app))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_diagnostics(app: AppHandle) -> Result<Value, UiError> {
+    blocking_ui_task(move || {
+        let logs = Rpc::new()
+            .call(edp_proto::method::LOGS_READ, json!({ "lines": 200 }))
+            .unwrap_or_else(|error| json!({ "logs": [], "error": error }));
+        Ok(json!({
+            "snapshot": app.state::<UiStateCoordinator>().current(),
+            "logs": logs["logs"]
+        }))
+    })
+    .await
 }
 
 const FINDER_WINDOW_SCRIPT: &str = r#"
@@ -461,21 +540,24 @@ fn finder_window_command(path: &str) -> std::process::Command {
 }
 
 #[tauri::command]
-fn open_in_finder(path: String) -> Result<(), UiError> {
+async fn open_in_finder(path: String) -> Result<(), UiError> {
     if path.is_empty() {
         return Err(UiError::new("BAD_PARAMS", "没有可打开的挂载点"));
     }
     if !Path::new(&path).is_dir() {
         return Err(UiError::new("MOUNTPOINT_GONE", "挂载点已不可用").with_detail(path));
     }
-    let output = finder_window_command(&path).output().map_err(|error| {
-        UiError::new("OPEN_FAILED", "无法在 Finder 中打开").with_detail(error.to_string())
-    })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(UiError::new("OPEN_FAILED", "无法创建标准 Finder 窗口").with_detail(detail))
+    blocking_ui_task(move || {
+        let output = finder_window_command(&path).output().map_err(|error| {
+            UiError::new("OPEN_FAILED", "无法在 Finder 中打开").with_detail(error.to_string())
+        })?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(UiError::new("OPEN_FAILED", "无法创建标准 Finder 窗口").with_detail(detail))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -780,7 +862,46 @@ fn open_login_items_settings() {
     service_management::open_login_items();
 }
 
-// ---------- cached, read-only tray ----------
+// ---------- cached tray ----------
+
+fn partition_type_label(partition_type: u32) -> &'static str {
+    match partition_type {
+        2 => "交换区",
+        4 => "保密区",
+        _ => "EDP 卷",
+    }
+}
+
+fn tray_action_item(
+    app: &AppHandle,
+    actions: &mut HashMap<String, TrayAction>,
+    label: String,
+    action: TrayAction,
+) -> Result<MenuItem<tauri::Wry>, tauri::Error> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    action.hash(&mut hasher);
+    let id = format!("tray-action-{:016x}", hasher.finish());
+    actions.insert(id.clone(), action);
+    MenuItem::with_id(app, id, label, true, None::<&str>)
+}
+
+fn mounted_session<'a>(
+    snapshot: &'a AppSnapshot,
+    device_id: &str,
+    partition_type: u32,
+) -> Option<&'a Value> {
+    snapshot.sessions.iter().find(|session| {
+        session["device_id"].as_str() == Some(device_id)
+            && session["partition"]["partition_type"].as_u64() == Some(partition_type as u64)
+    })
+}
+
+fn has_credential(snapshot: &AppSnapshot, device_id: &str, partition_type: u32) -> bool {
+    snapshot.credentials.iter().any(|credential| {
+        credential["device_id"].as_str() == Some(device_id)
+            && credential["partition_type"].as_u64() == Some(partition_type as u64)
+    })
+}
 
 fn build_tray_menu(
     app: &AppHandle,
@@ -815,27 +936,97 @@ fn build_tray_menu(
         None::<&str>,
     )?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    if snapshot.sessions.is_empty() {
+
+    let connected_devices: Vec<&Value> = snapshot
+        .devices
+        .iter()
+        .filter(|device| device["connected"].as_bool().unwrap_or(false))
+        .collect();
+    let mut actions = HashMap::new();
+    if connected_devices.is_empty() {
         menu.append(&MenuItem::with_id(
             app,
-            "no_sessions",
-            "无挂载中的卷",
+            "no_devices",
+            "未检测到外置磁盘",
             false,
             None::<&str>,
         )?)?;
     } else {
-        for session in &snapshot.sessions {
-            let id = session["session_id"].as_str().unwrap_or_default();
-            let mountpoint = first_mountpoint(session).unwrap_or_else(|| "未知挂载点".to_string());
-            menu.append(&MenuItem::with_id(
-                app,
-                format!("session-{id}"),
-                format!("{} — {mountpoint}", partition_label(session)),
-                true,
-                None::<&str>,
-            )?)?;
+        for (device_index, device) in connected_devices.into_iter().enumerate() {
+            let media_name = device["policy"]["label"]
+                .as_str()
+                .or_else(|| device["media_name"].as_str())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("外置磁盘");
+            let submenu =
+                Submenu::with_id(app, format!("tray-device-{device_index}"), media_name, true)?;
+            let kind = device["kind"].as_str().unwrap_or("unknown");
+            let device_id = device["device_id"].as_str().unwrap_or_default();
+            let disk = device["rbsd"].as_str().unwrap_or_default();
+
+            if kind != "edp" || device_id.is_empty() || disk.is_empty() {
+                let text = if kind == "ordinary" {
+                    "普通 U 盘，本应用不会操作"
+                } else {
+                    "正在只读识别设备…"
+                };
+                submenu.append(&MenuItem::with_id(
+                    app,
+                    format!("tray-device-{device_index}-info"),
+                    text,
+                    false,
+                    None::<&str>,
+                )?)?;
+                menu.append(&submenu)?;
+                continue;
+            }
+
+            for partition_type in [2_u32, 4_u32] {
+                let label = partition_type_label(partition_type);
+                if let Some(session) = mounted_session(snapshot, device_id, partition_type) {
+                    let session_id = session["session_id"].as_str().unwrap_or_default();
+                    submenu.append(&tray_action_item(
+                        app,
+                        &mut actions,
+                        format!("卸载{label}"),
+                        TrayAction::Unmount {
+                            session_id: session_id.to_string(),
+                            partition_type,
+                        },
+                    )?)?;
+                    if let Some(path) = first_mountpoint(session) {
+                        submenu.append(&tray_action_item(
+                            app,
+                            &mut actions,
+                            format!("在 Finder 中打开{label}"),
+                            TrayAction::OpenFinder { path },
+                        )?)?;
+                    }
+                } else if has_credential(snapshot, device_id, partition_type) {
+                    submenu.append(&tray_action_item(
+                        app,
+                        &mut actions,
+                        format!("挂载{label}"),
+                        TrayAction::Mount {
+                            disk: disk.to_string(),
+                            device_id: device_id.to_string(),
+                            partition_type,
+                        },
+                    )?)?;
+                } else {
+                    submenu.append(&MenuItem::with_id(
+                        app,
+                        format!("tray-device-{device_index}-missing-{partition_type}"),
+                        format!("{label} — 未配置密码"),
+                        false,
+                        None::<&str>,
+                    )?)?;
+                }
+            }
+            menu.append(&submenu)?;
         }
     }
+    *app.state::<TrayState>().actions.lock().unwrap() = actions;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItem::with_id(
         app,
@@ -848,6 +1039,89 @@ fn build_tray_menu(
     Ok(menu)
 }
 
+fn run_tray_action(app: AppHandle, action: TrayAction) {
+    std::thread::spawn(move || {
+        let (action_name, message) = match &action {
+            TrayAction::Mount { partition_type, .. } => (
+                "tray-mount",
+                format!("正在挂载{}…", partition_type_label(*partition_type)),
+            ),
+            TrayAction::Unmount { partition_type, .. } => (
+                "tray-unmount",
+                format!("正在卸载{}…", partition_type_label(*partition_type)),
+            ),
+            TrayAction::OpenFinder { .. } => ("tray-finder", "正在打开 Finder…".to_string()),
+        };
+        let id = operation_id(action_name);
+        emit_operation(&app, &id, action_name, "verifying", &message, None);
+        let result: Result<String, UiError> = match action {
+            TrayAction::Mount {
+                disk,
+                device_id,
+                partition_type,
+            } => Rpc::new()
+                .call(
+                    edp_proto::method::MOUNT,
+                    json!({
+                        "disk": disk,
+                        "device_id": device_id,
+                        "partition_type": partition_type,
+                    }),
+                )
+                .map(|_| format!("{}已挂载", partition_type_label(partition_type)))
+                .map_err(|error| UiError::new("MOUNT_FAILED", "托盘挂载失败").with_detail(error)),
+            TrayAction::Unmount {
+                session_id,
+                partition_type,
+            } => Rpc::new()
+                .call(
+                    edp_proto::method::UNMOUNT,
+                    json!({ "session_id": session_id, "force": false }),
+                )
+                .map(|_| format!("{}已卸载", partition_type_label(partition_type)))
+                .map_err(|error| UiError::new("UNMOUNT_FAILED", "托盘卸载失败").with_detail(error)),
+            TrayAction::OpenFinder { path } => finder_window_command(&path)
+                .output()
+                .map_err(|error| {
+                    UiError::new("OPEN_FAILED", "无法打开 Finder").with_detail(error.to_string())
+                })
+                .and_then(|output| {
+                    if output.status.success() {
+                        Ok("已打开 Finder".to_string())
+                    } else {
+                        Err(UiError::new("OPEN_FAILED", "无法打开 Finder").with_detail(
+                            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+                        ))
+                    }
+                }),
+        };
+        let _ = publish_snapshot(&app);
+        match result {
+            Ok(done) => {
+                emit_operation(&app, &id, action_name, "succeeded", &done, None);
+                let _ = app.notification().builder().title(&done).show();
+            }
+            Err(error) => {
+                emit_operation(
+                    &app,
+                    &id,
+                    action_name,
+                    "failed",
+                    &error.message,
+                    Some(error.clone()),
+                );
+                let body = error.detail.as_deref().unwrap_or(&error.message);
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title(&error.message)
+                    .body(body)
+                    .show();
+            }
+        }
+    });
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let snapshot = app.state::<UiStateCoordinator>().current();
     let tray = TrayIconBuilder::new()
@@ -857,27 +1131,27 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app.clone()),
             "quit" => app.exit(0),
-            id if id.starts_with("session-") => {
-                let session_id = id.trim_start_matches("session-");
-                let snapshot = app.state::<UiStateCoordinator>().current();
-                if let Some(path) = snapshot
-                    .sessions
-                    .iter()
-                    .find(|session| session["session_id"] == session_id)
-                    .and_then(first_mountpoint)
-                {
-                    let _ = std::process::Command::new("open").arg(path).spawn();
+            id if id.starts_with("tray-action-") => {
+                let action = app
+                    .state::<TrayState>()
+                    .actions
+                    .lock()
+                    .unwrap()
+                    .get(id)
+                    .cloned();
+                if let Some(action) = action {
+                    run_tray_action(app.clone(), action);
                 }
             }
             _ => {}
         })
         .build(app)?;
-    *app.state::<TrayState>().0.lock().unwrap() = Some(tray);
+    *app.state::<TrayState>().icon.lock().unwrap() = Some(tray);
     Ok(())
 }
 
 fn rebuild_tray(app: &AppHandle, snapshot: &AppSnapshot) -> tauri::Result<()> {
-    if let Some(tray) = app.state::<TrayState>().0.lock().unwrap().as_ref() {
+    if let Some(tray) = app.state::<TrayState>().icon.lock().unwrap().as_ref() {
         tray.set_menu(Some(build_tray_menu(app, snapshot)?))?;
     }
     Ok(())
@@ -943,7 +1217,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Rpc::new())
         .manage(UiStateCoordinator::default())
-        .manage(TrayState(Mutex::new(None)))
+        .manage(TrayState::default())
         .invoke_handler(tauri::generate_handler![
             get_app_snapshot,
             refresh_app_snapshot,

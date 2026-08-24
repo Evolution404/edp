@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { api } from "../api";
 import AppIcon from "../components/AppIcon.vue";
 import ModalSheet from "../components/ModalSheet.vue";
 import ToggleSwitch from "../components/ToggleSwitch.vue";
@@ -125,6 +124,11 @@ function runMount(item: DeviceInfo, type: PartitionType) {
 function runUnmount(item: DeviceInfo, type: PartitionType) {
   const session = sessionFor(item, type);
   if (session) void store.unmount(session).catch(() => undefined);
+}
+
+function openFinder(item: DeviceInfo, type: PartitionType) {
+  const path = sessionFor(item, type)?.mountpoints[0];
+  if (path) void store.openFinder(path).catch(() => undefined);
 }
 </script>
 
@@ -265,8 +269,8 @@ function runUnmount(item: DeviceInfo, type: PartitionType) {
                 />
                 <div class="partition-actions">
                   <template v-if="sessionFor(device, type)">
-                    <button class="button secondary" @click="api.openInFinder(sessionFor(device, type)?.mountpoints[0] ?? '')"><AppIcon name="folder" />Finder</button>
-                    <button class="button secondary" :disabled="!!store.busy[`unmount-${sessionFor(device, type)?.session_id}`]" @click="runUnmount(device, type)"><AppIcon name="eject" />正常卸载</button>
+                    <button class="button secondary" :disabled="!!store.busy[`finder-${sessionFor(device, type)?.mountpoints[0]}`]" @click="openFinder(device, type)"><AppIcon name="folder" />Finder</button>
+                    <button class="button secondary" :disabled="!!store.busy[`unmount-${sessionFor(device, type)?.session_id}`]" @click="runUnmount(device, type)"><span v-if="store.busy[`unmount-${sessionFor(device, type)?.session_id}`]" class="spinner"></span><AppIcon v-else name="eject" />{{ store.busy[`unmount-${sessionFor(device, type)?.session_id}`] ? "正在卸载…" : "正常卸载" }}</button>
                   </template>
                   <template v-else>
                     <button
@@ -274,7 +278,7 @@ function runUnmount(item: DeviceInfo, type: PartitionType) {
                       class="button primary"
                       :disabled="!device.connected || !!store.busy[`mount-${device.device_id}-${type}`]"
                       @click="runMount(device, type)"
-                    >手动挂载</button>
+                    ><span v-if="store.busy[`mount-${device.device_id}-${type}`]" class="spinner"></span>{{ store.busy[`mount-${device.device_id}-${type}`] ? "正在挂载…" : "手动挂载" }}</button>
                     <button v-else class="button primary" :disabled="!device.connected" @click="openCredentialSheet(type)"><AppIcon name="key" />设置密码</button>
                   </template>
                   <button v-if="credentialsFor(device, type).length" class="button ghost" @click="openCredentialSheet(type, credentialsFor(device, type)[0])">管理凭据</button>

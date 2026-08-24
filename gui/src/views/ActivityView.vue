@@ -41,8 +41,8 @@ function unmount(sessionId: string) {
             <p>{{ session.mountpoints[0] || "挂载点建立中" }}</p>
           </div>
           <div class="session-actions">
-            <button class="button secondary" :disabled="!session.mountpoints[0]" @click="api.openInFinder(session.mountpoints[0])"><AppIcon name="folder" />Finder</button>
-            <button class="button secondary" :disabled="!!store.busy[`unmount-${session.session_id}`]" @click="unmount(session.session_id)"><AppIcon name="eject" />正常卸载</button>
+            <button class="button secondary" :disabled="!session.mountpoints[0] || !!store.busy[`finder-${session.mountpoints[0]}`]" @click="store.openFinder(session.mountpoints[0]).catch(() => undefined)"><AppIcon name="folder" />Finder</button>
+            <button class="button secondary" :disabled="!!store.busy[`unmount-${session.session_id}`]" @click="unmount(session.session_id)"><span v-if="store.busy[`unmount-${session.session_id}`]" class="spinner"></span><AppIcon v-else name="eject" />{{ store.busy[`unmount-${session.session_id}`] ? "正在卸载…" : "正常卸载" }}</button>
           </div>
         </article>
       </div>

@@ -64,6 +64,10 @@ impl Client {
     where
         F: FnMut(crate::types::Event),
     {
+        // A subscription is intentionally idle between disk events. The normal
+        // 30-second RPC timeout would silently tear it down and create a window
+        // in which insert/remove events can be lost.
+        self.stream.set_read_timeout(None)?;
         let id = self.next_id;
         self.next_id += 1;
         let req = Request {

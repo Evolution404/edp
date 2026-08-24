@@ -1232,17 +1232,20 @@ fn cleanup_disappeared(state: &DaemonState, bsd: &str) {
         .unwrap()
         .remove(bsd)
         .unwrap_or_default();
-    for sid in sessions {
+    let session_ids: Vec<String> = sessions.into_iter().collect();
+    for sid in &session_ids {
         info!("磁盘消失，清理会话 {sid}");
-        if let Err(error) = session::unmount(&sid, true, &state.session_root) {
+        if let Err(error) = session::unmount(sid, true, &state.session_root) {
             warn!("清理会话 {sid} 失败: {error}");
         }
-        state.broadcaster.broadcast(
-            edp_proto::event::DISK_REMOVED,
-            json!({ "bsd": bsd, "session_id": sid }),
-        );
     }
     state.disk_inventory.lock().unwrap().remove(bsd);
+    // Always notify clients, including for ordinary, unauthorized and
+    // password-missing disks that never created a session.
+    state.broadcaster.broadcast(
+        edp_proto::event::DISK_REMOVED,
+        json!({ "bsd": bsd, "session_ids": session_ids }),
+    );
 }
 
 #[cfg(test)]
