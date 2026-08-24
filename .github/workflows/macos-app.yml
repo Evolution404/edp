@@ -46,8 +46,8 @@ jobs:
             ~/.cargo/git/db
             target
             gui/src-tauri/target
-          key: cargo-quality-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-quality-${{ runner.os }}-${{ runner.arch }}-
+          key: cargo-quality-edp-usb-vault-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-quality-edp-usb-vault-v2-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install frontend dependencies
         working-directory: gui
@@ -121,8 +121,8 @@ jobs:
             ~/.cargo/git/db
             target
             gui/src-tauri/target
-          key: cargo-build-${{ runner.os }}-arm64-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-build-${{ runner.os }}-arm64-
+          key: cargo-build-edp-usb-vault-v2-${{ runner.os }}-arm64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-build-edp-usb-vault-v2-${{ runner.os }}-arm64-
 
       - name: Install frontend dependencies
         working-directory: gui
