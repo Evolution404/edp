@@ -471,12 +471,26 @@ pub fn run(
         mountpoint.display()
     );
     let mut session = fuser::Session::new(bridge, mountpoint, &mount_options())?;
-    if let Some(fd) = ready_fd {
+    // Session::new 只完成内核挂载；必须进入 session.run 后 lookup 才能被
+    // 实际响应。由独立 notifier 验证 volume.raw 可见后再写 ready pipe，
+    // 避免 daemon 在事件循环启动前抢跑。
+    let ready_notifier = ready_fd.map(|fd| {
         use std::io::Write;
         use std::os::unix::io::FromRawFd;
-        let mut ready = unsafe { std::fs::File::from_raw_fd(fd) };
-        ready.write_all(&[1])?;
-    }
+        let virtual_file = mountpoint.join(VIRTUAL_NAME);
+        std::thread::spawn(move || {
+            let mut ready = unsafe { std::fs::File::from_raw_fd(fd) };
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while std::time::Instant::now() < deadline {
+                if std::fs::metadata(&virtual_file).is_ok() {
+                    let _ = ready.write_all(&[1]);
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            warn!("bridge: volume.raw 就绪验证超时");
+        })
+    });
 
     let stop = Arc::new(AtomicBool::new(false));
     let reporter = performance_path.map(|path| {
@@ -495,6 +509,9 @@ pub fn run(
     stop.store(true, Ordering::Relaxed);
     if let Some(reporter) = reporter {
         let _ = reporter.join();
+    }
+    if let Some(notifier) = ready_notifier {
+        let _ = notifier.join();
     }
     result?;
     Ok(())
