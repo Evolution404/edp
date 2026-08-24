@@ -1,0 +1,29 @@
+Source: /Library/Logs/DiagnosticReports/fskitd-2026-08-24-131809.ips
+procName: fskitd  osVersion: {'app_name': 'fskitd', 'timestamp': '2026-08-24 13:18:09.00 +0800', 'app_version': '1.0', 'slice_uuid': '01196e2d-3ade-30f9-ac1f-da4107c9741c', 'build_version': '1', 'platform': 1, 'share_with_app_devs': 0, 'is_first_party': 1, 'bug_type': '309', 'os_version': 'macOS 15.7.7 (24G720)', 'roots_installed': 0, 'incident_id': '15040B24-8B24-453D-BB9E-36025DC2DABA', 'name': 'fskitd'}
+exception: {'codes': '0x0000000000000001, 0x00000001813efafc', 'rawCodes': [1, 6463355644], 'type': 'EXC_BREAKPOINT', 'signal': 'SIGTRAP'}
+termination: {'flags': 0, 'code': 5, 'namespace': 'SIGNAL', 'indicator': 'Trace/BPT trap: 5', 'byProc': 'exc handler', 'byPid': 60977}
+faultingThread: 1
+--- faulting thread frames ---
+  libdispatch.dylib        __DISPATCH_WAIT_FOR_QUEUE__ + 484
+  libdispatch.dylib        _dispatch_sync_f_slow + 148
+  FSKit                    -[FSBlockDeviceResource(Private) terminate] + 120
+  FSKit                    -[FSBlockDeviceResource dealloc] + 28
+  FSKit                    deviceNotificationCallback + 492
+  IOKit                    IODispatchCalloutFromCFMessage + 332
+  IOKit                    _IODispatchCalloutWithDispatch + 44
+  libdispatch.dylib        dispatch_mig_server + 432
+  libdispatch.dylib        _dispatch_client_callout + 16
+  libdispatch.dylib        _dispatch_continuation_pop + 596
+  libdispatch.dylib        _dispatch_source_latch_and_call + 396
+  libdispatch.dylib        _dispatch_source_invoke + 844
+  libdispatch.dylib        _dispatch_lane_serial_drain + 332
+  libdispatch.dylib        _dispatch_lane_invoke + 388
+  libdispatch.dylib        _dispatch_root_queue_drain_deferred_wlh + 292
+  libdispatch.dylib        _dispatch_workloop_worker_thread + 540
+  libsystem_pthread.dylib  _pthread_wqthread + 292
+  libsystem_pthread.dylib  start_wqthread + 8
+--- other threads (names/counts) ---
+  thread 0: 10 frames, queue=?
+  thread 2: 24 frames, queue=?
+  thread 3: 1 frames, queue=?
+  thread 4: 1 frames, queue=?

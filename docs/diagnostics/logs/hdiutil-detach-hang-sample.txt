@@ -1,0 +1,34 @@
+hdiutil detach hang — sample of the hung hdiutil client
+=======================================================
+
+Captured 2026-08-25 00:30 (system in degraded state: 8 orphan 4KB Disk
+Images, diskarbitrationd wedged after fskitd death; original sample file
+lost to reboot, stack recorded verbatim from the live session).
+
+Command: /usr/bin/hdiutil detach /dev/disk11   (same hang for /dev/disk4;
+also reproduced earlier by the user with `hdiutil detach -force`)
+
+State: hangs indefinitely; main thread blocked in mach_msg waiting for an
+XPC reply that never arrives.
+
+Call graph (sample, 3s, 2376 samples — 100% of main thread):
+
+    2376 Thread_121336   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 2376 start  (in dyld) + 6076
+    +   2376 ???  (in hdiutil)  + 0xde4
+    +     2376 ???  (in hdiutil)  + 0x5fb8
+    +       2376 ???  (in hdiutil)  + 0x6624
+    +         2376 CFRunLoopRun  (in CoreFoundation) + 64
+    +           2376 CFRunLoopRunSpecific  (in CoreFoundation) + 572
+    +             2376 __CFRunLoopRun  (in CoreFoundation) + 1208
+    +               2376 __CFRunLoopServiceMachPort  (in CoreFoundation) + 160
+    +                 2376 mach_msg  (in libsystem_kernel.dylib) + 24
+    +                   2376 mach_msg_overwrite  (in libsystem_kernel.dylib) + 484
+    +                     2376 mach_msg2_internal  (in libsystem_kernel.dylib) + 76
+    +                       2376 mach_msg2_trap  (in libsystem_kernel.dylib) + 8
+
+Interpretation: detach request was sent; the peer responsible for the
+reply (DiskImages / diskarbitrationd chain) never responds. After reboot
+with a clean subsystem, detach of the same class of image completes
+normally — i.e. the hang is a symptom of the wedged diskarbitrationd /
+post-fskitd-crash state, not of the 4KB images themselves.
