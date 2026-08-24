@@ -11,7 +11,7 @@
 | CLI | `usbcore <cmd>` | 终端操作；daemon 在线走 socket 免 sudo，离线 sudo 直跑 |
 | daemon | `usbcore daemon run` | launchd 常驻（root）：磁盘监听、密码库、自动挂载、RPC server |
 | bridge | `usbcore bridge` | macFUSE 单文件桥（daemon/CLI spawn，file_key 走匿名管道） |
-| GUI | `EDP USB Client.app` | Tauri 2 菜单栏应用（accessory，无 Dock），纯 RPC 客户端 |
+| GUI | `EDP USB Vault.app` | Tauri 2 菜单栏应用（accessory，无 Dock），纯 RPC 客户端 |
 
 ## 模块划分
 

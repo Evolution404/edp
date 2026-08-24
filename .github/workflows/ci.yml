@@ -63,4 +63,4 @@ jobs:
       - name: GUI 打包 .app
         run: |
           cd gui && npx tauri build
-          cp ../target/release/usbcore "src-tauri/target/release/bundle/macos/EDP USB Client.app/Contents/MacOS/usbcore"
+          cp ../target/release/usbcore "src-tauri/target/release/bundle/macos/EDP USB Vault.app/Contents/MacOS/usbcore"

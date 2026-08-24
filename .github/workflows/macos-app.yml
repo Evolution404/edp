@@ -166,10 +166,10 @@ jobs:
           BUILD_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          APP_PATH="gui/src-tauri/target/release/bundle/macos/EDP USB Client.app"
+          APP_PATH="gui/src-tauri/target/release/bundle/macos/EDP USB Vault.app"
           ARTIFACT_DIR="artifacts"
           APP_VERSION="$(node -p "require('./gui/package.json').version")"
-          ARCHIVE_BASE="EDP-USB-Client-${APP_VERSION}-${BUILD_ARCH}"
+          ARCHIVE_BASE="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}"
           PACKAGE_DIR="$(mktemp -d "${RUNNER_TEMP}/edp-dmg.XXXXXX")"
 
           test -x "${APP_PATH}/Contents/Resources/usbcore"
@@ -180,10 +180,10 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent \
             "${APP_PATH}" "${ARTIFACT_DIR}/${ARCHIVE_BASE}.app.zip"
 
-          ditto "${APP_PATH}" "${PACKAGE_DIR}/EDP USB Client.app"
+          ditto "${APP_PATH}" "${PACKAGE_DIR}/EDP USB Vault.app"
           ln -s /Applications "${PACKAGE_DIR}/Applications"
           hdiutil create -quiet -ov -format UDZO \
-            -volname "EDP USB Client" \
+            -volname "EDP USB Vault" \
             -srcfolder "${PACKAGE_DIR}" \
             "${ARTIFACT_DIR}/${ARCHIVE_BASE}.dmg"
 
@@ -194,7 +194,7 @@ jobs:
       - name: Upload app artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: edp-usb-client-${{ matrix.arch }}
+          name: edp-usb-vault-${{ matrix.arch }}
           path: artifacts/*
           if-no-files-found: error
           retention-days: 30
@@ -210,7 +210,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v7
         with:
-          pattern: edp-usb-client-*
+          pattern: edp-usb-vault-*
           path: release-assets
           merge-multiple: true
 

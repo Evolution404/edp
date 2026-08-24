@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "EDP USB Client",
+  "productName": "EDP USB Vault",
   "version": "0.4.0",
   "identifier": "com.edp.usbcore",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "EDP 加密 U 盘客户端",
+        "title": "EDP USB Vault",
         "width": 980,
         "height": 680,
         "minWidth": 780,

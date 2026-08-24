@@ -1,4 +1,4 @@
-//! EDP USB Client UI v2 Tauri backend.
+//! EDP USB Vault UI v2 Tauri backend.
 //!
 //! The webview and tray consume one cached snapshot. Daemon events are debounced
 //! into snapshot refreshes so the UI never maintains an independent truth.
@@ -695,7 +695,7 @@ fn build_tray_menu(app: &AppHandle, snapshot: &AppSnapshot) -> Result<Menu<tauri
         }
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "open", "打开 EDP USB Client", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "open", "打开 EDP USB Vault", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?)?;
     Ok(menu)
 }

@@ -39,7 +39,7 @@ onUnmounted(() => unlisteners.forEach((unlisten) => unlisten()));
     <aside class="sidebar">
       <div class="brand-block">
         <span class="brand-symbol"><AppIcon name="lock" :size="19" /></span>
-        <div><strong>EDP USB</strong><span>安全磁盘客户端</span></div>
+        <div><strong>EDP USB Vault</strong><span>安全磁盘客户端</span></div>
       </div>
 
       <nav class="sidebar-nav" aria-label="主导航">

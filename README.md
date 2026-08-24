@@ -1,6 +1,6 @@
-# disk_client — EDP 加密 U 盘 macOS 客户端
+# EDP USB Vault — EDP 加密 U 盘 macOS 客户端
 
-[![macOS App](https://github.com/Evolution404/disk_client/actions/workflows/macos-app.yml/badge.svg)](https://github.com/Evolution404/disk_client/actions/workflows/macos-app.yml)
+[![macOS App](https://github.com/Evolution404/edp-usb-vault/actions/workflows/macos-app.yml/badge.svg)](https://github.com/Evolution404/edp-usb-vault/actions/workflows/macos-app.yml)
 
 VRV/CEMS **EDP 加密 U 盘**的 macOS 互操作客户端：**Rust 内核（CLI + 常驻守护进程）+ Tauri 状态栏 GUI**。
 插入已登记密码的 EDP U 盘即**自动解密挂载**，无需每次 sudo、无需手输密码。
@@ -28,7 +28,7 @@ launchd (root, KeepAlive)
      └─ hdiutil attach → 原生 exFAT → /Volumes/...
 
 usbcore <cmd>（终端 CLI）──┐
-EDP USB Client.app（菜单栏）──┴── 走 UDS socket 免 sudo
+EDP USB Vault.app（菜单栏）───┴── 走 UDS socket 免 sudo
 ```
 
 详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。

@@ -13,7 +13,7 @@ version = "0.4.0"
 edition = "2021"
 rust-version = "1.75"
 license = "Proprietary"
-repository = "https://github.com/Evolution404/disk_client"
+repository = "https://github.com/Evolution404/edp-usb-vault"
 
 [workspace.dependencies]
 # 内部 crate

@@ -37,7 +37,7 @@ gui:
 bundle:
 	cargo build --release -p usbcore
 	cd gui && npm ci && npx tauri build
-	cp target/release/usbcore "gui/src-tauri/target/release/bundle/macos/EDP USB Client.app/Contents/MacOS/usbcore"
+	cp target/release/usbcore "gui/src-tauri/target/release/bundle/macos/EDP USB Vault.app/Contents/MacOS/usbcore"
 
 clean:
 	cargo clean

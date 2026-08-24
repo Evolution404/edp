@@ -94,7 +94,7 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
       <section class="settings-card wide about-card">
         <div class="card-heading">
           <span class="settings-icon"><AppIcon name="info" /></span>
-          <div><h2>EDP USB Client</h2><p>简体中文 · Tauri + Vue · 客户端版本 0.4.0</p></div>
+          <div><h2>EDP USB Vault</h2><p>简体中文 · Tauri + Vue · 客户端版本 0.4.0</p></div>
         </div>
         <p>自动挂载总开关仅位于窗口顶部；每台设备的授权与分区选择在“设备”页面管理。</p>
       </section>
