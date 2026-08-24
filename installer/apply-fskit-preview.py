@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Apply the preview-only FSKit mountpoint change.
+"""Apply preview-only FSKit installation adjustments.
 
-The bridge transport itself now uses macFUSE's official libfuse API directly.
-This patch only moves the transient hidden bridge below /Volumes, which FSKit
-requires, while keeping logs/session metadata in /var/db.
+The bridge transport uses macFUSE's official libfuse API directly. This patch:
+1. moves the transient hidden bridge below /Volumes, which FSKit requires;
+2. makes the one-click installer's postinstall explicitly register macFUSE's
+   File System Extensions so they appear in System Settings on first install.
 """
 from pathlib import Path
 
@@ -16,4 +17,39 @@ if old in text:
 elif new not in text:
     raise SystemExit("expected bridge mountpoint snippet not found")
 
-print("Applied installer-preview /Volumes FSKit mountpoint patch")
+installer = Path("installer/build-one-click.sh")
+text = installer.read_text()
+needle = '''/bin/launchctl kickstart -k "system/${LABEL}" || true
+
+exit 0
+POSTINSTALL'''
+replacement = '''/bin/launchctl kickstart -k "system/${LABEL}" || true
+
+# macFUSE 5.1.2+ can register its FSKit File System Extensions explicitly.
+# The component packages can be installed successfully without the extensions
+# appearing in System Settings, which makes the first FSKit mount fail with a
+# user-facing "Enable File System Extension" dialog. Force registration here.
+MACFUSE_CTL="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/MacOS/macfuse"
+if [[ -x "$MACFUSE_CTL" ]]; then
+  echo "Registering macFUSE File System Extensions..."
+  "$MACFUSE_CTL" install --components file-system-extensions --force || \\
+    "$MACFUSE_CTL" install --force || true
+else
+  echo "Warning: macFUSE control tool was not found at $MACFUSE_CTL" >&2
+fi
+
+exit 0
+POSTINSTALL'''
+if needle in text:
+    text = text.replace(needle, replacement, 1)
+elif 'install --components file-system-extensions --force' not in text:
+    raise SystemExit("expected installer postinstall snippet not found")
+
+old_dialog = 'EDP USB Vault 已安装完成。首次使用请在“系统设置 → 隐私与安全性 → 完整磁盘访问权限”中允许 EDP USB Vault。'
+new_dialog = 'EDP USB Vault 已安装完成。首次使用请在“系统设置 → 通用 → 登录项与扩展 → 文件系统扩展”中启用 macFUSE，并在“隐私与安全性 → 完整磁盘访问权限”中允许 EDP USB Vault。'
+if old_dialog in text:
+    text = text.replace(old_dialog, new_dialog, 1)
+
+installer.write_text(text)
+
+print("Applied installer-preview FSKit mountpoint and extension-registration patches")
