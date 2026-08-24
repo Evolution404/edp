@@ -766,6 +766,23 @@ fn service_action_complete(action: &str, status: &Value) -> bool {
     }
 }
 
+fn repair_service_registration() -> Result<(), UiError> {
+    use service_management::Status;
+    match service_management::status() {
+        Status::Enabled => prepare_daemon_restart(),
+        Status::NotRegistered | Status::RequiresApproval => {
+            service_management::register().map_err(|message| {
+                UiError::new("SERVICE_REGISTER_FAILED", "无法启用嵌入式后台服务")
+                    .with_detail(message)
+            })
+        }
+        Status::NotFound => Err(UiError::new(
+            "SERVICE_NOT_FOUND",
+            "当前 App 包不包含可注册的后台服务",
+        )),
+    }
+}
+
 fn parse_launchd_failure(output: &str) -> Option<String> {
     if output.contains("last exit reason = OS_REASON_DYLD") {
         return Some(
@@ -1338,7 +1355,7 @@ fn spawn_health_check(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if std::env::args_os().any(|argument| argument == "--repair-service-registration") {
-        match prepare_daemon_restart() {
+        match repair_service_registration() {
             Ok(()) => {
                 println!("EDP USB Vault service registration repaired");
                 return;
