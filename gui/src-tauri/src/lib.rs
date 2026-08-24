@@ -1206,6 +1206,14 @@ fn spawn_subscriber(app: AppHandle) {
             // Refresh once on every successful connection so those state transitions are
             // visible even when their events happened before subscribe was established.
             schedule_snapshot_refresh(app.clone());
+            let app_for_convergence = app.clone();
+            std::thread::spawn(move || {
+                // Mounting through macFUSE can finish after the subscriber connects. A
+                // second, infrequent refresh closes that startup-only race without
+                // bringing back the old periodic full-state polling.
+                std::thread::sleep(Duration::from_secs(4));
+                schedule_snapshot_refresh(app_for_convergence);
+            });
             let app_for_event = app.clone();
             let _ = client.subscribe(move |event| {
                 let _ = app_for_event.emit(RAW_EVENT, event.clone());
@@ -1238,10 +1246,21 @@ fn spawn_health_check(app: AppHandle) {
         std::thread::sleep(Duration::from_secs(5));
         let current = app.state::<UiStateCoordinator>().current();
         let service = service_status_impl().unwrap_or_else(|_| json!({}));
-        let changed = ["installed", "running", "enabled", "online"]
+        let service_changed = ["installed", "running", "enabled", "online"]
             .iter()
             .any(|key| current.service[*key] != service[*key]);
-        if changed {
+        let daemon = Rpc::new()
+            .call(edp_proto::method::STATUS, json!({}))
+            .ok();
+        let daemon_changed = match (&current.daemon, &daemon) {
+            (Some(previous), Some(latest)) => {
+                previous["mounted_sessions"] != latest["mounted_sessions"]
+                    || previous["auto_mount_mode"] != latest["auto_mount_mode"]
+            }
+            (None, None) => false,
+            _ => true,
+        };
+        if service_changed || daemon_changed {
             let _ = publish_snapshot(&app);
         }
     });
