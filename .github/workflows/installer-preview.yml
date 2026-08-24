@@ -1,0 +1,139 @@
+name: Installer Preview
+
+on:
+  push:
+    branches: ["install/one-click-installer"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: installer-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  MACFUSE_VERSION: "5.2.0"
+
+jobs:
+  build:
+    name: Build one-click installer
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install frontend dependencies
+        working-directory: gui
+        run: npm ci
+
+      - name: Download and install macFUSE build runtime
+        run: |
+          set -euo pipefail
+          MACFUSE_DMG="${RUNNER_TEMP}/macfuse-${MACFUSE_VERSION}.dmg"
+          MACFUSE_VOLUME="${RUNNER_TEMP}/macfuse-build-volume"
+          curl -fsSL \
+            "https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg" \
+            -o "${MACFUSE_DMG}"
+          mkdir -p "${MACFUSE_VOLUME}"
+          hdiutil attach -quiet -nobrowse -readonly \
+            -mountpoint "${MACFUSE_VOLUME}" "${MACFUSE_DMG}"
+          MACFUSE_PKG="$(find "${MACFUSE_VOLUME}" -maxdepth 2 -name 'Install macFUSE*.pkg' -print -quit)"
+          if [[ -z "${MACFUSE_PKG}" ]]; then
+            MACFUSE_PKG="$(find "${MACFUSE_VOLUME}" -maxdepth 2 -name '*.pkg' -print -quit)"
+          fi
+          test -n "${MACFUSE_PKG}"
+          sudo installer -pkg "${MACFUSE_PKG}" -target /
+          hdiutil detach -quiet "${MACFUSE_VOLUME}"
+          pkg-config --modversion fuse
+
+      - name: Build usbcore
+        run: cargo build -p usbcore --release --locked
+
+      - name: Build Tauri app
+        working-directory: gui
+        run: npm run tauri -- build --bundles app
+
+      - name: Ad-hoc sign preview app
+        run: |
+          set -euo pipefail
+          APP_PATH="gui/src-tauri/target/release/bundle/macos/EDP USB Vault.app"
+          test -x "${APP_PATH}/Contents/Resources/usbcore"
+          codesign --force --options runtime --sign - \
+            --entitlements gui/src-tauri/embedded/usbcore.entitlements.plist \
+            --identifier com.edp.usbvault.daemon.v2 \
+            "${APP_PATH}/Contents/Resources/usbcore"
+          codesign --force --options runtime --sign - \
+            --identifier com.edp.usbvault "${APP_PATH}"
+          codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+
+      - name: Build one-click installer
+        run: |
+          set -euo pipefail
+          APP_VERSION="$(node -p "require('./gui/package.json').version")"
+          export APP_VERSION BUILD_ARCH=arm64
+          bash installer/build-one-click.sh \
+            "gui/src-tauri/target/release/bundle/macos/EDP USB Vault.app" \
+            artifacts \
+            "${RUNNER_TEMP}/macfuse-${MACFUSE_VERSION}.dmg"
+          ls -lah artifacts
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: edp-usb-vault-installer-preview
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish installer preview release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download preview artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: edp-usb-vault-installer-preview
+          path: release-assets
+
+      - name: Move preview tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: installer-preview
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" \
+              -f sha="${GITHUB_SHA}" -F force=true >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" -f sha="${GITHUB_SHA}" >/dev/null
+          fi
+
+      - name: Replace preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: installer-preview
+        run: |
+          set -euo pipefail
+          gh release delete "${RELEASE_TAG}" --yes >/dev/null 2>&1 || true
+          SHORT_SHA="${GITHUB_SHA::7}"
+          gh release create "${RELEASE_TAG}" release-assets/* \
+            --verify-tag \
+            --prerelease \
+            --title "Installer Preview" \
+            --notes "One-click installer test build from install/one-click-installer. Includes EDP USB Vault, macFUSE 5.2.0 components, and installer-managed LaunchDaemon fallback for unsigned/ad-hoc distribution. Commit: ${SHORT_SHA}."
