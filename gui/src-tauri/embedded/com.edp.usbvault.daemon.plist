@@ -16,9 +16,9 @@
   <true/>
   <key>KeepAlive</key>
   <true/>
-  <!-- 加密桥是前台文件 I/O 的热路径，不能被 launchd 以 Background CPU/QoS
-       节流；Standard 仍保持普通系统优先级，不抢占交互式进程。 -->
+  <!-- 加密桥位于 Finder 文件 I/O 的同步热路径，必须按交互式请求调度；
+       daemon 空闲时不运行加密任务，因此不会持续占用前台 CPU。 -->
   <key>ProcessType</key>
-  <string>Standard</string>
+  <string>Interactive</string>
 </dict>
 </plist>

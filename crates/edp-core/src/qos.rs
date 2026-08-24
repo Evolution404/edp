@@ -17,3 +17,19 @@ pub fn set_current_thread_user_initiated() {
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_current_thread_user_initiated() {}
+
+/// 适度提高当前进程的 CPU 调度优先级。只有嵌入式 root bridge 能成功；
+/// 普通开发 CLI 调用会静默失败并保持原优先级。
+#[cfg(target_os = "macos")]
+pub fn prioritize_current_process_for_io() -> bool {
+    unsafe extern "C" {
+        fn setpriority(which: i32, who: u32, priority: i32) -> i32;
+    }
+    const PRIO_PROCESS: i32 = 0;
+    unsafe { setpriority(PRIO_PROCESS, 0, -5) == 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn prioritize_current_process_for_io() -> bool {
+    false
+}

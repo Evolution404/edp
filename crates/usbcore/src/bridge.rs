@@ -445,6 +445,7 @@ pub fn run(
     ready_fd: Option<i32>,
     performance_path: Option<&Path>,
 ) -> anyhow::Result<()> {
+    let priority_raised = edp_core::qos::prioritize_current_process_for_io();
     edp_core::qos::set_current_thread_user_initiated();
     let key = read_key_from_fd(key_fd)?;
     let desc = VolumeDescriptor {
@@ -465,7 +466,7 @@ pub fn run(
         jobs: JobPool::new(),
     };
     info!(
-        "bridge: source={} mount={} start_sector={start_sector} size={size_bytes}",
+        "bridge: source={} mount={} start_sector={start_sector} size={size_bytes} priority_raised={priority_raised}",
         source.display(),
         mountpoint.display()
     );

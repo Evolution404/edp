@@ -5,6 +5,7 @@
 
 use crate::CoreError;
 use rayon::prelude::*;
+#[cfg(not(target_arch = "aarch64"))]
 use sm4::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 
 // macFUSE / DiskImages 在实机上把 iBoysoft NTFS 顺序 I/O 拆成约 64 KiB
@@ -31,23 +32,39 @@ fn crypto_pool() -> &'static rayon::ThreadPool {
 
 /// SM4-ECB：持密钥的加解密器（输入必须 16 字节对齐）。
 #[derive(Clone)]
-pub struct Sm4Ecb(sm4::Sm4);
+pub struct Sm4Ecb {
+    #[cfg(not(target_arch = "aarch64"))]
+    portable: sm4::Sm4,
+    #[cfg(target_arch = "aarch64")]
+    optimized: crate::sm4_fast::Sm4Fast,
+}
 
 impl Sm4Ecb {
     /// 以 16 字节密钥构造。
     pub fn new(key: &[u8; 16]) -> Self {
-        Self(sm4::Sm4::new(key.into()))
+        Self {
+            #[cfg(not(target_arch = "aarch64"))]
+            portable: sm4::Sm4::new(key.into()),
+            #[cfg(target_arch = "aarch64")]
+            optimized: crate::sm4_fast::Sm4Fast::new(key),
+        }
     }
 
     fn encrypt_chunk(&self, data: &mut [u8]) {
         for chunk in data.chunks_exact_mut(16) {
-            self.0.encrypt_block(chunk.into());
+            #[cfg(target_arch = "aarch64")]
+            self.optimized.encrypt_block(chunk);
+            #[cfg(not(target_arch = "aarch64"))]
+            self.portable.encrypt_block(chunk.into());
         }
     }
 
     fn decrypt_chunk(&self, data: &mut [u8]) {
         for chunk in data.chunks_exact_mut(16) {
-            self.0.decrypt_block(chunk.into());
+            #[cfg(target_arch = "aarch64")]
+            self.optimized.decrypt_block(chunk);
+            #[cfg(not(target_arch = "aarch64"))]
+            self.portable.decrypt_block(chunk.into());
         }
     }
 
@@ -116,6 +133,7 @@ pub fn wrapping_key() -> [u8; 16] {
 mod tests {
     use super::*;
     use hex_literal::hex;
+    use sm4::cipher::{BlockEncrypt, KeyInit};
 
     /// GB/T 32907-2016 标准向量：
     /// 明文 0123456789abcdeffedcba9876543210
@@ -147,5 +165,29 @@ mod tests {
     fn misaligned_rejected() {
         let sm4 = Sm4Ecb::new(&[0u8; 16]);
         assert!(sm4.encrypt_aligned(&[0u8; 15]).is_err());
+    }
+
+    #[test]
+    fn optimized_backend_matches_rustcrypto_for_parallel_random_data() {
+        let key = [0x42; 16];
+        let cipher = Sm4Ecb::new(&key);
+        let reference = sm4::Sm4::new(&key.into());
+        let mut actual = vec![0u8; 1024 * 1024];
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        for byte in &mut actual {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *byte = state as u8;
+        }
+        let original = actual.clone();
+        let mut expected = original.clone();
+        for block in expected.chunks_exact_mut(16) {
+            reference.encrypt_block(block.into());
+        }
+        cipher.encrypt_aligned_in_place(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+        cipher.decrypt_aligned_in_place(&mut actual).unwrap();
+        assert_eq!(actual, original);
     }
 }

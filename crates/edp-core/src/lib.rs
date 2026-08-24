@@ -24,6 +24,8 @@ pub mod lba12;
 pub mod lba7;
 pub mod qos;
 pub mod sm4_ecb;
+#[cfg(target_arch = "aarch64")]
+mod sm4_fast;
 pub mod synthetic;
 pub mod volume;
 pub mod xor;
