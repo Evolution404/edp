@@ -1,5 +1,7 @@
 # disk_client — EDP 加密 U 盘 macOS 客户端
 
+[![macOS App](https://github.com/Evolution404/disk_client/actions/workflows/macos-app.yml/badge.svg)](https://github.com/Evolution404/disk_client/actions/workflows/macos-app.yml)
+
 VRV/CEMS **EDP 加密 U 盘**的 macOS 互操作客户端：**Rust 内核（CLI + 常驻守护进程）+ Tauri 状态栏 GUI**。
 插入已登记密码的 EDP U 盘即**自动解密挂载**，无需每次 sudo、无需手输密码。
 
@@ -46,9 +48,16 @@ cd gui && npm ci && npx tauri dev     # 开发运行
 # 或打包 .app：npx tauri build       # 产物在 gui/src-tauri/target/release/bundle/
 ```
 
-GUI 首次使用：打开主窗口 → 设置页「安装 daemon」（弹系统授权）→ 密码库页录入密码 →
-设备页为目标 U 盘选择分区并授权自动挂载。新盘默认不授权；daemon 安装后，**关闭窗口或退出
-GUI 都不影响后台服务**。
+GUI 首次使用：打开主窗口 → 设置页「安装后台服务」（弹系统授权）→ 设备页选择目标 U 盘 →
+在分区行设置密码并开启逐盘授权。新盘默认不授权；daemon 安装后，**关闭窗口或退出 GUI
+都不影响后台服务**。
+
+## GitHub 自动构建
+
+- 推送到 `main` 或手动运行 **macOS App** workflow，会完成 Rust/前端测试与严格 Clippy，随后分别构建 Apple Silicon (`arm64`) 和 Intel (`x86_64`) 客户端。
+- 构建产物可从对应 Actions run 下载，包含保留 macOS 可执行权限的 `.app.zip`、可拖入“应用程序”的 `.dmg` 及 SHA-256 校验文件。
+- 推送 `v*` 标签（例如 `v0.4.0`）会自动创建或更新 GitHub Release 并附加双架构安装包。
+- 未配置 Apple Developer 证书时 CI 使用 ad-hoc 签名，不执行 Apple 公证；首次打开下载包可能需要在 Finder 中右键选择“打开”。
 
 > **macOS 15（Sequoia）注意**：系统默认禁止后台守护进程访问可移动磁盘。安装 daemon 后
 > 需**一次性**在「系统设置 → 隐私与安全性 → 完整磁盘访问权限」中添加
