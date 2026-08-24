@@ -25,10 +25,10 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -38,7 +38,7 @@ jobs:
         run: rustup toolchain install stable --profile minimal --component clippy
 
       - name: Cache Rust build output
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
@@ -52,6 +52,24 @@ jobs:
       - name: Install frontend dependencies
         working-directory: gui
         run: npm ci
+
+      - name: Install macFUSE build libraries
+        run: |
+          set -euo pipefail
+          MACFUSE_VERSION="5.2.0"
+          MACFUSE_DMG="${RUNNER_TEMP}/macfuse-${MACFUSE_VERSION}.dmg"
+          MACFUSE_VOLUME="${RUNNER_TEMP}/macfuse-volume"
+          curl -fsSL \
+            "https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg" \
+            -o "${MACFUSE_DMG}"
+          mkdir -p "${MACFUSE_VOLUME}"
+          hdiutil attach -quiet -nobrowse -readonly \
+            -mountpoint "${MACFUSE_VOLUME}" "${MACFUSE_DMG}"
+          MACFUSE_PKG="$(find "${MACFUSE_VOLUME}" -maxdepth 2 -name '*.pkg' -print -quit)"
+          test -n "${MACFUSE_PKG}"
+          sudo installer -pkg "${MACFUSE_PKG}" -target /
+          hdiutil detach -quiet "${MACFUSE_VOLUME}"
+          pkg-config --modversion fuse
 
       - name: Test frontend
         working-directory: gui
@@ -87,10 +105,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -100,7 +118,7 @@ jobs:
         run: rustup toolchain install stable --profile minimal
 
       - name: Cache Rust build output
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index
@@ -114,6 +132,24 @@ jobs:
       - name: Install frontend dependencies
         working-directory: gui
         run: npm ci
+
+      - name: Install macFUSE build libraries
+        run: |
+          set -euo pipefail
+          MACFUSE_VERSION="5.2.0"
+          MACFUSE_DMG="${RUNNER_TEMP}/macfuse-${MACFUSE_VERSION}.dmg"
+          MACFUSE_VOLUME="${RUNNER_TEMP}/macfuse-volume"
+          curl -fsSL \
+            "https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg" \
+            -o "${MACFUSE_DMG}"
+          mkdir -p "${MACFUSE_VOLUME}"
+          hdiutil attach -quiet -nobrowse -readonly \
+            -mountpoint "${MACFUSE_VOLUME}" "${MACFUSE_DMG}"
+          MACFUSE_PKG="$(find "${MACFUSE_VOLUME}" -maxdepth 2 -name '*.pkg' -print -quit)"
+          test -n "${MACFUSE_PKG}"
+          sudo installer -pkg "${MACFUSE_PKG}" -target /
+          hdiutil detach -quiet "${MACFUSE_VOLUME}"
+          pkg-config --modversion fuse
 
       - name: Build bundled usbcore
         run: cargo build -p usbcore --release --locked
@@ -153,7 +189,7 @@ jobs:
             > "${ARTIFACT_DIR}/SHA256SUMS-${BUILD_ARCH}.txt"
 
       - name: Upload app artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: edp-usb-client-${{ matrix.arch }}
           path: artifacts/*
@@ -169,7 +205,7 @@ jobs:
       contents: write
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: edp-usb-client-*
           path: release-assets
