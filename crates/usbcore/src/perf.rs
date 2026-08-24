@@ -37,6 +37,9 @@ pub enum PerfCmd {
         mib: u64,
         #[arg(long, default_value_t = 3)]
         iterations: u32,
+        /// 模拟上层每次提交给加密器的请求尺寸。
+        #[arg(long, default_value_t = 1024)]
+        request_kib: u64,
         #[arg(long)]
         json: bool,
     },
@@ -111,8 +114,9 @@ pub fn run(command: PerfCmd) -> Result<()> {
         PerfCmd::Sm4 {
             mib,
             iterations,
+            request_kib,
             json,
-        } => sm4_benchmark(mib, iterations, json),
+        } => sm4_benchmark(mib, iterations, request_kib, json),
         PerfCmd::File {
             path,
             mode,
@@ -562,6 +566,16 @@ fn sync_all_retry(file: &File) -> std::io::Result<()> {
                     return Err(error);
                 }
             }
+            #[cfg(target_os = "macos")]
+            Err(error) if error.raw_os_error() == Some(libc::ENOTSUP) => {
+                // iBoysoft NTFS 的文件级 fsync 会返回 ENOTSUP。诊断基准改用
+                // macOS 全局同步屏障，并把其耗时计入持久化写吞吐。
+                let status = std::process::Command::new("/bin/sync").status()?;
+                if status.success() {
+                    return Ok(());
+                }
+                return Err(error);
+            }
             Err(error) if retryable(&error) => {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
@@ -604,11 +618,15 @@ fn cpu_seconds() -> f64 {
     time(usage.ru_utime) + time(usage.ru_stime)
 }
 
-fn sm4_benchmark(mib: u64, iterations: u32, json: bool) -> Result<()> {
-    if mib == 0 || iterations == 0 {
-        bail!("mib 和 iterations 必须大于 0");
+fn sm4_benchmark(mib: u64, iterations: u32, request_kib: u64, json: bool) -> Result<()> {
+    if mib == 0 || iterations == 0 || request_kib == 0 {
+        bail!("mib、iterations 和 request-kib 必须大于 0");
     }
     let bytes = mib.checked_mul(1024 * 1024).context("测试大小过大")?;
+    let request_bytes = request_kib
+        .checked_mul(1024)
+        .filter(|size| size % 16 == 0 && *size <= bytes && bytes % *size == 0)
+        .context("request-kib 必须 16 字节对齐并整除测试大小")?;
     let original = vec![0x5au8; bytes as usize];
     let cipher = edp_core::sm4_ecb::Sm4Ecb::new(&[0x42; 16]);
     let mut reports = Vec::new();
@@ -616,10 +634,12 @@ fn sm4_benchmark(mib: u64, iterations: u32, json: bool) -> Result<()> {
     for (mode, encrypt) in [("encrypt", true), ("decrypt", false)] {
         let started = Instant::now();
         for _ in 0..iterations {
-            if encrypt {
-                cipher.encrypt_aligned_in_place(&mut buffer)?;
-            } else {
-                cipher.decrypt_aligned_in_place(&mut buffer)?;
+            for request in buffer.chunks_mut(request_bytes as usize) {
+                if encrypt {
+                    cipher.encrypt_aligned_in_place(request)?;
+                } else {
+                    cipher.decrypt_aligned_in_place(request)?;
+                }
             }
         }
         let elapsed = started.elapsed();
@@ -630,13 +650,13 @@ fn sm4_benchmark(mib: u64, iterations: u32, json: bool) -> Result<()> {
             filesystem: None,
             mode: mode.into(),
             bytes: total,
-            block_size: 16,
+            block_size: request_bytes,
             queue_depth: 1,
             access_pattern: "not_applicable".into(),
             duration_ms: elapsed.as_millis() as u64,
             sync_duration_ms: None,
             throughput_bytes_s: (total as f64 / elapsed.as_secs_f64()) as u64,
-            iops: total as f64 / 16.0 / elapsed.as_secs_f64(),
+            iops: total as f64 / request_bytes as f64 / elapsed.as_secs_f64(),
             latency_p50_us: 0,
             latency_p95_us: 0,
             latency_p99_us: 0,

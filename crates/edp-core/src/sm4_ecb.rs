@@ -7,8 +7,10 @@ use crate::CoreError;
 use rayon::prelude::*;
 use sm4::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
 
-const PARALLEL_THRESHOLD: usize = 256 * 1024;
-const PARALLEL_CHUNK: usize = 256 * 1024;
+// macFUSE / DiskImages 在实机上把 iBoysoft NTFS 顺序 I/O 拆成约 64 KiB
+// 请求；阈值必须低于该尺寸，否则每个请求都会退化为约 80 MB/s 的单核 SM4。
+const PARALLEL_THRESHOLD: usize = 32 * 1024;
+const PARALLEL_CHUNK: usize = 8 * 1024;
 
 fn crypto_pool() -> &'static rayon::ThreadPool {
     static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();

@@ -413,6 +413,7 @@ fn mount_options() -> Vec<MountOption> {
         MountOption::CUSTOM("noappledouble".into()),
         MountOption::CUSTOM("nobrowse".into()),
         MountOption::CUSTOM("async".into()),
+        MountOption::CUSTOM(format!("iosize={REQUEST_BYTES}")),
         MountOption::DefaultPermissions,
     ]
 }

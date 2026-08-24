@@ -45,6 +45,8 @@ pub struct DaemonState {
     disk_inventory: Mutex<HashMap<String, DetectedDisk>>,
     /// 正在尝试自动挂载的盘（bsd），防并发重复尝试
     pub auto_mount_inflight: Mutex<std::collections::HashSet<String>>,
+    /// 用户手动卸载后，本次连接周期不再立即自动挂载；拔盘或手动挂载时清除。
+    pub auto_mount_suppressed: Mutex<std::collections::HashSet<String>>,
     /// 配置/授权变更后请求 watcher 立即重新评估当前已连接设备。
     pub rescan_requested: std::sync::atomic::AtomicBool,
     /// daemon.shutdown 置位；主线程据此退出
@@ -128,6 +130,7 @@ pub fn run_with(
         mounted: Mutex::new(HashMap::new()),
         disk_inventory: Mutex::new(HashMap::new()),
         auto_mount_inflight: Mutex::new(std::collections::HashSet::new()),
+        auto_mount_suppressed: Mutex::new(std::collections::HashSet::new()),
         rescan_requested: std::sync::atomic::AtomicBool::new(false),
         shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         quiesced: std::sync::atomic::AtomicBool::new(false),
@@ -483,6 +486,7 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
         .trim_start_matches("/dev/")
         .trim_start_matches('r')
         .to_string();
+    d.auto_mount_suppressed.lock().unwrap().remove(&bsd);
     let physical_already_prepared = d
         .mounted
         .lock()
@@ -591,8 +595,22 @@ fn handle_unmount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto
         .and_then(|x| x.as_str())
         .unwrap_or_default();
     let force = p.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
+    let suppressed_bsd = d
+        .mounted
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|(bsd, sessions)| sessions.contains(sid).then(|| bsd.clone()));
+    if let Some(bsd) = &suppressed_bsd {
+        d.auto_mount_suppressed.lock().unwrap().insert(bsd.clone());
+    }
     let session_root = d.session_root.clone();
     let result = session::unmount(sid, force, &session_root);
+    if result.is_err() {
+        if let Some(bsd) = &suppressed_bsd {
+            d.auto_mount_suppressed.lock().unwrap().remove(bsd);
+        }
+    }
     record_timing(
         d,
         timing(
@@ -1252,6 +1270,9 @@ fn spawn_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
     if state.quiesced.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
+    if state.auto_mount_suppressed.lock().unwrap().contains(bsd) {
+        return;
+    }
     {
         let mut inflight = state.auto_mount_inflight.lock().unwrap();
         if !inflight.insert(bsd.to_string()) {
@@ -1367,6 +1388,9 @@ fn mounted_partition_types(state: &DaemonState, bsd: &str) -> HashSet<u32> {
 
 fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
     if state.quiesced.load(std::sync::atomic::Ordering::SeqCst) {
+        return EvaluationOutcome::Done;
+    }
+    if state.auto_mount_suppressed.lock().unwrap().contains(bsd) {
         return EvaluationOutcome::Done;
     }
     let disk_info = edp_macos::list_disks(false)
@@ -1562,6 +1586,7 @@ fn cleanup_disappeared(state: &DaemonState, bsd: &str) {
         }
     }
     state.disk_inventory.lock().unwrap().remove(bsd);
+    state.auto_mount_suppressed.lock().unwrap().remove(bsd);
     // Always notify clients, including for ordinary, unauthorized and
     // password-missing disks that never created a session.
     state.broadcaster.broadcast(
