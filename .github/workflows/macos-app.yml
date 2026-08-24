@@ -168,7 +168,7 @@ jobs:
           test -f "${APP_PATH}/Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist"
           codesign --force --options runtime --sign - \
             --entitlements gui/src-tauri/embedded/usbcore.entitlements.plist \
-            --identifier com.edp.usbvault.daemon \
+            --identifier com.edp.usbvault.daemon.v2 \
             "${APP_PATH}/Contents/Resources/usbcore"
           codesign --force --options runtime --sign - \
             --identifier com.edp.usbvault "${APP_PATH}"

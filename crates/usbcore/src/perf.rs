@@ -163,6 +163,9 @@ pub fn run(command: PerfCmd) -> Result<()> {
             json,
         } => {
             let mut client = edp_proto::Client::connect(&crate::daemon_socket())?;
+            // 32 GiB 写入、同步、冷读校验在慢速闪存上可能持续数分钟。
+            // 仅诊断 CLI 取消读超时，避免 daemon 正常工作时被误报为 EAGAIN。
+            client.set_read_timeout(None)?;
             let value = client.call(
                 edp_proto::method::PERFORMANCE_BENCHMARK_HIKSEMI,
                 serde_json::json!({
@@ -308,7 +311,7 @@ fn benchmark_io(
             layer,
             filesystem.clone(),
         )?);
-        file.sync_all()?;
+        sync_all_retry(&file)?;
     }
     if matches!(mode, BenchMode::Read | BenchMode::ReadWrite) {
         reports.push(run_phase(
@@ -366,9 +369,9 @@ fn run_phase(
                     }
                     let operation_started = Instant::now();
                     let result = if write {
-                        file.write_all_at(&buffer, position)
+                        write_all_at_retry(&file, &buffer, position)
                     } else {
-                        file.read_exact_at(&mut buffer, position)
+                        read_exact_at_retry(&file, &mut buffer, position)
                     };
                     local_latencies.push(operation_started.elapsed().as_micros() as u64);
                     if result.is_err() {
@@ -417,6 +420,85 @@ fn run_phase(
         cpu_seconds: (cpu_seconds() - cpu_before).max(0.0),
         verified: verify && !failed.load(Ordering::Relaxed),
     })
+}
+
+fn write_all_at_retry(file: &File, mut data: &[u8], mut offset: u64) -> std::io::Result<()> {
+    while !data.is_empty() {
+        match file.write_at(data, offset) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "裸设备返回零长写入",
+                ))
+            }
+            Ok(written) => {
+                data = &data[written..];
+                offset += written as u64;
+            }
+            Err(error) if retryable(&error) => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn read_exact_at_retry(file: &File, mut data: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    while !data.is_empty() {
+        match file.read_at(data, offset) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "裸设备提前到达 EOF",
+                ))
+            }
+            Ok(read) => {
+                data = &mut data[read..];
+                offset += read as u64;
+            }
+            Err(error) if retryable(&error) => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn sync_all_retry(file: &File) -> std::io::Result<()> {
+    loop {
+        match file.sync_all() {
+            Ok(()) => return Ok(()),
+            #[cfg(target_os = "macos")]
+            Err(error) if error.raw_os_error() == Some(libc::ENOTTY) => {
+                use std::os::fd::AsRawFd;
+                // sys/disk.h: DKIOCSYNCHRONIZECACHE = _IO('d', 22).
+                const DKIOCSYNCHRONIZECACHE: libc::c_ulong = 0x2000_6416;
+                let result = unsafe { libc::ioctl(file.as_raw_fd(), DKIOCSYNCHRONIZECACHE) };
+                if result == 0 {
+                    return Ok(());
+                }
+                let error = std::io::Error::last_os_error();
+                if retryable(&error) {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                } else {
+                    return Err(error);
+                }
+            }
+            Err(error) if retryable(&error) => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn retryable(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+    ) || matches!(error.raw_os_error(), Some(libc::EAGAIN) | Some(libc::EINTR))
 }
 
 fn fill_pattern(block: u64, buffer: &mut [u8]) {

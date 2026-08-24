@@ -727,7 +727,7 @@ fn parse_launchd_failure(output: &str) -> Option<String> {
 
 fn launchd_failure_detail() -> Option<String> {
     let output = std::process::Command::new("/bin/launchctl")
-        .args(["print", "system/com.edp.usbvault.daemon"])
+        .args(["print", "system/com.edp.usbvault.daemon.v2"])
         .output()
         .ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -779,12 +779,22 @@ async fn run_service_action(
         None,
     );
     let current = service_status_impl()?;
+    let installed = current["installed"].as_bool().unwrap_or(false);
     let running = current["running"].as_bool().unwrap_or(false);
     let action_for_task = action.clone();
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), UiError> {
         match action_for_task.as_str() {
             "install" | "start" => {
                 cleanup_legacy_installation()?;
+                // SMAppService 会记住注册时的父 App 版本。应用覆盖升级后，
+                // 单纯再次 register 是 no-op，launchd 仍会以旧版本校验并报 EX_CONFIG。
+                if installed {
+                    service_management::unregister().map_err(|message| {
+                        UiError::new("SERVICE_REFRESH_FAILED", "无法更新后台服务注册")
+                            .with_detail(message)
+                    })?;
+                    std::thread::sleep(Duration::from_millis(300));
+                }
                 service_management::register().map_err(|message| {
                     UiError::new("SERVICE_REGISTER_FAILED", "无法启用嵌入式后台服务")
                         .with_detail(message)

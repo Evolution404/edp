@@ -21,6 +21,12 @@ impl Client {
         Ok(Client { stream, next_id: 1 })
     }
 
+    /// 调整后续 RPC 的读超时。长时间诊断任务可显式延长或取消超时，
+    /// 普通 GUI/CLI 请求仍保留默认 30 秒上限。
+    pub fn set_read_timeout(&self, timeout: Option<std::time::Duration>) -> std::io::Result<()> {
+        self.stream.set_read_timeout(timeout)
+    }
+
     /// 发起一次请求，等待响应。
     pub fn call(&mut self, method: &str, params: Value) -> Result<Value, ClientError> {
         let id = self.next_id;

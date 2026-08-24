@@ -55,6 +55,8 @@ pub struct DaemonState {
     pub main_thread: std::thread::Thread,
     /// 最近的挂载/卸载阶段计时（最多 256 条）。
     pub performance_timings: Mutex<VecDeque<edp_proto::OperationTiming>>,
+    /// 最近完成的分层基准；即使发起请求的诊断客户端断开也保留结果。
+    pub benchmark_reports: Mutex<VecDeque<edp_proto::BenchmarkReport>>,
 }
 
 const DEFAULT_SESSION_ROOT: &str = "/var/db/com.edp.usbvault/sessions";
@@ -131,6 +133,7 @@ pub fn run_with(
         quiesced: std::sync::atomic::AtomicBool::new(false),
         main_thread: std::thread::current(),
         performance_timings: Mutex::new(VecDeque::with_capacity(256)),
+        benchmark_reports: Mutex::new(VecDeque::with_capacity(128)),
     });
 
     // The daemon executable lives inside the app bundle. If Finder removes the
@@ -1006,6 +1009,8 @@ fn handle_performance_snapshot(
     snapshot["operation_timings"] =
         serde_json::to_value(d.performance_timings.lock().unwrap().clone())
             .map_err(rpc_internal)?;
+    snapshot["benchmark_reports"] =
+        serde_json::to_value(d.benchmark_reports.lock().unwrap().clone()).map_err(rpc_internal)?;
     Ok(snapshot)
 }
 
@@ -1022,6 +1027,7 @@ fn handle_performance_reset(
     let d = daemon(ctx)?;
     session::reset_performance(&d.session_root).map_err(rpc_internal)?;
     d.performance_timings.lock().unwrap().clear();
+    d.benchmark_reports.lock().unwrap().clear();
     Ok(json!({ "ok": true }))
 }
 
@@ -1029,7 +1035,7 @@ fn handle_performance_benchmark_hiksemi(
     ctx: &edp_proto::Context,
     p: Value,
 ) -> Result<Value, edp_proto::RpcError> {
-    let _d = daemon(ctx)?;
+    let d = daemon(ctx)?;
     let mode = crate::perf::mode_from_name(p.get("mode").and_then(Value::as_str).unwrap_or("read"))
         .map_err(rpc_internal)?;
     let gib = p.get("gib").and_then(Value::as_u64).unwrap_or(32);
@@ -1050,7 +1056,27 @@ fn handle_performance_benchmark_hiksemi(
         "0x0300",
     )
     .map_err(rpc_internal)?;
+    {
+        let mut recent = d.benchmark_reports.lock().unwrap();
+        for report in &reports {
+            if recent.len() == 128 {
+                recent.pop_front();
+            }
+            recent.push_back(report.clone());
+        }
+    }
+    persist_benchmark_reports(&reports).map_err(rpc_internal)?;
     Ok(json!({ "reports": reports }))
+}
+
+fn persist_benchmark_reports(reports: &[edp_proto::BenchmarkReport]) -> anyhow::Result<()> {
+    let directory = Path::new(DEFAULT_DATA_ROOT).join("performance");
+    std::fs::create_dir_all(&directory)?;
+    let target = directory.join("benchmark-latest.json");
+    let temporary = directory.join(format!(".benchmark-{}.tmp", std::process::id()));
+    std::fs::write(&temporary, serde_json::to_vec_pretty(reports)?)?;
+    std::fs::rename(temporary, target)?;
+    Ok(())
 }
 
 fn tail_file(path: &Path, n: usize) -> Option<Vec<String>> {
