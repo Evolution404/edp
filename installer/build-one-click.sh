@@ -112,7 +112,6 @@ if not found:
 with p.open('wb') as f:
     plistlib.dump(items, f, sort_keys=False)
 
-# Re-read what will be supplied to pkgbuild so CI fails if the policy regresses.
 with p.open('rb') as f:
     checked = plistlib.load(f)
 entry = next(x for x in checked if x.get('RootRelativeBundlePath', '').endswith('EDP USB Vault.app'))
@@ -196,18 +195,80 @@ productbuild \
 
 pkgutil --check-signature "$PKG_OUTPUT" || true
 
+# Do not expose the PKG directly to Finder/Installer.app. macOS can ask Installer.app
+# for Downloads/Desktop TCC access even when the PKG is opened from a DMG whose backing
+# image lives in Downloads. Instead, ship a self-contained AppleScript launcher app.
+# The launcher copies its embedded PKG to /private/tmp, then invokes the command-line
+# /usr/sbin/installer with administrator privileges. Installer.app is never launched.
 DMG_STAGE="$WORK/dmg-stage"
 mkdir -p "$DMG_STAGE"
-cp "$PKG_OUTPUT" "$DMG_STAGE/$PKG_NAME"
+LAUNCHER_APP="$DMG_STAGE/安装 EDP USB Vault.app"
+LAUNCHER_SOURCE="$WORK/installer-launcher.applescript"
+TEMP_PKG="/private/tmp/com.edp.usbvault-installer.pkg"
+
+cat > "$LAUNCHER_SOURCE" <<APPLESCRIPT
+on run
+    set appBundle to POSIX path of (path to me)
+    set pkgPath to appBundle & "Contents/Resources/${PKG_NAME}"
+    set tempPkg to "${TEMP_PKG}"
+
+    try
+        display dialog "将安装 EDP USB Vault、macFUSE 5.3.3 和后台服务。安装过程中会要求输入 Mac 管理员密码。" buttons {"取消", "安装"} default button "安装" cancel button "取消" with title "EDP USB Vault" with icon note
+
+        do shell script "/bin/rm -f " & quoted form of tempPkg & "; /usr/bin/ditto " & quoted form of pkgPath & " " & quoted form of tempPkg
+
+        set installCommand to "/usr/sbin/installer -pkg " & quoted form of tempPkg & " -target /; status=\\$?; /bin/rm -f " & quoted form of tempPkg & "; exit \\$status"
+        do shell script installCommand with administrator privileges
+
+        set answer to display dialog "EDP USB Vault 已安装完成。首次使用请在“系统设置 → 隐私与安全性 → 完整磁盘访问权限”中允许 EDP USB Vault。" buttons {"稍后", "打开 EDP USB Vault"} default button "打开 EDP USB Vault" with title "安装完成" with icon note
+        if button returned of answer is "打开 EDP USB Vault" then
+            do shell script "/usr/bin/open -a " & quoted form of "/Applications/EDP USB Vault.app"
+        end if
+    on error errMsg number errNum
+        try
+            do shell script "/bin/rm -f " & quoted form of tempPkg
+        end try
+        if errNum is not -128 then
+            display dialog "安装失败：" & errMsg buttons {"关闭"} default button "关闭" with title "EDP USB Vault" with icon stop
+        end if
+    end try
+end run
+APPLESCRIPT
+
+osacompile -o "$LAUNCHER_APP" "$LAUNCHER_SOURCE"
+mkdir -p "$LAUNCHER_APP/Contents/Resources"
+cp "$PKG_OUTPUT" "$LAUNCHER_APP/Contents/Resources/$PKG_NAME"
+
+# Give the launcher a stable identity and reuse the product icon when available.
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.edp.usbvault.installer" "$LAUNCHER_APP/Contents/Info.plist" || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleName 安装 EDP USB Vault" "$LAUNCHER_APP/Contents/Info.plist" || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 安装 EDP USB Vault" "$LAUNCHER_APP/Contents/Info.plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 安装 EDP USB Vault" "$LAUNCHER_APP/Contents/Info.plist" || true
+ICON_SOURCE="$(find "$APP_PATH/Contents/Resources" -maxdepth 1 -name '*.icns' -print -quit 2>/dev/null || true)"
+if [[ -n "$ICON_SOURCE" ]]; then
+  cp "$ICON_SOURCE" "$LAUNCHER_APP/Contents/Resources/EDPInstaller.icns"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string EDPInstaller" "$LAUNCHER_APP/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile EDPInstaller" "$LAUNCHER_APP/Contents/Info.plist" || true
+fi
+codesign --force --deep --sign - "$LAUNCHER_APP"
+codesign --verify --deep --strict --verbose=2 "$LAUNCHER_APP"
+
+test -f "$LAUNCHER_APP/Contents/Resources/$PKG_NAME"
+if find "$DMG_STAGE" -maxdepth 1 -name '*.pkg' | grep -q .; then
+  echo "Refusing to build: top-level PKG would reintroduce Installer.app Downloads TCC" >&2
+  exit 1
+fi
+
 cat > "$DMG_STAGE/安装说明.txt" <<'README'
-EDP USB Vault 安装
+EDP USB Vault 一体化安装
 
-1. 双击 “EDP-USB-Vault-*-Installer.pkg”。
-2. 按 macOS 安装器提示输入管理员密码并完成安装。
-3. 如 macOS 要求批准 macFUSE 系统组件，请按系统提示批准并在要求时重启。
-4. 安装完成后，从“应用程序”打开 EDP USB Vault。
+1. 双击“安装 EDP USB Vault.app”。
+2. 点击“安装”，输入一次 Mac 管理员密码。
+3. 安装完成后，在“系统设置 → 隐私与安全性 → 完整磁盘访问权限”中允许 EDP USB Vault。
+4. 打开 EDP USB Vault，插入 U 盘即可使用。
 
-本安装包同时包含 EDP USB Vault、macFUSE 和后台服务。
+安装器已经内置 EDP USB Vault、macFUSE 和后台服务。
+安装过程不使用 macOS 图形化“安装器.app”，避免其额外申请“下载”文件夹访问权限。
 README
 
 DMG_NAME="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}-Installer.dmg"
