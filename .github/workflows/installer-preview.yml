@@ -65,6 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 installer/apply-fskit-preview.py
+          python3 installer/apply-installer-progress.py
           grep -F 'backend=fskit' crates/usbcore/src/bridge_libfuse.c
           grep -F '/Volumes' crates/usbcore/src/session.rs
           grep -F 'Command::new("/bin/launchctl")' crates/usbcore/src/session.rs
@@ -72,6 +73,8 @@ jobs:
           grep -F '"/var/run/com.edp.usbvault.daemon.sock"' gui/src-tauri/src/lib.rs
           grep -F 'system/${LABEL}' installer/build-one-click.sh
           grep -F 'launchctl asuser' installer/build-one-click.sh
+          grep -F 'installer -verboseR' installer/build-one-click.sh
+          grep -F 'progress total steps to 100' installer/build-one-click.sh
 
       - name: Build usbcore
         run: |
@@ -155,4 +158,4 @@ jobs:
             --verify-tag \
             --prerelease \
             --title "Installer Preview — FSKit hybrid bridge" \
-            --notes "One-click installer test build from install/one-click-installer. usbcore remains a privileged root LaunchDaemon for raw disk access. Only the libfuse/FSKit bridge is launched through launchctl asuser into the console user's GUI bootstrap while retaining root credentials, so MFMount sees the enabled macFUSE extension. Requires macOS 15.4+. Commit: ${SHORT_SHA}."
+            --notes "One-click installer test build from install/one-click-installer. usbcore remains a privileged root LaunchDaemon for raw disk access. Only the libfuse/FSKit bridge is launched through launchctl asuser into the console user's GUI bootstrap while retaining root credentials, so MFMount sees the enabled macFUSE extension. Installer launcher now stays visible and shows real percentage from installer -verboseR. Requires macOS 15.4+. Commit: ${SHORT_SHA}."
