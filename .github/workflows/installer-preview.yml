@@ -61,12 +61,26 @@ jobs:
           hdiutil detach -quiet "${MACFUSE_VOLUME}"
           pkg-config --modversion fuse
 
-      - name: Apply FSKit preview mountpoint
+      - name: Apply FSKit user-session preview
         run: |
           set -euo pipefail
           python3 installer/apply-fskit-preview.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("gui/src-tauri/src/lib.rs")
+          s = p.read_text()
+          s = s.replace(
+              "edp_proto::Client::connect(SOCKET_PATH)",
+              "edp_proto::Client::connect(&Rpc::socket_path())",
+          )
+          if "SOCKET_PATH" in s:
+              raise SystemExit("stale GUI SOCKET_PATH reference remains")
+          p.write_text(s)
+          PY
           grep -F 'backend=fskit' crates/usbcore/src/bridge_libfuse.c
           grep -F '/Volumes' crates/usbcore/src/session.rs
+          grep -F 'com.edp.usbvault.daemon.{uid}.sock' gui/src-tauri/src/lib.rs
+          grep -F 'gui/${CONSOLE_UID}/${LABEL}' installer/build-one-click.sh
 
       - name: Build usbcore
         run: |
@@ -149,5 +163,5 @@ jobs:
           gh release create "${RELEASE_TAG}" release-assets/* \
             --verify-tag \
             --prerelease \
-            --title "Installer Preview — FSKit/libfuse" \
-            --notes "One-click installer test build from install/one-click-installer. The hidden raw bridge now uses macFUSE ${MACFUSE_VERSION}'s official libfuse FSKit/MFMount transport instead of fuser's legacy fd transport. Includes installer-managed LaunchDaemon and self-contained installer launcher. Requires macOS 15.4+ for this preview path. Commit: ${SHORT_SHA}."
+            --title "Installer Preview — FSKit user session" \
+            --notes "One-click installer test build from install/one-click-installer. The hidden raw bridge uses macFUSE ${MACFUSE_VERSION} libfuse/FSKit and the installer-managed usbcore daemon now runs as a per-user LaunchAgent in the logged-in GUI bootstrap domain so MFMount sees the user's enabled file-system extension. Requires macOS 15.4+. Commit: ${SHORT_SHA}."
