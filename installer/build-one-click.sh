@@ -69,8 +69,6 @@ PLIST_EOF
 chown root:wheel "$PLIST"
 chmod 0644 "$PLIST"
 
-# Replace an older test/legacy launchd instance if present. A fresh install simply
-# ignores the bootout failure and bootstraps the new service.
 /bin/launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 /bin/launchctl bootstrap system "$PLIST"
 /bin/launchctl enable "system/${LABEL}" || true
@@ -100,9 +98,10 @@ if [[ -z "$MACFUSE_PRODUCT" ]]; then
   exit 1
 fi
 
-# macFUSE ships a product archive. Expand only the outer layer so the vendor's
-# signed component packages and their scripts remain intact, then compose those
-# components with our app package into one Installer product.
+# macFUSE's outer product archive contains component packages. `pkgutil --expand`
+# represents nested packages as directory archives on recent macOS runners; feeding
+# those PKFolderArchive directories directly to productbuild can crash PackageKit.
+# Re-flatten every directory-form component before composing our product.
 MACFUSE_EXPANDED="$WORK/macfuse-expanded"
 pkgutil --expand "$MACFUSE_PRODUCT" "$MACFUSE_EXPANDED"
 COMPONENT_DIR="$WORK/components"
@@ -111,17 +110,24 @@ mkdir -p "$COMPONENT_DIR"
 component_count=0
 while IFS= read -r -d '' pkg; do
   name="$(basename "$pkg")"
-  cp -R "$pkg" "$COMPONENT_DIR/$name"
+  dest="$COMPONENT_DIR/$(printf '%02d-%s' "$component_count" "$name")"
+  if [[ -d "$pkg" ]]; then
+    pkgutil --flatten "$pkg" "$dest"
+  else
+    cp "$pkg" "$dest"
+  fi
+  echo "Prepared macFUSE component: $(basename "$dest")"
+  pkgutil --check-signature "$dest" || true
   component_count=$((component_count + 1))
-done < <(find "$MACFUSE_EXPANDED" -maxdepth 2 -name '*.pkg' -print0)
+done < <(find "$MACFUSE_EXPANDED" -maxdepth 3 -name '*.pkg' -print0)
 
 if [[ "$component_count" -eq 0 ]]; then
   echo "macFUSE product did not expose component packages after pkgutil --expand" >&2
-  find "$MACFUSE_EXPANDED" -maxdepth 2 -print >&2 || true
+  find "$MACFUSE_EXPANDED" -maxdepth 3 -print >&2 || true
   exit 1
 fi
 
-cp "$APP_COMPONENT" "$COMPONENT_DIR/EDP-USB-Vault-App.pkg"
+cp "$APP_COMPONENT" "$COMPONENT_DIR/99-EDP-USB-Vault-App.pkg"
 
 DIST="$WORK/Distribution.xml"
 args=(--synthesize)
@@ -130,8 +136,6 @@ while IFS= read -r -d '' pkg; do
 done < <(find "$COMPONENT_DIR" -maxdepth 1 -name '*.pkg' -print0 | sort -z)
 productbuild "${args[@]}" "$DIST"
 
-# Give Installer a useful product title while leaving package requirements and
-# identifiers synthesized from the component packages.
 python3 - "$DIST" <<'PY'
 from pathlib import Path
 import sys
