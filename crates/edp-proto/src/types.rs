@@ -113,6 +113,8 @@ pub struct BenchmarkReport {
     #[serde(default = "default_access_pattern")]
     pub access_pattern: String,
     pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_duration_ms: Option<u64>,
     pub throughput_bytes_s: u64,
     pub iops: f64,
     pub latency_p50_us: u64,

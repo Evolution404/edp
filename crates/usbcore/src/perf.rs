@@ -335,7 +335,7 @@ fn benchmark_io(
     }
     let mut reports = Vec::new();
     if matches!(mode, BenchMode::Write | BenchMode::ReadWrite) {
-        reports.push(run_phase(
+        let mut report = run_phase(
             file.clone(),
             offset,
             bytes,
@@ -347,8 +347,16 @@ fn benchmark_io(
             identity.clone(),
             layer,
             filesystem.clone(),
-        )?);
+        )?;
+        let sync_started = Instant::now();
         sync_all_retry(&file)?;
+        let sync_elapsed = sync_started.elapsed();
+        report.sync_duration_ms = Some(sync_elapsed.as_millis() as u64);
+        let durable_duration = report.duration_ms as f64 / 1_000.0 + sync_elapsed.as_secs_f64();
+        report.duration_ms = (durable_duration * 1_000.0) as u64;
+        report.throughput_bytes_s = (bytes as f64 / durable_duration) as u64;
+        report.iops = (bytes / block_size) as f64 / durable_duration;
+        reports.push(report);
     }
     if matches!(mode, BenchMode::Read | BenchMode::ReadWrite) {
         reports.push(run_phase(
@@ -461,6 +469,7 @@ fn run_phase(
         queue_depth,
         access_pattern: access_pattern_name(access_pattern).to_string(),
         duration_ms: elapsed.as_millis() as u64,
+        sync_duration_ms: None,
         throughput_bytes_s: (bytes as f64 / duration_s) as u64,
         iops: blocks as f64 / duration_s,
         latency_p50_us: percentile(&latencies, 50),
@@ -625,6 +634,7 @@ fn sm4_benchmark(mib: u64, iterations: u32, json: bool) -> Result<()> {
             queue_depth: 1,
             access_pattern: "not_applicable".into(),
             duration_ms: elapsed.as_millis() as u64,
+            sync_duration_ms: None,
             throughput_bytes_s: (total as f64 / elapsed.as_secs_f64()) as u64,
             iops: total as f64 / 16.0 / elapsed.as_secs_f64(),
             latency_p50_us: 0,
