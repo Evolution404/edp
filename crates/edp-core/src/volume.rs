@@ -465,6 +465,50 @@ mod tests {
     use crate::lba12::VolumeDescriptor;
     use crate::SecretKey16;
 
+    struct BlockingWriteIo {
+        inner: MemIo,
+        released: Mutex<bool>,
+        release_signal: std::sync::Condvar,
+    }
+
+    impl BlockingWriteIo {
+        fn new(size: u64) -> Self {
+            Self {
+                inner: MemIo::new(size),
+                released: Mutex::new(false),
+                release_signal: std::sync::Condvar::new(),
+            }
+        }
+
+        fn release_writes(&self) {
+            *self.released.lock().unwrap() = true;
+            self.release_signal.notify_all();
+        }
+    }
+
+    impl RawIo for BlockingWriteIo {
+        fn pread_exact(&self, off: u64, buf: &mut [u8]) -> std::io::Result<()> {
+            self.inner.pread_exact(off, buf)
+        }
+
+        fn pwrite_all(&self, off: u64, data: &[u8]) -> std::io::Result<()> {
+            let mut released = self.released.lock().unwrap();
+            while !*released {
+                released = self.release_signal.wait(released).unwrap();
+            }
+            drop(released);
+            self.inner.pwrite_all(off, data)
+        }
+
+        fn size(&self) -> u64 {
+            self.inner.size()
+        }
+
+        fn fsync(&self) -> std::io::Result<()> {
+            self.inner.fsync()
+        }
+    }
+
     fn make_volume() -> (Arc<MemIo>, EncryptedPartitionIO) {
         let io = Arc::new(MemIo::new(64 * 1024));
         let desc = VolumeDescriptor {
@@ -543,8 +587,17 @@ mod tests {
 
     #[test]
     fn independent_ranges_can_run_concurrently() {
-        let (_io, vol) = make_volume();
-        let vol = Arc::new(vol);
+        let io = Arc::new(BlockingWriteIo::new(64 * 1024));
+        let desc = VolumeDescriptor {
+            partition_type: 4,
+            start_sector: 8,
+            size_bytes: 32 * 1024,
+            algo: 2,
+            file_key: Some(SecretKey16::from([0x42u8; 16])),
+            password_crc: 0,
+            key_crc: 0,
+        };
+        let vol = Arc::new(EncryptedPartitionIO::open(io.clone(), desc, false).unwrap());
         let barrier = Arc::new(std::sync::Barrier::new(5));
         let threads: Vec<_> = (0..4u64)
             .map(|index| {
@@ -562,6 +615,23 @@ mod tests {
             })
             .collect();
         barrier.wait();
+        let deadline = Instant::now() + std::time::Duration::from_secs(2);
+        let observed_concurrency = loop {
+            if vol.performance_snapshot().inflight >= 2 {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::yield_now();
+        };
+        // Always release the blocked writer so a failing assertion cannot strand
+        // worker threads or hang the test process.
+        io.release_writes();
+        assert!(
+            observed_concurrency,
+            "second request never entered the volume"
+        );
         for thread in threads {
             thread.join().unwrap();
         }
