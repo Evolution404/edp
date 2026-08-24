@@ -81,6 +81,7 @@ pub mod method {
     pub const DAEMON_SHUTDOWN: &str = "daemon.shutdown";
     pub const PERFORMANCE_SNAPSHOT: &str = "performance.snapshot";
     pub const PERFORMANCE_RESET: &str = "performance.reset";
+    pub const PERFORMANCE_BENCHMARK_HIKSEMI: &str = "performance.benchmark_hiksemi";
 }
 
 /// 挂载/卸载操作的单阶段计时。

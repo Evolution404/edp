@@ -243,6 +243,10 @@ fn build_methods() -> Result<HashMap<String, Handler>> {
         Arc::new(handle_performance_reset),
     );
     map.insert(
+        m::PERFORMANCE_BENCHMARK_HIKSEMI.to_string(),
+        Arc::new(handle_performance_benchmark_hiksemi),
+    );
+    map.insert(
         m::SUBSCRIBE.to_string(),
         Arc::new(|_c, _p| Ok(json!({"ok": true}))),
     );
@@ -1019,6 +1023,34 @@ fn handle_performance_reset(
     session::reset_performance(&d.session_root).map_err(rpc_internal)?;
     d.performance_timings.lock().unwrap().clear();
     Ok(json!({ "ok": true }))
+}
+
+fn handle_performance_benchmark_hiksemi(
+    ctx: &edp_proto::Context,
+    p: Value,
+) -> Result<Value, edp_proto::RpcError> {
+    let _d = daemon(ctx)?;
+    let mode = crate::perf::mode_from_name(p.get("mode").and_then(Value::as_str).unwrap_or("read"))
+        .map_err(rpc_internal)?;
+    let gib = p.get("gib").and_then(Value::as_u64).unwrap_or(32);
+    let block_kib = p.get("block_kib").and_then(Value::as_u64).unwrap_or(1024);
+    let queue_depth = p.get("queue_depth").and_then(Value::as_u64).unwrap_or(1) as usize;
+    let destructive = p
+        .get("destructive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let reports = crate::perf::hiksemi_raw_reports(
+        mode,
+        gib,
+        block_kib,
+        queue_depth,
+        destructive,
+        "7A6726BC6646D8C2",
+        "0x2bdf",
+        "0x0300",
+    )
+    .map_err(rpc_internal)?;
+    Ok(json!({ "reports": reports }))
 }
 
 fn tail_file(path: &Path, n: usize) -> Option<Vec<String>> {

@@ -77,6 +77,21 @@ pub enum PerfCmd {
         #[arg(long)]
         json: bool,
     },
+    /// 通过已获完整磁盘访问权限的 daemon 执行 HIKSEMI 裸盘基准。
+    HiksemiDaemon {
+        #[arg(long, value_enum, default_value_t = BenchMode::ReadWrite)]
+        mode: BenchMode,
+        #[arg(long, default_value_t = 32)]
+        gib: u64,
+        #[arg(long, default_value_t = 1024)]
+        block_kib: u64,
+        #[arg(long, default_value_t = 1)]
+        queue_depth: usize,
+        #[arg(long)]
+        destructive: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub fn run(command: PerfCmd) -> Result<()> {
@@ -127,41 +142,104 @@ pub fn run(command: PerfCmd) -> Result<()> {
             destructive,
             json,
         } => {
-            if matches!(mode, BenchMode::Write | BenchMode::ReadWrite) && !destructive {
-                bail!("裸写会破坏 HIKSEMI 上的文件系统，必须传入 --destructive");
-            }
-            let identity = locate_hiksemi(&serial, &vendor_id, &product_id)?;
-            validate_external_physical(&identity.bsd)?;
-            let bytes = gib_to_bytes(gib)?;
-            if RAW_OFFSET.saturating_add(bytes) > identity.size {
-                bail!("基准范围超过设备容量 {}", identity.size);
-            }
-            let status = std::process::Command::new("/usr/sbin/diskutil")
-                .args(["unmountDisk", &identity.bsd])
-                .status()?;
-            if !status.success() {
-                bail!("无法卸载 {}，拒绝进行裸设备基准", identity.bsd);
-            }
-            let raw = format!("/dev/r{}", identity.bsd);
-            let file = OpenOptions::new()
-                .read(true)
-                .write(matches!(mode, BenchMode::Write | BenchMode::ReadWrite))
-                .open(&raw)
-                .with_context(|| format!("打开 {raw} 失败（裸盘测试需 root）"))?;
-            disable_cache(&file);
-            let reports = benchmark_io(
-                Arc::new(file),
-                RAW_OFFSET,
-                bytes,
-                block_kib * 1024,
-                queue_depth,
+            let reports = hiksemi_raw_reports(
                 mode,
-                format!("HIKSEMI serial={serial} bsd={}", identity.bsd),
-                "raw_device",
-                None,
+                gib,
+                block_kib,
+                queue_depth,
+                destructive,
+                &serial,
+                &vendor_id,
+                &product_id,
             )?;
             print_reports(&reports, json)
         }
+        PerfCmd::HiksemiDaemon {
+            mode,
+            gib,
+            block_kib,
+            queue_depth,
+            destructive,
+            json,
+        } => {
+            let mut client = edp_proto::Client::connect(&crate::daemon_socket())?;
+            let value = client.call(
+                edp_proto::method::PERFORMANCE_BENCHMARK_HIKSEMI,
+                serde_json::json!({
+                    "mode": mode_name(mode),
+                    "gib": gib,
+                    "block_kib": block_kib,
+                    "queue_depth": queue_depth,
+                    "destructive": destructive,
+                }),
+            )?;
+            let reports: Vec<BenchmarkReport> = serde_json::from_value(value["reports"].clone())?;
+            print_reports(&reports, json)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn hiksemi_raw_reports(
+    mode: BenchMode,
+    gib: u64,
+    block_kib: u64,
+    queue_depth: usize,
+    destructive: bool,
+    serial: &str,
+    vendor_id: &str,
+    product_id: &str,
+) -> Result<Vec<BenchmarkReport>> {
+    if matches!(mode, BenchMode::Write | BenchMode::ReadWrite) && !destructive {
+        bail!("裸写会破坏 HIKSEMI 上的文件系统，必须传入 --destructive");
+    }
+    let identity = locate_hiksemi(serial, vendor_id, product_id)?;
+    validate_external_physical(&identity.bsd)?;
+    let bytes = gib_to_bytes(gib)?;
+    if RAW_OFFSET.saturating_add(bytes) > identity.size {
+        bail!("基准范围超过设备容量 {}", identity.size);
+    }
+    let status = std::process::Command::new("/usr/sbin/diskutil")
+        .args(["unmountDisk", &identity.bsd])
+        .status()?;
+    if !status.success() {
+        bail!("无法卸载 {}，拒绝进行裸设备基准", identity.bsd);
+    }
+    let _remount = RemountDisk(identity.bsd.clone());
+    let raw = format!("/dev/r{}", identity.bsd);
+    let file = OpenOptions::new()
+        .read(true)
+        .write(matches!(mode, BenchMode::Write | BenchMode::ReadWrite))
+        .open(&raw)
+        .with_context(|| format!("打开 {raw} 失败（裸盘测试需 root 和完整磁盘访问权限）"))?;
+    disable_cache(&file);
+    benchmark_io(
+        Arc::new(file),
+        RAW_OFFSET,
+        bytes,
+        block_kib * 1024,
+        queue_depth,
+        mode,
+        format!("HIKSEMI serial={serial} bsd={}", identity.bsd),
+        "raw_device",
+        None,
+    )
+}
+
+pub fn mode_from_name(value: &str) -> Result<BenchMode> {
+    match value {
+        "read" => Ok(BenchMode::Read),
+        "write" => Ok(BenchMode::Write),
+        "read_write" => Ok(BenchMode::ReadWrite),
+        _ => bail!("mode 仅允许 read/write/read_write"),
+    }
+}
+
+fn mode_name(mode: BenchMode) -> &'static str {
+    match mode {
+        BenchMode::Read => "read",
+        BenchMode::Write => "write",
+        BenchMode::ReadWrite => "read_write",
     }
 }
 
@@ -337,7 +415,7 @@ fn run_phase(
         latency_p95_us: percentile(&latencies, 95),
         latency_p99_us: percentile(&latencies, 99),
         cpu_seconds: (cpu_seconds() - cpu_before).max(0.0),
-        verified: !verify || !failed.load(Ordering::Relaxed),
+        verified: verify && !failed.load(Ordering::Relaxed),
     })
 }
 
@@ -435,6 +513,16 @@ fn print_reports(reports: &[BenchmarkReport], json: bool) -> Result<()> {
 struct DeviceIdentity {
     bsd: String,
     size: u64,
+}
+
+struct RemountDisk(String);
+
+impl Drop for RemountDisk {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("/usr/sbin/diskutil")
+            .args(["mountDisk", &self.0])
+            .status();
+    }
 }
 
 fn locate_hiksemi(serial: &str, vendor: &str, product: &str) -> Result<DeviceIdentity> {

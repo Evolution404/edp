@@ -165,6 +165,9 @@ pub struct EncryptedPartitionIO {
     sm4: Sm4Ecb,
     readonly: bool,
     write_locks: [Mutex<()>; 64],
+    /// 实机 ExFAT 基准表明 USB 介质顺序写 QD4 反而大幅降速。
+    /// 加密可并行，但最终的物理 pwrite 保持 QD1。
+    device_write_gate: Mutex<()>,
     sync_lock: Mutex<()>,
     write_generation: AtomicU64,
     synced_generation: AtomicU64,
@@ -188,6 +191,7 @@ impl EncryptedPartitionIO {
             desc,
             readonly,
             write_locks: std::array::from_fn(|_| Mutex::new(())),
+            device_write_gate: Mutex::new(()),
             sync_lock: Mutex::new(()),
             write_generation: AtomicU64::new(0),
             synced_generation: AtomicU64::new(0),
@@ -317,6 +321,7 @@ impl EncryptedPartitionIO {
                 .crypto_write_ns
                 .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
             let started = Instant::now();
+            let _device_gate = self.device_write_gate.lock().unwrap();
             self.pwrite_cipher(offset, &reenc)?;
             self.performance
                 .device_write_ns
@@ -344,6 +349,7 @@ impl EncryptedPartitionIO {
             .crypto_write_ns
             .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         let started = Instant::now();
+        let _device_gate = self.device_write_gate.lock().unwrap();
         self.pwrite_cipher(begin, &plain)?;
         self.performance
             .device_write_ns

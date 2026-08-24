@@ -55,7 +55,7 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
         </div>
 
         <div class="metric-row">
-          <div><span>版本</span><strong>v{{ store.snapshot?.daemon?.version ?? "0.4.0" }}</strong></div>
+          <div><span>版本</span><strong>v{{ store.snapshot?.daemon?.version ?? "0.4.1" }}</strong></div>
           <div><span>活动会话</span><strong>{{ store.snapshot?.daemon?.mounted_sessions ?? store.activeSessions.length }}</strong></div>
           <div><span>凭据</span><strong>{{ store.snapshot?.daemon?.keystore_entries ?? store.snapshot?.credentials.length ?? 0 }}</strong></div>
           <div><span>运行时间</span><strong>{{ store.snapshot?.daemon ? `${Math.floor(store.snapshot.daemon.uptime_s / 60)} 分钟` : "—" }}</strong></div>
@@ -98,7 +98,7 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
       <section class="settings-card wide about-card">
         <div class="card-heading">
           <span class="settings-icon"><AppIcon name="info" /></span>
-          <div><h2>EDP USB Vault</h2><p>简体中文 · Tauri + Vue · 客户端版本 0.4.0</p></div>
+          <div><h2>EDP USB Vault</h2><p>简体中文 · Tauri + Vue · 客户端版本 0.4.1</p></div>
         </div>
         <p>紧急暂停开关仅位于窗口顶部；每台设备只需在“设备”页面选择交换区或保密区。</p>
       </section>

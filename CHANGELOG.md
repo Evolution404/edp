@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1] - 2026-08-24
+
+- 挂载 bridge 启用缓存预读、1 MiB 请求和有界并发 I/O。
+- SM4 改为 RustCrypto 原地批量实现，大块数据最多 8 核并行。
+- flush 不再每次强制整盘同步，fsync 与安全卸载保持持久化保证。
+- 增加挂载/卸载阶段计时、I/O 性能快照和 HIKSEMI 分层基准工具。
+
 本项目的所有显著变更记录于此。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 

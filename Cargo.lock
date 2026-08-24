@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "edp-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes",
  "hex",
@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "edp-macos"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "edp-core",
  "plist",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "edp-proto"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "libc",
  "serde",
@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "usbcore"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes-gcm",
  "anyhow",

@@ -53,7 +53,7 @@ onUnmounted(() => unlisteners.forEach((unlisten) => unlisten()));
 
       <div class="sidebar-status">
         <span class="status-dot" :class="serviceTone"></span>
-        <div><strong>{{ serviceText }}</strong><span>v{{ store.snapshot?.daemon?.version ?? "0.4.0" }}</span></div>
+        <div><strong>{{ serviceText }}</strong><span>v{{ store.snapshot?.daemon?.version ?? "0.4.1" }}</span></div>
       </div>
     </aside>
 
