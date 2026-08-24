@@ -263,3 +263,53 @@ jobs:
           else
             gh release create "${GITHUB_REF_NAME}" release-assets/* --generate-notes
           fi
+
+  latest-release:
+    name: Publish Latest Build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-app
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: edp-usb-vault-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Move latest tag to current commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: latest
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}" \
+              -f sha="${GITHUB_SHA}" \
+              -F force=true >/dev/null
+          else
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="${GITHUB_SHA}" >/dev/null
+          fi
+
+      - name: Replace rolling latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: latest
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release delete "${RELEASE_TAG}" --yes
+          fi
+
+          SHORT_SHA="${GITHUB_SHA::7}"
+          gh release create "${RELEASE_TAG}" release-assets/* \
+            --verify-tag \
+            --latest \
+            --title "Latest Build" \
+            --notes "Automatic macOS arm64 build from main. Commit: ${SHORT_SHA}. Workflow run: ${GITHUB_RUN_NUMBER}."
