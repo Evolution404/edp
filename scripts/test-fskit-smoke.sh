@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -u
+set -uo pipefail
 
 MOUNT_POINT="/Volumes/edp-fskit-smoke"
 WORK_DIR="${TMPDIR:-/tmp}/edp-fskit-smoke"
