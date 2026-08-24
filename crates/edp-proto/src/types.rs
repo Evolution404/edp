@@ -110,6 +110,8 @@ pub struct BenchmarkReport {
     pub bytes: u64,
     pub block_size: u64,
     pub queue_depth: usize,
+    #[serde(default = "default_access_pattern")]
+    pub access_pattern: String,
     pub duration_ms: u64,
     pub throughput_bytes_s: u64,
     pub iops: f64,
@@ -118,6 +120,10 @@ pub struct BenchmarkReport {
     pub latency_p99_us: u64,
     pub cpu_seconds: f64,
     pub verified: bool,
+}
+
+fn default_access_pattern() -> String {
+    "sequential".to_string()
 }
 
 /// 事件名常量。

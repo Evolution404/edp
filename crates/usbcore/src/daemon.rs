@@ -1041,6 +1041,12 @@ fn handle_performance_benchmark_hiksemi(
     let gib = p.get("gib").and_then(Value::as_u64).unwrap_or(32);
     let block_kib = p.get("block_kib").and_then(Value::as_u64).unwrap_or(1024);
     let queue_depth = p.get("queue_depth").and_then(Value::as_u64).unwrap_or(1) as usize;
+    let access_pattern = crate::perf::access_pattern_from_name(
+        p.get("access_pattern")
+            .and_then(Value::as_str)
+            .unwrap_or("sequential"),
+    )
+    .map_err(rpc_internal)?;
     let destructive = p
         .get("destructive")
         .and_then(Value::as_bool)
@@ -1050,6 +1056,7 @@ fn handle_performance_benchmark_hiksemi(
         gib,
         block_kib,
         queue_depth,
+        access_pattern,
         destructive,
         "7A6726BC6646D8C2",
         "0x2bdf",

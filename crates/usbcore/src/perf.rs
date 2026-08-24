@@ -23,6 +23,12 @@ pub enum BenchMode {
     ReadWrite,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum AccessPattern {
+    Sequential,
+    Random,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum PerfCmd {
     /// 纯 SM4 原地加/解密基准。
@@ -45,6 +51,8 @@ pub enum PerfCmd {
         block_kib: u64,
         #[arg(long, default_value_t = 1)]
         queue_depth: usize,
+        #[arg(long, value_enum, default_value_t = AccessPattern::Sequential)]
+        access_pattern: AccessPattern,
         #[arg(long)]
         filesystem: Option<String>,
         #[arg(long, default_value = "native_file")]
@@ -65,6 +73,8 @@ pub enum PerfCmd {
         block_kib: u64,
         #[arg(long, default_value_t = 1)]
         queue_depth: usize,
+        #[arg(long, value_enum, default_value_t = AccessPattern::Sequential)]
+        access_pattern: AccessPattern,
         #[arg(long, default_value = HIKSEMI_SERIAL)]
         serial: String,
         #[arg(long, default_value = HIKSEMI_VENDOR)]
@@ -87,6 +97,8 @@ pub enum PerfCmd {
         block_kib: u64,
         #[arg(long, default_value_t = 1)]
         queue_depth: usize,
+        #[arg(long, value_enum, default_value_t = AccessPattern::Sequential)]
+        access_pattern: AccessPattern,
         #[arg(long)]
         destructive: bool,
         #[arg(long)]
@@ -107,6 +119,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
             gib,
             block_kib,
             queue_depth,
+            access_pattern,
             filesystem,
             layer,
             destructive,
@@ -124,6 +137,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
                 bytes,
                 block_kib * 1024,
                 queue_depth,
+                access_pattern,
                 mode,
                 path.display().to_string(),
                 &layer,
@@ -136,6 +150,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
             gib,
             block_kib,
             queue_depth,
+            access_pattern,
             serial,
             vendor_id,
             product_id,
@@ -147,6 +162,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
                 gib,
                 block_kib,
                 queue_depth,
+                access_pattern,
                 destructive,
                 &serial,
                 &vendor_id,
@@ -159,6 +175,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
             gib,
             block_kib,
             queue_depth,
+            access_pattern,
             destructive,
             json,
         } => {
@@ -173,6 +190,7 @@ pub fn run(command: PerfCmd) -> Result<()> {
                     "gib": gib,
                     "block_kib": block_kib,
                     "queue_depth": queue_depth,
+                    "access_pattern": access_pattern_name(access_pattern),
                     "destructive": destructive,
                 }),
             )?;
@@ -188,6 +206,7 @@ pub fn hiksemi_raw_reports(
     gib: u64,
     block_kib: u64,
     queue_depth: usize,
+    access_pattern: AccessPattern,
     destructive: bool,
     serial: &str,
     vendor_id: &str,
@@ -222,6 +241,7 @@ pub fn hiksemi_raw_reports(
         bytes,
         block_kib * 1024,
         queue_depth,
+        access_pattern,
         mode,
         format!("HIKSEMI serial={serial} bsd={}", identity.bsd),
         "raw_device",
@@ -235,6 +255,21 @@ pub fn mode_from_name(value: &str) -> Result<BenchMode> {
         "write" => Ok(BenchMode::Write),
         "read_write" => Ok(BenchMode::ReadWrite),
         _ => bail!("mode 仅允许 read/write/read_write"),
+    }
+}
+
+pub fn access_pattern_from_name(value: &str) -> Result<AccessPattern> {
+    match value {
+        "sequential" => Ok(AccessPattern::Sequential),
+        "random" => Ok(AccessPattern::Random),
+        _ => bail!("access_pattern 仅允许 sequential/random"),
+    }
+}
+
+fn access_pattern_name(pattern: AccessPattern) -> &'static str {
+    match pattern {
+        AccessPattern::Sequential => "sequential",
+        AccessPattern::Random => "random",
     }
 }
 
@@ -286,6 +321,7 @@ fn benchmark_io(
     bytes: u64,
     block_size: u64,
     queue_depth: usize,
+    access_pattern: AccessPattern,
     mode: BenchMode,
     identity: String,
     layer: &str,
@@ -305,6 +341,7 @@ fn benchmark_io(
             bytes,
             block_size,
             queue_depth,
+            access_pattern,
             true,
             false,
             identity.clone(),
@@ -320,6 +357,7 @@ fn benchmark_io(
             bytes,
             block_size,
             queue_depth,
+            access_pattern,
             false,
             matches!(mode, BenchMode::ReadWrite),
             identity,
@@ -337,6 +375,7 @@ fn run_phase(
     bytes: u64,
     block_size: u64,
     queue_depth: usize,
+    access_pattern: AccessPattern,
     write: bool,
     verify: bool,
     identity: String,
@@ -344,6 +383,7 @@ fn run_phase(
     filesystem: Option<String>,
 ) -> Result<BenchmarkReport> {
     let blocks = bytes / block_size;
+    let random_stride = random_stride(blocks);
     let next = Arc::new(AtomicU64::new(0));
     let failed = Arc::new(AtomicBool::new(false));
     let latencies = Arc::new(Mutex::new(Vec::with_capacity(blocks as usize)));
@@ -357,12 +397,20 @@ fn run_phase(
             let latencies = latencies.clone();
             std::thread::spawn(move || {
                 let mut buffer = vec![0u8; block_size as usize];
+                let mut expected = verify.then(|| vec![0u8; block_size as usize]);
                 let mut local_latencies = Vec::new();
                 loop {
-                    let block = next.fetch_add(1, Ordering::Relaxed);
-                    if block >= blocks || failed.load(Ordering::Relaxed) {
+                    let sequence = next.fetch_add(1, Ordering::Relaxed);
+                    if sequence >= blocks || failed.load(Ordering::Relaxed) {
                         break;
                     }
+                    let block = match access_pattern {
+                        AccessPattern::Sequential => sequence,
+                        AccessPattern::Random => {
+                            (((sequence as u128 * random_stride as u128) + 0x9E37_79B9_u128)
+                                % blocks as u128) as u64
+                        }
+                    };
                     let position = offset + block * block_size;
                     if write {
                         fill_pattern(block, &mut buffer);
@@ -379,9 +427,9 @@ fn run_phase(
                         break;
                     }
                     if verify {
-                        let mut expected = vec![0u8; buffer.len()];
-                        fill_pattern(block, &mut expected);
-                        if buffer != expected {
+                        let expected = expected.as_mut().expect("verify buffer");
+                        fill_pattern(block, expected);
+                        if buffer.as_slice() != expected.as_slice() {
                             failed.store(true, Ordering::Relaxed);
                             break;
                         }
@@ -411,6 +459,7 @@ fn run_phase(
         bytes,
         block_size,
         queue_depth,
+        access_pattern: access_pattern_name(access_pattern).to_string(),
         duration_ms: elapsed.as_millis() as u64,
         throughput_bytes_s: (bytes as f64 / duration_s) as u64,
         iops: blocks as f64 / duration_s,
@@ -420,6 +469,24 @@ fn run_phase(
         cpu_seconds: (cpu_seconds() - cpu_before).max(0.0),
         verified: verify && !failed.load(Ordering::Relaxed),
     })
+}
+
+fn random_stride(blocks: u64) -> u64 {
+    let mut stride = 0x9E37_79B9_7F4A_7C15_u64 % blocks.max(1);
+    stride |= 1;
+    while gcd(stride, blocks) != 1 {
+        stride = stride.saturating_sub(2).max(1);
+    }
+    stride
+}
+
+fn gcd(mut left: u64, mut right: u64) -> u64 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
 }
 
 fn write_all_at_retry(file: &File, mut data: &[u8], mut offset: u64) -> std::io::Result<()> {
@@ -556,6 +623,7 @@ fn sm4_benchmark(mib: u64, iterations: u32, json: bool) -> Result<()> {
             bytes: total,
             block_size: 16,
             queue_depth: 1,
+            access_pattern: "not_applicable".into(),
             duration_ms: elapsed.as_millis() as u64,
             throughput_bytes_s: (total as f64 / elapsed.as_secs_f64()) as u64,
             iops: total as f64 / 16.0 / elapsed.as_secs_f64(),
@@ -688,4 +756,46 @@ fn validate_external_physical(bsd: &str) -> Result<()> {
         bail!("{bsd} 不是当前的外置物理盘");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_stride_visits_every_block_once() {
+        for blocks in [1, 3, 1024, 4093] {
+            let stride = random_stride(blocks);
+            let mut visited = std::collections::HashSet::new();
+            for sequence in 0..blocks {
+                let block = (((sequence as u128 * stride as u128) + 0x9E37_79B9_u128)
+                    % blocks as u128) as u64;
+                assert!(visited.insert(block));
+            }
+            assert_eq!(visited.len(), blocks as usize);
+        }
+    }
+
+    #[test]
+    fn benchmark_report_accepts_legacy_json_without_pattern() {
+        let report: BenchmarkReport = serde_json::from_value(serde_json::json!({
+            "device_identity": "legacy",
+            "layer": "raw_device",
+            "filesystem": null,
+            "mode": "read",
+            "bytes": 4096,
+            "block_size": 4096,
+            "queue_depth": 1,
+            "duration_ms": 1,
+            "throughput_bytes_s": 4096,
+            "iops": 1.0,
+            "latency_p50_us": 1,
+            "latency_p95_us": 1,
+            "latency_p99_us": 1,
+            "cpu_seconds": 0.0,
+            "verified": true
+        }))
+        .unwrap();
+        assert_eq!(report.access_pattern, "sequential");
+    }
 }
