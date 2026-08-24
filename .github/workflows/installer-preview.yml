@@ -59,7 +59,7 @@ jobs:
           hdiutil detach -quiet "${MACFUSE_VOLUME}"
           pkg-config --modversion fuse
 
-      - name: Apply FSKit real-user preview
+      - name: Apply FSKit exec-user preview
         run: |
           set -euo pipefail
           python3 installer/apply-fskit-real-user-preview.py
@@ -68,10 +68,12 @@ jobs:
           grep -F '/Volumes' crates/usbcore/src/session.rs
           grep -F 'Command::new("/bin/launchctl")' crates/usbcore/src/session.rs
           grep -F '.arg("asuser")' crates/usbcore/src/session.rs
-          grep -F 'EDP_BRIDGE_RUN_UID' crates/usbcore/src/session.rs
-          grep -F 'EDP_BRIDGE_RUN_GID' crates/usbcore/src/session.rs
-          grep -F 'drop_to_user(uid, gid)' crates/usbcore/src/bridge.rs
-          grep -F 'open_euid=' crates/usbcore/src/bridge.rs
+          grep -F 'make_fd_inheritable(source_fd)' crates/usbcore/src/session.rs
+          grep -F 'command.gid(gid).uid(uid)' crates/usbcore/src/session.rs
+          grep -F '"--source-fd"' crates/usbcore/src/session.rs
+          grep -F 'source_fd: Option<i32>' crates/usbcore/src/main.rs
+          grep -F 'FileRawIo::from_open_file' crates/usbcore/src/bridge.rs
+          grep -F 'process_euid=' crates/usbcore/src/bridge.rs
           grep -F '"/var/run/com.edp.usbvault.daemon.sock"' gui/src-tauri/src/lib.rs
           grep -F 'system/${LABEL}' installer/build-one-click.sh
           grep -F 'launchctl asuser' installer/build-one-click.sh
@@ -81,6 +83,7 @@ jobs:
       - name: Build usbcore
         run: |
           set -euo pipefail
+          cargo fmt --all -- --check
           cargo build -p usbcore --release
           otool -L target/release/usbcore | grep -i 'libfuse'
 
@@ -159,5 +162,5 @@ jobs:
           gh release create "${RELEASE_TAG}" release-assets/* \
             --verify-tag \
             --prerelease \
-            --title "Installer Preview — FSKit real-user bridge" \
-            --notes "Experimental one-click installer from install/one-click-installer. usbcore remains a privileged root LaunchDaemon. The bridge enters the console user's GUI bootstrap, opens the raw disk while still root, then drops its real uid/gid to the console user before calling libfuse/MFMount/FSKit. This tests whether macFUSE authorization requires both the user bootstrap and real user credentials. Requires macOS 15.4+. Commit: ${SHORT_SHA}."
+            --title "Installer Preview — FSKit inherited raw FD" \
+            --notes "Experimental one-click installer from install/one-click-installer. The root LaunchDaemon opens the raw disk first and passes the already-open FD to a bridge that is exec'd as the logged-in console user inside that user's GUI bootstrap. The bridge never reopens /dev/rdiskN. This tests whether MFMount requires the bridge to be a real user process from exec start. Requires macOS 15.4+. Commit: ${SHORT_SHA}."
