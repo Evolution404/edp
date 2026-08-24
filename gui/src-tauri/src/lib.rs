@@ -1337,6 +1337,21 @@ fn spawn_health_check(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if std::env::args_os().any(|argument| argument == "--repair-service-registration") {
+        match prepare_daemon_restart() {
+            Ok(()) => {
+                println!("EDP USB Vault service registration repaired");
+                return;
+            }
+            Err(error) => {
+                eprintln!("{}: {}", error.code, error.message);
+                if let Some(detail) = error.detail {
+                    eprintln!("{detail}");
+                }
+                std::process::exit(1);
+            }
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(Rpc::new())
