@@ -440,18 +440,42 @@ fn get_diagnostics(coordinator: State<UiStateCoordinator>) -> Value {
     json!({ "snapshot": coordinator.current(), "logs": logs["logs"] })
 }
 
+const FINDER_WINDOW_SCRIPT: &str = r#"
+on run argv
+  if (count of argv) is not 1 then error "missing folder path"
+  set targetFolder to POSIX file (item 1 of argv) as alias
+  tell application "Finder"
+    activate
+    set targetWindow to make new Finder window
+    set target of targetWindow to targetFolder
+    set toolbar visible of targetWindow to true
+    if sidebar width of targetWindow < 160 then set sidebar width of targetWindow to 180
+  end tell
+end run
+"#;
+
+fn finder_window_command(path: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("/usr/bin/osascript");
+    command.args(["-e", FINDER_WINDOW_SCRIPT, "--", path]);
+    command
+}
+
 #[tauri::command]
 fn open_in_finder(path: String) -> Result<(), UiError> {
     if path.is_empty() {
         return Err(UiError::new("BAD_PARAMS", "没有可打开的挂载点"));
     }
-    std::process::Command::new("open")
-        .arg(&path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| {
-            UiError::new("OPEN_FAILED", "无法在 Finder 中打开").with_detail(error.to_string())
-        })
+    if !Path::new(&path).is_dir() {
+        return Err(UiError::new("MOUNTPOINT_GONE", "挂载点已不可用").with_detail(path));
+    }
+    let output = finder_window_command(&path).output().map_err(|error| {
+        UiError::new("OPEN_FAILED", "无法在 Finder 中打开").with_detail(error.to_string())
+    })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(UiError::new("OPEN_FAILED", "无法创建标准 Finder 窗口").with_detail(detail))
 }
 
 #[tauri::command]
@@ -1000,5 +1024,20 @@ mod tests {
         .expect("dyld failure should be recognized");
         assert!(detail.contains("无法加载 macFUSE 运行库"));
         assert!(detail.contains("EDP USB Vault"));
+    }
+
+    #[test]
+    fn finder_path_is_a_single_osascript_argument() {
+        use std::ffi::OsStr;
+
+        let path = "/Volumes/交换区\"; error \"injected";
+        let command = finder_window_command(path);
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(command.get_program(), OsStr::new("/usr/bin/osascript"));
+        assert_eq!(args[0], OsStr::new("-e"));
+        assert_eq!(args[1], OsStr::new(FINDER_WINDOW_SCRIPT));
+        assert_eq!(args[2], OsStr::new("--"));
+        assert_eq!(args[3], OsStr::new(path));
+        assert!(!FINDER_WINDOW_SCRIPT.contains(path));
     }
 }
