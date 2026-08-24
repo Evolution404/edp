@@ -12,6 +12,9 @@ pub enum Status {
 mod platform {
     use super::Status;
     use std::ffi::{c_char, CStr};
+    use std::process::{Command, Stdio};
+
+    const LEGACY_LABEL: &str = "system/com.edp.usbvault.daemon.v2";
 
     unsafe extern "C" {
         fn edp_sm_service_status() -> i32;
@@ -36,20 +39,41 @@ mod platform {
         })
     }
 
+    fn installer_daemon_enabled() -> bool {
+        Command::new("/bin/launchctl")
+            .args(["print", LEGACY_LABEL])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
     pub fn status() -> Status {
         match unsafe { edp_sm_service_status() } {
-            0 => Status::NotRegistered,
             1 => Status::Enabled,
             2 => Status::RequiresApproval,
+            0 if installer_daemon_enabled() => Status::Enabled,
+            0 => Status::NotRegistered,
+            _ if installer_daemon_enabled() => Status::Enabled,
             _ => Status::NotFound,
         }
     }
 
     pub fn register() -> Result<(), String> {
+        if installer_daemon_enabled() {
+            return Ok(());
+        }
         operation(edp_sm_service_register)
     }
 
     pub fn unregister() -> Result<(), String> {
+        if installer_daemon_enabled() {
+            return Err(
+                "当前后台服务由一体化安装器管理。测试版请使用卸载/清理命令移除后台服务。"
+                    .to_string(),
+            );
+        }
         operation(edp_sm_service_unregister)
     }
 
