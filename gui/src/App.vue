@@ -18,8 +18,10 @@ const serviceTone = computed(() => {
 const serviceText = computed(() => {
   if (!store.initialized) return "正在连接";
   if (store.snapshot?.service.running && store.snapshot.daemon) return "后台服务运行中";
+  if (store.snapshot?.service.requires_approval) return "后台服务等待系统批准";
+  if (store.snapshot?.service.legacy_installed) return "旧后台服务需要清理";
   if (store.snapshot?.service.installed) return "后台服务已停止";
-  return "后台服务未安装";
+  return "后台服务未启用";
 });
 
 onMounted(async () => {

@@ -9,7 +9,7 @@
 | 角色 | 入口 | 职责 |
 |---|---|---|
 | CLI | `usbcore <cmd>` | 终端操作；daemon 在线走 socket 免 sudo，离线 sudo 直跑 |
-| daemon | `usbcore daemon run` | launchd 常驻（root）：磁盘监听、密码库、自动挂载、RPC server |
+| daemon | App 内嵌 `usbcore daemon run` | SMAppService/launchd 常驻（root）：磁盘监听、密码库、自动挂载、RPC server |
 | bridge | `usbcore bridge` | macFUSE 单文件桥（daemon/CLI spawn，file_key 走匿名管道） |
 | GUI | `EDP USB Vault.app` | Tauri 2 菜单栏应用（accessory，无 Dock），纯 RPC 客户端 |
 
@@ -31,7 +31,7 @@ gui/
 - 所有数据走 UDS JSON-RPC（`edp-proto`），**GUI 不直接读盘、不接触密码库文件**
 - `subscribe` 长连接实时接收 `mounted/unmounted/disk_appeared/…` → 前端事件 + 系统通知 + 托盘菜单重建
 - daemon 离线时 GUI 显示引导（设置页可提权安装 daemon、macFUSE 引导）
-- 唯一提权动作：`install_daemon` 经 `osascript … with administrator privileges` 执行 `usbcore daemon install`
+- 后台服务通过 `SMAppService.daemon(plistName:)` 注册；二进制与 plist 始终留在签名的 `.app` 包内
 
 ## 挂载数据流
 
@@ -56,5 +56,5 @@ session 集合的反向索引，拔盘、手动卸载与安全停止均据此完
 
 - 密码仅作认证因子；数据主密钥 `file_key` 每次从 LBA12 重新派生
 - `file_key` 只经匿名管道传给 bridge，永不进 argv/env/磁盘/日志/会话文件
-- 密码库：`/var/db/edp-usbcore/store.enc`（AES-256-GCM，KEK 随机文件 0600 root-only）
+- 密码库：`/var/db/com.edp.usbvault/store.enc`（AES-256-GCM，KEK 随机文件 0600 root-only）
 - 威胁模型：防同机非 root 进程；root 攻击者可读 daemon 内存，任何方案（含 Keychain）不可防

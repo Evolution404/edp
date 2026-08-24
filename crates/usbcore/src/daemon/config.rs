@@ -64,7 +64,7 @@ impl Default for Config {
             schema_version: CONFIG_SCHEMA_VERSION,
             auto_mount_mode: AutoMountMode::Active,
             device_policies: Vec::new(),
-            socket_path: "/var/run/edp-usbcore.sock".to_string(),
+            socket_path: "/var/run/com.edp.usbvault.daemon.sock".to_string(),
             allowed_uids: Vec::new(),
         }
     }

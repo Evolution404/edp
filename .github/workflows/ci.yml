@@ -68,4 +68,5 @@ jobs:
       - name: GUI 打包 .app
         run: |
           cd gui && npx tauri build
-          cp ../target/release/usbcore "src-tauri/target/release/bundle/macos/EDP USB Vault.app/Contents/MacOS/usbcore"
+          test -x "src-tauri/target/release/bundle/macos/EDP USB Vault.app/Contents/Resources/usbcore"
+          test -f "src-tauri/target/release/bundle/macos/EDP USB Vault.app/Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist"

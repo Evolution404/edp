@@ -4,7 +4,7 @@
 
 ## 传输
 
-- Unix domain socket：默认 `/var/run/edp-usbcore.sock`（测试可用 `--socket` / `EDP_USB_SOCKET` 覆盖），0660
+- Unix domain socket：默认 `/var/run/com.edp.usbvault.daemon.sock`（测试可用 `--socket` / `EDP_USB_SOCKET` 覆盖），0660
 - NDJSON：每行一个 JSON 对象，UTF-8；`\n` 为帧分隔符
 - 鉴权：连接建立后 `LOCAL_PEERCRED`（`getsockopt(SOL_LOCAL, LOCAL_PEERCRED)`）取对端 uid
 
@@ -15,7 +15,7 @@
 - **白名单默认派生**（`Config.allowed_uids` 为空时，daemon 启动时自动填充）：
   - root 守护进程：`stat -f %u /dev/console` 取当前控制台登录用户（GUI/CLI 免 sudo 调用的前提）
   - 非 root（测试/开发）：daemon 自身 euid
-- 根安装时持久化到 `/var/db/edp-usbcore/config.json`；`config.set` 可覆盖
+- 嵌入式 root daemon 持久化到 `/var/db/com.edp.usbvault/config.json`；`config.set` 可覆盖
 
 ## 帧格式
 
@@ -67,7 +67,7 @@
 | `config.get` / `config.set` | `{...}` | 配置 | 白名单 |
 | `logs.read` | `{...}` | 日志尾部 | 白名单 |
 | `subscribe` / `unsubscribe` | `{}` | `{ok: true}` | 白名单 |
-| `daemon.shutdown` | `{}` | `{ok}` | 仅 root |
+| `daemon.shutdown` | `{exit?, purge_data?}` | `{ok, exit, purged}` | 已授权的本机控制端 |
 
 > `keys.add` 的 device_id 解析：优先显式 `device_id`，否则 `disk` 现场 probe（`discover_volume`）后取命中 id。
 > 密码经 socket 明文传输（本地 root socket + PEERCRED 鉴权；威胁模型见 ARCHITECTURE.md）。

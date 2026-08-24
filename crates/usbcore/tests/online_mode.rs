@@ -280,16 +280,17 @@ fn daemon_rpc_aux_methods() {
         .unwrap();
     assert!(r["logs"].is_array());
 
-    // daemon.shutdown：非 root 拒绝
-    let err = c
-        .call(edp_proto::method::DAEMON_SHUTDOWN, serde_json::json!({}))
-        .unwrap_err();
-    match err {
-        edp_proto::ClientError::Rpc(code, _) => {
-            assert_eq!(code, edp_proto::codes::PERMISSION_DENIED)
-        }
-        other => panic!("应返回 Rpc 错误，实际 {other:?}"),
-    }
+    // 连接本身已经过 UID 白名单校验；应用可先安全卸载并让 daemon 保持存活，
+    // 随后由 SMAppService 原子注销 launchd job。
+    let stopped = c
+        .call(
+            edp_proto::method::DAEMON_SHUTDOWN,
+            serde_json::json!({ "exit": false, "purge_data": false }),
+        )
+        .unwrap();
+    assert_eq!(stopped["ok"], true);
+    assert_eq!(stopped["exit"], false);
+    assert_eq!(stopped["purged"], false);
 
     daemon.kill().ok();
     let _ = daemon.wait();

@@ -3,7 +3,9 @@
 //! The webview and tray consume one cached snapshot. Daemon events are debounced
 //! into snapshot refreshes so the UI never maintains an independent truth.
 
-use std::path::{Path, PathBuf};
+mod service_management;
+
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -15,8 +17,8 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
-const SOCKET_PATH: &str = "/var/run/edp-usbcore.sock";
-const INSTALLED_USB_CORE: &str = "/usr/local/libexec/usbcore";
+const SOCKET_PATH: &str = "/var/run/com.edp.usbvault.daemon.sock";
+const LEGACY_USB_CORE: &str = "/usr/local/libexec/usbcore";
 const SNAPSHOT_EVENT: &str = "ui://snapshot";
 const OPERATION_EVENT: &str = "ui://operation";
 const RAW_EVENT: &str = "edp://event";
@@ -42,7 +44,9 @@ impl Rpc {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         let mut client = edp_proto::Client::connect(&self.socket)
             .map_err(|error| format!("无法连接 daemon（{}）：{error}", self.socket))?;
-        client.call(method, params).map_err(|error| error.to_string())
+        client
+            .call(method, params)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -66,7 +70,8 @@ impl Default for AppSnapshot {
             revision: 0,
             generated_at: now(),
             service: json!({
-                "installed": Path::new(INSTALLED_USB_CORE).exists(),
+                "installed": false,
+                "embedded": false,
                 "running": false,
                 "enabled": false,
                 "online": false,
@@ -111,7 +116,8 @@ impl UiStateCoordinator {
         let rpc = Rpc::new();
         let service = service_status_impl().unwrap_or_else(|error| {
             json!({
-                "installed": Path::new(INSTALLED_USB_CORE).exists(),
+                "installed": false,
+                "embedded": false,
                 "running": false,
                 "enabled": false,
                 "online": false,
@@ -119,44 +125,45 @@ impl UiStateCoordinator {
             })
         });
 
-        let (daemon, auto_mount_mode, devices, sessions, credentials, last_error) =
-            match rpc.call(edp_proto::method::STATUS, json!({})) {
-                Ok(status) => {
-                    let mut error = None;
-                    let (devices, mode) = match rpc.call(edp_proto::method::DEVICES_LIST, json!({})) {
-                        Ok(value) => (
-                            value["devices"].as_array().cloned().unwrap_or_default(),
-                            value["auto_mount_mode"]
-                                .as_str()
-                                .unwrap_or(&previous.auto_mount_mode)
-                                .to_string(),
-                        ),
-                        Err(message) => {
-                            error = Some(message);
-                            (previous.devices.clone(), previous.auto_mount_mode.clone())
-                        }
-                    };
-                    let sessions = rpc
-                        .call(edp_proto::method::SESSIONS, json!({}))
-                        .ok()
-                        .and_then(|value| value["sessions"].as_array().cloned())
-                        .unwrap_or_default();
-                    let credentials = rpc
-                        .call(edp_proto::method::KEYS_LS, json!({}))
-                        .ok()
-                        .and_then(|value| value.as_array().cloned())
-                        .unwrap_or_else(|| previous.credentials.clone());
-                    (Some(status), mode, devices, sessions, credentials, error)
-                }
-                Err(message) => (
-                    None,
-                    previous.auto_mount_mode.clone(),
-                    previous.devices.clone(),
-                    Vec::new(),
-                    previous.credentials.clone(),
-                    Some(message),
-                ),
-            };
+        let (daemon, auto_mount_mode, devices, sessions, credentials, last_error) = match rpc
+            .call(edp_proto::method::STATUS, json!({}))
+        {
+            Ok(status) => {
+                let mut error = None;
+                let (devices, mode) = match rpc.call(edp_proto::method::DEVICES_LIST, json!({})) {
+                    Ok(value) => (
+                        value["devices"].as_array().cloned().unwrap_or_default(),
+                        value["auto_mount_mode"]
+                            .as_str()
+                            .unwrap_or(&previous.auto_mount_mode)
+                            .to_string(),
+                    ),
+                    Err(message) => {
+                        error = Some(message);
+                        (previous.devices.clone(), previous.auto_mount_mode.clone())
+                    }
+                };
+                let sessions = rpc
+                    .call(edp_proto::method::SESSIONS, json!({}))
+                    .ok()
+                    .and_then(|value| value["sessions"].as_array().cloned())
+                    .unwrap_or_default();
+                let credentials = rpc
+                    .call(edp_proto::method::KEYS_LS, json!({}))
+                    .ok()
+                    .and_then(|value| value.as_array().cloned())
+                    .unwrap_or_else(|| previous.credentials.clone());
+                (Some(status), mode, devices, sessions, credentials, error)
+            }
+            Err(message) => (
+                None,
+                previous.auto_mount_mode.clone(),
+                previous.devices.clone(),
+                Vec::new(),
+                previous.credentials.clone(),
+                Some(message),
+            ),
+        };
 
         let snapshot = AppSnapshot {
             revision: self.revision.fetch_add(1, Ordering::SeqCst) + 1,
@@ -327,7 +334,9 @@ fn set_auto_mount_mode(app: AppHandle, mode: String) -> Result<AppSnapshot, UiEr
             edp_proto::method::AUTO_MOUNT_SET_MODE,
             json!({ "mode": mode }),
         )
-        .map_err(|message| UiError::new("RPC_FAILED", "无法更新自动挂载状态").with_detail(message))?;
+        .map_err(|message| {
+            UiError::new("RPC_FAILED", "无法更新自动挂载状态").with_detail(message)
+        })?;
     Ok(publish_snapshot(&app))
 }
 
@@ -407,7 +416,9 @@ fn save_credential(app: AppHandle, input: CredentialInput) -> Result<AppSnapshot
             }),
         )
     }
-    .map_err(|message| UiError::new("CREDENTIAL_SAVE_FAILED", "无法保存凭据").with_detail(message))?;
+    .map_err(|message| {
+        UiError::new("CREDENTIAL_SAVE_FAILED", "无法保存凭据").with_detail(message)
+    })?;
     Ok(publish_snapshot(&app))
 }
 
@@ -415,7 +426,9 @@ fn save_credential(app: AppHandle, input: CredentialInput) -> Result<AppSnapshot
 fn delete_credential(app: AppHandle, id: String) -> Result<AppSnapshot, UiError> {
     Rpc::new()
         .call(edp_proto::method::KEYS_RM, json!({ "id": id }))
-        .map_err(|message| UiError::new("CREDENTIAL_DELETE_FAILED", "无法删除凭据").with_detail(message))?;
+        .map_err(|message| {
+            UiError::new("CREDENTIAL_DELETE_FAILED", "无法删除凭据").with_detail(message)
+        })?;
     Ok(publish_snapshot(&app))
 }
 
@@ -436,7 +449,9 @@ fn open_in_finder(path: String) -> Result<(), UiError> {
         .arg(&path)
         .spawn()
         .map(|_| ())
-        .map_err(|error| UiError::new("OPEN_FAILED", "无法在 Finder 中打开").with_detail(error.to_string()))
+        .map_err(|error| {
+            UiError::new("OPEN_FAILED", "无法在 Finder 中打开").with_detail(error.to_string())
+        })
 }
 
 #[tauri::command]
@@ -449,69 +464,26 @@ fn show_main(app: AppHandle) {
 
 // ---------- service lifecycle ----------
 
-fn resolve_service_binary(installed: &Path, debug_candidates: &[PathBuf]) -> Option<PathBuf> {
-    if installed.exists() {
-        return Some(installed.to_path_buf());
-    }
-    if cfg!(debug_assertions) {
-        return debug_candidates.iter().find(|path| path.exists()).cloned();
-    }
-    None
-}
-
-fn service_binary() -> Result<PathBuf, UiError> {
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
-    let debug_candidates = [workspace.join("debug/usbcore"), workspace.join("release/usbcore")];
-    resolve_service_binary(Path::new(INSTALLED_USB_CORE), &debug_candidates)
-        .ok_or_else(|| UiError::new("SERVICE_NOT_INSTALLED", "后台服务尚未安装"))
-}
-
-fn install_source(app: &AppHandle) -> Result<PathBuf, UiError> {
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let bundled = resource_dir.join("usbcore");
-        if bundled.exists() {
-            return Ok(bundled);
-        }
-    }
-    if Path::new(INSTALLED_USB_CORE).exists() {
-        return Ok(PathBuf::from(INSTALLED_USB_CORE));
-    }
-    if cfg!(debug_assertions) {
-        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
-        for candidate in [workspace.join("release/usbcore"), workspace.join("debug/usbcore")] {
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-    }
-    Err(UiError::new(
-        "INSTALL_SOURCE_MISSING",
-        "应用包中缺少 usbcore 安装组件",
-    ))
+fn legacy_service_installed() -> bool {
+    Path::new(LEGACY_USB_CORE).exists()
+        || Path::new("/Library/LaunchDaemons/com.edp.usbcore.plist").exists()
 }
 
 fn service_status_impl() -> Result<Value, UiError> {
-    let installed = Path::new(INSTALLED_USB_CORE).exists()
-        && Path::new("/Library/LaunchDaemons/com.edp.usbcore.plist").exists();
-    let Some(binary) = resolve_service_binary(Path::new(INSTALLED_USB_CORE), &[]) else {
-        return Ok(json!({
-            "installed": installed,
-            "running": Path::new(SOCKET_PATH).exists(),
-            "enabled": false,
-            "online": Path::new(SOCKET_PATH).exists(),
-        }));
-    };
-    let output = std::process::Command::new(binary)
-        .args(["daemon", "status"])
-        .output()
-        .map_err(|error| UiError::new("STATUS_FAILED", "无法读取服务状态").with_detail(error.to_string()))?;
-    if !output.status.success() {
-        return Err(UiError::new("STATUS_FAILED", "无法读取服务状态")
-            .with_detail(String::from_utf8_lossy(&output.stderr).trim()));
-    }
-    serde_json::from_slice(&output.stdout).map_err(|error| {
-        UiError::new("STATUS_INVALID", "服务返回了无效状态").with_detail(error.to_string())
-    })
+    use service_management::Status;
+    let registration = service_management::status();
+    let online = Rpc::new()
+        .call(edp_proto::method::STATUS, json!({}))
+        .is_ok();
+    Ok(json!({
+        "installed": matches!(registration, Status::Enabled | Status::RequiresApproval),
+        "embedded": !matches!(registration, Status::NotFound),
+        "enabled": matches!(registration, Status::Enabled),
+        "requires_approval": matches!(registration, Status::RequiresApproval),
+        "running": online,
+        "online": online,
+        "legacy_installed": legacy_service_installed(),
+    }))
 }
 
 fn shell_quote(value: &str) -> String {
@@ -527,24 +499,67 @@ fn run_admin(script: &str) -> Result<(), UiError> {
         .arg("-e")
         .arg(apple_script)
         .output()
-        .map_err(|error| UiError::new("ADMIN_FAILED", "无法请求管理员授权").with_detail(error.to_string()))?;
+        .map_err(|error| {
+            UiError::new("ADMIN_FAILED", "无法请求管理员授权").with_detail(error.to_string())
+        })?;
     if output.status.success() {
         return Ok(());
     }
     let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if detail.contains("User canceled") || detail.contains("-128") || detail.contains("用户已取消") {
+    if detail.contains("User canceled") || detail.contains("-128") || detail.contains("用户已取消")
+    {
         return Err(UiError::new("ADMIN_CANCELLED", "已取消管理员授权"));
     }
     Err(UiError::new("SERVICE_CONTROL_FAILED", "后台服务操作失败").with_detail(detail))
+}
+
+fn cleanup_legacy_installation() -> Result<(), UiError> {
+    if !legacy_service_installed() && !Path::new("/var/db/edp-usbcore").exists() {
+        return Ok(());
+    }
+    let script = format!(
+        "if [ -x {binary} ]; then {binary} daemon uninstall; \
+         elif /bin/launchctl print system/com.edp.usbcore >/dev/null 2>&1; then \
+         echo '旧后台服务仍在运行但卸载程序缺失' >&2; exit 42; fi; \
+         /bin/rm -f /Library/LaunchDaemons/com.edp.usbcore.plist \
+         /usr/local/bin/usbcore {binary} /var/run/edp-usbcore.sock; \
+         /bin/rm -rf /var/db/edp-usbcore",
+        binary = LEGACY_USB_CORE,
+    );
+    run_admin(&script)
+}
+
+fn purge_embedded_data() -> Result<(), UiError> {
+    run_admin(
+        "/bin/rm -f /var/run/com.edp.usbvault.daemon.sock; \
+         /bin/rm -rf /var/db/com.edp.usbvault",
+    )
+}
+
+fn prepare_daemon_stop(purge_data: bool) -> Result<(), UiError> {
+    let mut client = edp_proto::Client::connect(SOCKET_PATH).map_err(|error| {
+        UiError::new("DAEMON_OFFLINE", "后台服务未连接").with_detail(error.to_string())
+    })?;
+    client
+        .call(
+            edp_proto::method::DAEMON_SHUTDOWN,
+            json!({ "exit": false, "purge_data": purge_data }),
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            UiError::new("SAFE_STOP_FAILED", "加密卷安全卸载失败，服务保持运行")
+                .with_detail(error.to_string())
+        })
 }
 
 fn service_action_complete(action: &str, status: &Value) -> bool {
     let installed = status["installed"].as_bool().unwrap_or(false);
     let running = status["running"].as_bool().unwrap_or(false);
     let enabled = status["enabled"].as_bool().unwrap_or(false);
+    let requires_approval = status["requires_approval"].as_bool().unwrap_or(false);
     match action {
-        "install" | "start" | "restart" => installed && running && enabled,
-        "stop" => installed && !running && !enabled,
+        "install" | "start" | "restart" => installed && (requires_approval || (running && enabled)),
+        "stop" => !installed && !running && !enabled,
         "uninstall" => !installed && !running,
         _ => false,
     }
@@ -561,53 +576,97 @@ fn verify_service_action(action: &str) -> Result<(), UiError> {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    Err(UiError::new("VERIFY_TIMEOUT", "后台服务状态验证超时").with_detail(
-        last_status
-            .map(|status| status.to_string())
-            .unwrap_or_else(|| "无法读取服务状态".to_string()),
-    ))
+    Err(
+        UiError::new("VERIFY_TIMEOUT", "后台服务状态验证超时").with_detail(
+            last_status
+                .map(|status| status.to_string())
+                .unwrap_or_else(|| "无法读取服务状态".to_string()),
+        ),
+    )
 }
 
 #[tauri::command]
-async fn run_service_action(app: AppHandle, action: String) -> Result<ServiceActionResult, UiError> {
-    if !matches!(action.as_str(), "install" | "start" | "stop" | "restart" | "uninstall") {
+async fn run_service_action(
+    app: AppHandle,
+    action: String,
+) -> Result<ServiceActionResult, UiError> {
+    if !matches!(
+        action.as_str(),
+        "install" | "start" | "stop" | "restart" | "uninstall"
+    ) {
         return Err(UiError::new("BAD_PARAMS", "未知的服务操作"));
     }
     let id = operation_id(&action);
-    emit_operation(&app, &id, &action, "authorizing", "等待管理员授权…", None);
-    let binary_result = if action == "install" {
-        install_source(&app)
-    } else {
-        service_binary()
-    };
-    let binary = match binary_result {
-        Ok(binary) => binary,
-        Err(error) => {
-            emit_operation(
-                &app,
-                &id,
-                &action,
-                "failed",
-                &error.message,
-                Some(error.clone()),
-            );
-            return Err(error);
-        }
-    };
-    let command = format!(
-        "{} daemon {}",
-        shell_quote(&binary.to_string_lossy()),
-        shell_quote(&action)
+    emit_operation(
+        &app,
+        &id,
+        &action,
+        "authorizing",
+        "正在更新 macOS 后台项目…",
+        None,
     );
-    let result = tauri::async_runtime::spawn_blocking(move || run_admin(&command))
-        .await
-        .map_err(|error| UiError::new("SERVICE_TASK_FAILED", "服务任务异常退出").with_detail(error.to_string()))?;
+    let current = service_status_impl()?;
+    let running = current["running"].as_bool().unwrap_or(false);
+    let action_for_task = action.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), UiError> {
+        match action_for_task.as_str() {
+            "install" | "start" => {
+                cleanup_legacy_installation()?;
+                service_management::register().map_err(|message| {
+                    UiError::new("SERVICE_REGISTER_FAILED", "无法启用嵌入式后台服务")
+                        .with_detail(message)
+                })
+            }
+            "stop" => {
+                if running {
+                    prepare_daemon_stop(false)?;
+                }
+                service_management::unregister().map_err(|message| {
+                    UiError::new("SERVICE_UNREGISTER_FAILED", "无法停用嵌入式后台服务")
+                        .with_detail(message)
+                })
+            }
+            "restart" => {
+                if running {
+                    prepare_daemon_stop(false)?;
+                }
+                service_management::unregister().map_err(|message| {
+                    UiError::new("SERVICE_UNREGISTER_FAILED", "无法重新注册后台服务")
+                        .with_detail(message)
+                })?;
+                service_management::register().map_err(|message| {
+                    UiError::new("SERVICE_REGISTER_FAILED", "无法重新启用后台服务")
+                        .with_detail(message)
+                })
+            }
+            "uninstall" => {
+                if running {
+                    prepare_daemon_stop(true)?;
+                }
+                service_management::unregister().map_err(|message| {
+                    UiError::new("SERVICE_UNREGISTER_FAILED", "无法注销嵌入式后台服务")
+                        .with_detail(message)
+                })?;
+                cleanup_legacy_installation()?;
+                purge_embedded_data()
+            }
+            _ => unreachable!(),
+        }
+    })
+    .await
+    .map_err(|error| {
+        UiError::new("SERVICE_TASK_FAILED", "服务任务异常退出").with_detail(error.to_string())
+    })?;
     if let Err(error) = result {
         emit_operation(
             &app,
             &id,
             &action,
-            if error.code == "ADMIN_CANCELLED" { "cancelled" } else { "failed" },
+            if error.code == "ADMIN_CANCELLED" {
+                "cancelled"
+            } else {
+                "failed"
+            },
             &error.message,
             Some(error.clone()),
         );
@@ -626,11 +685,12 @@ async fn run_service_action(app: AppHandle, action: String) -> Result<ServiceAct
         None,
     );
     let verify_action = action.clone();
-    let verification = tauri::async_runtime::spawn_blocking(move || {
-        verify_service_action(&verify_action)
-    })
-        .await
-        .map_err(|error| UiError::new("VERIFY_FAILED", "无法验证服务状态").with_detail(error.to_string()))?;
+    let verification =
+        tauri::async_runtime::spawn_blocking(move || verify_service_action(&verify_action))
+            .await
+            .map_err(|error| {
+                UiError::new("VERIFY_FAILED", "无法验证服务状态").with_detail(error.to_string())
+            })?;
     if let Err(error) = verification {
         emit_operation(
             &app,
@@ -643,12 +703,19 @@ async fn run_service_action(app: AppHandle, action: String) -> Result<ServiceAct
         return Err(error);
     }
     let snapshot = publish_snapshot(&app);
+    let approval_required = snapshot.service["requires_approval"]
+        .as_bool()
+        .unwrap_or(false);
+    if approval_required {
+        service_management::open_login_items();
+    }
     let message = match action.as_str() {
-        "install" => "后台服务已安装并启动",
-        "start" => "后台服务已启动",
+        "install" | "start" if approval_required => "请在系统设置中允许 EDP USB Vault 后台项目",
+        "install" => "嵌入式后台服务已启用",
+        "start" => "嵌入式后台服务已启动",
         "stop" => "后台服务已安全停止",
         "restart" => "后台服务已安全重启",
-        "uninstall" => "后台服务已卸载，用户数据已保留",
+        "uninstall" => "后台服务与应用数据已完全清理",
         _ => "操作完成",
     };
     emit_operation(&app, &id, &action, "succeeded", message, None);
@@ -659,9 +726,17 @@ async fn run_service_action(app: AppHandle, action: String) -> Result<ServiceAct
     })
 }
 
+#[tauri::command]
+fn open_login_items_settings() {
+    service_management::open_login_items();
+}
+
 // ---------- cached, read-only tray ----------
 
-fn build_tray_menu(app: &AppHandle, snapshot: &AppSnapshot) -> Result<Menu<tauri::Wry>, tauri::Error> {
+fn build_tray_menu(
+    app: &AppHandle,
+    snapshot: &AppSnapshot,
+) -> Result<Menu<tauri::Wry>, tauri::Error> {
     let menu = Menu::new(app)?;
     let service_label = if snapshot.service["running"].as_bool().unwrap_or(false) {
         "后台服务：运行中"
@@ -670,17 +745,33 @@ fn build_tray_menu(app: &AppHandle, snapshot: &AppSnapshot) -> Result<Menu<tauri
     } else {
         "后台服务：未安装"
     };
-    menu.append(&MenuItem::with_id(app, "service_status", service_label, false, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "service_status",
+        service_label,
+        false,
+        None::<&str>,
+    )?)?;
     menu.append(&MenuItem::with_id(
         app,
         "auto_status",
-        if snapshot.auto_mount_mode == "active" { "自动挂载：运行中" } else { "自动挂载：已暂停" },
+        if snapshot.auto_mount_mode == "active" {
+            "自动挂载：运行中"
+        } else {
+            "自动挂载：已暂停"
+        },
         false,
         None::<&str>,
     )?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     if snapshot.sessions.is_empty() {
-        menu.append(&MenuItem::with_id(app, "no_sessions", "无挂载中的卷", false, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(
+            app,
+            "no_sessions",
+            "无挂载中的卷",
+            false,
+            None::<&str>,
+        )?)?;
     } else {
         for session in &snapshot.sessions {
             let id = session["session_id"].as_str().unwrap_or_default();
@@ -695,7 +786,13 @@ fn build_tray_menu(app: &AppHandle, snapshot: &AppSnapshot) -> Result<Menu<tauri
         }
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "open", "打开 EDP USB Vault", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "open",
+        "打开 EDP USB Vault",
+        true,
+        None::<&str>,
+    )?)?;
     menu.append(&MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?)?;
     Ok(menu)
 }
@@ -762,7 +859,12 @@ fn spawn_subscriber(app: AppHandle) {
                 };
                 if let Some(title) = title {
                     let body = first_mountpoint(&event.data).unwrap_or_else(|| event.event.clone());
-                    let _ = app_for_event.notification().builder().title(title).body(body).show();
+                    let _ = app_for_event
+                        .notification()
+                        .builder()
+                        .title(title)
+                        .body(body)
+                        .show();
                 }
             });
             std::thread::sleep(Duration::from_secs(2));
@@ -803,10 +905,13 @@ pub fn run() {
             get_diagnostics,
             run_service_action,
             open_in_finder,
+            open_login_items_settings,
             show_main,
         ])
         .setup(|app| {
-            let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let _ = app
+                .handle()
+                .set_activation_policy(tauri::ActivationPolicy::Accessory);
             setup_tray(app.handle())?;
             spawn_subscriber(app.handle().clone());
             spawn_health_check(app.handle().clone());
@@ -842,42 +947,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn installed_service_binary_always_wins() {
-        let root = std::env::temp_dir().join(format!("edp-ui-test-{}", std::process::id()));
-        let installed = root.join("installed-usbcore");
-        let workspace = root.join("workspace-usbcore");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(&installed, b"installed").unwrap();
-        std::fs::write(&workspace, b"workspace").unwrap();
-        assert_eq!(
-            resolve_service_binary(&installed, std::slice::from_ref(&workspace)),
-            Some(installed.clone())
-        );
-        std::fs::remove_file(installed).unwrap();
-        std::fs::remove_file(workspace).unwrap();
-        std::fs::remove_dir(root).unwrap();
-    }
-
-    #[test]
-    fn release_build_never_uses_workspace_fallback() {
-        if cfg!(debug_assertions) {
-            return;
-        }
-        assert_eq!(
-            resolve_service_binary(
-                Path::new("/definitely/missing/installed-usbcore"),
-                &[PathBuf::from(env!("CARGO_MANIFEST_DIR"))],
-            ),
-            None
-        );
-    }
-
-    #[test]
     fn service_action_verification_requires_the_expected_state() {
         let running = json!({ "installed": true, "running": true, "enabled": true });
-        let stopped = json!({ "installed": true, "running": false, "enabled": false });
+        let approval = json!({
+            "installed": true,
+            "running": false,
+            "enabled": false,
+            "requires_approval": true
+        });
+        let stopped = json!({ "installed": false, "running": false, "enabled": false });
         let removed = json!({ "installed": false, "running": false, "enabled": false });
         assert!(service_action_complete("start", &running));
+        assert!(service_action_complete("start", &approval));
         assert!(!service_action_complete("start", &stopped));
         assert!(service_action_complete("stop", &stopped));
         assert!(!service_action_complete("stop", &running));

@@ -19,11 +19,12 @@ VRV/CEMS **EDP 加密 U 盘**的 macOS 互操作客户端：**Rust 内核（CLI 
 ## 架构
 
 ```
-launchd (root, KeepAlive)
- └─ usbcore daemon run              ← 守护进程（磁盘监听/密码库/自动挂载）
+EDP USB Vault.app
+ ├─ Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist
+ └─ Contents/Resources/usbcore      ← SMAppService 注册的 root 守护进程
      ├─ DiskArbitration 监听
-     ├─ 密码库 /var/db/edp-usbcore/store.enc（AES-256-GCM）
-     ├─ UDS JSON-RPC /var/run/edp-usbcore.sock
+     ├─ 密码库 /var/db/com.edp.usbvault/store.enc（AES-256-GCM）
+     ├─ UDS JSON-RPC /var/run/com.edp.usbvault.daemon.sock
      ├─ spawn: usbcore bridge       ← macFUSE 单文件桥（file_key 走匿名管道）
      └─ hdiutil attach → 原生 exFAT → /Volumes/...
 
@@ -48,7 +49,7 @@ cd gui && npm ci && npx tauri dev     # 开发运行
 # 或打包 .app：npx tauri build       # 产物在 gui/src-tauri/target/release/bundle/
 ```
 
-GUI 首次使用：打开主窗口 → 设置页「安装后台服务」（弹系统授权）→ 设备页选择目标 U 盘 →
+GUI 首次使用：打开主窗口 → 设置页「启用后台服务」→ 在 macOS“登录项与扩展”中批准 → 设备页选择目标 U 盘 →
 在分区行设置密码并开启逐盘授权。新盘默认不授权；daemon 安装后，**关闭窗口或退出 GUI
 都不影响后台服务**。
 
@@ -61,7 +62,7 @@ GUI 首次使用：打开主窗口 → 设置页「安装后台服务」（弹�
 
 > **macOS 15（Sequoia）注意**：系统默认禁止后台守护进程访问可移动磁盘。安装 daemon 后
 > 需**一次性**在「系统设置 → 隐私与安全性 → 完整磁盘访问权限」中添加
-> `/usr/local/libexec/usbcore`，否则 daemon 无法读取 U 盘（GUI 设置页会提示）。
+> `EDP USB Vault.app`，否则 daemon 无法读取 U 盘（GUI 设置页会提示）。
 > `usbcore status` 输出 `disk_access_ok: false` 即表示未授予。
 
 **CLI**：
@@ -71,7 +72,6 @@ make build
 sudo target/release/usbcore mount /dev/rdisk4        # 手动挂载（输密码）
 target/release/usbcore probe /dev/rdisk4             # 只读探测（密码/key/分区闭环）
 target/release/usbcore status                        # daemon 在线状态
-sudo make install                                    # 安装 launchd 守护进程（自动挂载）
 target/release/usbcore keys add --disk /dev/rdisk4   # 录入密码（daemon 闭环验证）
 ```
 

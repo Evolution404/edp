@@ -1,6 +1,6 @@
 //! root-only 加密密码库。
 //!
-//! `/var/db/edp-usbcore/`（0700 root:wheel）：
+//! daemon 私有数据目录（0700 root:wheel）：
 //! - `kek.bin`：32B CSPRNG 密钥加密密钥（0600 root:wheel）
 //! - `store.enc`：`"EDPSTOR1" ‖ nonce[12] ‖ AES-256-GCM(json)`（0600）
 //!   json 明文含密码（以密码 CRC 为主要索引，绝不外泄）

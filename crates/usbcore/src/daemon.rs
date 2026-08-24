@@ -6,13 +6,11 @@
 mod config;
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use std::os::unix::fs::PermissionsExt;
 use tracing::{info, warn};
 
 use edp_core::discovery::{discover_volume, filesystem_magic};
@@ -24,7 +22,8 @@ use crate::session;
 
 use config::{AutoMountMode, Config, DevicePolicy};
 
-const DEFAULT_CONFIG_PATH: &str = "/var/db/edp-usbcore/config.json";
+const DEFAULT_DATA_ROOT: &str = "/var/db/com.edp.usbvault";
+const DEFAULT_CONFIG_PATH: &str = "/var/db/com.edp.usbvault/config.json";
 
 #[derive(Debug, Clone)]
 struct DetectedDisk {
@@ -50,11 +49,13 @@ pub struct DaemonState {
     pub rescan_requested: std::sync::atomic::AtomicBool,
     /// daemon.shutdown 置位；主线程据此退出
     pub shutdown: Arc<std::sync::atomic::AtomicBool>,
+    /// 安全停止准备完成后阻止产生任何新的自动挂载。
+    pub quiesced: std::sync::atomic::AtomicBool,
     /// 主线程句柄（shutdown 时 unpark）
     pub main_thread: std::thread::Thread,
 }
 
-const DEFAULT_SESSION_ROOT: &str = "/var/db/edp-usbcore/sessions";
+const DEFAULT_SESSION_ROOT: &str = "/var/db/com.edp.usbvault/sessions";
 
 /// 默认授权用户白名单：
 /// - root 守护进程：放行控制台登录用户（GUI/CLI 免 sudo 走 RPC）
@@ -109,7 +110,7 @@ pub fn run_with(
 
     let keystore_dir = session_root
         .parent()
-        .unwrap_or(Path::new("/var/db/edp-usbcore"));
+        .unwrap_or(Path::new(DEFAULT_DATA_ROOT));
     let ks = Keystore::open(keystore_dir)?;
     let broadcaster = EventBroadcaster::new();
 
@@ -125,8 +126,28 @@ pub fn run_with(
         auto_mount_inflight: Mutex::new(std::collections::HashSet::new()),
         rescan_requested: std::sync::atomic::AtomicBool::new(false),
         shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        quiesced: std::sync::atomic::AtomicBool::new(false),
         main_thread: std::thread::current(),
     });
+
+    // The daemon executable lives inside the app bundle. If Finder removes the
+    // app while the registered service is running, safely unmount, erase daemon
+    // data, and exit instead of leaving a detached privileged process alive.
+    if let Some(executable) = embedded_executable_path() {
+        let orphan_state = state.clone();
+        std::thread::spawn(move || {
+            while !orphan_state
+                .shutdown
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                if !executable.exists() {
+                    let _ = quiesce(&orphan_state, true, true, "app_removed");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
+    }
 
     // 启动磁盘监听线程（轮询 diskutil diff；DiskArbitration 后续补）
     {
@@ -164,6 +185,14 @@ pub fn run_with(
     info!("usbcore daemon 收到 shutdown，退出");
     handle.shutdown();
     Ok(())
+}
+
+fn embedded_executable_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    executable
+        .to_string_lossy()
+        .contains(".app/Contents/")
+        .then_some(executable)
 }
 
 fn build_methods() -> Result<HashMap<String, Handler>> {
@@ -815,12 +844,12 @@ fn handle_devices_list(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp
     Ok(json!({ "devices": out, "auto_mount_mode": cfg.auto_mount_mode }))
 }
 
-/// 读 daemon 日志尾部（launchd 重定向到 /var/db/edp-usbcore/logs/）。
+/// 读 daemon 日志尾部（若构建配置启用了文件日志）。
 fn handle_logs_read(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
     let lines = p.get("lines").and_then(|x| x.as_u64()).unwrap_or(100) as usize;
     let mut logs = Vec::new();
     for name in ["daemon.err", "daemon.out"] {
-        let path = Path::new("/var/db/edp-usbcore/logs").join(name);
+        let path = Path::new(DEFAULT_DATA_ROOT).join("logs").join(name);
         if let Some(tail) = tail_file(&path, lines) {
             logs.push(json!({ "file": name, "lines": tail }));
         }
@@ -837,16 +866,27 @@ fn tail_file(path: &Path, n: usize) -> Option<Vec<String>> {
     Some(lines[start..].iter().map(|s| s.to_string()).collect())
 }
 
-/// 停止 daemon（仅 root）。
-fn handle_shutdown(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_proto::RpcError> {
+/// 安全卸载全部会话，并按需要清除数据或退出。
+fn handle_shutdown(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
     let d = daemon(ctx)?;
-    if !ctx.is_root() {
-        return Err(edp_proto::RpcError::new(
-            edp_proto::codes::PERMISSION_DENIED,
-            "仅 root 可停止 daemon",
-        ));
-    }
-    let active = session::list_active(&d.session_root).map_err(rpc_internal)?;
+    let exit = p.get("exit").and_then(Value::as_bool).unwrap_or(true);
+    let purge_data = p
+        .get("purge_data")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    quiesce(d, purge_data, exit, "daemon_stop").map_err(rpc_internal)?;
+    Ok(json!({ "ok": true, "exit": exit, "purged": purge_data }))
+}
+
+fn quiesce(d: &DaemonState, purge_data: bool, exit: bool, reason: &str) -> Result<()> {
+    d.quiesced.store(true, std::sync::atomic::Ordering::SeqCst);
+    let active = match session::list_active(&d.session_root) {
+        Ok(active) => active,
+        Err(error) => {
+            d.quiesced.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err(error);
+        }
+    };
     let sessions = active["sessions"].as_array().cloned().unwrap_or_default();
     let mut physical_disks = HashSet::new();
     for item in &sessions {
@@ -854,12 +894,10 @@ fn handle_shutdown(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_pro
         if sid.is_empty() {
             continue;
         }
-        session::unmount(sid, false, &d.session_root).map_err(|error| {
-            edp_proto::RpcError::new(
-                edp_proto::codes::BUSY,
-                format!("安全卸载会话 {sid} 失败，daemon 保持运行: {error}"),
-            )
-        })?;
+        if let Err(error) = session::unmount(sid, false, &d.session_root) {
+            d.quiesced.store(false, std::sync::atomic::Ordering::SeqCst);
+            bail!("安全卸载会话 {sid} 失败，daemon 保持运行: {error}");
+        }
         if let Some((bsd, true)) =
             unregister_session(d, sid).filter(|(bsd, _)| bsd.starts_with("disk"))
         {
@@ -875,16 +913,27 @@ fn handle_shutdown(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_pro
         }
         d.broadcaster.broadcast(
             edp_proto::event::UNMOUNTED,
-            json!({ "session_id": sid, "reason": "daemon_stop" }),
+            json!({ "session_id": sid, "reason": reason }),
         );
     }
     d.mounted.lock().unwrap().clear();
     for bsd in physical_disks {
         let _ = edp_macos::mount_disk(&bsd);
     }
-    d.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
-    d.main_thread.unpark();
-    Ok(json!({ "ok": true }))
+    if purge_data {
+        let data_root = d
+            .session_root
+            .parent()
+            .unwrap_or_else(|| Path::new(DEFAULT_DATA_ROOT));
+        if data_root == Path::new(DEFAULT_DATA_ROOT) {
+            let _ = std::fs::remove_dir_all(data_root);
+        }
+    }
+    if exit {
+        d.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        d.main_thread.unpark();
+    }
+    Ok(())
 }
 
 fn rpc_io(e: std::io::Error) -> edp_proto::RpcError {
@@ -895,369 +944,26 @@ fn rpc_internal(error: impl std::fmt::Display) -> edp_proto::RpcError {
     edp_proto::RpcError::new(edp_proto::codes::INTERNAL, error.to_string())
 }
 
-// ---------- launchd 管理 ----------
+// ---------- Service Management 状态 ----------
 
-const LAUNCHD_LABEL: &str = "com.edp.usbcore";
-const PLIST_PATH: &str = "/Library/LaunchDaemons/com.edp.usbcore.plist";
-const BIN_INSTALL_PATH: &str = "/usr/local/libexec/usbcore";
-const BIN_SYMLINK: &str = "/usr/local/bin/usbcore";
-
-/// 只复制可执行文件内容，不复制 macOS 的 quarantine/provenance 等扩展属性。
-///
-/// `std::fs::copy` 在 macOS 会走 `fcopyfile(COPYFILE_ALL)`。开发构建产物带有
-/// `com.apple.provenance` 时，即使管理员已授权，把该属性覆盖到 `/usr/local` 也可能
-/// 返回 EPERM。先在目标目录生成新 inode，再用 rename 替换，既规避属性复制也避免
-/// 目标文件在复制过程中被截断。
-fn install_binary(source: &Path, target: &Path) -> Result<()> {
-    let parent = target
-        .parent()
-        .context("安装路径缺少父目录")?;
-    let staging = parent.join(format!(".usbcore.install-{}", std::process::id()));
-    let _ = std::fs::remove_file(&staging);
-
-    let result = (|| -> Result<()> {
-        let mut input = std::fs::File::open(source)
-            .with_context(|| format!("读取安装源 {} 失败", source.display()))?;
-        let mut output = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staging)
-            .with_context(|| format!("创建安装临时文件 {} 失败", staging.display()))?;
-        let copied = std::io::copy(&mut input, &mut output)?;
-        output.flush()?;
-        output.sync_all()?;
-        if copied == 0 {
-            bail!("二进制复制结果为空：安装中止");
-        }
-        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))?;
-
-        let cpath = std::ffi::CString::new(staging.as_os_str().as_encoded_bytes())
-            .context("安装临时路径包含 NUL")?;
-        if unsafe { libc::chown(cpath.as_ptr(), 0, 0) } != 0 {
-            bail!(
-                "chown root:wheel {} 失败: {}",
-                staging.display(),
-                std::io::Error::last_os_error()
-            );
-        }
-        std::fs::rename(&staging, target).with_context(|| {
-            format!(
-                "原子替换 daemon 二进制 {} -> {} 失败",
-                staging.display(),
-                target.display()
-            )
-        })?;
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&staging);
-    }
-    result
-}
-
-/// 安装 launchd 守护进程（需 root）。
-pub fn install() -> Result<()> {
-    if unsafe { libc::getuid() } != 0 {
-        bail!("安装守护进程需要 root：请用 sudo 运行 usbcore daemon install");
-    }
-    let self_exe = std::env::current_exe()?;
-    // 复制二进制到 /usr/local/libexec。仅复制文件内容，避免把开发构建产物的
-    // provenance/quarantine 扩展属性带入系统安装目录。
-    std::fs::create_dir_all("/usr/local/libexec")?;
-    std::fs::create_dir_all("/usr/local/bin")?;
-    let installing_self = self_exe
-        .canonicalize()
-        .ok()
-        .zip(Path::new(BIN_INSTALL_PATH).canonicalize().ok())
-        .map(|(source, target)| source == target)
-        .unwrap_or(false);
-    if !installing_self {
-        install_binary(&self_exe, Path::new(BIN_INSTALL_PATH))?;
-    }
-    let meta = std::fs::metadata(BIN_INSTALL_PATH)?;
-    if meta.len() == 0 {
-        bail!("二进制复制结果为空（{} 字节）：安装中止", meta.len());
-    }
-    let cpath = std::ffi::CString::new(BIN_INSTALL_PATH).expect("BIN_INSTALL_PATH 不含 NUL");
-    if unsafe { libc::chown(cpath.as_ptr(), 0, 0) } != 0 {
-        bail!(
-            "chown root:wheel {} 失败: {}",
-            BIN_INSTALL_PATH,
-            std::io::Error::last_os_error()
-        );
-    }
-    std::fs::set_permissions(BIN_INSTALL_PATH, std::fs::Permissions::from_mode(0o755))?;
-    let _ = std::fs::remove_file(BIN_SYMLINK);
-    std::os::unix::fs::symlink(BIN_INSTALL_PATH, BIN_SYMLINK)?;
-    // 初始化数据目录
-    std::fs::create_dir_all("/var/db/edp-usbcore/logs")?;
-    std::fs::create_dir_all("/var/db/edp-usbcore/sessions")?;
-    // 首次安装创建安全的 v2 配置；升级只迁移 schema，绝不覆盖用户的暂停状态
-    // 和逐盘授权。v1 自动挂载标志不会迁移为设备授权。
-    let config_path = Path::new(DEFAULT_CONFIG_PATH);
-    let mut installed_config = config::load(config_path)?;
-    if installed_config.allowed_uids.is_empty() {
-        installed_config.allowed_uids = default_allowed_uids();
-    }
-    installed_config.socket_path = "/var/run/edp-usbcore.sock".to_string();
-    config::save_atomic(config_path, &installed_config)?;
-    // 写 plist
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>{LABEL}</string>
-  <key>ProgramArguments</key><array>
-    <string>{BIN}</string><string>daemon</string><string>run</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>/var/db/edp-usbcore/logs/daemon.out</string>
-  <key>StandardErrorPath</key><string>/var/db/edp-usbcore/logs/daemon.err</string>
-</dict></plist>
-"#,
-        LABEL = LAUNCHD_LABEL,
-        BIN = BIN_INSTALL_PATH
-    );
-    std::fs::write(PLIST_PATH, plist)?;
-    let _ = std::process::Command::new("launchctl")
-        .args(["enable", "system/com.edp.usbcore"])
-        .output();
-    // 加载：job 已加载时用 kickstart -k 强制重启（运行新二进制）；未加载时 bootstrap。
-    // （实测「bootout → bootstrap」序列在部分 macOS 状态会报 "Bootstrap failed: 5:
-    //  Input/output error"，而 kickstart -k 稳定成功——重装 daemon 走此路径。）
-    let job_loaded = matches!(
-        std::process::Command::new("launchctl")
-            .args(["print", "system/com.edp.usbcore"])
-            .output(),
-        Ok(o) if o.status.success()
-    );
-    if job_loaded {
-        let out = std::process::Command::new("launchctl")
-            .args(["kickstart", "-k", "system/com.edp.usbcore"])
-            .output()?;
-        if !out.status.success() {
-            bail!(
-                "launchctl kickstart -k 失败: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-        }
-    } else {
-        let out = std::process::Command::new("launchctl")
-            .args(["bootstrap", "system", PLIST_PATH])
-            .output()?;
-        if !out.status.success() {
-            // 残留 job 会使 bootstrap 报 "Bootstrap failed: 5"：bootout 后重试（≤3 轮）
-            let mut loaded = false;
-            let mut last_err = String::new();
-            for _ in 0..3 {
-                let _ = std::process::Command::new("launchctl")
-                    .args(["bootout", "system/com.edp.usbcore"])
-                    .output();
-                std::thread::sleep(std::time::Duration::from_millis(1000));
-                let out = std::process::Command::new("launchctl")
-                    .args(["bootstrap", "system", PLIST_PATH])
-                    .output()?;
-                if out.status.success() {
-                    loaded = true;
-                    break;
-                }
-                last_err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            }
-            if !loaded {
-                bail!("launchctl bootstrap 失败：{last_err}\n请手动运行：launchctl bootstrap system {PLIST_PATH}");
-            }
-        }
-    }
-    // 健康检查：等 socket 出现
-    let sock = "/var/run/edp-usbcore.sock";
-    for _ in 0..20 {
-        if Path::new(sock).exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-    }
-    if !Path::new(sock).exists() {
-        bail!("daemon 启动后 socket 未出现，请查看 /var/db/edp-usbcore/logs/daemon.err");
-    }
-    println!("daemon 已安装并启动：{sock}");
-    Ok(())
-}
-
-fn require_root(action: &str) -> Result<()> {
-    if unsafe { libc::getuid() } != 0 {
-        bail!("{action}守护进程需要管理员权限");
-    }
-    Ok(())
-}
-
-fn launchd_loaded() -> bool {
-    matches!(
-        std::process::Command::new("launchctl")
-            .args(["print", "system/com.edp.usbcore"])
-            .output(),
-        Ok(output) if output.status.success()
-    )
-}
-
-fn launchd_disabled() -> bool {
-    std::process::Command::new("launchctl")
-        .args(["print-disabled", "system"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout.lines().any(|line| {
-                line.contains(&format!("\"{LAUNCHD_LABEL}\""))
-                    && (line.contains("=> true") || line.contains("=> disabled"))
-            })
-        })
-        .unwrap_or(false)
-}
-
-pub fn start() -> Result<()> {
-    require_root("启动")?;
-    if !Path::new(PLIST_PATH).exists() {
-        bail!("daemon 尚未安装");
-    }
-    let enabled = std::process::Command::new("launchctl")
-        .args(["enable", "system/com.edp.usbcore"])
-        .output()?;
-    if !enabled.status.success() {
-        bail!(
-            "launchctl enable 失败: {}",
-            String::from_utf8_lossy(&enabled.stderr).trim()
-        );
-    }
-    let output = if launchd_loaded() {
-        std::process::Command::new("launchctl")
-            .args(["kickstart", "-k", "system/com.edp.usbcore"])
-            .output()?
-    } else {
-        std::process::Command::new("launchctl")
-            .args(["bootstrap", "system", PLIST_PATH])
-            .output()?
-    };
-    if !output.status.success() {
-        bail!(
-            "启动 daemon 失败: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    for _ in 0..30 {
-        if edp_proto::Client::connect("/var/run/edp-usbcore.sock").is_ok() {
-            println!("daemon 已启动");
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-    bail!("daemon 启动超时，请查看 daemon.err")
-}
-
-pub fn stop() -> Result<()> {
-    require_root("停止")?;
-    let disabled = std::process::Command::new("launchctl")
-        .args(["disable", "system/com.edp.usbcore"])
-        .output()?;
-    if !disabled.status.success() {
-        bail!(
-            "launchctl disable 失败: {}",
-            String::from_utf8_lossy(&disabled.stderr).trim()
-        );
-    }
-
-    if let Ok(mut client) = edp_proto::Client::connect("/var/run/edp-usbcore.sock") {
-        if let Err(error) = client.call(edp_proto::method::DAEMON_SHUTDOWN, json!({})) {
-            let _ = std::process::Command::new("launchctl")
-                .args(["enable", "system/com.edp.usbcore"])
-                .output();
-            return Err(error.into());
-        }
-    }
-    for _ in 0..30 {
-        if !Path::new("/var/run/edp-usbcore.sock").exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    if launchd_loaded() {
-        let output = std::process::Command::new("launchctl")
-            .args(["bootout", "system/com.edp.usbcore"])
-            .output()?;
-        if !output.status.success() && launchd_loaded() {
-            let _ = std::process::Command::new("launchctl")
-                .args(["enable", "system/com.edp.usbcore"])
-                .output();
-            bail!(
-                "停止 daemon 失败: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-    }
-    let _ = std::fs::remove_file("/var/run/edp-usbcore.sock");
-    println!("daemon 已停止，重启 Mac 后仍保持停止");
-    Ok(())
-}
-
-pub fn restart() -> Result<()> {
-    stop()?;
-    start()
-}
-
-/// 卸载 launchd 守护进程（需 root）。
-pub fn uninstall() -> Result<()> {
-    require_root("卸载")?;
-    if launchd_loaded() || Path::new("/var/run/edp-usbcore.sock").exists() {
-        stop()?;
-    }
-    // 实测部分 macOS 状态下 bootout 会报 "Boot-out failed: 5"，job 残留——
-    // 失败时用 kill SIGKILL 兜底终止进程（与 install 的 kickstart 对应）。
-    if launchd_loaded() {
-        match std::process::Command::new("launchctl")
-            .args(["bootout", "system/com.edp.usbcore"])
-            .output()
-        {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                warn!(
-                    "launchctl bootout 失败（{}），改用 kill SIGKILL 兜底",
-                    String::from_utf8_lossy(&o.stderr).trim()
-                );
-                let _ = std::process::Command::new("launchctl")
-                    .args(["kill", "SIGKILL", "system/com.edp.usbcore"])
-                    .output();
-            }
-            Err(e) => warn!("launchctl bootout 启动失败: {e}"),
-        }
-    }
-    let _ = std::fs::remove_file(PLIST_PATH);
-    let _ = std::fs::remove_file(BIN_SYMLINK);
-    let _ = std::fs::remove_file(BIN_INSTALL_PATH);
-    let _ = std::fs::remove_file("/var/run/edp-usbcore.sock");
-    println!("daemon 已卸载（配置与密码库已保留）");
-    Ok(())
-}
-
-/// daemon 状态。
+/// daemon 在线状态。注册、启停和注销由 App 内的 SMAppService 控制。
 pub fn status(socket: &str) -> Result<()> {
-    // 真实连通性检查（socket 文件存在但 daemon 已死 → 视为离线）
     let live = match edp_proto::Client::connect(socket) {
-        Ok(mut c) => c.call(edp_proto::method::STATUS, json!({})).ok(),
+        Ok(mut client) => client.call(edp_proto::method::STATUS, json!({})).ok(),
         Err(_) => None,
     };
+    let embedded = std::env::current_exe()
+        .ok()
+        .is_some_and(|path| path.to_string_lossy().contains(".app/Contents/"));
     let mut report = json!({
-        "installed": Path::new(PLIST_PATH).exists() && Path::new(BIN_INSTALL_PATH).exists(),
-        "enabled": !launchd_disabled(),
+        "embedded": embedded,
         "running": live.is_some(),
         "online": live.is_some(),
         "socket": socket,
         "macfuse": edp_macos::macfuse_version(),
     });
-    if let Some(r) = live {
-        report["status"] = r;
+    if let Some(status) = live {
+        report["status"] = status;
     }
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
@@ -1319,6 +1025,9 @@ fn lba7_is_structurally_edp(lba7: &[u8; 512], size: u64) -> bool {
 }
 
 fn spawn_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
+    if state.quiesced.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     {
         let mut inflight = state.auto_mount_inflight.lock().unwrap();
         if !inflight.insert(bsd.to_string()) {
@@ -1387,6 +1096,9 @@ fn mounted_partition_types(state: &DaemonState, bsd: &str) -> HashSet<u32> {
 }
 
 fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
+    if state.quiesced.load(std::sync::atomic::Ordering::SeqCst) {
+        return EvaluationOutcome::Done;
+    }
     let disk_info = edp_macos::list_disks(false)
         .ok()
         .and_then(|disks| disks.into_iter().find(|disk| disk.bsd == bsd));

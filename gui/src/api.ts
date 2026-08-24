@@ -48,6 +48,7 @@ export const api = {
     call<{ action: string; snapshot: AppSnapshot }>("run_service_action", { action }),
   diagnostics: () => call<DiagnosticsResult>("get_diagnostics"),
   openInFinder: (path: string) => call<void>("open_in_finder", { path }),
+  openLoginItemsSettings: () => call<void>("open_login_items_settings"),
 };
 
 export function uiError(error: unknown): UiError {

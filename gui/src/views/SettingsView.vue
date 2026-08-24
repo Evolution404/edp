@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { api } from "../api";
 import AppIcon from "../components/AppIcon.vue";
 import ModalSheet from "../components/ModalSheet.vue";
 import { partitionName, useStore } from "../store";
@@ -10,7 +11,9 @@ const confirmation = ref<"stop" | "restart" | "uninstall" | null>(null);
 const serviceBusy = computed(() => Object.keys(store.busy).some((key) => key.startsWith("service-")));
 const serviceLabel = computed(() => {
   const service = store.snapshot?.service;
-  if (!service?.installed) return "未安装";
+  if (service?.requires_approval) return "等待系统批准";
+  if (service?.legacy_installed) return "需要迁移";
+  if (!service?.installed) return "未启用";
   if (service.running && store.snapshot?.daemon) return "运行中";
   if (service.running) return "启动中";
   if (!service.enabled) return "已停止";
@@ -47,7 +50,7 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
       <section class="settings-card service-card wide">
         <div class="card-heading">
           <span class="settings-icon"><AppIcon name="shield" /></span>
-          <div><h2>后台服务</h2><p>GUI 退出不会停止服务；停止状态在 Mac 重启后仍会保持。</p></div>
+          <div><h2>嵌入式后台服务</h2><p>服务随应用提供，不会向 /usr/local 或 LaunchDaemons 复制文件。</p></div>
           <span class="badge" :class="store.snapshot?.service.running ? 'success' : 'neutral'">{{ serviceLabel }}</span>
         </div>
 
@@ -59,12 +62,13 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
         </div>
 
         <div class="service-actions">
-          <button v-if="!store.snapshot?.service.installed" class="button primary" :disabled="serviceBusy" @click="requestServiceAction('install')">安装后台服务</button>
-          <button v-if="store.snapshot?.service.installed && !store.snapshot.service.running" class="button primary" :disabled="serviceBusy" @click="requestServiceAction('start')">启动服务</button>
+          <button v-if="!store.snapshot?.service.installed" class="button primary" :disabled="serviceBusy" @click="requestServiceAction('install')">启用后台服务</button>
+          <button v-if="store.snapshot?.service.requires_approval" class="button primary" :disabled="serviceBusy" @click="api.openLoginItemsSettings()">打开后台项目设置</button>
+          <button v-else-if="store.snapshot?.service.installed && !store.snapshot.service.running" class="button primary" :disabled="serviceBusy" @click="requestServiceAction('start')">启动服务</button>
           <button v-if="store.snapshot?.service.running" class="button secondary" :disabled="serviceBusy" @click="requestServiceAction('stop')">安全停止</button>
           <button v-if="store.snapshot?.service.running" class="button secondary" :disabled="serviceBusy" @click="requestServiceAction('restart')">重新启动</button>
         </div>
-        <p class="service-note">服务操作将请求 macOS 管理员授权。安全停止会先正常卸载全部加密卷，任一卷卸载失败都会取消停止。</p>
+        <p class="service-note">首次启用需要在 macOS“登录项与扩展”中批准。安全停止会先正常卸载全部加密卷，任一卷失败都会取消停止。</p>
       </section>
 
       <section class="settings-card">
@@ -86,7 +90,7 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
         <p v-if="store.snapshot?.daemon?.disk_access_ok" class="setting-value">后台服务能够读取受支持的 EDP 磁盘。</p>
         <div v-else class="permission-help">
           <p>在“系统设置 → 隐私与安全性 → 完整磁盘访问权限”中添加：</p>
-          <code>/usr/local/libexec/usbcore</code>
+          <code>/Applications/EDP USB Vault.app</code>
           <p>授权后返回此页重新启动服务。</p>
         </div>
       </section>
@@ -99,9 +103,9 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
         <p>自动挂载总开关仅位于窗口顶部；每台设备的授权与分区选择在“设备”页面管理。</p>
       </section>
 
-      <section v-if="store.snapshot?.service.installed" class="settings-card wide danger-zone">
-        <div><h2>危险操作</h2><p>卸载后台服务不会删除设备策略、配置或密码库。</p></div>
-        <button class="button danger" :disabled="serviceBusy" @click="requestServiceAction('uninstall')">卸载后台服务</button>
+      <section v-if="store.snapshot?.service.installed || store.snapshot?.service.legacy_installed" class="settings-card wide danger-zone">
+        <div><h2>清除应用数据</h2><p>安全卸载所有会话、注销后台服务，并永久删除设备策略、配置和密码库。</p></div>
+        <button class="button danger" :disabled="serviceBusy" @click="requestServiceAction('uninstall')">完全清理</button>
       </section>
     </div>
 
@@ -123,11 +127,11 @@ async function executeServiceAction(action: "install" | "start" | "stop" | "rest
       </template>
     </ModalSheet>
 
-    <ModalSheet v-if="confirmation === 'uninstall'" title="卸载后台服务？" description="服务二进制和 launchd 项目会被移除，现有配置与密码库默认保留。" @close="confirmation = null">
-      <p>卸载后，设备识别、自动挂载和手动挂载都会停止，直到再次安装服务。</p>
+    <ModalSheet v-if="confirmation === 'uninstall'" title="完全清理 EDP USB Vault？" description="所有加密卷会先安全卸载，后台服务会被注销，配置、设备授权和密码库会永久删除。" @close="confirmation = null">
+      <p>此操作不可撤销。应用包仍会保留，可稍后重新启用并从空白状态开始。</p>
       <template #footer>
         <button class="button secondary" @click="confirmation = null">取消</button>
-        <button class="button danger" @click="executeServiceAction('uninstall')">保留数据并卸载</button>
+        <button class="button danger" @click="executeServiceAction('uninstall')">清除全部数据</button>
       </template>
     </ModalSheet>
   </div>

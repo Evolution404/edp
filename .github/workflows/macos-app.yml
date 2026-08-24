@@ -165,7 +165,10 @@ jobs:
           PACKAGE_DIR="$(mktemp -d "${RUNNER_TEMP}/edp-dmg.XXXXXX")"
 
           test -x "${APP_PATH}/Contents/Resources/usbcore"
-          codesign --force --deep --sign - --identifier com.edp.usbcore "${APP_PATH}"
+          test -f "${APP_PATH}/Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist"
+          codesign --force --sign - --identifier com.edp.usbvault.daemon \
+            "${APP_PATH}/Contents/Resources/usbcore"
+          codesign --force --deep --sign - --identifier com.edp.usbvault "${APP_PATH}"
           codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
           mkdir -p "${ARTIFACT_DIR}"

@@ -3,8 +3,11 @@ export type PartitionType = 2 | 4;
 
 export interface ServiceStatus {
   installed: boolean;
+  embedded?: boolean;
   running: boolean;
   enabled: boolean;
+  requires_approval?: boolean;
+  legacy_installed?: boolean;
   online?: boolean;
   macfuse?: string | null;
   error?: string;

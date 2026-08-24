@@ -272,11 +272,13 @@ fn cmd_daemon(action: DaemonCmd) -> Result<()> {
             session_root,
             socket,
         } => daemon::run_with(socket.as_deref(), None, session_root.as_deref()),
-        DaemonCmd::Install => daemon::install(),
-        DaemonCmd::Start => daemon::start(),
-        DaemonCmd::Stop => daemon::stop(),
-        DaemonCmd::Restart => daemon::restart(),
-        DaemonCmd::Uninstall => daemon::uninstall(),
+        DaemonCmd::Install
+        | DaemonCmd::Start
+        | DaemonCmd::Stop
+        | DaemonCmd::Restart
+        | DaemonCmd::Uninstall => {
+            bail!("后台服务由 EDP USB Vault 通过 macOS Service Management 管理")
+        }
         DaemonCmd::Status => daemon::status(&daemon_socket()),
     }
 }
@@ -343,7 +345,7 @@ fn get_password(provided: Option<String>) -> Result<String> {
 fn daemon_socket() -> String {
     std::env::var_os("EDP_USB_SOCKET")
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "/var/run/edp-usbcore.sock".to_string())
+        .unwrap_or_else(|| "/var/run/com.edp.usbvault.daemon.sock".to_string())
 }
 
 /// 尝试连接 daemon；成功返回 Client。

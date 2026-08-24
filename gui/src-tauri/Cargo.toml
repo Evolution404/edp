@@ -15,6 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [dependencies]
 # custom-protocol 必需：让 generate_context! 的 dev=cfg!(not(feature)) 为 false，
