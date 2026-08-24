@@ -5,8 +5,9 @@ set -o pipefail
 TARGET_BUNDLE="io.macfuse.app.fsmodule.macfuse-local"
 BASE="${TMPDIR:-/tmp}/edp-fskit-enablement-context"
 REPORT="$BASE/report.txt"
-SWIFT_SRC="$BASE/fskit-state.swift"
+OBJC_SRC="$BASE/fskit-state.m"
 HELPER="$BASE/fskit-state"
+BUILD_LOG="$BASE/helper-build.log"
 USER_OUT="$BASE/user-direct.txt"
 ROOT_OUT="$BASE/root-sudo.txt"
 ASUSER_OUT="$BASE/root-asuser.txt"
@@ -20,6 +21,7 @@ USER_NOW="$(id -un)"
 
 mkdir -p "$BASE"
 : > "$REPORT"
+: > "$BUILD_LOG"
 
 log() {
   printf '%s\n' "$*" | /usr/bin/tee -a "$REPORT"
@@ -31,7 +33,7 @@ section() {
 }
 
 cleanup() {
-  /bin/rm -f "$HELPER" "$SWIFT_SRC" >/dev/null 2>&1 || true
+  /bin/rm -f "$HELPER" "$OBJC_SRC" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -70,80 +72,180 @@ section "System"
 log "shell_uid=$UID_NOW shell_gid=$GID_NOW shell_user=$USER_NOW"
 log "target_bundle=$TARGET_BUNDLE"
 
+section "PlugInKit state as login user"
+/usr/bin/pluginkit -mAvvv -i "$TARGET_BUNDLE" > "$PLUGIN_USER_OUT" 2>&1 || true
+show_file "$PLUGIN_USER_OUT"
+
 section "Installed macFUSE FSKit extension"
-LOCAL_APPEX="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/PlugIns/io.macfuse.app.fsmodule.macfuse-local.appex"
-if [[ -d "$LOCAL_APPEX" ]]; then
+LOCAL_APPEX="$(/usr/bin/sed -n 's/^[[:space:]]*Path = //p' "$PLUGIN_USER_OUT" | /usr/bin/head -n 1)"
+if [[ -n "$LOCAL_APPEX" && -d "$LOCAL_APPEX" ]]; then
   log "appex_present=1"
   log "appex_path=$LOCAL_APPEX"
   /usr/bin/codesign -dv --verbose=2 "$LOCAL_APPEX" 2>&1 | /usr/bin/grep -E 'Identifier=|TeamIdentifier=|Authority=' | /usr/bin/tee -a "$REPORT" || true
 else
   log "appex_present=0"
+  log "appex_path=${LOCAL_APPEX:-not-resolved}"
 fi
 
-section "PlugInKit state as login user"
-/usr/bin/pluginkit -mAvvv -i "$TARGET_BUNDLE" > "$PLUGIN_USER_OUT" 2>&1 || true
-show_file "$PLUGIN_USER_OUT"
-
 section "Prepare FSClient helper"
-cat > "$SWIFT_SRC" <<'SWIFT'
-import Foundation
-import FSKit
-import Darwin
+/bin/cat > "$OBJC_SRC" <<'OBJC'
+#import <Foundation/Foundation.h>
+#import <dispatch/dispatch.h>
+#import <objc/message.h>
+#import <dlfcn.h>
+#import <unistd.h>
 
-let targetBundle = "io.macfuse.app.fsmodule.macfuse-local"
-let semaphore = DispatchSemaphore(value: 0)
-
-print("process_uid=\(getuid())")
-print("process_euid=\(geteuid())")
-print("process_gid=\(getgid())")
-print("process_egid=\(getegid())")
-print("process_user=\(NSUserName())")
-print("home=\(NSHomeDirectory())")
-
-FSClient.shared.fetchInstalledExtensions { identities, error in
-    if let error = error {
-        let ns = error as NSError
-        print("query_status=error")
-        print("error_domain=\(ns.domain)")
-        print("error_code=\(ns.code)")
-        print("error_description=\(ns.localizedDescription.replacingOccurrences(of: "\n", with: " "))")
-        semaphore.signal()
-        return
-    }
-
-    let modules = identities ?? []
-    print("query_status=ok")
-    print("module_count=\(modules.count)")
-
-    let sorted = modules.sorted { $0.bundleIdentifier < $1.bundleIdentifier }
-    for module in sorted {
-        let marker = module.bundleIdentifier == targetBundle ? "target" : "module"
-        print("\(marker)_entry=\(module.bundleIdentifier)|enabled=\(module.isEnabled ? 1 : 0)|url=\(module.url.path)")
-    }
-
-    if let target = modules.first(where: { $0.bundleIdentifier == targetBundle }) {
-        print("target_found=1")
-        print("target_enabled=\(target.isEnabled ? 1 : 0)")
-        print("target_url=\(target.url.path)")
-    } else {
-        print("target_found=0")
-        print("target_enabled=unknown")
-        print("target_url=unknown")
-    }
-
-    semaphore.signal()
+static id callObjectNoArgs(id object, SEL selector) {
+    return ((id (*)(id, SEL))objc_msgSend)(object, selector);
 }
 
-if semaphore.wait(timeout: .now() + 10) == .timedOut {
-    print("query_status=timeout")
-    print("target_found=unknown")
-    print("target_enabled=unknown")
-    exit(124)
+static NSString *safeString(id object) {
+    if (!object || object == [NSNull null]) return @"unknown";
+    return [object description];
 }
-SWIFT
 
-if ! /usr/bin/xcrun --sdk macosx swiftc -O -framework FSKit "$SWIFT_SRC" -o "$HELPER" >> "$REPORT" 2>&1; then
+int main(int argc, const char *argv[]) {
+    @autoreleasepool {
+        NSString *targetBundle = @"io.macfuse.app.fsmodule.macfuse-local";
+
+        printf("process_uid=%u\n", getuid());
+        printf("process_euid=%u\n", geteuid());
+        printf("process_gid=%u\n", getgid());
+        printf("process_egid=%u\n", getegid());
+        printf("process_user=%s\n", NSUserName().UTF8String ?: "unknown");
+        printf("home=%s\n", NSHomeDirectory().UTF8String ?: "unknown");
+
+        void *handle = dlopen("/System/Library/Frameworks/FSKit.framework/FSKit", RTLD_NOW | RTLD_LOCAL);
+        if (!handle) {
+            printf("query_status=error\n");
+            printf("error_domain=dlopen\n");
+            printf("error_code=1\n");
+            printf("error_description=%s\n", dlerror() ?: "unable to load FSKit");
+            printf("target_found=unknown\n");
+            printf("target_enabled=unknown\n");
+            return 2;
+        }
+
+        Class FSClientClass = NSClassFromString(@"FSClient");
+        if (!FSClientClass) {
+            printf("query_status=error\n");
+            printf("error_domain=runtime\n");
+            printf("error_code=2\n");
+            printf("error_description=FSClient class not found\n");
+            printf("target_found=unknown\n");
+            printf("target_enabled=unknown\n");
+            dlclose(handle);
+            return 2;
+        }
+
+        SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+        SEL fetchSel = NSSelectorFromString(@"fetchInstalledExtensionsWithCompletionHandler:");
+        if (![FSClientClass respondsToSelector:sharedSel]) {
+            printf("query_status=error\n");
+            printf("error_domain=runtime\n");
+            printf("error_code=3\n");
+            printf("error_description=FSClient sharedInstance selector missing\n");
+            printf("target_found=unknown\n");
+            printf("target_enabled=unknown\n");
+            dlclose(handle);
+            return 2;
+        }
+
+        id client = callObjectNoArgs(FSClientClass, sharedSel);
+        if (!client || ![client respondsToSelector:fetchSel]) {
+            printf("query_status=error\n");
+            printf("error_domain=runtime\n");
+            printf("error_code=4\n");
+            printf("error_description=fetchInstalledExtensions selector missing\n");
+            printf("target_found=unknown\n");
+            printf("target_enabled=unknown\n");
+            dlclose(handle);
+            return 2;
+        }
+
+        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+        __block BOOL callbackRan = NO;
+
+        void (^completion)(NSArray *, NSError *) = ^(NSArray *identities, NSError *error) {
+            callbackRan = YES;
+            if (error) {
+                NSString *desc = [[error localizedDescription] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+                printf("query_status=error\n");
+                printf("error_domain=%s\n", error.domain.UTF8String ?: "unknown");
+                printf("error_code=%ld\n", (long)error.code);
+                printf("error_description=%s\n", desc.UTF8String ?: "unknown");
+                printf("target_found=unknown\n");
+                printf("target_enabled=unknown\n");
+                dispatch_semaphore_signal(semaphore);
+                return;
+            }
+
+            NSArray *modules = identities ?: @[];
+            printf("query_status=ok\n");
+            printf("module_count=%lu\n", (unsigned long)modules.count);
+
+            BOOL found = NO;
+            for (id module in modules) {
+                NSString *bundleID = nil;
+                NSNumber *enabled = nil;
+                NSURL *url = nil;
+                @try {
+                    bundleID = [module valueForKey:@"bundleIdentifier"];
+                    enabled = [module valueForKey:@"enabled"];
+                    url = [module valueForKey:@"url"];
+                } @catch (NSException *exception) {
+                    continue;
+                }
+
+                NSString *path = [url isKindOfClass:[NSURL class]] ? url.path : safeString(url);
+                int enabledInt = [enabled respondsToSelector:@selector(boolValue)] && enabled.boolValue ? 1 : 0;
+                const char *marker = [bundleID isEqualToString:targetBundle] ? "target" : "module";
+                printf("%s_entry=%s|enabled=%d|url=%s\n",
+                       marker,
+                       bundleID.UTF8String ?: "unknown",
+                       enabledInt,
+                       path.UTF8String ?: "unknown");
+
+                if ([bundleID isEqualToString:targetBundle]) {
+                    found = YES;
+                    printf("target_found=1\n");
+                    printf("target_enabled=%d\n", enabledInt);
+                    printf("target_url=%s\n", path.UTF8String ?: "unknown");
+                }
+            }
+
+            if (!found) {
+                printf("target_found=0\n");
+                printf("target_enabled=unknown\n");
+                printf("target_url=unknown\n");
+            }
+            fflush(stdout);
+            dispatch_semaphore_signal(semaphore);
+        };
+
+        typedef void (*FetchFn)(id, SEL, void (^)(NSArray *, NSError *));
+        ((FetchFn)objc_msgSend)(client, fetchSel, completion);
+
+        long waitResult = dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC));
+        if (waitResult != 0 || !callbackRan) {
+            printf("query_status=timeout\n");
+            printf("target_found=unknown\n");
+            printf("target_enabled=unknown\n");
+            fflush(stdout);
+            dlclose(handle);
+            return 124;
+        }
+
+        dlclose(handle);
+        return 0;
+    }
+}
+OBJC
+
+if ! /usr/bin/xcrun --sdk macosx clang -fobjc-arc -fblocks -O0 "$OBJC_SRC" -framework Foundation -o "$HELPER" > "$BUILD_LOG" 2>&1; then
   log "helper_build=failed"
+  section "Helper compiler diagnostics"
+  show_file "$BUILD_LOG"
   log "RESULT=FSCLIENT_HELPER_BUILD_FAILED"
   log "REPORT=$REPORT"
   exit 2
@@ -196,22 +298,22 @@ if [[ "$USER_STATUS" != "ok" ]]; then
   log "Interpretation: FSClient itself could not return the installed-module list in the normal login-user context. Inspect the user query error before drawing conclusions about approval state."
 elif [[ "$USER_FOUND" != "1" ]]; then
   log "RESULT=FSCLIENT_USER_CANNOT_SEE_MACFUSE_LOCAL"
-  log "Interpretation: PlugInKit may know the extension, but FSKit's own FSClient does not expose macfuse-local to the login user. This is direct evidence of a discovery/state split."
+  log "Interpretation: PlugInKit knows the extension, but FSKit's own FSClient does not expose macfuse-local to the login user. This is direct evidence of a discovery/state split."
 elif [[ "$USER_ENABLED" == "0" ]]; then
   log "RESULT=FSCLIENT_USER_REPORTS_DISABLED"
-  log "Interpretation: FSKit's own public API reports macfuse-local disabled for the login user. If PlugInKit shows '+', the two state views are inconsistent; this is more specific than a final-mount-only authorization failure."
+  log "Interpretation: FSKit's own public API reports macfuse-local disabled for the login user. If PlugInKit shows '+', the two state views are inconsistent."
 elif [[ "$USER_ENABLED" == "1" && "$ROOT_ENABLED" == "0" && "$ASUSER_ENABLED" == "1" ]]; then
   log "RESULT=FSCLIENT_ENABLEMENT_DEPENDS_ON_USER_BOOTSTRAP"
-  log "Interpretation: the same root EUID sees the module disabled in the normal sudo context but enabled when placed in the login user's launchd bootstrap. This strongly points to per-user agent/bootstrap state rather than code signing or EUID alone."
+  log "Interpretation: root sees the module disabled in the normal sudo context but enabled inside the login user's launchd bootstrap. This points to per-user/bootstrap state."
 elif [[ "$USER_ENABLED" == "1" && "$ROOT_ENABLED" == "0" && "$BACKUSER_ENABLED" == "1" ]]; then
   log "RESULT=FSCLIENT_ROOT_CONTEXT_REPORTS_DISABLED"
-  log "Interpretation: FSKit reports the module enabled for UID $UID_NOW but disabled for root. This matches the root-only MFMount preflight warning and supports a per-user enablement/state source."
+  log "Interpretation: FSKit reports the module enabled for the login UID but disabled for root. This matches the root-only MFMount preflight warning and supports a per-user enablement source."
 elif [[ "$USER_ENABLED" == "1" && "$ROOT_ENABLED" == "1" ]]; then
   log "RESULT=FSCLIENT_ENABLED_IN_USER_AND_ROOT"
-  log "Interpretation: FSKit's public module state reports macfuse-local enabled in both primary contexts. Given the separately captured final mount requiresApproval failure, isEnabled alone is not the final LiveFiles mount-authorization predicate."
+  log "Interpretation: FSKit's public state reports macfuse-local enabled in both primary contexts. If a clean mount still returns requiresApproval, isEnabled is not the final LiveFiles authorization predicate."
 else
   log "RESULT=FSCLIENT_CONTEXT_MATRIX_MIXED"
-  log "Interpretation: inspect the four context outputs. A mixed result can distinguish effective UID, login-user bootstrap and per-user fskit_agent state."
+  log "Interpretation: inspect the four context outputs to distinguish effective UID, login-user bootstrap and per-user FSKit state."
 fi
 
 log "REPORT=$REPORT"
