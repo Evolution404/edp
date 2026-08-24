@@ -99,9 +99,9 @@ jobs:
     needs: quality
     runs-on: macos-15
     env:
-      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      CI_APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      CI_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      CI_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -117,26 +117,26 @@ jobs:
         run: rustup toolchain install stable --profile minimal
 
       - name: Import Apple signing certificate
-        if: env.APPLE_CERTIFICATE_P12 != ''
+        if: env.CI_APPLE_CERTIFICATE_P12 != ''
         run: |
           set -euo pipefail
-          test -n "${APPLE_CERTIFICATE_PASSWORD}"
-          test -n "${APPLE_SIGNING_IDENTITY}"
+          test -n "${CI_APPLE_CERTIFICATE_PASSWORD}"
+          test -n "${CI_APPLE_SIGNING_IDENTITY}"
           CERTIFICATE_PATH="${RUNNER_TEMP}/edp-signing.p12"
           KEYCHAIN_PATH="${RUNNER_TEMP}/edp-signing.keychain-db"
           KEYCHAIN_PASSWORD="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          printf '%s' "${APPLE_CERTIFICATE_P12}" | base64 -D > "${CERTIFICATE_PATH}"
+          printf '%s' "${CI_APPLE_CERTIFICATE_P12}" | base64 -D > "${CERTIFICATE_PATH}"
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
           security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security import "${CERTIFICATE_PATH}" -k "${KEYCHAIN_PATH}" \
-            -P "${APPLE_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12
+            -P "${CI_APPLE_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security list-keychains -d user -s "${KEYCHAIN_PATH}" login.keychain-db
 
       - name: Require signed release artifacts
-        if: startsWith(github.ref, 'refs/tags/v') && env.APPLE_CERTIFICATE_P12 == ''
+        if: startsWith(github.ref, 'refs/tags/v') && env.CI_APPLE_CERTIFICATE_P12 == ''
         run: |
           echo 'Release tags require APPLE_CERTIFICATE_P12, APPLE_CERTIFICATE_PASSWORD and APPLE_SIGNING_IDENTITY.' >&2
           exit 1
@@ -193,8 +193,8 @@ jobs:
           ARCHIVE_BASE="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}"
           PACKAGE_DIR="$(mktemp -d "${RUNNER_TEMP}/edp-dmg.XXXXXX")"
           SIGNING_IDENTITY="-"
-          if [[ -n "${APPLE_CERTIFICATE_P12}" ]]; then
-            SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY}"
+          if [[ -n "${CI_APPLE_CERTIFICATE_P12}" ]]; then
+            SIGNING_IDENTITY="${CI_APPLE_SIGNING_IDENTITY}"
           fi
 
           test -x "${APP_PATH}/Contents/Resources/usbcore"
