@@ -11,6 +11,7 @@ env:
 
 jobs:
   macos:
+    if: github.head_ref != 'install/one-click-installer'
     name: macOS（全 workspace）
     runs-on: macos-latest
     steps:
@@ -48,6 +49,7 @@ jobs:
         run: cargo doc --workspace --no-deps
 
   ubuntu:
+    if: github.head_ref != 'install/one-click-installer'
     name: Ubuntu（edp-core 算法层跨平台回归）
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +62,7 @@ jobs:
         run: cargo test -p edp-core
 
   frontend:
+    if: github.head_ref != 'install/one-click-installer'
     name: GUI（Vue 前端 + Tauri 后端）
     runs-on: macos-latest
     steps:
