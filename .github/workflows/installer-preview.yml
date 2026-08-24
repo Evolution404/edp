@@ -61,6 +61,13 @@ jobs:
           hdiutil detach -quiet "${MACFUSE_VOLUME}"
           pkg-config --modversion fuse
 
+      - name: Apply FSKit preview bridge patch
+        run: |
+          set -euo pipefail
+          python3 installer/apply-fskit-preview.py
+          grep -F 'backend=fskit' crates/usbcore/src/bridge.rs
+          grep -F '/Volumes' crates/usbcore/src/session.rs
+
       - name: Build usbcore
         run: cargo build -p usbcore --release --locked
 
@@ -138,5 +145,5 @@ jobs:
           gh release create "${RELEASE_TAG}" release-assets/* \
             --verify-tag \
             --prerelease \
-            --title "Installer Preview" \
-            --notes "One-click installer test build from install/one-click-installer. Includes EDP USB Vault, macFUSE ${MACFUSE_VERSION} components, and installer-managed LaunchDaemon fallback for unsigned/ad-hoc distribution. Commit: ${SHORT_SHA}."
+            --title "Installer Preview — FSKit" \
+            --notes "One-click installer test build from install/one-click-installer. Includes EDP USB Vault, macFUSE ${MACFUSE_VERSION}, installer-managed LaunchDaemon fallback, and an FSKit-backed hidden raw bridge under /Volumes so clean Apple Silicon systems do not require the macFUSE kernel extension. Requires macOS 15.4+ for this preview path. Commit: ${SHORT_SHA}."
