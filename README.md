@@ -32,6 +32,8 @@ usbcore <cmd>（终端 CLI）──┐
 EDP USB Vault.app（菜单栏）───┴── 走 UDS socket 免 sudo
 ```
 
+`usbcore` 使用单独的 Hardened Runtime entitlement 加载由 macFUSE 官方签名的用户态库；路径固定在 root 管理的 macFUSE 安装目录，不从用户可写目录加载代码。
+
 详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 环境要求

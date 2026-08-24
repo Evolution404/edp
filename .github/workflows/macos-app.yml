@@ -166,9 +166,15 @@ jobs:
 
           test -x "${APP_PATH}/Contents/Resources/usbcore"
           test -f "${APP_PATH}/Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist"
-          codesign --force --sign - --identifier com.edp.usbvault.daemon \
+          codesign --force --options runtime --sign - \
+            --entitlements gui/src-tauri/embedded/usbcore.entitlements.plist \
+            --identifier com.edp.usbvault.daemon \
             "${APP_PATH}/Contents/Resources/usbcore"
-          codesign --force --deep --sign - --identifier com.edp.usbvault "${APP_PATH}"
+          codesign --force --options runtime --sign - \
+            --identifier com.edp.usbvault "${APP_PATH}"
+          codesign -d --entitlements :- \
+            "${APP_PATH}/Contents/Resources/usbcore" 2>&1 \
+            | grep -Fq 'com.apple.security.cs.disable-library-validation'
           codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
           mkdir -p "${ARTIFACT_DIR}"

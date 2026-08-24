@@ -565,6 +565,32 @@ fn service_action_complete(action: &str, status: &Value) -> bool {
     }
 }
 
+fn parse_launchd_failure(output: &str) -> Option<String> {
+    if output.contains("last exit reason = OS_REASON_DYLD") {
+        return Some(
+            "后台进程启动时无法加载 macFUSE 运行库。请更新或重新安装 EDP USB Vault 与 macFUSE。"
+                .to_string(),
+        );
+    }
+    if output.contains("successive crashes") || output.contains("job state = exited") {
+        return Some(
+            "后台进程被 launchd 反复启动后异常退出，请打开“活动 → 诊断详情”查看系统错误。"
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn launchd_failure_detail() -> Option<String> {
+    let output = std::process::Command::new("/bin/launchctl")
+        .args(["print", "system/com.edp.usbvault.daemon"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    parse_launchd_failure(&format!("{stdout}\n{stderr}"))
+}
+
 fn verify_service_action(action: &str) -> Result<(), UiError> {
     let mut last_status = None;
     for _ in 0..40 {
@@ -576,13 +602,12 @@ fn verify_service_action(action: &str) -> Result<(), UiError> {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    Err(
-        UiError::new("VERIFY_TIMEOUT", "后台服务状态验证超时").with_detail(
-            last_status
-                .map(|status| status.to_string())
-                .unwrap_or_else(|| "无法读取服务状态".to_string()),
-        ),
-    )
+    let detail = launchd_failure_detail().unwrap_or_else(|| {
+        last_status
+            .map(|status| status.to_string())
+            .unwrap_or_else(|| "无法读取服务状态".to_string())
+    });
+    Err(UiError::new("VERIFY_TIMEOUT", "后台服务未能启动").with_detail(detail))
 }
 
 #[tauri::command]
@@ -740,6 +765,8 @@ fn build_tray_menu(
     let menu = Menu::new(app)?;
     let service_label = if snapshot.service["running"].as_bool().unwrap_or(false) {
         "后台服务：运行中"
+    } else if snapshot.service["enabled"].as_bool().unwrap_or(false) {
+        "后台服务：异常"
     } else if snapshot.service["installed"].as_bool().unwrap_or(false) {
         "后台服务：已停止"
     } else {
@@ -963,5 +990,15 @@ mod tests {
         assert!(service_action_complete("stop", &stopped));
         assert!(!service_action_complete("stop", &running));
         assert!(service_action_complete("uninstall", &removed));
+    }
+
+    #[test]
+    fn launchd_dyld_failure_has_actionable_message() {
+        let detail = parse_launchd_failure(
+            "runs = 18\nsuccessive crashes = 18\nlast exit reason = OS_REASON_DYLD\njob state = exited",
+        )
+        .expect("dyld failure should be recognized");
+        assert!(detail.contains("无法加载 macFUSE 运行库"));
+        assert!(detail.contains("EDP USB Vault"));
     }
 }

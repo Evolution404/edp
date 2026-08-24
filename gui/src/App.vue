@@ -20,6 +20,7 @@ const serviceText = computed(() => {
   if (store.snapshot?.service.running && store.snapshot.daemon) return "后台服务运行中";
   if (store.snapshot?.service.requires_approval) return "后台服务等待系统批准";
   if (store.snapshot?.service.legacy_installed) return "旧后台服务需要清理";
+  if (store.snapshot?.service.installed && store.snapshot.service.enabled) return "后台服务异常";
   if (store.snapshot?.service.installed) return "后台服务已停止";
   return "后台服务未启用";
 });
