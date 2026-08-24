@@ -27,7 +27,6 @@ pub struct KeyRecord {
     pub device_id: String,
     pub partition_type: u32,
     pub password: String,
-    pub auto_mount: bool,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<String>,
@@ -183,7 +182,7 @@ impl Keystore {
         Ok(true)
     }
 
-    /// 更新自动挂载等非密码字段。
+    /// 更新凭据字段。密码仅在调用方完成只读 probe 验证后传入。
     pub fn update(&mut self, id: &str, patch: Value) -> Result<bool> {
         let Some(rec) = self.records.iter_mut().find(|r| r.id == id) else {
             return Ok(false);
@@ -191,8 +190,11 @@ impl Keystore {
         if let Some(b) = patch.get("label").and_then(|x| x.as_str()) {
             rec.label = b.to_string();
         }
-        if let Some(b) = patch.get("auto_mount").and_then(|x| x.as_bool()) {
-            rec.auto_mount = b;
+        if let Some(password) = patch.get("password").and_then(|x| x.as_str()) {
+            if password.is_empty() {
+                bail!("password 不能为空");
+            }
+            rec.password = password.to_string();
         }
         self.save()?;
         self.rebuild_index();
@@ -274,7 +276,6 @@ mod tests {
                 device_id: "disk&ven_test".into(),
                 partition_type: 4,
                 password: "0000aaaa".into(),
-                auto_mount: true,
                 created_at: String::new(),
                 last_used_at: None,
             })
@@ -308,7 +309,6 @@ mod tests {
             device_id: "d".into(),
             partition_type: 4,
             password: "supersecret".into(),
-            auto_mount: true,
             created_at: String::new(),
             last_used_at: None,
         })

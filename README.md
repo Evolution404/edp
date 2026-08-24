@@ -8,7 +8,7 @@ VRV/CEMS **EDP 加密 U 盘**的 macOS 互操作客户端：**Rust 内核（CLI 
 ## 功能特性
 
 - **U 盘密码记录**：root-only AES-256-GCM 加密密码库，按 `(device_id, 分区类型)` 管理多条密码
-- **插入自动挂载**：launchd 常驻守护进程监听磁盘事件，GUI 不在线也能自动挂载
+- **逐盘授权自动挂载**：只有用户批准的 EDP 盘/分区才会自动挂载；普通 U 盘只读识别后忽略
 - **状态栏 GUI**：Tauri 2 常驻 macOS 菜单栏，密码管理 / 会话管理 / 设置 / 日志
 - **终端 CLI**：`usbcore` 一套命令完成 list/probe/mount/unmount/keys 等全部操作
 - **透明读写**：SM4-ECB 透明解密 + macFUSE 桥 + 原生 exFAT 驱动，Finder 直接读写
@@ -47,7 +47,8 @@ cd gui && npm ci && npx tauri dev     # 开发运行
 ```
 
 GUI 首次使用：打开主窗口 → 设置页「安装 daemon」（弹系统授权）→ 密码库页录入密码 →
-插入 EDP U 盘即自动挂载。daemon 安装后，**GUI 退出也不影响自动挂载**。
+设备页为目标 U 盘选择分区并授权自动挂载。新盘默认不授权；daemon 安装后，**关闭窗口或退出
+GUI 都不影响后台服务**。
 
 > **macOS 15（Sequoia）注意**：系统默认禁止后台守护进程访问可移动磁盘。安装 daemon 后
 > 需**一次性**在「系统设置 → 隐私与安全性 → 完整磁盘访问权限」中添加

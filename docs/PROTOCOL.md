@@ -28,6 +28,30 @@
 
 ## 方法
 
+### `devices.list`
+
+返回在线外置盘与已登记离线设备的合并视图，包括 `kind`、`device_id`、连接状态、凭据分区、
+逐盘策略、已挂载分区和 session ids。`kind=ordinary` 的设备永远不可授权。
+
+### `devices.policy.set`
+
+以整份对象原子替换单盘策略：
+
+```json
+{
+  "device_id": "disk&ven_lexar&prod_usb_flash_drive",
+  "label": "工作盘",
+  "authorized": true,
+  "partition_types": [2, 4],
+  "last_media_name": "Lexar USB Flash Drive Media"
+}
+```
+
+### `auto_mount.get` / `auto_mount.set_mode`
+
+全局自动挂载运行状态为 `active` 或 `paused`。暂停只阻止新自动挂载并保留逐盘授权和现有会话；
+恢复为 `active` 后 daemon 立即重新评估当前设备。
+
 | 方法 | 参数 | 结果 | 授权 |
 |---|---|---|---|
 | `status` | `{}` | `{version, uptime_s, macfuse, keystore_ok, keystore_entries, auto_mount_enabled, mounted_sessions}` | 匿名可读 |

@@ -205,6 +205,39 @@ fn config_set_permissions() {
         .unwrap();
     assert_eq!(r["auto_mount_enabled"], serde_json::json!(false));
 
+    // v2 总暂停接口持久化独立于逐盘授权。
+    let r = c
+        .call(
+            edp_proto::method::AUTO_MOUNT_SET_MODE,
+            serde_json::json!({ "mode": "paused" }),
+        )
+        .unwrap();
+    assert_eq!(r["mode"], serde_json::json!("paused"));
+    let r = c
+        .call(edp_proto::method::AUTO_MOUNT_GET, serde_json::json!({}))
+        .unwrap();
+    assert_eq!(r["mode"], serde_json::json!("paused"));
+
+    // 单盘策略整对象写入，分区类型去重并排序。
+    c.call(
+        edp_proto::method::DEVICES_POLICY_SET,
+        serde_json::json!({
+            "device_id": "test-device",
+            "label": "测试盘",
+            "authorized": false,
+            "partition_types": [4, 2, 4],
+            "last_media_name": null
+        }),
+    )
+    .unwrap();
+    let config = c
+        .call(edp_proto::method::CONFIG_GET, serde_json::json!({}))
+        .unwrap();
+    assert_eq!(
+        config["device_policies"][0]["partition_types"],
+        serde_json::json!([2, 4])
+    );
+
     // 敏感字段：非 root 拒绝
     let err = c
         .call(
@@ -222,8 +255,8 @@ fn config_set_permissions() {
 
     // 恢复默认（避免影响同 daemon 后续断言，本测试独立无碍，但保持整洁）
     c.call(
-        edp_proto::method::CONFIG_SET,
-        serde_json::json!({ "auto_mount_enabled": true }),
+        edp_proto::method::AUTO_MOUNT_SET_MODE,
+        serde_json::json!({ "mode": "active" }),
     )
     .unwrap();
 

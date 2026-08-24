@@ -173,6 +173,20 @@ pub fn unmount_disk(bsd: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// `diskutil mountDisk`：恢复物理盘上由系统管理的可挂载分区。
+pub fn mount_disk(bsd: &str) -> std::io::Result<()> {
+    let mut cmd = Command::new("diskutil");
+    cmd.args(["mountDisk"]).arg(bsd);
+    let out = cmd_output_timeout(cmd, Duration::from_secs(10))?;
+    if !out.status.success() {
+        return Err(std::io::Error::other(format!(
+            "mountDisk 失败: {}",
+            String::from_utf8_lossy(&out.stderr)
+        )));
+    }
+    Ok(())
+}
+
 /// `diskutil mount`（挂载指定分区，返回挂载点）。
 pub fn mount_partition(bsd: &str) -> std::io::Result<String> {
     let mut cmd = Command::new("diskutil");

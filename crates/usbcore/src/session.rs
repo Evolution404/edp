@@ -126,18 +126,6 @@ pub fn mount_and_attach(
         std::fs::set_permissions(&session_dir, std::fs::Permissions::from_mode(0o700))?;
     }
 
-    // 真实设备：先卸掉系统自动挂载的公共区
-    if source.starts_with("/dev/") {
-        let bsd = source
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n.trim_start_matches('r').to_string())
-            .unwrap_or_default();
-        if let Err(e) = edp_macos::unmount_disk(&bsd) {
-            warn!("unmountDisk {bsd} 失败（可能本就未挂载）: {e}");
-        }
-    }
-
     let bridge_mount = session_dir.join("bridge");
     let log_path = session_dir.join("bridge.log");
 

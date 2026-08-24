@@ -3,7 +3,10 @@
 //! 职责：磁盘事件监听 → EDP 盘识别 → keystore 密码匹配 → 自动挂载；
 //! 通过 UDS JSON-RPC 服务 CLI / GUI。
 
-use std::collections::HashMap;
+mod config;
+
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -19,46 +22,36 @@ use edp_proto::{serve, EventBroadcaster, Handler};
 use crate::keystore::Keystore;
 use crate::session;
 
+use config::{AutoMountMode, Config, DevicePolicy};
+
+const DEFAULT_CONFIG_PATH: &str = "/var/db/edp-usbcore/config.json";
+
+#[derive(Debug, Clone)]
+struct DetectedDisk {
+    kind: &'static str,
+    candidate_ids: Vec<String>,
+}
+
 /// daemon 全局状态（注入 RPC Context）。
 pub struct DaemonState {
     pub keystore: Mutex<Keystore>,
     pub config: Mutex<Config>,
+    pub config_path: PathBuf,
     pub broadcaster: EventBroadcaster,
     pub session_root: PathBuf,
     pub started_at: std::time::Instant,
-    /// 当前已挂载会话的 bsd → session_id
-    pub mounted: Mutex<HashMap<String, String>>,
-    /// 识别到的 EDP 盘（bsd → device_id）
-    pub edp_disks: Mutex<HashMap<String, String>>,
+    /// 当前已挂载会话的物理盘 bsd → session ids。一个盘可以同时挂载多个分区。
+    pub mounted: Mutex<HashMap<String, HashSet<String>>>,
+    /// 当前外置盘的只读识别结果。
+    disk_inventory: Mutex<HashMap<String, DetectedDisk>>,
     /// 正在尝试自动挂载的盘（bsd），防并发重复尝试
     pub auto_mount_inflight: Mutex<std::collections::HashSet<String>>,
+    /// 配置/授权变更后请求 watcher 立即重新评估当前已连接设备。
+    pub rescan_requested: std::sync::atomic::AtomicBool,
     /// daemon.shutdown 置位；主线程据此退出
     pub shutdown: Arc<std::sync::atomic::AtomicBool>,
     /// 主线程句柄（shutdown 时 unpark）
     pub main_thread: std::thread::Thread,
-}
-
-/// 运行配置。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Config {
-    pub auto_mount_enabled: bool,
-    /// 自动挂载默认分区类型（2=交换区 4=保密区）；null 表示全部匹配的都要挂。
-    pub default_partition_types: Vec<u32>,
-    pub socket_path: String,
-    pub allowed_uids: Vec<u32>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            auto_mount_enabled: true,
-            // 用户明确要求：默认挂载交换区，交换区逻辑在前、保密区在后（[2,4]）。
-            // install() 会用此默认重写 config.json，务必与产品语义一致。
-            default_partition_types: vec![2, 4],
-            socket_path: "/var/run/edp-usbcore.sock".to_string(),
-            allowed_uids: Vec::new(),
-        }
-    }
 }
 
 const DEFAULT_SESSION_ROOT: &str = "/var/db/edp-usbcore/sessions";
@@ -94,7 +87,16 @@ pub fn run_with(
     config_path: Option<&Path>,
     session_root_override: Option<&Path>,
 ) -> Result<()> {
-    let mut cfg = load_config(config_path).unwrap_or_default();
+    let config_path = config_path.map(Path::to_path_buf).unwrap_or_else(|| {
+        session_root_override
+            .and_then(Path::parent)
+            .map(|parent| parent.join("config.json"))
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH))
+    });
+    let mut cfg = config::load(&config_path)?;
+    // Persist schema migration immediately. Test-only socket overrides are applied
+    // afterwards and therefore never leak into the stored configuration.
+    config::save_atomic(&config_path, &cfg)?;
     if let Some(sock) = socket_override {
         cfg.socket_path = sock.to_string();
     }
@@ -114,12 +116,14 @@ pub fn run_with(
     let state = Arc::new(DaemonState {
         keystore: Mutex::new(ks),
         config: Mutex::new(cfg.clone()),
+        config_path,
         broadcaster: broadcaster.clone(),
         session_root,
         started_at: std::time::Instant::now(),
         mounted: Mutex::new(HashMap::new()),
-        edp_disks: Mutex::new(HashMap::new()),
+        disk_inventory: Mutex::new(HashMap::new()),
         auto_mount_inflight: Mutex::new(std::collections::HashSet::new()),
+        rescan_requested: std::sync::atomic::AtomicBool::new(false),
         shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         main_thread: std::thread::current(),
     });
@@ -148,8 +152,8 @@ pub fn run_with(
     .with_context(|| format!("监听 {} 失败", cfg.socket_path))?;
 
     info!(
-        "usbcore daemon 就绪: socket={} keystore_ok=true auto_mount={}",
-        cfg.socket_path, cfg.auto_mount_enabled
+        "usbcore daemon 就绪: socket={} keystore_ok=true auto_mount_mode={:?}",
+        cfg.socket_path, cfg.auto_mount_mode
     );
 
     // 主线程常驻（launchd 管理生命周期；daemon.shutdown 或 SIGTERM 退出）
@@ -160,12 +164,6 @@ pub fn run_with(
     info!("usbcore daemon 收到 shutdown，退出");
     handle.shutdown();
     Ok(())
-}
-
-fn load_config(path: Option<&Path>) -> Option<Config> {
-    let p = path.unwrap_or(Path::new("/var/db/edp-usbcore/config.json"));
-    let text = std::fs::read_to_string(p).ok()?;
-    serde_json::from_str(&text).ok()
 }
 
 fn build_methods() -> Result<HashMap<String, Handler>> {
@@ -183,6 +181,19 @@ fn build_methods() -> Result<HashMap<String, Handler>> {
     map.insert(m::KEYS_UPDATE.to_string(), Arc::new(handle_keys_update));
     map.insert(m::CONFIG_GET.to_string(), Arc::new(handle_config_get));
     map.insert(m::CONFIG_SET.to_string(), Arc::new(handle_config_set));
+    map.insert(m::DEVICES_LIST.to_string(), Arc::new(handle_devices_list));
+    map.insert(
+        m::DEVICES_POLICY_SET.to_string(),
+        Arc::new(handle_devices_policy_set),
+    );
+    map.insert(
+        m::AUTO_MOUNT_GET.to_string(),
+        Arc::new(handle_auto_mount_get),
+    );
+    map.insert(
+        m::AUTO_MOUNT_SET_MODE.to_string(),
+        Arc::new(handle_auto_mount_set_mode),
+    );
     map.insert(m::LOGS_READ.to_string(), Arc::new(handle_logs_read));
     map.insert(m::DAEMON_SHUTDOWN.to_string(), Arc::new(handle_shutdown));
     map.insert(
@@ -207,14 +218,17 @@ fn handle_status(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_proto
     let d = daemon(ctx)?;
     let ks = d.keystore.lock().unwrap();
     let cfg = d.config.lock().unwrap();
+    let mounted_sessions: usize = d.mounted.lock().unwrap().values().map(HashSet::len).sum();
     Ok(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "uptime_s": d.started_at.elapsed().as_secs(),
         "macfuse": edp_macos::macfuse_version(),
         "keystore_ok": true,
         "keystore_entries": ks.all().len(),
-        "auto_mount_enabled": cfg.auto_mount_enabled,
-        "mounted_sessions": d.mounted.lock().unwrap().len(),
+        "auto_mount_mode": cfg.auto_mount_mode,
+        // v1 compatibility for older CLI/GUI clients.
+        "auto_mount_enabled": cfg.auto_mount_mode == AutoMountMode::Active,
+        "mounted_sessions": mounted_sessions,
         // macOS 15 起 launchd 守护进程默认无权访问可移动磁盘（TCC），
         // 需在系统设置授予“完整磁盘访问权限”。为 false 时自动挂载不可用。
         "disk_access_ok": std::fs::File::open("/dev/rdisk0").is_ok(),
@@ -229,7 +243,7 @@ fn handle_list_disks(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_pr
     // RPC 卡 ~10s（密码库页卡顿根因）。
     let disks = edp_macos::list_disks(all).map_err(rpc_io)?;
     let mounted = d.mounted.lock().unwrap();
-    let edp = d.edp_disks.lock().unwrap();
+    let inventory = d.disk_inventory.lock().unwrap();
     let out: Vec<Value> = disks
         .into_iter()
         .map(|dk| {
@@ -238,8 +252,9 @@ fn handle_list_disks(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_pr
                 "rbsd": dk.rbsd,
                 "size": dk.total_size,
                 "media_name": dk.media_name,
-                "is_edp": edp.get(&dk.bsd).is_some(),
-                "session_id": mounted.get(&dk.bsd),
+                "is_edp": inventory.get(&dk.bsd).map(|d| d.kind == "edp").unwrap_or(false),
+                "session_id": mounted.get(&dk.bsd).and_then(|s| s.iter().next()),
+                "session_ids": mounted.get(&dk.bsd).map(|s| s.iter().cloned().collect::<Vec<_>>()).unwrap_or_default(),
             })
         })
         .collect();
@@ -269,18 +284,54 @@ fn handle_probe(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
 }
 
 fn probe_impl(source: &Path, password: &str, ptype: u32) -> Result<Value> {
+    let (desc, hit_id, magic) = discover_verified(source, None, password, ptype)?;
+    Ok(json!({
+        "ok": true,
+        "device_id": hit_id,
+        "partition": desc.public_dict(),
+        "filesystem_magic": magic,
+    }))
+}
+
+fn discover_verified(
+    source: &Path,
+    explicit_device_id: Option<&str>,
+    password: &str,
+    ptype: u32,
+) -> Result<(edp_core::lba12::VolumeDescriptor, String, &'static str)> {
     let io = std::sync::Arc::new(FileRawIo::open(source, true)?);
-    let hints = crate::build_hints_for(source);
+    let mut hints = crate::build_hints_for(source);
+    hints.explicit = explicit_device_id.map(str::to_string);
     let (desc, hit_id) = discover_volume(io.as_ref(), &hints, password, ptype)?;
     let vol = edp_core::volume::EncryptedPartitionIO::open(io, desc.clone(), true)?;
     let mut boot = [0u8; 512];
     vol.read(0, &mut boot)?;
-    Ok(json!({
-        "ok": filesystem_magic(&boot).is_some(),
-        "device_id": hit_id,
-        "partition": desc.public_dict(),
-        "filesystem_magic": String::from_utf8_lossy(&boot[3..11]).trim_end(),
-    }))
+    let magic = filesystem_magic(&boot).context("解密分区没有可识别的文件系统签名")?;
+    Ok((desc, hit_id, magic))
+}
+
+fn register_session(d: &DaemonState, bsd: &str, sid: &str) {
+    d.mounted
+        .lock()
+        .unwrap()
+        .entry(bsd.to_string())
+        .or_default()
+        .insert(sid.to_string());
+}
+
+fn unregister_session(d: &DaemonState, sid: &str) -> Option<(String, bool)> {
+    let mut mounted = d.mounted.lock().unwrap();
+    let bsd = mounted
+        .iter()
+        .find(|(_, sessions)| sessions.contains(sid))
+        .map(|(bsd, _)| bsd.clone())?;
+    let sessions = mounted.get_mut(&bsd)?;
+    sessions.remove(sid);
+    let last = sessions.is_empty();
+    if last {
+        mounted.remove(&bsd);
+    }
+    Some((bsd, last))
 }
 
 fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
@@ -321,8 +372,8 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
         let candidates = d.keystore.lock().unwrap().candidates(&device_id, ptype);
         let mut found: Option<(_, String, String)> = None;
         for rec in candidates {
-            match discover_volume(io.as_ref(), &hints, &rec.password, ptype) {
-                Ok((desc, id)) => {
+            match discover_verified(&source, Some(&device_id), &rec.password, ptype) {
+                Ok((desc, id, _)) => {
                     found = Some((desc, id, rec.id.clone()));
                     break;
                 }
@@ -336,20 +387,47 @@ fn handle_mount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::
             )
         })?
     } else {
-        let (desc, id) = discover_volume(io.as_ref(), &hints, password, ptype)
+        let (desc, id, _) = discover_verified(&source, None, password, ptype)
             .map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
         (desc, id, String::new())
     };
 
     let session_root = d.session_root.clone();
-    let state =
-        session::mount_and_attach(&source, &desc, &hit_id, readonly, None, None, &session_root)
-            .map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
+    let bsd = disk
+        .trim_start_matches("/dev/")
+        .trim_start_matches('r')
+        .to_string();
+    let physical_already_prepared = d
+        .mounted
+        .lock()
+        .unwrap()
+        .get(&bsd)
+        .is_some_and(|sessions| !sessions.is_empty());
+    if source.starts_with("/dev/") && !physical_already_prepared {
+        edp_macos::unmount_disk(&bsd).map_err(rpc_io)?;
+    }
+    let state = match session::mount_and_attach(
+        &source,
+        &desc,
+        &hit_id,
+        readonly,
+        None,
+        None,
+        &session_root,
+    ) {
+        Ok(state) => state,
+        Err(error) => {
+            if source.starts_with("/dev/") && !physical_already_prepared {
+                let _ = edp_macos::mount_disk(&bsd);
+            }
+            return Err(edp_proto::RpcError::new(
+                edp_proto::codes::INTERNAL,
+                error.to_string(),
+            ));
+        }
+    };
     if let Some(sid) = state["session_id"].as_str() {
-        d.mounted
-            .lock()
-            .unwrap()
-            .insert(disk.to_string(), sid.to_string());
+        register_session(d, &bsd, sid);
         d.broadcaster
             .broadcast(edp_proto::event::MOUNTED, state.clone());
         // 命中密码库条目 → 标记最近使用
@@ -372,6 +450,10 @@ fn handle_unmount(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto
     let session_root = d.session_root.clone();
     session::unmount(sid, force, &session_root)
         .map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
+    if let Some((bsd, true)) = unregister_session(d, sid).filter(|(bsd, _)| bsd.starts_with("disk"))
+    {
+        let _ = edp_macos::mount_disk(&bsd);
+    }
     d.broadcaster
         .broadcast(edp_proto::event::UNMOUNTED, json!({ "session_id": sid }));
     Ok(json!({ "unmounted": sid }))
@@ -398,7 +480,6 @@ fn handle_keys_ls(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_prot
                 "partition_type": r.partition_type,
                 "password_crc": format!("{:08x}", edp_core::crc32::crc32_bare(r.password.as_bytes())),
                 "password_hint": password_hint(&r.password),
-                "auto_mount": r.auto_mount,
                 "created_at": r.created_at,
                 "last_used_at": r.last_used_at,
             })
@@ -438,10 +519,6 @@ fn handle_keys_add(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_prot
         .and_then(|x| x.as_str())
         .unwrap_or_default()
         .to_string();
-    let auto_mount = p
-        .get("auto_mount")
-        .and_then(|x| x.as_bool())
-        .unwrap_or(true);
     if password.is_empty() {
         return Err(edp_proto::RpcError::new(
             edp_proto::codes::BAD_PARAMS,
@@ -454,9 +531,7 @@ fn handle_keys_add(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_prot
     } else if let Some(disk) = p.get("disk").and_then(|x| x.as_str()) {
         // 用 keystore 里已有的同盘 device_id，或 probe
         let source = PathBuf::from(disk);
-        let io = std::sync::Arc::new(FileRawIo::open(&source, true).map_err(rpc_io)?);
-        let hints = crate::build_hints_for(&source);
-        let (_, hit) = discover_volume(io.as_ref(), &hints, &password, partition_type)
+        let (_, hit, _) = discover_verified(&source, None, &password, partition_type)
             .map_err(|e| edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string()))?;
         Some(hit)
     } else {
@@ -476,7 +551,6 @@ fn handle_keys_add(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_prot
             device_id,
             partition_type,
             password,
-            auto_mount,
             created_at: String::new(),
             last_used_at: None,
         })
@@ -507,13 +581,24 @@ fn handle_keys_update(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_p
 fn handle_config_get(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_proto::RpcError> {
     let d = daemon(ctx)?;
     let cfg = d.config.lock().unwrap();
-    Ok(serde_json::to_value(&*cfg).unwrap())
+    let mut value = serde_json::to_value(&*cfg).unwrap();
+    value["auto_mount_enabled"] = json!(cfg.auto_mount_mode == AutoMountMode::Active);
+    Ok(value)
+}
+
+fn replace_config(d: &DaemonState, mut next: Config) -> Result<Value, edp_proto::RpcError> {
+    next.validate().map_err(rpc_internal)?;
+    config::save_atomic(&d.config_path, &next).map_err(rpc_internal)?;
+    let mut value = serde_json::to_value(&next).map_err(rpc_internal)?;
+    value["auto_mount_enabled"] = json!(next.auto_mount_mode == AutoMountMode::Active);
+    *d.config.lock().unwrap() = next;
+    Ok(value)
 }
 
 fn handle_config_set(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_proto::RpcError> {
     let d = daemon(ctx)?;
-    // 敏感字段（授权白名单/socket 路径）仅 root 可改；常规设置（自动挂载开关、
-    // 默认分区类型）是 GUI 设置页要用的，已授权用户（白名单=控制台用户）可改。
+    // 敏感字段（授权白名单/socket 路径）仅 root 可改；旧版自动挂载布尔值继续兼容，
+    // 新 GUI 使用 auto_mount.set_mode。
     // 注意：到这里调用者已通过 allowed_uids 白名单鉴权，此处只做字段级权限分级。
     let touches_sensitive = p.get("allowed_uids").is_some() || p.get("socket_path").is_some();
     if touches_sensitive && !ctx.is_root() {
@@ -522,16 +607,15 @@ fn handle_config_set(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_pr
             "仅 root 可修改授权白名单 / socket 路径",
         ));
     }
-    let mut cfg = d.config.lock().unwrap();
+    let mut cfg = d.config.lock().unwrap().clone();
+    let mut resume = false;
     if let Some(b) = p.get("auto_mount_enabled").and_then(|x| x.as_bool()) {
-        cfg.auto_mount_enabled = b;
-    }
-    if let Some(v) = p.get("default_partition_types").and_then(|x| x.as_array()) {
-        cfg.default_partition_types = v
-            .iter()
-            .filter_map(|x| x.as_u64())
-            .map(|x| x as u32)
-            .collect();
+        cfg.auto_mount_mode = if b {
+            resume = true;
+            AutoMountMode::Active
+        } else {
+            AutoMountMode::Paused
+        };
     }
     if ctx.is_root() {
         if let Some(v) = p.get("allowed_uids").and_then(|x| x.as_array()) {
@@ -545,15 +629,190 @@ fn handle_config_set(ctx: &edp_proto::Context, p: Value) -> Result<Value, edp_pr
             cfg.socket_path = s.to_string();
         }
     }
-    let cfg_json = serde_json::to_value(&*cfg).unwrap();
-    drop(cfg);
-    // 持久化
-    let path = Path::new("/var/db/edp-usbcore/config.json");
-    let _ = std::fs::create_dir_all(path.parent().unwrap());
-    if let Ok(text) = serde_json::to_string_pretty(&cfg_json) {
-        let _ = std::fs::write(path, text);
+    let value = replace_config(d, cfg)?;
+    if resume {
+        d.rescan_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
-    Ok(cfg_json)
+    Ok(value)
+}
+
+fn handle_auto_mount_get(
+    ctx: &edp_proto::Context,
+    _p: Value,
+) -> Result<Value, edp_proto::RpcError> {
+    let d = daemon(ctx)?;
+    let cfg = d.config.lock().unwrap();
+    Ok(json!({ "mode": cfg.auto_mount_mode }))
+}
+
+fn handle_auto_mount_set_mode(
+    ctx: &edp_proto::Context,
+    p: Value,
+) -> Result<Value, edp_proto::RpcError> {
+    let d = daemon(ctx)?;
+    let mode: AutoMountMode = serde_json::from_value(
+        p.get("mode")
+            .cloned()
+            .ok_or_else(|| edp_proto::RpcError::new(edp_proto::codes::BAD_PARAMS, "缺少 mode"))?,
+    )
+    .map_err(|_| {
+        edp_proto::RpcError::new(edp_proto::codes::BAD_PARAMS, "mode 仅允许 active 或 paused")
+    })?;
+    let mut next = d.config.lock().unwrap().clone();
+    next.auto_mount_mode = mode;
+    replace_config(d, next)?;
+    d.broadcaster.broadcast(
+        edp_proto::event::AUTO_MOUNT_MODE_CHANGED,
+        json!({ "mode": mode }),
+    );
+    if mode == AutoMountMode::Active {
+        d.rescan_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    Ok(json!({ "mode": mode }))
+}
+
+fn handle_devices_policy_set(
+    ctx: &edp_proto::Context,
+    p: Value,
+) -> Result<Value, edp_proto::RpcError> {
+    let d = daemon(ctx)?;
+    let policy: DevicePolicy = serde_json::from_value(p).map_err(|error| {
+        edp_proto::RpcError::new(
+            edp_proto::codes::BAD_PARAMS,
+            format!("设备策略格式错误: {error}"),
+        )
+    })?;
+    let should_evaluate = policy.authorized;
+    let device_id = policy.device_id.clone();
+    let mut next = d.config.lock().unwrap().clone();
+    next.set_policy(policy).map_err(rpc_internal)?;
+    let value = replace_config(d, next)?;
+    d.broadcaster.broadcast(
+        edp_proto::event::DEVICE_POLICY_CHANGED,
+        json!({ "device_id": device_id }),
+    );
+    if should_evaluate {
+        d.rescan_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    Ok(value)
+}
+
+fn handle_devices_list(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_proto::RpcError> {
+    let d = daemon(ctx)?;
+    let disks = edp_macos::list_disks(false).map_err(rpc_io)?;
+    for disk in &disks {
+        if !d.disk_inventory.lock().unwrap().contains_key(&disk.bsd) {
+            if let Ok(detected) = inspect_disk(&disk.bsd, &disk.media_name, disk.total_size) {
+                d.disk_inventory
+                    .lock()
+                    .unwrap()
+                    .insert(disk.bsd.clone(), detected);
+            }
+        }
+    }
+
+    let cfg = d.config.lock().unwrap().clone();
+    let keys = d.keystore.lock().unwrap().all().to_vec();
+    let inventory = d.disk_inventory.lock().unwrap().clone();
+    let mounted = d.mounted.lock().unwrap().clone();
+    let active_sessions = session::list_active(&d.session_root)
+        .ok()
+        .and_then(|value| value.get("sessions").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    let mut connected_ids = HashSet::new();
+
+    for disk in disks {
+        let detected = inventory.get(&disk.bsd);
+        let candidates = detected
+            .map(|detected| detected.candidate_ids.clone())
+            .unwrap_or_default();
+        let device_id = candidates
+            .iter()
+            .find(|candidate| {
+                cfg.device_policies
+                    .iter()
+                    .any(|policy| policy.device_id.as_str() == candidate.as_str())
+                    || keys
+                        .iter()
+                        .any(|key| key.device_id.as_str() == candidate.as_str())
+            })
+            .cloned()
+            .or_else(|| candidates.first().cloned());
+        if let Some(id) = &device_id {
+            connected_ids.insert(id.clone());
+        }
+        let policy = device_id.as_ref().and_then(|id| {
+            cfg.device_policies
+                .iter()
+                .find(|policy| policy.device_id == *id)
+        });
+        let credential_types: Vec<u32> = device_id
+            .as_ref()
+            .map(|id| {
+                let mut types: Vec<u32> = keys
+                    .iter()
+                    .filter(|key| key.device_id == *id)
+                    .map(|key| key.partition_type)
+                    .collect();
+                types.sort_unstable();
+                types.dedup();
+                types
+            })
+            .unwrap_or_default();
+        let mounted_partition_types: Vec<u32> = active_sessions
+            .iter()
+            .filter(|item| item.get("source").and_then(Value::as_str) == Some(disk.rbsd.as_str()))
+            .filter_map(|item| {
+                item.get("partition")
+                    .and_then(|partition| partition.get("partition_type"))
+                    .and_then(Value::as_u64)
+                    .map(|value| value as u32)
+            })
+            .collect();
+        out.push(json!({
+            "bsd": disk.bsd,
+            "rbsd": disk.rbsd,
+            "media_name": disk.media_name,
+            "size": disk.total_size,
+            "connected": true,
+            "kind": detected.map(|detected| detected.kind).unwrap_or("unknown"),
+            "device_id": device_id,
+            "policy": policy,
+            "credential_partition_types": credential_types,
+            "session_ids": mounted.get(&disk.bsd).map(|ids| ids.iter().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+            "mounted_partition_types": mounted_partition_types,
+        }));
+    }
+    for policy in &cfg.device_policies {
+        if connected_ids.contains(&policy.device_id) {
+            continue;
+        }
+        let mut credential_types: Vec<u32> = keys
+            .iter()
+            .filter(|key| key.device_id == policy.device_id)
+            .map(|key| key.partition_type)
+            .collect();
+        credential_types.sort_unstable();
+        credential_types.dedup();
+        out.push(json!({
+            "bsd": Value::Null,
+            "rbsd": Value::Null,
+            "media_name": policy.last_media_name.clone().unwrap_or_else(|| policy.label.clone()),
+            "size": 0,
+            "connected": false,
+            "kind": "edp",
+            "device_id": policy.device_id,
+            "policy": policy,
+            "credential_partition_types": credential_types,
+            "session_ids": [],
+            "mounted_partition_types": [],
+        }));
+    }
+    Ok(json!({ "devices": out, "auto_mount_mode": cfg.auto_mount_mode }))
 }
 
 /// 读 daemon 日志尾部（launchd 重定向到 /var/db/edp-usbcore/logs/）。
@@ -587,6 +846,42 @@ fn handle_shutdown(ctx: &edp_proto::Context, _p: Value) -> Result<Value, edp_pro
             "仅 root 可停止 daemon",
         ));
     }
+    let active = session::list_active(&d.session_root).map_err(rpc_internal)?;
+    let sessions = active["sessions"].as_array().cloned().unwrap_or_default();
+    let mut physical_disks = HashSet::new();
+    for item in &sessions {
+        let sid = item["session_id"].as_str().unwrap_or_default();
+        if sid.is_empty() {
+            continue;
+        }
+        session::unmount(sid, false, &d.session_root).map_err(|error| {
+            edp_proto::RpcError::new(
+                edp_proto::codes::BUSY,
+                format!("安全卸载会话 {sid} 失败，daemon 保持运行: {error}"),
+            )
+        })?;
+        if let Some((bsd, true)) =
+            unregister_session(d, sid).filter(|(bsd, _)| bsd.starts_with("disk"))
+        {
+            let _ = edp_macos::mount_disk(&bsd);
+        }
+        if let Some(source) = item["source"]
+            .as_str()
+            .filter(|source| source.starts_with("/dev/"))
+        {
+            if let Some(name) = Path::new(source).file_name().and_then(|name| name.to_str()) {
+                physical_disks.insert(name.trim_start_matches('r').to_string());
+            }
+        }
+        d.broadcaster.broadcast(
+            edp_proto::event::UNMOUNTED,
+            json!({ "session_id": sid, "reason": "daemon_stop" }),
+        );
+    }
+    d.mounted.lock().unwrap().clear();
+    for bsd in physical_disks {
+        let _ = edp_macos::mount_disk(&bsd);
+    }
     d.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
     d.main_thread.unpark();
     Ok(json!({ "ok": true }))
@@ -596,6 +891,10 @@ fn rpc_io(e: std::io::Error) -> edp_proto::RpcError {
     edp_proto::RpcError::new(edp_proto::codes::INTERNAL, e.to_string())
 }
 
+fn rpc_internal(error: impl std::fmt::Display) -> edp_proto::RpcError {
+    edp_proto::RpcError::new(edp_proto::codes::INTERNAL, error.to_string())
+}
+
 // ---------- launchd 管理 ----------
 
 const LAUNCHD_LABEL: &str = "com.edp.usbcore";
@@ -603,20 +902,79 @@ const PLIST_PATH: &str = "/Library/LaunchDaemons/com.edp.usbcore.plist";
 const BIN_INSTALL_PATH: &str = "/usr/local/libexec/usbcore";
 const BIN_SYMLINK: &str = "/usr/local/bin/usbcore";
 
+/// 只复制可执行文件内容，不复制 macOS 的 quarantine/provenance 等扩展属性。
+///
+/// `std::fs::copy` 在 macOS 会走 `fcopyfile(COPYFILE_ALL)`。开发构建产物带有
+/// `com.apple.provenance` 时，即使管理员已授权，把该属性覆盖到 `/usr/local` 也可能
+/// 返回 EPERM。先在目标目录生成新 inode，再用 rename 替换，既规避属性复制也避免
+/// 目标文件在复制过程中被截断。
+fn install_binary(source: &Path, target: &Path) -> Result<()> {
+    let parent = target
+        .parent()
+        .context("安装路径缺少父目录")?;
+    let staging = parent.join(format!(".usbcore.install-{}", std::process::id()));
+    let _ = std::fs::remove_file(&staging);
+
+    let result = (|| -> Result<()> {
+        let mut input = std::fs::File::open(source)
+            .with_context(|| format!("读取安装源 {} 失败", source.display()))?;
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)
+            .with_context(|| format!("创建安装临时文件 {} 失败", staging.display()))?;
+        let copied = std::io::copy(&mut input, &mut output)?;
+        output.flush()?;
+        output.sync_all()?;
+        if copied == 0 {
+            bail!("二进制复制结果为空：安装中止");
+        }
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))?;
+
+        let cpath = std::ffi::CString::new(staging.as_os_str().as_encoded_bytes())
+            .context("安装临时路径包含 NUL")?;
+        if unsafe { libc::chown(cpath.as_ptr(), 0, 0) } != 0 {
+            bail!(
+                "chown root:wheel {} 失败: {}",
+                staging.display(),
+                std::io::Error::last_os_error()
+            );
+        }
+        std::fs::rename(&staging, target).with_context(|| {
+            format!(
+                "原子替换 daemon 二进制 {} -> {} 失败",
+                staging.display(),
+                target.display()
+            )
+        })?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&staging);
+    }
+    result
+}
+
 /// 安装 launchd 守护进程（需 root）。
 pub fn install() -> Result<()> {
     if unsafe { libc::getuid() } != 0 {
         bail!("安装守护进程需要 root：请用 sudo 运行 usbcore daemon install");
     }
     let self_exe = std::env::current_exe()?;
-    // 复制二进制到 /usr/local/libexec。
-    // ⚠ macOS 下 Rust fs::copy 用 fcopyfile(COPYFILE_ALL)，会连同源文件属主一起复制
-    // （源是用户构建的 target/release/usbcore → 落盘即 zhangyuxi 属主）。必须显式
-    // chown root:wheel + 置 755：否则文件被非 root 拥有后，任何用户态进程都能把
-    // 运行中的 daemon 二进制截断成空文件（实测 2026-08-23 发生过，launchd 重启即崩）。
+    // 复制二进制到 /usr/local/libexec。仅复制文件内容，避免把开发构建产物的
+    // provenance/quarantine 扩展属性带入系统安装目录。
     std::fs::create_dir_all("/usr/local/libexec")?;
     std::fs::create_dir_all("/usr/local/bin")?;
-    std::fs::copy(&self_exe, BIN_INSTALL_PATH)?;
+    let installing_self = self_exe
+        .canonicalize()
+        .ok()
+        .zip(Path::new(BIN_INSTALL_PATH).canonicalize().ok())
+        .map(|(source, target)| source == target)
+        .unwrap_or(false);
+    if !installing_self {
+        install_binary(&self_exe, Path::new(BIN_INSTALL_PATH))?;
+    }
     let meta = std::fs::metadata(BIN_INSTALL_PATH)?;
     if meta.len() == 0 {
         bail!("二进制复制结果为空（{} 字节）：安装中止", meta.len());
@@ -635,16 +993,15 @@ pub fn install() -> Result<()> {
     // 初始化数据目录
     std::fs::create_dir_all("/var/db/edp-usbcore/logs")?;
     std::fs::create_dir_all("/var/db/edp-usbcore/sessions")?;
-    // 持久化初始配置（授权控制台用户；socket 用系统默认路径）
-    let initial_cfg = Config {
-        socket_path: "/var/run/edp-usbcore.sock".to_string(),
-        allowed_uids: default_allowed_uids(),
-        ..Config::default()
-    };
-    let _ = std::fs::write(
-        "/var/db/edp-usbcore/config.json",
-        serde_json::to_string_pretty(&initial_cfg)?,
-    );
+    // 首次安装创建安全的 v2 配置；升级只迁移 schema，绝不覆盖用户的暂停状态
+    // 和逐盘授权。v1 自动挂载标志不会迁移为设备授权。
+    let config_path = Path::new(DEFAULT_CONFIG_PATH);
+    let mut installed_config = config::load(config_path)?;
+    if installed_config.allowed_uids.is_empty() {
+        installed_config.allowed_uids = default_allowed_uids();
+    }
+    installed_config.socket_path = "/var/run/edp-usbcore.sock".to_string();
+    config::save_atomic(config_path, &installed_config)?;
     // 写 plist
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -665,6 +1022,9 @@ pub fn install() -> Result<()> {
         BIN = BIN_INSTALL_PATH
     );
     std::fs::write(PLIST_PATH, plist)?;
+    let _ = std::process::Command::new("launchctl")
+        .args(["enable", "system/com.edp.usbcore"])
+        .output();
     // 加载：job 已加载时用 kickstart -k 强制重启（运行新二进制）；未加载时 bootstrap。
     // （实测「bootout → bootstrap」序列在部分 macOS 状态会报 "Bootstrap failed: 5:
     //  Input/output error"，而 kickstart -k 稳定成功——重装 daemon 走此路径。）
@@ -694,7 +1054,7 @@ pub fn install() -> Result<()> {
             let mut last_err = String::new();
             for _ in 0..3 {
                 let _ = std::process::Command::new("launchctl")
-                    .args(["bootout", "system", LAUNCHD_LABEL])
+                    .args(["bootout", "system/com.edp.usbcore"])
                     .output();
                 std::thread::sleep(std::time::Duration::from_millis(1000));
                 let out = std::process::Command::new("launchctl")
@@ -726,32 +1086,158 @@ pub fn install() -> Result<()> {
     Ok(())
 }
 
+fn require_root(action: &str) -> Result<()> {
+    if unsafe { libc::getuid() } != 0 {
+        bail!("{action}守护进程需要管理员权限");
+    }
+    Ok(())
+}
+
+fn launchd_loaded() -> bool {
+    matches!(
+        std::process::Command::new("launchctl")
+            .args(["print", "system/com.edp.usbcore"])
+            .output(),
+        Ok(output) if output.status.success()
+    )
+}
+
+fn launchd_disabled() -> bool {
+    std::process::Command::new("launchctl")
+        .args(["print-disabled", "system"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.lines().any(|line| {
+                line.contains(&format!("\"{LAUNCHD_LABEL}\""))
+                    && (line.contains("=> true") || line.contains("=> disabled"))
+            })
+        })
+        .unwrap_or(false)
+}
+
+pub fn start() -> Result<()> {
+    require_root("启动")?;
+    if !Path::new(PLIST_PATH).exists() {
+        bail!("daemon 尚未安装");
+    }
+    let enabled = std::process::Command::new("launchctl")
+        .args(["enable", "system/com.edp.usbcore"])
+        .output()?;
+    if !enabled.status.success() {
+        bail!(
+            "launchctl enable 失败: {}",
+            String::from_utf8_lossy(&enabled.stderr).trim()
+        );
+    }
+    let output = if launchd_loaded() {
+        std::process::Command::new("launchctl")
+            .args(["kickstart", "-k", "system/com.edp.usbcore"])
+            .output()?
+    } else {
+        std::process::Command::new("launchctl")
+            .args(["bootstrap", "system", PLIST_PATH])
+            .output()?
+    };
+    if !output.status.success() {
+        bail!(
+            "启动 daemon 失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    for _ in 0..30 {
+        if edp_proto::Client::connect("/var/run/edp-usbcore.sock").is_ok() {
+            println!("daemon 已启动");
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    bail!("daemon 启动超时，请查看 daemon.err")
+}
+
+pub fn stop() -> Result<()> {
+    require_root("停止")?;
+    let disabled = std::process::Command::new("launchctl")
+        .args(["disable", "system/com.edp.usbcore"])
+        .output()?;
+    if !disabled.status.success() {
+        bail!(
+            "launchctl disable 失败: {}",
+            String::from_utf8_lossy(&disabled.stderr).trim()
+        );
+    }
+
+    if let Ok(mut client) = edp_proto::Client::connect("/var/run/edp-usbcore.sock") {
+        if let Err(error) = client.call(edp_proto::method::DAEMON_SHUTDOWN, json!({})) {
+            let _ = std::process::Command::new("launchctl")
+                .args(["enable", "system/com.edp.usbcore"])
+                .output();
+            return Err(error.into());
+        }
+    }
+    for _ in 0..30 {
+        if !Path::new("/var/run/edp-usbcore.sock").exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if launchd_loaded() {
+        let output = std::process::Command::new("launchctl")
+            .args(["bootout", "system/com.edp.usbcore"])
+            .output()?;
+        if !output.status.success() && launchd_loaded() {
+            let _ = std::process::Command::new("launchctl")
+                .args(["enable", "system/com.edp.usbcore"])
+                .output();
+            bail!(
+                "停止 daemon 失败: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+    }
+    let _ = std::fs::remove_file("/var/run/edp-usbcore.sock");
+    println!("daemon 已停止，重启 Mac 后仍保持停止");
+    Ok(())
+}
+
+pub fn restart() -> Result<()> {
+    stop()?;
+    start()
+}
+
 /// 卸载 launchd 守护进程（需 root）。
 pub fn uninstall() -> Result<()> {
-    if unsafe { libc::getuid() } != 0 {
-        bail!("卸载守护进程需要 root：请用 sudo 运行 usbcore daemon uninstall");
+    require_root("卸载")?;
+    if launchd_loaded() || Path::new("/var/run/edp-usbcore.sock").exists() {
+        stop()?;
     }
     // 实测部分 macOS 状态下 bootout 会报 "Boot-out failed: 5"，job 残留——
     // 失败时用 kill SIGKILL 兜底终止进程（与 install 的 kickstart 对应）。
-    match std::process::Command::new("launchctl")
-        .args(["bootout", "system", LAUNCHD_LABEL])
-        .output()
-    {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => {
-            warn!(
-                "launchctl bootout 失败（{}），改用 kill SIGKILL 兜底",
-                String::from_utf8_lossy(&o.stderr).trim()
-            );
-            let _ = std::process::Command::new("launchctl")
-                .args(["kill", "SIGKILL", "system/com.edp.usbcore"])
-                .output();
+    if launchd_loaded() {
+        match std::process::Command::new("launchctl")
+            .args(["bootout", "system/com.edp.usbcore"])
+            .output()
+        {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                warn!(
+                    "launchctl bootout 失败（{}），改用 kill SIGKILL 兜底",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                );
+                let _ = std::process::Command::new("launchctl")
+                    .args(["kill", "SIGKILL", "system/com.edp.usbcore"])
+                    .output();
+            }
+            Err(e) => warn!("launchctl bootout 启动失败: {e}"),
         }
-        Err(e) => warn!("launchctl bootout 启动失败: {e}"),
     }
     let _ = std::fs::remove_file(PLIST_PATH);
+    let _ = std::fs::remove_file(BIN_SYMLINK);
+    let _ = std::fs::remove_file(BIN_INSTALL_PATH);
     let _ = std::fs::remove_file("/var/run/edp-usbcore.sock");
-    println!("daemon 已卸载");
+    println!("daemon 已卸载（配置与密码库已保留）");
     Ok(())
 }
 
@@ -763,6 +1249,9 @@ pub fn status(socket: &str) -> Result<()> {
         Err(_) => None,
     };
     let mut report = json!({
+        "installed": Path::new(PLIST_PATH).exists() && Path::new(BIN_INSTALL_PATH).exists(),
+        "enabled": !launchd_disabled(),
+        "running": live.is_some(),
         "online": live.is_some(),
         "socket": socket,
         "macfuse": edp_macos::macfuse_version(),
@@ -774,198 +1263,297 @@ pub fn status(socket: &str) -> Result<()> {
     Ok(())
 }
 
-// ---------- 磁盘监听（轮询 diff） ----------
+// ---------- 磁盘监听与安全自动挂载 ----------
 
-/// 自动挂载重试上限与间隔（设备插入后 /dev/rdiskN 可能未就绪，LBA4 首读会瞬态失败）。
 const AUTO_MOUNT_MAX_RETRIES: u32 = 12;
 const AUTO_MOUNT_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// 异步尝试自动挂载（同盘去重；不同盘并行，双盘可同时挂载）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvaluationOutcome {
+    Done,
+    Retry,
+}
+
+fn inspect_disk(bsd: &str, _media_name: &str, size: u64) -> std::io::Result<DetectedDisk> {
+    use std::os::unix::fs::FileExt;
+
+    let source = PathBuf::from(format!("/dev/r{bsd}"));
+    let file = std::fs::File::open(&source)?;
+    let mut lba7 = [0u8; 512];
+    file.read_exact_at(&mut lba7, 7 * 512)?;
+
+    let structurally_edp = lba7_is_structurally_edp(&lba7, size);
+    if !structurally_edp {
+        return Ok(DetectedDisk {
+            kind: "ordinary",
+            candidate_ids: Vec::new(),
+        });
+    }
+
+    let io = FileRawIo::open(&source, true)?;
+    let hints = crate::build_hints_for(&source);
+    let candidate_ids = edp_core::discovery::candidate_device_ids(&io, &hints);
+    Ok(DetectedDisk {
+        kind: "edp",
+        candidate_ids,
+    })
+}
+
+fn lba7_is_structurally_edp(lba7: &[u8; 512], size: u64) -> bool {
+    edp_core::lba7::recover_lba7(lba7)
+        .ok()
+        .map(|(_, plain)| {
+            (0..8).any(|index| {
+                let entry = &plain[index * 0x40..(index + 1) * 0x40];
+                if &entry[..4] != b"EDPF" {
+                    return false;
+                }
+                let start = u64::from_le_bytes(entry[0x18..0x20].try_into().unwrap());
+                let bytes = u64::from_le_bytes(entry[0x28..0x30].try_into().unwrap());
+                start > 0
+                    && bytes > 0
+                    && (size == 0 || start.saturating_mul(512).saturating_add(bytes) <= size)
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn spawn_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
     {
         let mut inflight = state.auto_mount_inflight.lock().unwrap();
         if !inflight.insert(bsd.to_string()) {
-            return; // 已有尝试进行中
+            return;
         }
     }
     let state = state.clone();
     let bsd = bsd.to_string();
     std::thread::spawn(move || {
-        maybe_auto_mount(&state, &bsd);
+        for _ in 0..AUTO_MOUNT_MAX_RETRIES {
+            if maybe_auto_mount(&state, &bsd) == EvaluationOutcome::Done {
+                break;
+            }
+            std::thread::sleep(AUTO_MOUNT_RETRY_INTERVAL);
+        }
         state.auto_mount_inflight.lock().unwrap().remove(&bsd);
     });
 }
 
 fn disk_watcher_loop(state: Arc<DaemonState>) {
-    let mut prev: HashMap<String, bool> = HashMap::new();
-    // bsd → (重试次数, 上次尝试时刻)：出现时尝试失败后的重试（设备就绪竞态）。
-    let mut pending: HashMap<String, (u32, std::time::Instant)> = HashMap::new();
-    loop {
+    let mut prev: HashSet<String> = HashSet::new();
+    while !state.shutdown.load(std::sync::atomic::Ordering::SeqCst) {
         let disks = edp_macos::list_disks(false).unwrap_or_default();
-        let cur: HashMap<String, bool> = disks.iter().map(|d| (d.bsd.clone(), true)).collect();
-        // appeared
-        for bsd in cur.keys() {
-            if !prev.contains_key(bsd) {
-                info!("磁盘出现: {bsd}");
+        let cur: HashSet<String> = disks.iter().map(|disk| disk.bsd.clone()).collect();
+        for disk in &disks {
+            if !prev.contains(&disk.bsd) {
+                info!("磁盘出现: {}", disk.bsd);
                 state
                     .broadcaster
-                    .broadcast(edp_proto::event::DISK_APPEARED, json!({ "bsd": bsd }));
-                spawn_auto_mount(&state, bsd);
-                pending.insert(bsd.clone(), (0, std::time::Instant::now()));
+                    .broadcast(edp_proto::event::DISK_APPEARED, json!({ "bsd": disk.bsd }));
+                spawn_auto_mount(&state, &disk.bsd);
             }
         }
-        // retry：已出现但未挂载的盘，冷却后重试（≤上限）
+        if state
+            .rescan_requested
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
-            let mounted = state.mounted.lock().unwrap();
-            let retry: Vec<String> = cur
-                .keys()
-                .filter(|bsd| !mounted.contains_key(*bsd))
-                .filter_map(|bsd| {
-                    let (n, last) = pending.get_mut(bsd)?;
-                    if *n >= AUTO_MOUNT_MAX_RETRIES || last.elapsed() < AUTO_MOUNT_RETRY_INTERVAL {
-                        return None;
-                    }
-                    *n += 1;
-                    *last = std::time::Instant::now();
-                    Some(bsd.clone())
-                })
-                .collect();
-            drop(mounted);
-            for bsd in &retry {
-                spawn_auto_mount(&state, bsd);
+            for disk in &disks {
+                spawn_auto_mount(&state, &disk.bsd);
             }
         }
-        // disappeared
-        for bsd in prev.keys() {
-            if !cur.contains_key(bsd) {
-                info!("磁盘消失: {bsd}");
-                cleanup_disappeared(&state, bsd);
-                pending.remove(bsd);
-            }
+        for bsd in prev.difference(&cur) {
+            info!("磁盘消失: {bsd}");
+            cleanup_disappeared(&state, bsd);
         }
         prev = cur;
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
 }
 
-fn maybe_auto_mount(state: &Arc<DaemonState>, bsd: &str) {
-    let cfg = state.config.lock().unwrap();
-    if !cfg.auto_mount_enabled {
-        return;
-    }
-    let types = cfg.default_partition_types.clone();
-    drop(cfg);
-    let source = PathBuf::from(format!("/dev/r{bsd}"));
-    // 读取 LBA4 判断 EDP 盘
-    let is_edp = {
-        use std::os::unix::fs::FileExt;
-        if let Ok(f) = std::fs::File::open(&source) {
-            let mut buf = [0u8; 512];
-            if f.read_exact_at(&mut buf, 4 * 512).is_ok() {
-                buf[..32].windows(2).any(|w| w == b"$$")
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    };
-    if !is_edp {
-        return;
-    }
-    // 先 unmountDisk 清公共区
-    let _ = edp_macos::unmount_disk(bsd);
+fn mounted_partition_types(state: &DaemonState, bsd: &str) -> HashSet<u32> {
+    let source = format!("/dev/r{bsd}");
+    session::list_active(&state.session_root)
+        .ok()
+        .and_then(|value| value.get("sessions").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| item.get("source").and_then(Value::as_str) == Some(source.as_str()))
+        .filter_map(|item| {
+            item.get("partition")
+                .and_then(|partition| partition.get("partition_type"))
+                .and_then(Value::as_u64)
+                .map(|value| value as u32)
+        })
+        .collect()
+}
 
-    // 对每个默认分区类型，尝试 keystore 匹配
-    let mut any_mounted = false;
-    for ptype in types {
-        let io = match FileRawIo::open(&source, true) {
-            Ok(f) => std::sync::Arc::new(f),
-            Err(_) => continue,
-        };
-        let hints = crate::build_hints_for(&source);
-        // 先解 device_id（keystore 匹配键）
-        let device_id = {
-            let io2 = io.clone();
-            let ids = edp_core::discovery::candidate_device_ids(io2.as_ref(), &hints);
-            ids.into_iter().next()
-        };
-        let Some(device_id) = device_id else {
+fn maybe_auto_mount(state: &DaemonState, bsd: &str) -> EvaluationOutcome {
+    let disk_info = edp_macos::list_disks(false)
+        .ok()
+        .and_then(|disks| disks.into_iter().find(|disk| disk.bsd == bsd));
+    let Some(disk_info) = disk_info else {
+        return EvaluationOutcome::Retry;
+    };
+    let detected = match inspect_disk(bsd, &disk_info.media_name, disk_info.total_size) {
+        Ok(detected) => detected,
+        Err(_) => return EvaluationOutcome::Retry,
+    };
+    state
+        .disk_inventory
+        .lock()
+        .unwrap()
+        .insert(bsd.to_string(), detected.clone());
+    state.broadcaster.broadcast(
+        edp_proto::event::DEVICE_DETECTED,
+        json!({ "bsd": bsd, "kind": detected.kind }),
+    );
+    if detected.kind != "edp" {
+        return EvaluationOutcome::Done;
+    }
+
+    let config = state.config.lock().unwrap().clone();
+    if config.auto_mount_mode != AutoMountMode::Active {
+        return EvaluationOutcome::Done;
+    }
+    let Some(policy) = config.policy(&detected.candidate_ids).cloned() else {
+        state.broadcaster.broadcast(
+            edp_proto::event::DEVICE_NEEDS_SETUP,
+            json!({ "bsd": bsd, "candidate_ids": detected.candidate_ids }),
+        );
+        return EvaluationOutcome::Done;
+    };
+    if !policy.authorized {
+        return EvaluationOutcome::Done;
+    }
+
+    let source = PathBuf::from(format!("/dev/r{bsd}"));
+    let already_mounted = mounted_partition_types(state, bsd);
+    let mut plans = Vec::new();
+    for partition_type in &policy.partition_types {
+        if already_mounted.contains(partition_type) {
             continue;
-        };
-        let candidates = state.keystore.lock().unwrap().candidates(&device_id, ptype);
-        for rec in candidates {
-            if !rec.auto_mount {
-                continue;
-            }
-            // 密码双路径验证：probe 闭环
-            let ok = probe_impl(&source, &rec.password, ptype).is_ok();
-            if ok {
-                info!("自动挂载 {bsd} type={ptype} label={}", rec.label);
-                let session_root = state.session_root.clone();
-                let (desc, hit_id) =
-                    match discover_volume(io.as_ref(), &hints, &rec.password, ptype) {
-                        Ok(x) => x,
-                        Err(e) => {
-                            warn!("{bsd} 自动挂载 discover 失败: {e}");
-                            continue;
-                        }
-                    };
-                match session::mount_and_attach(
-                    &source,
-                    &desc,
-                    &hit_id,
-                    false,
-                    None,
-                    None,
-                    &session_root,
-                ) {
-                    Ok(s) => {
-                        if let Some(sid) = s["session_id"].as_str() {
-                            any_mounted = true;
-                            state
-                                .mounted
-                                .lock()
-                                .unwrap()
-                                .insert(bsd.to_string(), sid.to_string());
-                            state
-                                .edp_disks
-                                .lock()
-                                .unwrap()
-                                .insert(bsd.to_string(), device_id.clone());
-                            state
-                                .broadcaster
-                                .broadcast(edp_proto::event::MOUNTED, s.clone());
-                            if let Ok(mut ks) = state.keystore.try_lock() {
-                                ks.touch(&rec.id);
-                            }
-                        }
-                    }
-                    Err(e) => warn!("{bsd} 自动挂载失败: {e}"),
-                }
+        }
+        let records = state
+            .keystore
+            .lock()
+            .unwrap()
+            .candidates(&policy.device_id, *partition_type);
+        for record in records {
+            if let Ok((descriptor, hit_id, _)) = discover_verified(
+                &source,
+                Some(&policy.device_id),
+                &record.password,
+                *partition_type,
+            ) {
+                plans.push((descriptor, hit_id, record.id.clone(), record.label.clone()));
                 break;
             }
         }
     }
-    // 已确认 EDP 盘但全部密码不匹配/无条目 → 通知 GUI 需要密码
-    if !any_mounted {
-        state
-            .broadcaster
-            .broadcast(edp_proto::event::PASSWORD_NEEDED, json!({ "bsd": bsd }));
+    if plans.is_empty() {
+        if !policy.partition_types.is_empty() && already_mounted.is_empty() {
+            state.broadcaster.broadcast(
+                edp_proto::event::PASSWORD_NEEDED,
+                json!({ "bsd": bsd, "device_id": policy.device_id }),
+            );
+        }
+        return EvaluationOutcome::Done;
     }
+
+    let physical_already_prepared = !already_mounted.is_empty();
+    if !physical_already_prepared {
+        if let Err(error) = edp_macos::unmount_disk(bsd) {
+            state.broadcaster.broadcast(
+                edp_proto::event::MOUNT_FAILED,
+                json!({ "bsd": bsd, "message": error.to_string() }),
+            );
+            return EvaluationOutcome::Done;
+        }
+    }
+
+    let mut mounted_any = false;
+    for (descriptor, hit_id, record_id, label) in plans {
+        info!(
+            "自动挂载 {bsd} type={} label={label}",
+            descriptor.partition_type
+        );
+        match session::mount_and_attach(
+            &source,
+            &descriptor,
+            &hit_id,
+            false,
+            None,
+            None,
+            &state.session_root,
+        ) {
+            Ok(session) => {
+                if let Some(sid) = session.get("session_id").and_then(Value::as_str) {
+                    mounted_any = true;
+                    register_session(state, bsd, sid);
+                    state
+                        .broadcaster
+                        .broadcast(edp_proto::event::MOUNTED, session);
+                    if let Ok(mut keystore) = state.keystore.try_lock() {
+                        keystore.touch(&record_id);
+                    }
+                }
+            }
+            Err(error) => state.broadcaster.broadcast(
+                edp_proto::event::MOUNT_FAILED,
+                json!({
+                    "bsd": bsd,
+                    "partition_type": descriptor.partition_type,
+                    "message": error.to_string(),
+                }),
+            ),
+        }
+    }
+    if !mounted_any && !physical_already_prepared {
+        let _ = edp_macos::mount_disk(bsd);
+    }
+    EvaluationOutcome::Done
 }
 
-fn cleanup_disappeared(state: &Arc<DaemonState>, bsd: &str) {
-    if let Some(sid) = state.mounted.lock().unwrap().remove(bsd) {
+fn cleanup_disappeared(state: &DaemonState, bsd: &str) {
+    let sessions = state
+        .mounted
+        .lock()
+        .unwrap()
+        .remove(bsd)
+        .unwrap_or_default();
+    for sid in sessions {
         info!("磁盘消失，清理会话 {sid}");
-        let session_root = state.session_root.clone();
-        if let Err(e) = session::unmount(&sid, true, &session_root) {
-            warn!("清理会话 {sid} 失败: {e}");
+        if let Err(error) = session::unmount(&sid, true, &state.session_root) {
+            warn!("清理会话 {sid} 失败: {error}");
         }
         state.broadcaster.broadcast(
             edp_proto::event::DISK_REMOVED,
             json!({ "bsd": bsd, "session_id": sid }),
         );
     }
-    state.edp_disks.lock().unwrap().remove(bsd);
+    state.disk_inventory.lock().unwrap().remove(bsd);
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_sector_is_not_edp_even_if_an_unrelated_lba_has_dollar_marker() {
+        // The old detector looked for "$$" in LBA4. The new detector never receives
+        // LBA4 and requires a structurally valid EDPF table in LBA7.
+        let mut ordinary_lba7 = [0u8; 512];
+        ordinary_lba7[..8].copy_from_slice(b"FAT32   ");
+        assert!(!lba7_is_structurally_edp(&ordinary_lba7, 64 * 1024 * 1024));
+    }
+
+    #[test]
+    fn real_fixture_lba7_passes_strong_structure_check() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/real_disks/disk4/LBA7.bin"
+        ))
+        .unwrap();
+        let lba7: [u8; 512] = bytes.try_into().unwrap();
+        assert!(lba7_is_structurally_edp(&lba7, 124_736_503_808));
+    }
 }

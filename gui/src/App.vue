@@ -1,48 +1,98 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useStore } from "./store";
+import type { AppSnapshot, OperationEvent, RawDaemonEvent } from "./types";
+import AppIcon from "./components/AppIcon.vue";
+import ToggleSwitch from "./components/ToggleSwitch.vue";
 
 const store = useStore();
-let unlisten: UnlistenFn | undefined;
-let timer: number | undefined;
+const unlisteners: UnlistenFn[] = [];
+
+const serviceTone = computed(() => {
+  if (store.snapshot?.service.running) return "success";
+  if (store.snapshot?.service.installed) return "warning";
+  return "danger";
+});
+
+const serviceText = computed(() => {
+  if (!store.initialized) return "正在连接";
+  if (store.snapshot?.service.running && store.snapshot.daemon) return "后台服务运行中";
+  if (store.snapshot?.service.installed) return "后台服务已停止";
+  return "后台服务未安装";
+});
 
 onMounted(async () => {
-  await store.refreshAll();
-  timer = window.setInterval(() => void store.refreshAll(), 5000);
-  unlisten = await listen<any>("edp://event", (e) => store.pushEvent(e.payload));
+  unlisteners.push(
+    await listen<AppSnapshot>("ui://snapshot", (event) => store.applySnapshot(event.payload)),
+    await listen<OperationEvent>("ui://operation", (event) => store.setOperation(event.payload)),
+    await listen<RawDaemonEvent>("edp://event", (event) => store.recordEvent(event.payload)),
+  );
+  await store.initialize();
 });
-onUnmounted(() => {
-  if (timer) window.clearInterval(timer);
-  unlisten?.();
-});
+
+onUnmounted(() => unlisteners.forEach((unlisten) => unlisten()));
 </script>
 
 <template>
-  <div class="app">
-    <header class="app-header">
-      <div class="brand">
-        <span class="brand-dot">🔒</span>
-        <span>EDP 加密 U 盘</span>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <span class="brand-symbol"><AppIcon name="lock" :size="19" /></span>
+        <div><strong>EDP USB</strong><span>安全磁盘客户端</span></div>
       </div>
-      <div class="daemon-badge" :class="store.daemonOnline ? 'ok' : 'off'">
-        {{
-          store.daemonOnline
-            ? `daemon 在线 · v${store.status?.version ?? ""}`
-            : "daemon 离线"
-        }}
+
+      <nav class="sidebar-nav" aria-label="主导航">
+        <RouterLink to="/devices"><AppIcon name="devices" /><span>设备</span></RouterLink>
+        <RouterLink to="/activity"><AppIcon name="activity" /><span>活动</span></RouterLink>
+        <RouterLink to="/settings"><AppIcon name="settings" /><span>设置</span></RouterLink>
+      </nav>
+
+      <div class="sidebar-status">
+        <span class="status-dot" :class="serviceTone"></span>
+        <div><strong>{{ serviceText }}</strong><span>v{{ store.snapshot?.daemon?.version ?? "0.4.0" }}</span></div>
       </div>
-    </header>
+    </aside>
 
-    <nav class="tabs">
-      <RouterLink to="/sessions">挂载</RouterLink>
-      <RouterLink to="/keys">密码库</RouterLink>
-      <RouterLink to="/settings">设置</RouterLink>
-      <RouterLink to="/logs">日志</RouterLink>
-    </nav>
+    <section class="workspace">
+      <header class="toolbar">
+        <div class="toolbar-service">
+          <span class="status-dot" :class="serviceTone"></span>
+          <span>{{ serviceText }}</span>
+        </div>
+        <ToggleSwitch
+          class="toolbar-toggle"
+          :model-value="store.snapshot?.auto_mount_mode === 'active'"
+          :disabled="!store.daemonOnline || !!store.busy['auto-mode']"
+          :label="store.snapshot?.auto_mount_mode === 'active' ? '自动挂载运行中' : '自动挂载已暂停'"
+          @update:model-value="store.setAutoMount"
+        />
+      </header>
 
-    <main class="content">
-      <RouterView />
-    </main>
+      <div v-if="store.operation && !['succeeded', 'cancelled'].includes(store.operation.phase)" class="operation-banner" :class="store.operation.phase">
+        <span class="spinner" v-if="!['failed'].includes(store.operation.phase)"></span>
+        <span class="status-dot danger" v-else></span>
+        <div><strong>{{ store.operation.message }}</strong><span v-if="store.operation.error?.detail">{{ store.operation.error.detail }}</span></div>
+      </div>
+
+      <main class="workspace-content">
+        <div v-if="!store.initialized" class="loading-shell">
+          <span class="spinner large"></span><p>正在读取设备状态…</p>
+        </div>
+        <RouterView v-else />
+      </main>
+    </section>
+
+    <div class="toast-stack" aria-live="polite">
+      <button
+        v-for="toast in store.toasts"
+        :key="toast.id"
+        class="toast"
+        :class="toast.tone"
+        @click="store.dismissToast(toast.id)"
+      >
+        <strong>{{ toast.title }}</strong><span v-if="toast.detail">{{ toast.detail }}</span>
+      </button>
+    </div>
   </div>
 </template>

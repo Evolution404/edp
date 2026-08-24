@@ -36,13 +36,21 @@ gui/
 ## 挂载数据流
 
 ```
-插入 → DiskArbitration appeared → 预筛（LBA4 "$$"）
+插入 → 磁盘 appeared → 只读恢复并校验 LBA7 EDPF 结构
   → device_id 三级发现（explicit → LBA11 PDKB → identify 候选）
-  → 密码库按 (device_id, partition_type) 取多条 → 密码双路径验证
-  → diskutil unmountDisk → spawn bridge（匿名管道传 file_key）
+  → 检查全局运行状态 + 逐盘授权 + 逐分区选择
+  → 密码库按 (device_id, partition_type) 取多条 → 只读密码/文件系统闭环
+  → 形成至少一个有效计划后才 diskutil unmountDisk（每盘一次）
+  → spawn bridge（匿名管道传 file_key）
   → hdiutil attach -nobrowse -owners off -imagekey diskimage-class=CRawDiskImage
   → 原生 exFAT 驱动 → /Volumes/...
 ```
+
+普通盘、未授权盘、密码缺失或验证失败的盘不会进入 `unmountDisk`。全局开关只暂停新的自动挂载，
+不修改逐盘授权，也不卸载现有会话；恢复后重新评估当前已插入设备。
+
+同一物理盘可拥有多个活动 session（交换区/保密区）。daemon 同时维护 session 索引和物理盘到
+session 集合的反向索引，拔盘、手动卸载与安全停止均据此完整清理。
 
 ## 密钥生命周期与安全模型
 

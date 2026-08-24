@@ -1,16 +1,15 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-import KeysView from "./views/KeysView.vue";
-import SessionsView from "./views/SessionsView.vue";
+import DevicesView from "./views/DevicesView.vue";
+import ActivityView from "./views/ActivityView.vue";
 import SettingsView from "./views/SettingsView.vue";
-import LogsView from "./views/LogsView.vue";
 
 export default createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: "/", redirect: "/sessions" },
-    { path: "/keys", name: "keys", component: KeysView },
-    { path: "/sessions", name: "sessions", component: SessionsView },
+    { path: "/", redirect: "/devices" },
+    { path: "/devices", name: "devices", component: DevicesView },
+    { path: "/activity", name: "activity", component: ActivityView },
     { path: "/settings", name: "settings", component: SettingsView },
-    { path: "/logs", name: "logs", component: LogsView },
+    { path: "/:pathMatch(.*)*", redirect: "/devices" },
   ],
 });

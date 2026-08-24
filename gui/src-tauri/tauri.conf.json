@@ -14,11 +14,11 @@
       {
         "label": "main",
         "title": "EDP 加密 U 盘客户端",
-        "width": 860,
-        "height": 640,
-        "minWidth": 720,
-        "minHeight": 520,
-        "visible": false
+        "width": 980,
+        "height": 680,
+        "minWidth": 780,
+        "minHeight": 560,
+        "visible": true
       }
     ],
     "security": {
@@ -35,6 +35,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../../target/release/usbcore": "usbcore"
+    },
     "macOS": {
       "signingIdentity": null
     }

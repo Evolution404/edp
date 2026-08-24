@@ -71,6 +71,10 @@ pub mod method {
     pub const KEYS_UPDATE: &str = "keys.update";
     pub const CONFIG_GET: &str = "config.get";
     pub const CONFIG_SET: &str = "config.set";
+    pub const DEVICES_LIST: &str = "devices.list";
+    pub const DEVICES_POLICY_SET: &str = "devices.policy.set";
+    pub const AUTO_MOUNT_GET: &str = "auto_mount.get";
+    pub const AUTO_MOUNT_SET_MODE: &str = "auto_mount.set_mode";
     pub const LOGS_READ: &str = "logs.read";
     pub const SUBSCRIBE: &str = "subscribe";
     pub const UNSUBSCRIBE: &str = "unsubscribe";
@@ -85,6 +89,10 @@ pub mod event {
     pub const PASSWORD_NEEDED: &str = "password_needed";
     pub const UNMOUNTED: &str = "unmounted";
     pub const DISK_REMOVED: &str = "disk_removed";
+    pub const DEVICE_DETECTED: &str = "device_detected";
+    pub const DEVICE_NEEDS_SETUP: &str = "device_needs_setup";
+    pub const DEVICE_POLICY_CHANGED: &str = "device_policy_changed";
+    pub const AUTO_MOUNT_MODE_CHANGED: &str = "auto_mount_mode_changed";
 }
 
 /// 服务端状态摘要。
@@ -95,6 +103,8 @@ pub struct StatusInfo {
     pub macfuse: Option<String>,
     pub keystore_ok: bool,
     pub auto_mount_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_mount_mode: Option<AutoMountMode>,
 }
 
 /// 磁盘摘要（对外返回）。
@@ -119,7 +129,6 @@ pub struct KeyEntry {
     pub password_crc: String,
     /// 首尾提示（如 `"00…aa"`），便于区分多条同盘密码。
     pub password_hint: String,
-    pub auto_mount: bool,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<String>,
@@ -135,7 +144,23 @@ pub struct KeyAddParams {
     pub device_id: Option<String>,
     pub partition_type: u32,
     pub password: String,
-    pub auto_mount: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoMountMode {
+    Active,
+    Paused,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevicePolicy {
+    pub device_id: String,
+    pub label: String,
+    pub authorized: bool,
+    pub partition_types: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_media_name: Option<String>,
 }
 
 /// mount 参数。

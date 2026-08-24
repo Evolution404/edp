@@ -1,31 +1,55 @@
 import { invoke } from "@tauri-apps/api/core";
+import type {
+  AppSnapshot,
+  AutoMountMode,
+  CredentialInput,
+  DevicePolicy,
+  DiagnosticsResult,
+  PartitionType,
+  UiError,
+} from "./types";
 
-/** 前端 → Tauri 命令 / daemon RPC 的统一封装。 */
+function normalizeError(error: unknown): UiError {
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const value = error as Partial<UiError>;
+    return {
+      code: value.code ?? "UNKNOWN",
+      message: String(value.message),
+      detail: value.detail ? String(value.detail) : null,
+    };
+  }
+  return { code: "UNKNOWN", message: String(error) };
+}
+
+async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    throw normalizeError(error);
+  }
+}
+
 export const api = {
-  // 本地命令（GUI 后端）
-  daemonStatus: () => invoke<any>("daemon_status"),
-  macfuse: () => invoke<any>("macfuse_status"),
-  installDaemon: () => invoke<any>("install_daemon"),
-  uninstallDaemon: () => invoke<any>("uninstall_daemon"),
-  openInFinder: (path: string) => invoke("open_in_finder", { path }),
-
-  // daemon RPC 转发
-  rpc: (method: string, params: Record<string, unknown> = {}) =>
-    invoke<any>("rpc", { method, params }),
-
-  status: () => api.rpc("status"),
-  sessions: () => api.rpc("sessions"),
-  listDisks: () => api.rpc("list_disks"),
-  keysLs: () => api.rpc("keys.ls"),
-  keysAdd: (p: Record<string, unknown>) => api.rpc("keys.add", p),
-  keysRm: (id: string) => api.rpc("keys.rm", { id }),
-  keysUpdate: (id: string, patch: Record<string, unknown>) =>
-    api.rpc("keys.update", { id, ...patch }),
-  mount: (disk: string, password?: string, partition_type = 4) =>
-    api.rpc("mount", { disk, password, partition_type }),
-  unmount: (session_id: string, force = false) =>
-    api.rpc("unmount", { session_id, force }),
-  configGet: () => api.rpc("config.get"),
-  configSet: (patch: Record<string, unknown>) => api.rpc("config.set", patch),
-  logsRead: (lines = 200) => api.rpc("logs.read", { lines }),
+  snapshot: () => call<AppSnapshot>("get_app_snapshot"),
+  refresh: () => call<AppSnapshot>("refresh_app_snapshot"),
+  setAutoMountMode: (mode: AutoMountMode) =>
+    call<AppSnapshot>("set_auto_mount_mode", { mode }),
+  setDevicePolicy: (policy: DevicePolicy) =>
+    call<AppSnapshot>("set_device_policy", { policy }),
+  mountPartition: (disk: string, deviceId: string, partitionType: PartitionType) =>
+    call<AppSnapshot>("mount_partition", { disk, deviceId, partitionType }),
+  unmountSession: (sessionId: string, force = false) =>
+    call<AppSnapshot>("unmount_session", { sessionId, force }),
+  saveCredential: (input: CredentialInput) =>
+    call<AppSnapshot>("save_credential", { input }),
+  deleteCredential: (id: string) =>
+    call<AppSnapshot>("delete_credential", { id }),
+  serviceAction: (action: "install" | "start" | "stop" | "restart" | "uninstall") =>
+    call<{ action: string; snapshot: AppSnapshot }>("run_service_action", { action }),
+  diagnostics: () => call<DiagnosticsResult>("get_diagnostics"),
+  openInFinder: (path: string) => call<void>("open_in_finder", { path }),
 };
+
+export function uiError(error: unknown): UiError {
+  return normalizeError(error);
+}

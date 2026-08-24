@@ -133,7 +133,8 @@ enum KeysCmd {
         partition_type: u32,
         #[arg(long)]
         password: Option<String>,
-        #[arg(long)]
+        /// 已废弃：自动挂载授权请通过 GUI 设备页设置。
+        #[arg(long, hide = true)]
         no_auto_mount: bool,
     },
     /// 删除密码
@@ -153,6 +154,12 @@ enum DaemonCmd {
     },
     /// 安装 launchd 守护进程
     Install,
+    /// 启动已安装的 launchd 守护进程
+    Start,
+    /// 安全卸载活动会话并停止守护进程（跨重启保持停止）
+    Stop,
+    /// 安全重启守护进程
+    Restart,
     /// 卸载 launchd 守护进程
     Uninstall,
     /// daemon 状态（在线/离线）
@@ -238,7 +245,7 @@ fn cmd_keys(action: KeysCmd) -> Result<()> {
             disk,
             partition_type,
             password,
-            no_auto_mount,
+            no_auto_mount: _,
         } => {
             let password = get_password(password)?;
             let params = serde_json::json!({
@@ -247,7 +254,6 @@ fn cmd_keys(action: KeysCmd) -> Result<()> {
                 "disk": disk,
                 "partition_type": partition_type,
                 "password": password,
-                "auto_mount": !no_auto_mount,
             });
             let r = c.call(edp_proto::method::KEYS_ADD, params)?;
             println!("{}", serde_json::to_string_pretty(&r)?);
@@ -267,6 +273,9 @@ fn cmd_daemon(action: DaemonCmd) -> Result<()> {
             socket,
         } => daemon::run_with(socket.as_deref(), None, session_root.as_deref()),
         DaemonCmd::Install => daemon::install(),
+        DaemonCmd::Start => daemon::start(),
+        DaemonCmd::Stop => daemon::stop(),
+        DaemonCmd::Restart => daemon::restart(),
         DaemonCmd::Uninstall => daemon::uninstall(),
         DaemonCmd::Status => daemon::status(&daemon_socket()),
     }
@@ -527,7 +536,15 @@ fn cmd_mount(
         }
     }
 
-    let state = session::mount_and_attach(
+    let physical_bsd = if source.starts_with("/dev/") {
+        Some(dev_disk_of(&source)?)
+    } else {
+        None
+    };
+    if let Some(bsd) = &physical_bsd {
+        edp_macos::unmount_disk(bsd)?;
+    }
+    let state = match session::mount_and_attach(
         &source,
         &desc,
         &hit_id,
@@ -535,7 +552,15 @@ fn cmd_mount(
         mountpoint.as_deref(),
         session_id.as_deref(),
         &session_root(),
-    )?;
+    ) {
+        Ok(state) => state,
+        Err(error) => {
+            if let Some(bsd) = &physical_bsd {
+                let _ = edp_macos::mount_disk(bsd);
+            }
+            return Err(error);
+        }
+    };
     println!("{}", serde_json::to_string_pretty(&state)?);
     Ok(())
 }
