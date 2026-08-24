@@ -80,13 +80,16 @@ exit 0
 POSTINSTALL
 chmod 0755 "$SCRIPTS/postinstall"
 
-# `pkgbuild --component` makes app bundles relocatable by default. PackageKit can
-# then discover a development copy with the same bundle id anywhere on disk and
-# silently install/upgrade that copy instead of /Applications. Besides being wrong,
-# that can trigger Desktop/Documents TCC prompts if a source checkout lives there.
-# Generate the component plist explicitly and disable relocation.
+# Stage the app under its final absolute location, then ask pkgbuild to analyze that
+# root. This lets us explicitly disable bundle relocation. Without this, PackageKit
+# may discover a development copy with the same bundle id elsewhere on disk and
+# install there instead of /Applications.
+APP_ROOT="$WORK/app-root"
+mkdir -p "$APP_ROOT/Applications"
+/usr/bin/ditto "$APP_PATH" "$APP_ROOT/Applications/EDP USB Vault.app"
+
 APP_COMPONENT_PLIST="$WORK/app-component.plist"
-pkgbuild --analyze --component "$APP_PATH" "$APP_COMPONENT_PLIST"
+pkgbuild --analyze --root "$APP_ROOT" "$APP_COMPONENT_PLIST"
 python3 - "$APP_COMPONENT_PLIST" <<'PY'
 import plistlib
 import sys
@@ -97,41 +100,36 @@ with p.open('rb') as f:
     items = plistlib.load(f)
 if not items:
     raise SystemExit('pkgbuild produced an empty component plist')
+found = False
 for item in items:
-    item['BundleIsRelocatable'] = False
-    item['BundleOverwriteAction'] = 'upgrade'
+    path = item.get('RootRelativeBundlePath', '')
+    if path.endswith('EDP USB Vault.app'):
+        item['BundleIsRelocatable'] = False
+        item['BundleOverwriteAction'] = 'upgrade'
+        found = True
+if not found:
+    raise SystemExit('EDP USB Vault.app was not found in pkgbuild component analysis')
 with p.open('wb') as f:
     plistlib.dump(items, f, sort_keys=False)
+
+# Re-read what will be supplied to pkgbuild so CI fails if the policy regresses.
+with p.open('rb') as f:
+    checked = plistlib.load(f)
+entry = next(x for x in checked if x.get('RootRelativeBundlePath', '').endswith('EDP USB Vault.app'))
+if entry.get('BundleIsRelocatable') is not False:
+    raise SystemExit('BundleIsRelocatable is not false')
+print('Verified component policy: EDP app is non-relocatable')
 PY
 
 APP_COMPONENT="$WORK/EDP-USB-Vault-App.pkg"
 pkgbuild \
-  --component "$APP_PATH" \
+  --root "$APP_ROOT" \
   --component-plist "$APP_COMPONENT_PLIST" \
-  --install-location /Applications \
+  --install-location / \
   --identifier com.edp.usbvault.app-package \
   --version "$APP_VERSION" \
   --scripts "$SCRIPTS" \
   "$APP_COMPONENT"
-
-# Assert the generated component package really carries the no-relocation policy.
-APP_COMPONENT_EXPANDED="$WORK/app-component-expanded"
-pkgutil --expand "$APP_COMPONENT" "$APP_COMPONENT_EXPANDED"
-python3 - "$APP_COMPONENT_EXPANDED/PackageInfo" <<'PY'
-import sys
-import xml.etree.ElementTree as ET
-
-root = ET.parse(sys.argv[1]).getroot()
-bundles = root.findall('.//bundle')
-if not bundles:
-    raise SystemExit('EDP component package has no bundle metadata')
-for bundle in bundles:
-    reloc = bundle.attrib.get('relocatable')
-    if reloc not in ('false', '0'):
-        raise SystemExit(f'EDP app is still relocatable in PackageInfo: {reloc!r}')
-print('Verified: EDP app bundle relocation is disabled')
-PY
-rm -rf "$APP_COMPONENT_EXPANDED"
 
 mkdir -p "$MOUNT_POINT"
 hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT_POINT" "$MACFUSE_DMG"
@@ -144,10 +142,6 @@ if [[ -z "$MACFUSE_PRODUCT" ]]; then
   exit 1
 fi
 
-# macFUSE's outer product archive contains component packages. `pkgutil --expand`
-# represents nested packages as directory archives on recent macOS runners; feeding
-# those PKFolderArchive directories directly to productbuild can crash PackageKit.
-# Re-flatten every directory-form component before composing our product.
 MACFUSE_EXPANDED="$WORK/macfuse-expanded"
 pkgutil --expand "$MACFUSE_PRODUCT" "$MACFUSE_EXPANDED"
 COMPONENT_DIR="$WORK/components"
@@ -202,8 +196,6 @@ productbuild \
 
 pkgutil --check-signature "$PKG_OUTPUT" || true
 
-# Ship the combined installer inside a read-only DMG. This gives first-time users
-# one deterministic entry point and keeps the package separate from Downloads/Desktop.
 DMG_STAGE="$WORK/dmg-stage"
 mkdir -p "$DMG_STAGE"
 cp "$PKG_OUTPUT" "$DMG_STAGE/$PKG_NAME"
