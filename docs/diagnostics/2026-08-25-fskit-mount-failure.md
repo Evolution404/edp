@@ -9,7 +9,8 @@ FUSE 挂载(官方 demo 与自有实现均同)在 `activateVolume` 成功返回 
 **`fileSystemExtensionRequiresApproval`**(非旧结论 activatingDeviceFailed)。
 501 与 root 发起结果完全相同;PlugKit 显示 extension 已启用(`+`)。
 官方 GitHub issue #1181 的成功案例运行于 15.7.5 — 高度怀疑 15.7.6/15.7.7 加严了
-FSKit 挂载授权模型。EDP 应用层无法修复。
+FSKit 挂载授权模型。**已在 15.7.9 (24G830) 复验:未修复,失败序列与 15.7.7
+逐行一致(见"macOS 15.7.9 复验"节)。**EDP 应用层无法修复。
 
 附带发现两个独立系统 bug:
 1. `fskitd` 在块设备移除(IOKit notification)路径存在 `dispatch_sync` 死锁崩溃;
@@ -112,6 +113,21 @@ fskitd 侧无任何可见错误日志(消息均 `<private>`);mount(8) 进程仅�
   即 MFMount 客户端本地预检在 root 上下文直接判定 "extension not enabled"。
 - 推论:approval/enabled 判定至少存在于两处(MFMount 客户端预检、fskitd 挂载协商),
   且均不认可,而 GUI(501 Login Items/PlugKit)显示已启用。
+
+## macOS 15.7.9 (24G830) 复验(2026-08-25 06:54–06:56)
+
+系统升级到 15.7.9 后 PlugKit 注册保留(`+`),系统干净。两次 baseline:
+
+1. **第一次(全冷启动)**:虚拟设备激活耗时 40.7s(升级后磁盘子系统冷),
+   advertise/discover 双双 10s 超时(`Broker.Code=1`),60s watchdog 内未出结果,
+   最终以 Code=4 汇总失败。超时为主因,不能单独定论。
+2. **第二次(热路径,日志 `logs/system-159-warm-uid501.log`)**:与 15.7.7 的失败
+   序列逐行一致 —
+   `Activated device(1.6s)→ Discover server ✓ → Channel created ✓ →
+   activateVolume error:0 ✓ → 5ms 后 canStartDeactivateTask → Code=4`,
+   全程 4 秒,无 orphan。
+
+**结论:15.7.9 未修复该授权拒绝;故障点与 15.7.7 完全相同。**
 
 ## 结论
 
