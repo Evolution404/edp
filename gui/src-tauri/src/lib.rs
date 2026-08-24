@@ -1201,6 +1201,11 @@ fn spawn_subscriber(app: AppHandle) {
                     continue;
                 }
             };
+            // The daemon may discover and mount an already-connected device before this
+            // subscriber finishes reconnecting (notably just after enabling the service).
+            // Refresh once on every successful connection so those state transitions are
+            // visible even when their events happened before subscribe was established.
+            schedule_snapshot_refresh(app.clone());
             let app_for_event = app.clone();
             let _ = client.subscribe(move |event| {
                 let _ = app_for_event.emit(RAW_EVENT, event.clone());
