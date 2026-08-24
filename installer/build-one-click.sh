@@ -147,16 +147,42 @@ if needle in s and '<title>' not in s:
 p.write_text(s)
 PY
 
-OUTPUT_NAME="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}-Installer.pkg"
-OUTPUT="$OUTPUT_DIR/$OUTPUT_NAME"
+PKG_NAME="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}-Installer.pkg"
+PKG_OUTPUT="$WORK/$PKG_NAME"
 productbuild \
   --distribution "$DIST" \
   --package-path "$COMPONENT_DIR" \
-  "$OUTPUT"
+  "$PKG_OUTPUT"
 
-pkgutil --check-signature "$OUTPUT" || true
+pkgutil --check-signature "$PKG_OUTPUT" || true
+
+# Ship the PKG inside a read-only DMG. When users run a PKG directly from Desktop,
+# macOS may ask Installer.app for Desktop-folder access; denying that prompt makes
+# installation fail before our package runs. A mounted DMG avoids that unrelated
+# TCC prompt and gives first-time users a deterministic entry point.
+DMG_STAGE="$WORK/dmg-stage"
+mkdir -p "$DMG_STAGE"
+cp "$PKG_OUTPUT" "$DMG_STAGE/$PKG_NAME"
+cat > "$DMG_STAGE/安装说明.txt" <<'README'
+EDP USB Vault 安装
+
+1. 双击 “EDP-USB-Vault-*-Installer.pkg”。
+2. 按 macOS 安装器提示输入管理员密码并完成安装。
+3. 如 macOS 要求批准 macFUSE 系统组件，请按系统提示批准并在要求时重启。
+4. 安装完成后，从“应用程序”打开 EDP USB Vault。
+
+本安装包同时包含 EDP USB Vault、macFUSE 和后台服务。
+README
+
+DMG_NAME="EDP-USB-Vault-${APP_VERSION}-${BUILD_ARCH}-Installer.dmg"
+DMG_OUTPUT="$OUTPUT_DIR/$DMG_NAME"
+hdiutil create -quiet -ov -format UDZO \
+  -volname "EDP USB Vault Installer" \
+  -srcfolder "$DMG_STAGE" \
+  "$DMG_OUTPUT"
+
 (
   cd "$OUTPUT_DIR"
-  shasum -a 256 "$OUTPUT_NAME" > "SHA256SUMS-installer-${BUILD_ARCH}.txt"
+  shasum -a 256 "$DMG_NAME" > "SHA256SUMS-installer-${BUILD_ARCH}.txt"
 )
-echo "Built: $OUTPUT"
+echo "Built: $DMG_OUTPUT"
