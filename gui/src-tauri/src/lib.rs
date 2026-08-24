@@ -675,20 +675,33 @@ fn purge_embedded_data() -> Result<(), UiError> {
     )
 }
 
+fn safe_to_repair_unauthorized_daemon(error: &str, status: &Value) -> bool {
+    error.contains("PERMISSION_DENIED")
+        && status["mounted_sessions"].as_u64() == Some(0)
+}
+
+fn unauthorized_daemon_has_no_sessions(error: &str) -> bool {
+    let status = Rpc::new()
+        .call(edp_proto::method::STATUS, json!({}))
+        .unwrap_or_else(|_| json!({}));
+    safe_to_repair_unauthorized_daemon(error, &status)
+}
+
 fn prepare_daemon_stop(purge_data: bool) -> Result<(), UiError> {
     let mut client = edp_proto::Client::connect(SOCKET_PATH).map_err(|error| {
         UiError::new("DAEMON_OFFLINE", "后台服务未连接").with_detail(error.to_string())
     })?;
-    client
-        .call(
+    match client.call(
             edp_proto::method::DAEMON_SHUTDOWN,
             json!({ "exit": false, "purge_data": purge_data }),
-        )
-        .map(|_| ())
-        .map_err(|error| {
+        ) {
+        Ok(_) => Ok(()),
+        Err(error) if unauthorized_daemon_has_no_sessions(&error.to_string()) => Ok(()),
+        Err(error) => Err(
             UiError::new("SAFE_STOP_FAILED", "加密卷安全卸载失败，服务保持运行")
-                .with_detail(error.to_string())
-        })
+                .with_detail(error.to_string()),
+        ),
+    }
 }
 
 fn prepare_daemon_restart() -> Result<(), UiError> {
@@ -700,15 +713,30 @@ fn prepare_daemon_restart() -> Result<(), UiError> {
     let mut client = edp_proto::Client::connect(SOCKET_PATH).map_err(|error| {
         UiError::new("DAEMON_OFFLINE", "后台服务未连接").with_detail(error.to_string())
     })?;
-    client
-        .call(
+    match client.call(
             edp_proto::method::DAEMON_SHUTDOWN,
             json!({ "exit": true, "purge_data": false }),
-        )
-        .map_err(|error| {
-            UiError::new("SAFE_RESTART_FAILED", "加密卷安全卸载失败，服务保持运行")
-                .with_detail(error.to_string())
-        })?;
+        ) {
+        Ok(_) => {}
+        Err(error) if unauthorized_daemon_has_no_sessions(&error.to_string()) => {
+            service_management::unregister().map_err(|message| {
+                UiError::new("SERVICE_REFRESH_FAILED", "无法更新后台服务注册")
+                    .with_detail(message)
+            })?;
+            std::thread::sleep(Duration::from_millis(300));
+            service_management::register().map_err(|message| {
+                UiError::new("SERVICE_REGISTER_FAILED", "无法启用嵌入式后台服务")
+                    .with_detail(message)
+            })?;
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(
+                UiError::new("SAFE_RESTART_FAILED", "加密卷安全卸载失败，服务保持运行")
+                    .with_detail(error.to_string()),
+            );
+        }
+    }
 
     for _ in 0..100 {
         std::thread::sleep(Duration::from_millis(100));
@@ -1437,5 +1465,22 @@ mod tests {
         );
         assert_eq!(sessions, vec![json!({ "session_id": "current" })]);
         assert!(error.is_none());
+    }
+
+    #[test]
+    fn unauthorized_service_repair_requires_zero_sessions() {
+        let permission_error = "RPC 错误[PERMISSION_DENIED]: 无权限";
+        assert!(safe_to_repair_unauthorized_daemon(
+            permission_error,
+            &json!({ "mounted_sessions": 0 }),
+        ));
+        assert!(!safe_to_repair_unauthorized_daemon(
+            permission_error,
+            &json!({ "mounted_sessions": 1 }),
+        ));
+        assert!(!safe_to_repair_unauthorized_daemon(
+            "RPC 错误[INTERNAL]",
+            &json!({ "mounted_sessions": 0 }),
+        ));
     }
 }
