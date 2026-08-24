@@ -75,7 +75,7 @@ if [[ -n "$DAEMON_BIN" && -f "$DAEMON_BIN" ]]; then
 fi
 
 section "Relevant mount-service strings"
-/usr/bin/cat "$STRINGS_LOG" | /usr/bin/tail -n 250 | tee -a "$REPORT" || true
+/bin/cat "$STRINGS_LOG" | /usr/bin/tail -n 250 | tee -a "$REPORT" || true
 
 section "Build exact issue-1181 minfs"
 if ! /usr/bin/curl -fsSL https://api.github.com/repos/macfuse/macfuse/issues/1181 -o "$ISSUE_JSON"; then
@@ -109,7 +109,7 @@ sudo /usr/sbin/chown "$UID_NOW:$GID_NOW" "$MNT"
 
 whole_disks > "$BEFORE_DISKS"
 section "Whole disks before mount"
-/usr/bin/cat "$BEFORE_DISKS" | tee -a "$REPORT"
+/bin/cat "$BEFORE_DISKS" | tee -a "$REPORT"
 
 sudo -v
 section "Start focused live log"
@@ -134,8 +134,14 @@ section "Start ephemeral-disk watcher"
       [[ -n "$d" ]] || continue
       if ! /usr/bin/grep -qx "$d" "$BEFORE_DISKS"; then
         printf '%s\n' "$d" > "$NEW_DISK_FILE"
-        /usr/sbin/diskutil info "/dev/$d" > "$DISKINFO" 2>&1 || true
-        /usr/sbin/diskutil info -plist "/dev/$d" > "$DISKINFO_PLIST" 2>/dev/null || true
+        /usr/sbin/diskutil info "/dev/$d" > "$DISKINFO" 2>&1 &
+        DI_PID=$!
+        for _di in $(/usr/bin/seq 1 20); do
+          kill -0 "$DI_PID" >/dev/null 2>&1 || break
+          sleep 0.05
+        done
+        if kill -0 "$DI_PID" >/dev/null 2>&1; then kill "$DI_PID" >/dev/null 2>&1 || true; fi
+        wait "$DI_PID" >/dev/null 2>&1 || true
         /usr/sbin/ioreg -a -r -c IOMedia > "$IOREG" 2>/dev/null || true
         /usr/bin/hdiutil info > "$HDIINFO" 2>&1 || true
         exit 0
@@ -154,28 +160,44 @@ log "command=$MINFS_BIN -f -o backend=fskit,uid=$UID_NOW,gid=$GID_NOW $MNT"
 set +e
 "$MINFS_BIN" -f -o "backend=fskit,uid=$UID_NOW,gid=$GID_NOW" "$MNT" > "$MINFS_LOG" 2>&1 &
 MINFS_PID=$!
-for _ in $(/usr/bin/seq 1 80); do
-  if [[ -r "$MNT/small.sh" ]]; then break; fi
-  if ! kill -0 "$MINFS_PID" >/dev/null 2>&1; then break; fi
+log "minfs_pid=$MINFS_PID observation_window_s=4"
+
+MINFS_EXITED_EARLY=0
+for _ in $(/usr/bin/seq 1 40); do
+  if ! kill -0 "$MINFS_PID" >/dev/null 2>&1; then
+    MINFS_EXITED_EARLY=1
+    break
+  fi
   sleep 0.1
 done
-MINFS_PASS=0
-if [[ -r "$MNT/small.sh" ]] && /bin/cat "$MNT/small.sh" >/dev/null 2>&1; then MINFS_PASS=1; fi
+
+MOUNT_SEEN=0
+/sbin/mount | /usr/bin/grep -F " on $MNT " >/dev/null 2>&1 && MOUNT_SEEN=1 || true
+
 if kill -0 "$MINFS_PID" >/dev/null 2>&1; then
   kill "$MINFS_PID" >/dev/null 2>&1 || true
-  wait "$MINFS_PID" >/dev/null 2>&1
-  MINFS_RC=$?
-else
-  wait "$MINFS_PID" >/dev/null 2>&1
-  MINFS_RC=$?
+  for _ in $(/usr/bin/seq 1 20); do
+    kill -0 "$MINFS_PID" >/dev/null 2>&1 || break
+    sleep 0.05
+  done
+  if kill -0 "$MINFS_PID" >/dev/null 2>&1; then kill -9 "$MINFS_PID" >/dev/null 2>&1 || true; fi
 fi
-set -e
+wait "$MINFS_PID" >/dev/null 2>&1
+MINFS_RC=$?
 MINFS_PID=""
+
+for _ in $(/usr/bin/seq 1 60); do
+  if ! kill -0 "$WATCH_PID" >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+if kill -0 "$WATCH_PID" >/dev/null 2>&1; then kill "$WATCH_PID" >/dev/null 2>&1 || true; fi
 wait "$WATCH_PID" >/dev/null 2>&1 || true
 WATCH_PID=""
+
 sleep 0.4
 if [[ -n "$LOG_PID" ]] && kill -0 "$LOG_PID" >/dev/null 2>&1; then sudo /bin/kill "$LOG_PID" >/dev/null 2>&1 || true; fi
 LOG_PID=""
+set -e
 
 NEW_DISK="$(/usr/bin/head -n 1 "$NEW_DISK_FILE" 2>/dev/null || true)"
 DISKINFO_CAPTURED=0
@@ -183,7 +205,7 @@ DISKINFO_CAPTURED=0
 
 section "Ephemeral disk metadata"
 log "new_disk=${NEW_DISK:-not-captured}"
-if [[ -s "$DISKINFO" ]]; then /usr/bin/cat "$DISKINFO" | tee -a "$REPORT"; fi
+if [[ -s "$DISKINFO" ]]; then /bin/cat "$DISKINFO" | tee -a "$REPORT"; fi
 
 section "macFUSE / FSKit critical lifecycle"
 /usr/bin/grep -i -E 'Channel created|Connection to file system extension established|activateVolume|Activate virtual device|Activated device|initializ|Deactivating virtual device|Detach virtual device|Failed to mount volume|MountError|DiskImage.Error|mount\(8\)|Failed to call mount|Failed to activate' "$LIVE_LOG" | /usr/bin/tail -n 350 | tee -a "$REPORT" || true
@@ -194,7 +216,7 @@ if [[ -n "$NEW_DISK" ]]; then
 fi
 
 section "minfs log"
-/usr/bin/cat "$MINFS_LOG" | tee -a "$REPORT" || true
+/bin/cat "$MINFS_LOG" | tee -a "$REPORT" || true
 
 CHANNEL_CREATED=0
 EXT_ESTABLISHED=0
@@ -223,21 +245,21 @@ fi
 /usr/bin/grep -E -q 'STATFS /|GETATTR /' "$MINFS_LOG" && ROOT_FUSE_REQUESTS=1 || true
 
 section "SUMMARY"
-log "minfs_pass=$MINFS_PASS minfs_rc=$MINFS_RC"
+log "mount_seen=$MOUNT_SEEN minfs_exited_early=$MINFS_EXITED_EARLY minfs_rc=$MINFS_RC"
 log "new_disk=${NEW_DISK:-none} diskinfo_captured=$DISKINFO_CAPTURED"
 log "channel_created=$CHANNEL_CREATED extension_established=$EXT_ESTABLISHED activate_ok=$ACTIVATE_OK"
 log "virtual_device_activated=$VIRTUAL_ACTIVATED da_claimed=$DA_CLAIMED fskit_additions=$FSKIT_ADDITIONS root_fuse_requests=$ROOT_FUSE_REQUESTS"
 log "virtual_device_deactivated=$VIRTUAL_DEACTIVATED mount_error4=$MOUNT_ERROR4 diskimage_error=$DISKIMAGE_ERROR mount8_error=$MOUNT8_ERROR"
 
-if [[ "$MINFS_PASS" -eq 1 ]]; then
-  log "RESULT=MFMount_LOCAL_BASELINE_PASS"
-  log "Interpretation: the local FSKit mount path succeeded during this capture. Compare this run with the prior failing state before changing EDP."
+if [[ "$MOUNT_SEEN" -eq 1 ]]; then
+  log "RESULT=MFMOUNT_LOCAL_MOUNT_OBSERVED"
+  log "Interpretation: the local FSKit mount appeared in the system mount table during the observation window. No filesystem reads were issued by this diagnostic."
 elif [[ "$CHANNEL_CREATED" -eq 1 && "$EXT_ESTABLISHED" -eq 1 && "$ACTIVATE_OK" -eq 1 && "$VIRTUAL_ACTIVATED" -eq 1 && "$ROOT_FUSE_REQUESTS" -eq 1 && "$MOUNT_ERROR4" -eq 1 ]]; then
   log "RESULT=MFMOUNT_LOCAL_FINALIZATION_FAILURE"
-  log "Interpretation: channel setup, FSKit activateVolume, virtual-device activation and initial FUSE requests all succeeded. MFMount then failed while finalizing the local virtual volume and rolled it back. The failure is later than channel establishment and earlier than a reported mount(8) failure."
+  log "Interpretation: channel setup, FSKit activateVolume, virtual-device activation and initial FUSE requests all succeeded. MFMount then failed while finalizing the local virtual volume and rolled it back. The diagnostic never accessed the failing mountpoint, so this result is not caused by a blocking stat/read from the test script."
 elif [[ "$MOUNT_ERROR4" -eq 1 && "$VIRTUAL_ACTIVATED" -eq 1 ]]; then
   log "RESULT=MFMOUNT_LOCAL_VIRTUAL_VOLUME_INIT_FAILURE"
-  log "Interpretation: the virtual device was created and activated, but MFMount returned activatingDeviceFailed during the local virtual-volume initialization/finalization path."
+  log "Interpretation: the virtual device was created and activated, but MFMount returned activatingDeviceFailed during local virtual-volume initialization/finalization."
 else
   log "RESULT=MFMOUNT_LOCAL_FAILURE_OTHER"
   log "Interpretation: inspect the critical lifecycle and ephemeral disk metadata above for the earliest failed operation."
