@@ -85,6 +85,9 @@ jobs:
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      - name: Build bundled usbcore for Tauri checks
+        run: cargo build -p usbcore --release --locked
+
       - name: Test Tauri backend
         run: cargo test --manifest-path gui/src-tauri/Cargo.toml --locked
 
