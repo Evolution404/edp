@@ -15,7 +15,7 @@ use tracing::{info, warn};
 
 use edp_core::discovery::{discover_volume, filesystem_magic};
 use edp_core::volume::FileRawIo;
-use edp_proto::{serve, EventBroadcaster, Handler};
+use edp_proto::{serve_with_broadcaster, EventBroadcaster, Handler};
 
 use crate::keystore::Keystore;
 use crate::session;
@@ -164,11 +164,12 @@ pub fn run_with(
         cfg.allowed_uids.clone()
     };
     let methods = build_methods()?;
-    let handle = serve(
+    let handle = serve_with_broadcaster(
         &cfg.socket_path,
         methods,
         allowed_uids,
         state.clone() as Arc<dyn std::any::Any + Send + Sync>,
+        broadcaster,
     )
     .with_context(|| format!("监听 {} 失败", cfg.socket_path))?;
 

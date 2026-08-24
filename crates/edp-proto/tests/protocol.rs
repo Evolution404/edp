@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use edp_proto::{serve, types, Client};
+use edp_proto::{serve, serve_with_broadcaster, types, Client, EventBroadcaster};
 use serde_json::json;
 
 struct StubState {
@@ -11,6 +11,12 @@ struct StubState {
 }
 
 fn start_server() -> (String, edp_proto::ServerHandle) {
+    start_server_with_broadcaster(None)
+}
+
+fn start_server_with_broadcaster(
+    broadcaster: Option<EventBroadcaster>,
+) -> (String, edp_proto::ServerHandle) {
     use std::sync::atomic::{AtomicU32, Ordering};
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -51,7 +57,12 @@ fn start_server() -> (String, edp_proto::ServerHandle) {
     ]
     .into_iter()
     .collect();
-    let handle = serve(&path, methods, vec![501], state).unwrap();
+    let handle = match broadcaster {
+        Some(broadcaster) => {
+            serve_with_broadcaster(&path, methods, vec![501], state, broadcaster).unwrap()
+        }
+        None => serve(&path, methods, vec![501], state).unwrap(),
+    };
     (path, handle)
 }
 
@@ -107,8 +118,8 @@ fn event_broadcast() {
 
 #[test]
 fn subscribe_receives_events() {
-    let (path, mut handle) = start_server();
-    let broadcaster = handle.broadcaster.clone();
+    let broadcaster = EventBroadcaster::new();
+    let (path, mut handle) = start_server_with_broadcaster(Some(broadcaster.clone()));
     let mut c = Client::connect(&path).unwrap();
     let (tx, rx) = std::sync::mpsc::channel::<edp_proto::types::Event>();
     std::thread::spawn(move || {

@@ -110,6 +110,26 @@ pub fn serve(
     allowed_uids: Vec<u32>,
     state: Arc<dyn std::any::Any + Send + Sync>,
 ) -> std::io::Result<ServerHandle> {
+    serve_with_broadcaster(
+        socket_path,
+        methods,
+        allowed_uids,
+        state,
+        EventBroadcaster::new(),
+    )
+}
+
+/// Start a server using the caller's event broadcaster.
+///
+/// Daemons that emit events from their shared state must use this entry point so
+/// handlers and subscribed clients are connected to the same event bus.
+pub fn serve_with_broadcaster(
+    socket_path: &str,
+    methods: HashMap<String, Handler>,
+    allowed_uids: Vec<u32>,
+    state: Arc<dyn std::any::Any + Send + Sync>,
+    broadcaster: EventBroadcaster,
+) -> std::io::Result<ServerHandle> {
     let _ = std::fs::remove_file(socket_path);
     let listener = UnixListener::bind(socket_path)?;
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
@@ -129,7 +149,6 @@ pub fn serve(
         }
     }
 
-    let broadcaster = EventBroadcaster::new();
     let broadcaster_loop = broadcaster.clone();
     let join = thread::spawn(move || {
         for conn in listener.incoming() {

@@ -14,5 +14,5 @@ pub mod server;
 pub mod types;
 
 pub use client::{Client, ClientError};
-pub use server::{serve, Context, EventBroadcaster, Handler, ServerHandle};
+pub use server::{serve, serve_with_broadcaster, Context, EventBroadcaster, Handler, ServerHandle};
 pub use types::*;
