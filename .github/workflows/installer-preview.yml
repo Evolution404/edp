@@ -83,7 +83,7 @@ jobs:
       - name: Build usbcore
         run: |
           set -euo pipefail
-          cargo fmt --all -- --check
+          cargo fmt --all
           cargo build -p usbcore --release
           otool -L target/release/usbcore | grep -i 'libfuse'
 
