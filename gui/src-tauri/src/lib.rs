@@ -147,16 +147,18 @@ impl UiStateCoordinator {
                         (previous.devices.clone(), previous.auto_mount_mode.clone())
                     }
                 };
-                let sessions = rpc
-                    .call(edp_proto::method::SESSIONS, json!({}))
-                    .ok()
-                    .and_then(|value| value["sessions"].as_array().cloned())
-                    .unwrap_or_default();
-                let credentials = rpc
-                    .call(edp_proto::method::KEYS_LS, json!({}))
-                    .ok()
-                    .and_then(|value| value.as_array().cloned())
-                    .unwrap_or_else(|| previous.credentials.clone());
+                let sessions = snapshot_array(
+                    rpc.call(edp_proto::method::SESSIONS, json!({})),
+                    Some("sessions"),
+                    &previous.sessions,
+                    &mut error,
+                );
+                let credentials = snapshot_array(
+                    rpc.call(edp_proto::method::KEYS_LS, json!({})),
+                    None,
+                    &previous.credentials,
+                    &mut error,
+                );
                 (Some(status), mode, devices, sessions, credentials, error)
             }
             Err(message) => (
@@ -183,6 +185,33 @@ impl UiStateCoordinator {
         };
         *self.snapshot.lock().unwrap() = snapshot.clone();
         snapshot
+    }
+}
+
+fn snapshot_array(
+    result: Result<Value, String>,
+    field: Option<&str>,
+    previous: &[Value],
+    error: &mut Option<String>,
+) -> Vec<Value> {
+    match result {
+        Ok(value) => field
+            .map(|field| &value[field])
+            .unwrap_or(&value)
+            .as_array()
+            .cloned()
+            .unwrap_or_default(),
+        Err(message) => {
+            match error {
+                Some(existing) if existing != &message => {
+                    existing.push('；');
+                    existing.push_str(&message);
+                }
+                None => *error = Some(message),
+                _ => {}
+            }
+            previous.to_vec()
+        }
     }
 }
 
@@ -1380,5 +1409,33 @@ mod tests {
         assert_eq!(args[2], OsStr::new("--"));
         assert_eq!(args[3], OsStr::new(path));
         assert!(!FINDER_WINDOW_SCRIPT.contains(path));
+    }
+
+    #[test]
+    fn snapshot_rpc_failure_preserves_sessions_and_surfaces_error() {
+        let previous = vec![json!({ "session_id": "mounted-before-reboot" })];
+        let mut error = None;
+        let sessions = snapshot_array(
+            Err("RPC 错误[PERMISSION_DENIED]".to_string()),
+            Some("sessions"),
+            &previous,
+            &mut error,
+        );
+        assert_eq!(sessions, previous);
+        assert_eq!(error.as_deref(), Some("RPC 错误[PERMISSION_DENIED]"));
+    }
+
+    #[test]
+    fn successful_snapshot_replaces_stale_sessions() {
+        let previous = vec![json!({ "session_id": "old" })];
+        let mut error = None;
+        let sessions = snapshot_array(
+            Ok(json!({ "sessions": [{ "session_id": "current" }] })),
+            Some("sessions"),
+            &previous,
+            &mut error,
+        );
+        assert_eq!(sessions, vec![json!({ "session_id": "current" })]);
+        assert!(error.is_none());
     }
 }

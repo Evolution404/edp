@@ -6,6 +6,7 @@
 //! - 每连接一线程；订阅后另起事件推送线程（共用写锁，防响应/事件交错）
 
 use std::collections::HashMap;
+use std::ffi::{CStr, CString};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -198,8 +199,140 @@ fn peer_uid(stream: &UnixStream) -> Option<u32> {
     }
 }
 
+fn account_buffer_size() -> usize {
+    let configured = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    if configured > 0 {
+        configured as usize
+    } else {
+        16 * 1024
+    }
+}
+
+fn group_gid(name: &CStr) -> Option<libc::gid_t> {
+    let mut group: libc::group = unsafe { std::mem::zeroed() };
+    let mut result = std::ptr::null_mut();
+    let mut buffer = vec![0 as libc::c_char; account_buffer_size()];
+    let status = unsafe {
+        libc::getgrnam_r(
+            name.as_ptr(),
+            &mut group,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    (status == 0 && !result.is_null()).then_some(group.gr_gid)
+}
+
+fn account_name_and_primary_group(uid: u32) -> Option<(CString, libc::gid_t)> {
+    let mut account: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result = std::ptr::null_mut();
+    let mut buffer = vec![0 as libc::c_char; account_buffer_size()];
+    let status = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut account,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if status != 0 || result.is_null() || account.pw_name.is_null() {
+        return None;
+    }
+    let name = unsafe { CStr::from_ptr(account.pw_name) }.to_owned();
+    Some((name, account.pw_gid))
+}
+
+fn account_groups(uid: u32) -> Option<Vec<libc::gid_t>> {
+    let (name, primary_group) = account_name_and_primary_group(uid)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let primary_group = libc::c_int::try_from(primary_group).ok()?;
+        let mut count = 16i32;
+        let mut groups = vec![0i32; count as usize];
+        let mut status = unsafe {
+            libc::getgrouplist(
+                name.as_ptr(),
+                primary_group,
+                groups.as_mut_ptr(),
+                &mut count,
+            )
+        };
+        if status < 0 && count > 0 {
+            groups.resize(count as usize, 0);
+            status = unsafe {
+                libc::getgrouplist(
+                    name.as_ptr(),
+                    primary_group,
+                    groups.as_mut_ptr(),
+                    &mut count,
+                )
+            };
+        }
+        if status < 0 || count < 0 {
+            return None;
+        }
+        groups.truncate(count as usize);
+        Some(
+            groups
+                .into_iter()
+                .filter_map(|group| libc::gid_t::try_from(group).ok())
+                .collect(),
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut count = 16i32;
+        let mut groups = vec![0 as libc::gid_t; count as usize];
+        let mut status = unsafe {
+            libc::getgrouplist(
+                name.as_ptr(),
+                primary_group,
+                groups.as_mut_ptr(),
+                &mut count,
+            )
+        };
+        if status < 0 && count > 0 {
+            groups.resize(count as usize, 0);
+            status = unsafe {
+                libc::getgrouplist(
+                    name.as_ptr(),
+                    primary_group,
+                    groups.as_mut_ptr(),
+                    &mut count,
+                )
+            };
+        }
+        if status < 0 || count < 0 {
+            return None;
+        }
+        groups.truncate(count as usize);
+        Some(groups)
+    }
+}
+
+fn allowed_by_policy(
+    uid: u32,
+    allowed: &[u32],
+    groups: &[libc::gid_t],
+    admin_gid: Option<libc::gid_t>,
+) -> bool {
+    uid == 0
+        || allowed.contains(&uid)
+        || admin_gid.is_some_and(|admin_gid| groups.contains(&admin_gid))
+}
+
 fn is_allowed(uid: u32, allowed: &[u32]) -> bool {
-    uid == 0 || allowed.contains(&uid)
+    if uid == 0 || allowed.contains(&uid) {
+        return true;
+    }
+    let admin = CString::new("admin").expect("static group name");
+    let admin_gid = group_gid(&admin);
+    let groups = account_groups(uid).unwrap_or_default();
+    allowed_by_policy(uid, allowed, &groups, admin_gid)
 }
 
 fn handle_conn(
@@ -263,7 +396,7 @@ fn handle_conn(
                 result: None,
                 error: Some(RpcError::new(
                     crate::types::codes::PERMISSION_DENIED,
-                    "无权限：连接者不在允许列表（需 root 或 daemon 授权用户）",
+                    "无权限：连接者须为 root、admin 组成员或 daemon 授权用户",
                 )),
             }
         } else if let Some(h) = methods.get(&req.method) {
@@ -321,4 +454,22 @@ fn handle_conn(
         broadcaster.unregister(id);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::*;
+
+    #[test]
+    fn root_explicit_uid_and_admin_group_are_allowed() {
+        assert!(allowed_by_policy(0, &[], &[], Some(80)));
+        assert!(allowed_by_policy(501, &[501], &[], Some(80)));
+        assert!(allowed_by_policy(501, &[], &[20, 80], Some(80)));
+    }
+
+    #[test]
+    fn unrelated_account_is_denied() {
+        assert!(!allowed_by_policy(502, &[501], &[20], Some(80)));
+        assert!(!allowed_by_policy(502, &[], &[20], None));
+    }
 }
