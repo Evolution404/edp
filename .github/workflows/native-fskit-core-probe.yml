@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          xcrun swiftc \
+          xcrun swiftc -O \
             native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
             native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift \
             -o "${RUNNER_TEMP}/validate-aligned-read" &
