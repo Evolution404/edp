@@ -30,6 +30,19 @@ private final class MemoryRawReadable: EDPRawReadable {
 
 @main
 struct ValidateEDPNativeCore {
+    private struct DeterministicRNG {
+        private var state: UInt64
+
+        init(seed: UInt64) {
+            state = seed
+        }
+
+        mutating func next() -> UInt64 {
+            state = state &* 2_862_933_555_777_941_757 &+ 3_037_000_493
+            return state
+        }
+    }
+
     static func main() throws {
         guard CommandLine.arguments.count == 2 else {
             throw ValidationFailure.message("usage: ValidateEDPNativeCore <fixtures/golden/disks.json>")
@@ -47,6 +60,7 @@ struct ValidateEDPNativeCore {
 
         var lba12Count = 0
         var lba11Count = 0
+        var randomizedRealKeyDisks = 0
         for disk in disks {
             guard let name = disk["name"] as? String,
                   let deviceID = disk["device_id"] as? String,
@@ -78,6 +92,17 @@ struct ValidateEDPNativeCore {
                         try require(volume.fileKey == hexBytes(expectedKeyHex), "\(name): file key mismatch")
                     }
                 }
+
+                if (name == "disk4_real_lexar" || name == "disk5_real_sandisk"),
+                   let realKey = parsed.compactMap({ $0.fileKey }).first {
+                    try validateRandomizedEncryptedReads(
+                        key: realKey,
+                        label: name,
+                        seed: deterministicSeed(for: realKey)
+                    )
+                    randomizedRealKeyDisks += 1
+                }
+
                 lba12Count += 1
                 print("NATIVE_LBA12_GOLDEN=OK:\(name)")
             }
@@ -102,6 +127,8 @@ struct ValidateEDPNativeCore {
 
         try require(lba12Count >= 2, "expected at least two real LBA12 golden disks")
         try require(lba11Count >= 1, "expected at least one real LBA11 golden disk")
+        try require(randomizedRealKeyDisks >= 2, "expected randomized reads for both captured real-disk keys")
+        print("NATIVE_REAL_KEY_RANDOM_READS=OK:disks=\(randomizedRealKeyDisks):cases=\(randomizedRealKeyDisks * 512)")
         print("RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK")
         print("RESULT=SWIFT_NATIVE_LBA11_LBA12_OK")
         print("RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK")
@@ -220,6 +247,58 @@ struct ValidateEDPNativeCore {
         print("NATIVE_ENCRYPTED_READER_BOUNDARIES=OK")
     }
 
+    private static func validateRandomizedEncryptedReads(
+        key: [UInt8],
+        label: String,
+        seed: UInt64
+    ) throws {
+        let plaintext = (0..<8192).map { index in
+            UInt8(truncatingIfNeeded: (index &* 73) ^ (index >> 3) ^ 0xa5)
+        }
+        let cipher = try EDPSM4(key: key)
+        let encrypted = try cipher.encryptAligned(plaintext)
+        let startSector: UInt64 = 3
+        var backing = Data(count: Int(startSector * 512))
+        backing.append(contentsOf: encrypted)
+
+        let descriptor = EDPVolumeDescriptor(
+            partitionType: 4,
+            startSector: startSector,
+            sizeBytes: UInt64(plaintext.count),
+            algorithm: 2,
+            fileKey: key,
+            passwordCRC: 0,
+            keyCRC: EDPCrypto.crc32Bare(key)
+        )
+        let reader = try EDPEncryptedPartitionReader(raw: MemoryRawReadable(backing), descriptor: descriptor)
+
+        let boundaryOffsets = [0, 1, 15, 16, 17, 511, 512, 513, 4095, 4096, 4097, 8191, 8192]
+        let boundaryLengths = [0, 1, 2, 15, 16, 17, 31, 32, 63, 64, 255, 512]
+        for offset in boundaryOffsets {
+            for length in boundaryLengths where offset + length <= plaintext.count {
+                let actual = try reader.readExact(at: UInt64(offset), length: length)
+                let expected = Data(plaintext[offset..<(offset + length)])
+                try require(actual == expected, "\(label): boundary randomized reader mismatch offset=\(offset) length=\(length)")
+            }
+        }
+
+        var rng = DeterministicRNG(seed: seed)
+        for caseIndex in 0..<512 {
+            let offset = Int(rng.next() % UInt64(plaintext.count + 1))
+            let remaining = plaintext.count - offset
+            let maximumLength = min(remaining, 1024)
+            let length = maximumLength == 0 ? 0 : Int(rng.next() % UInt64(maximumLength + 1))
+            let actual = try reader.readExact(at: UInt64(offset), length: length)
+            let expected = Data(plaintext[offset..<(offset + length)])
+            try require(
+                actual == expected,
+                "\(label): randomized reader mismatch case=\(caseIndex) offset=\(offset) length=\(length)"
+            )
+        }
+
+        print("NATIVE_REAL_KEY_RANDOM_READS=OK:\(label):cases=512")
+    }
+
     private static func validateMetadataErrorPaths() throws {
         let cylinderBytes: UInt64 = 255 * 63 * 512
         try require(EDPVolumeMetadata.chsCapacity(0) == 0, "zero CHS capacity mismatch")
@@ -267,6 +346,15 @@ struct ValidateEDPNativeCore {
         }
 
         print("NATIVE_METADATA_NEGATIVE_PATHS=OK")
+    }
+
+    private static func deterministicSeed(for key: [UInt8]) -> UInt64 {
+        var seed: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in key {
+            seed ^= UInt64(byte)
+            seed = seed &* 0x0000_0100_0000_01b3
+        }
+        return seed
     }
 
     private static func expectThrows(_ message: String, _ body: () throws -> Void) throws {
