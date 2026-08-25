@@ -2,7 +2,7 @@ name: Native Swift Fast Checks
 
 on:
   push:
-    branches: ["feat/macos26-native-fskit"]
+    branches: ["feat/macos26-native-fskit", "feat/macos26-fskit-*"]
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
@@ -13,6 +13,8 @@ on:
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
       - ".github/workflows/native-fskit-core-probe.yml"
+  pull_request:
+    branches: ["feat/macos26-native-fskit"]
   workflow_dispatch:
 
 permissions:
