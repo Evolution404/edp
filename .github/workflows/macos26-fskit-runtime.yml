@@ -1,0 +1,140 @@
+name: macOS 26 FSKit Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - install/one-click-installer
+    paths:
+      - ".github/workflows/macos26-fskit-runtime.yml"
+      - "scripts/test-fskit-smoke.sh"
+
+permissions:
+  contents: read
+
+env:
+  MACFUSE_VERSION: "5.3.3"
+
+jobs:
+  fskit-runtime:
+    name: macOS 26 / macFUSE 5.3.3 / generic FSKit
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Record runner baseline
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -a
+          uname -m
+          xcodebuild -version
+          id
+          printf 'runner.temp=%s\n' "${RUNNER_TEMP}"
+          printf 'runner.arch=%s\n' "${RUNNER_ARCH}"
+
+      - name: Install macFUSE 5.3.3
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse-${MACFUSE_VERSION}.dmg"
+          VOL="${RUNNER_TEMP}/macfuse-volume"
+          curl -fsSL \
+            "https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg" \
+            -o "${DMG}"
+          mkdir -p "${VOL}"
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "${VOL}" "${DMG}"
+          PKG="$(find "${VOL}" -maxdepth 2 -name '*.pkg' -print -quit)"
+          test -n "${PKG}"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach -quiet "${VOL}"
+
+          pkgutil --pkg-info io.macfuse.pkg.Core || true
+          pkg-config --modversion fuse
+
+      - name: Inspect macOS 26 generic FSKit module
+        run: |
+          set -euo pipefail
+          APP="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app"
+          GENERIC="${APP}/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
+          LOCAL="${APP}/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
+
+          test -d "${GENERIC}"
+          echo "generic_appex=${GENERIC}"
+          echo "local_appex=${LOCAL}"
+
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${GENERIC}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${GENERIC}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${GENERIC}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportsGenericURLResources' "${GENERIC}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportedSchemes' "${GENERIC}/Contents/Info.plist"
+
+          echo '--- generic PluginKit record ---'
+          /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse || true
+          echo '--- local PluginKit record ---'
+          /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse-local || true
+
+          echo '--- request PluginKit use state ---'
+          /usr/bin/pluginkit -e use -i io.macfuse.app.fsmodule.macfuse || true
+          /usr/bin/pluginkit -e use -i io.macfuse.app.fsmodule.macfuse-local || true
+          /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse || true
+
+          echo '--- FSKit per-user settings ---'
+          SETTINGS="$HOME/Library/Group Containers/group.com.apple.fskit.settings"
+          find "${SETTINGS}" -maxdepth 2 -type f -print 2>/dev/null || true
+          if [[ -f "${SETTINGS}/enabledModules.plist" ]]; then
+            plutil -p "${SETTINGS}/enabledModules.plist" || true
+          fi
+
+      - name: Run real FSKit mount smoke test
+        id: smoke
+        shell: bash
+        run: |
+          set +e
+          bash scripts/test-fskit-smoke.sh
+          RC=$?
+          echo "rc=${RC}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Verify macOS 26 used generic macfuse URL mount
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT="${TMPDIR:-/tmp}/edp-fskit-smoke-report.txt"
+          test -f "${REPORT}"
+          cat "${REPORT}"
+
+          if [[ "${{ steps.smoke.outputs.rc }}" != "0" ]]; then
+            echo "FSKit smoke test failed with rc=${{ steps.smoke.outputs.rc }}" >&2
+            exit 1
+          fi
+
+          if ! grep -E 'macfuse://[^ ]+ on .*\(macfuse,.*fskit' "${REPORT}"; then
+            echo "Mount succeeded, but macOS 26 generic macfuse:// FSKit source was not observed." >&2
+            exit 1
+          fi
+
+          echo "RESULT=MACOS26_GENERIC_FSKIT_PASS"
+
+      - name: Dump FSKit diagnostics on failure
+        if: failure()
+        run: |
+          /usr/bin/log show \
+            --debug --info \
+            --predicate '(subsystem == "com.apple.FSKit") OR (subsystem == "com.apple.LiveFS") OR (subsystem == "io.macfuse") OR (process == "fskitd") OR (process == "fskit_agent")' \
+            --last 10m | tail -n 1000 || true
+
+          /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse || true
+          /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse-local || true
+
+      - name: Upload FSKit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos26-fskit-runtime-report
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/edp-fskit-smoke-report.txt
+            ${{ runner.temp }}/edp-fskit-smoke/server.log
