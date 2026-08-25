@@ -87,6 +87,7 @@ jobs:
           "${RUNNER_TEMP}/validate-aligned-read" \
             | tee "${RUNNER_TEMP}/aligned-read.txt"
           grep -F 'ALIGNED_READ_SEGMENTED_PROGRESS=OK' "${RUNNER_TEMP}/aligned-read.txt"
+          grep -F 'ALIGNED_READ_SEGMENTED_PROPERTIES=OK:cases=512' "${RUNNER_TEMP}/aligned-read.txt"
           grep -F 'ALIGNED_READ_INVALID_RESULTS=OK' "${RUNNER_TEMP}/aligned-read.txt"
           grep -F 'ALIGNED_READ_OFFSET_OVERFLOW=OK' "${RUNNER_TEMP}/aligned-read.txt"
           grep -F 'RESULT=ALIGNED_READ_LOOP_OK' "${RUNNER_TEMP}/aligned-read.txt"
