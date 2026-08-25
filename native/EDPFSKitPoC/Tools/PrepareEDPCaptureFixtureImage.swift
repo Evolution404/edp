@@ -70,6 +70,9 @@ private enum PrepareEDPCaptureFixtureImage {
         guard descriptor.algorithm == 2 else {
             throw PreparationError.invalid("capture-image preparation currently requires SM4 partition algorithm 2")
         }
+        guard let fileKey = descriptor.fileKey else {
+            throw PreparationError.invalid("selected encrypted partition has no derived file key")
+        }
         guard captureBytes <= descriptor.sizeBytes else {
             throw PreparationError.invalid("capture length exceeds selected partition")
         }
@@ -85,7 +88,7 @@ private enum PrepareEDPCaptureFixtureImage {
             plaintext.replaceSubrange(3..<11, with: Array("EXFAT   ".utf8))
         }
 
-        let ciphertext = try EDPSM4(key: descriptor.fileKey).encryptAligned(plaintext)
+        let ciphertext = try EDPSM4(key: fileKey).encryptAligned(plaintext)
 
         let manager = FileManager.default
         for url in [imageURL, expectedPlainURL, expectedCipherURL] {
