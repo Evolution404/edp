@@ -7,6 +7,7 @@ on:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
       - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
+      - "native/EDPFSKitPoC/Tools/PrepareEDPCaptureFixtureImage.swift"
       - "native/EDPFSKitPoC/Tools/build-capture-tool.sh"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
@@ -16,6 +17,8 @@ on:
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
+      - "fixtures/real_disks/**/LBA11.bin"
+      - "fixtures/real_disks/**/LBA12.bin"
       - ".github/workflows/native-fskit-core-probe.yml"
   pull_request:
     branches: ["feat/macos26-native-fskit"]
@@ -23,6 +26,7 @@ on:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
       - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
+      - "native/EDPFSKitPoC/Tools/PrepareEDPCaptureFixtureImage.swift"
       - "native/EDPFSKitPoC/Tools/build-capture-tool.sh"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
@@ -32,6 +36,8 @@ on:
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
+      - "fixtures/real_disks/**/LBA11.bin"
+      - "fixtures/real_disks/**/LBA12.bin"
       - ".github/workflows/native-fskit-core-probe.yml"
   workflow_dispatch:
 
@@ -147,6 +153,14 @@ jobs:
             "${RUNNER_TEMP}/capture-edp-fixture-compile-check" \
             >"${RUNNER_TEMP}/capture-build.txt" &
           capture_pid=$!
+          xcrun swiftc -parse-as-library \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Tools/PrepareEDPCaptureFixtureImage.swift \
+            -o "${RUNNER_TEMP}/prepare-edp-capture-image" &
+          prepare_capture_pid=$!
 
           wait "${extension_pid}"
           echo 'RESULT=FSKIT_READ_ONLY_VOLUME_CONTRACT_TYPECHECKED'
@@ -157,4 +171,63 @@ jobs:
           grep -F 'EDP_CAPTURE_TOOL_TARGET=arm64-apple-macosx15.0' "${RUNNER_TEMP}/capture-build.txt"
           grep -F 'RESULT=EDP_CAPTURE_TOOL_BUILT' "${RUNNER_TEMP}/capture-build.txt"
           echo 'RESULT=EDP_CAPTURE_TOOL_COMPILED_FOR_MACOS15'
+          wait "${prepare_capture_pid}"
+          echo 'RESULT=EDP_CAPTURE_TEST_IMAGE_TOOL_COMPILED'
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
+
+      - name: End-to-end capture tool contract
+        run: |
+          set -euo pipefail
+          IMAGE="${RUNNER_TEMP}/edp-capture-test.img"
+          EXPECTED_PLAIN="${RUNNER_TEMP}/edp-capture-expected.plain"
+          EXPECTED_CIPHER="${RUNNER_TEMP}/edp-capture-expected.cipher"
+          OUTPUT="${RUNNER_TEMP}/edp-capture-output"
+          mkdir -p "${OUTPUT}"
+
+          "${RUNNER_TEMP}/prepare-edp-capture-image" \
+            fixtures/real_disks/disk4/LBA11.bin \
+            fixtures/real_disks/disk4/LBA12.bin \
+            21c4 \
+            0cd1 \
+            124736503808 \
+            0000aaaa \
+            2 \
+            65536 \
+            "${IMAGE}" \
+            "${EXPECTED_PLAIN}" \
+            "${EXPECTED_CIPHER}" \
+            | tee "${RUNNER_TEMP}/capture-prepare.txt"
+          grep -F 'RESULT=EDP_CAPTURE_TEST_IMAGE_PREPARED' "${RUNNER_TEMP}/capture-prepare.txt"
+
+          EDP_PASSWORD=0000aaaa \
+            "${RUNNER_TEMP}/capture-edp-fixture-compile-check" \
+            "${IMAGE}" \
+            21c4 \
+            0cd1 \
+            124736503808 \
+            "${OUTPUT}" \
+            2 \
+            65536 \
+            | tee "${RUNNER_TEMP}/capture-e2e.txt"
+
+          grep -F 'CAPTURE_SECRETS_WRITTEN=false' "${RUNNER_TEMP}/capture-e2e.txt"
+          grep -F 'RESULT=EDP_REAL_DATA_FIXTURE_CAPTURED' "${RUNNER_TEMP}/capture-e2e.txt"
+          cmp fixtures/real_disks/disk4/LBA11.bin "${OUTPUT}/LBA11.bin"
+          cmp fixtures/real_disks/disk4/LBA12.bin "${OUTPUT}/LBA12.bin"
+          cmp "${EXPECTED_CIPHER}" "${OUTPUT}/data-head.cipher.bin"
+          cmp "${EXPECTED_PLAIN}" "${OUTPUT}/data-head.plain.bin"
+
+          python3 - "${OUTPUT}/manifest.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              manifest = json.load(handle)
+          assert manifest["containsFileKey"] is False
+          assert manifest["containsPassword"] is False
+          assert manifest["partitionType"] == 2
+          assert manifest["captureLengthBytes"] == 65536
+          print("CAPTURE_MANIFEST_SECRETS=false")
+          PY
+
+          echo 'RESULT=EDP_CAPTURE_TOOL_E2E_OK'
