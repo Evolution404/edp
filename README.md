@@ -1,72 +1,129 @@
-# EDP USB Vault — macOS 26 Native FSKit
+# EDP USB Vault — macOS 26
 
-本分支 `feat/macos26-native-fskit` 只维护 **macOS 26+ 原生实现**。
+本分支 `feat/macos26-native-fskit` 只维护 **macOS 26+** 方案。
 
-目标：Swift/SwiftUI + Apple FSKit，最终做到原生 App、一键安装，不依赖 macFUSE、Rust bridge 或常驻 helper daemon。
-
-## 当前架构
+当前产品方向已经通过 macOS 26 Apple Silicon CI 完整验证：
 
 ```text
-FSKit / fskitd
-  -> FSBlockDeviceResource
-  -> FSBlockRawAccessor
-  -> EDPRawReadable
-  -> EDP metadata / key derivation / SM4 translation
-  -> EDPEncryptedPartitionReader
-  -> read-only filesystem semantics
-  -> FSVolume
+EDP encrypted partition
+  -> password / key / SM4 transparent block translation
+  -> macFUSE 5.3.3 (backend=fskit)
+  -> hidden volume.raw
+  -> Private DiskImages2
+  -> /dev/diskN / IOMedia
+  -> macOS native filesystem stack
+  -> Finder
 ```
 
-Apple 公开 FSKit API 当前没有受支持的方式把任意解密后的字节流重新包装成新的 real `FSBlockDeviceResource` 再交给系统内置 exFAT FSKit 模块，因此产品方案不依赖 FSKit module chaining。
+## 核心原则
 
-## 当前状态
+EDP USB Vault **不自行实现 exFAT/APFS/FAT 等文件系统**。
 
-已经完成：
+项目只负责：
 
-- macOS 26.0+ SwiftUI Host App + FSKit File System Extension 骨架；
-- `com.apple.developer.fskit.fsmodule` entitlement 与 block-resource 声明；
-- `Contents/Extensions` 正确嵌入、ad-hoc 签名、PluginKit 注册和 hosted contract；
-- `FSBlockDeviceResource` 对齐读取适配层；
-- Swift 原生 EDP LBA4/LBA7 识别；
-- Swift 原生 LBA11/LBA12、CRC32、SM4、密码/key 校验、分区描述；
+- EDP metadata；
+- 设备身份与密码校验；
+- key derivation；
+- SM4 加解密；
+- offset/length block translation；
+- mount/unmount lifecycle。
+
+具体文件系统继续由 macOS 原生实现负责。
+
+## 已验证的关键架构
+
+2026-08-25，GitHub Actions 在：
+
+```text
+macOS 26.5.2 (25F84)
+Apple Silicon
+Xcode 26.6
+macFUSE 5.3.3
+```
+
+完整跑通：
+
+```text
+macFUSE FSKit backing
+  -> DiskImages2 attach
+  -> /dev/disk8
+  -> native ExFAT format
+  -> /Volumes/EDPDI2TEST
+  -> write proof.txt
+  -> read proof.txt
+  -> unmount
+  -> eject
+```
+
+最终标记：
+
+```text
+RESULT=MACFUSE_FSKIT_DISKIMAGES2_NATIVE_FS_E2E_OK
+```
+
+这证明 `macFUSE FSKit + Private DiskImages2` 可以把用户态透明随机读写文件桥接成系统真实 BSD block device，并继续使用 Apple 原生文件系统。
+
+PoC runtime **没有调用 `hdiutil`**，也没有使用 DriverKit block-storage entitlement。
+
+## 为什么使用 DiskImages2
+
+macFUSE FSKit 能暴露高质量 random-access regular file，但它本身不会创建 `/dev/diskN`。
+
+Private `DiskImages2.framework` 正好补上：
+
+```text
+regular file -> Apple disk image stack -> IOMedia -> BSD disk
+```
+
+它是私有 API，因此产品必须：
+
+- 通过 `dlopen` / runtime selector probe 使用；
+- 集中封装，不把私有 selector 散落到业务代码；
+- 每个 macOS 更新运行 E2E；
+- 不兼容时 fail closed。
+
+## 当前 EDP core
+
+现有纯 Swift core 已包含：
+
+- aligned block reads；
+- LBA4/LBA7 recognition；
+- LBA11 device identity；
+- LBA12 partition metadata；
+- CRC32；
+- password/key validation；
+- SM4；
+- encrypted partition translation；
 - `EDPEncryptedPartitionReader`；
-- 3,200 个 deterministic property/random cases + golden/negative regressions；
-- macOS 15-target 的真实 EDP 数据采集工具及端到端 CI；
-- 当前稳定 SDK 下的只读 `FSVolume` compile contract。
+- 3,200 deterministic property/random cases + golden/negative tests。
 
-当前唯一不能由 GitHub hosted runner 越过的关键门槛是 **用户批准第三方 File System Extension**。Hosted runner 已证明 bundle/注册/原始块调用链到达系统批准边界，但会得到：
+## 当前未完成部分
 
-```text
-Module com.edp.usbvault.fskit-poc.extension is disabled!
-```
-
-因此 `EDPFileSystem.loadResource` 目前仍故意返回 `ENOTSUP`；在正常 macOS 26 机器通过 approved-runtime gate 前，不提前接完整 `FSVolume`。
-
-## CI
-
-保留四条有效工作流：
-
-- **Native Swift Fast Checks**：Swift core、3,200 随机/性质测试、source graph、macOS 15 capture tool、capture E2E；
-- **Native FSKit Hosted Contract**：一次完整 Xcode build + bundle/sign/register/PluginKit/raw-block approval-boundary contract；
-- **Native FSKit SDK Surface**：低频检查 runner 实际 Swift FSKit API；
-- **Native FSKit Approved Runtime Gate**：正常、已批准扩展的 macOS 26 self-hosted 机器运行最终 runtime gate。
-
-详见 [`docs/STATUS.md`](docs/STATUS.md)。
-
-## 当前开发规则
-
-1. 不重新引入 macFUSE。
-2. 不重新引入 Rust/C ABI bridge。
-3. 不增加 helper daemon 作为文件系统数据路径依赖。
-4. `FSBlockRawAccessor` 是唯一 FSKit-specific raw-device adapter。
-5. 文件系统语义与 FSKit I/O 解耦，先实现可独立测试的 read-only backend。
-6. 写支持必须晚于 read-only mount/read/unmount 正确性。
-
-## 目录
+完整块桥已经证明，但真实 EDP 数据路径还需要接入：
 
 ```text
-.github/workflows/     当前 native CI gates
-native/EDPFSKitPoC/    Host、FSKit Extension、Swift core 与工具
-fixtures/              golden vectors 与真实 EDP reserved-sector captures
-docs/STATUS.md         当前唯一项目状态/交接文档
+real EDP USB
+  -> Swift EDP block translation
+  -> macFUSE volume.raw
+  -> DiskImages2
+  -> existing native filesystem
+  -> Finder
 ```
+
+下一阶段优先：
+
+1. 把 PoC 内存 backing 替换成真实 EDP decrypted block view；
+2. 先完成真实盘只读 Finder mount；
+3. 再实现安全 partial-write / read-modify-write / flush；
+4. 完成 SwiftUI 设备发现、密码输入和 mount lifecycle；
+5. 做 macFUSE FSKit 首次安装/批准的一键引导。
+
+## 永久 PoC
+
+```text
+.github/workflows/macfuse-diskimages2-poc.yml
+native/EDPFSKitPoC/Tools/DiskImages2Attach.m
+native/EDPFSKitPoC/Tools/probe-macfuse-diskimages2.sh
+```
+
+完整架构、证据边界和后续实施顺序见 [`docs/STATUS.md`](docs/STATUS.md)。
