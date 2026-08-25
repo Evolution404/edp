@@ -20,6 +20,12 @@
 #endif
 
 extern void *edp_ro_open(const char *cipher_path, const char *key_hex);
+extern void *edp_ro_open_device(const char *raw_path, const char *vid_hex,
+                                const char *pid_hex,
+                                unsigned long long device_size_bytes,
+                                const unsigned char *password_bytes,
+                                unsigned long long password_length,
+                                uint32_t partition_type);
 extern unsigned long long edp_ro_size(void *handle);
 extern long long edp_ro_read(void *handle, unsigned long long offset, void *buffer,
                              unsigned long long requested_length);
@@ -28,6 +34,78 @@ extern void edp_ro_close(void *handle);
 static const char *volume_path = "/volume.raw";
 static void *block_handle = NULL;
 static uint64_t volume_size = 0;
+
+static void secure_zero(void *buffer, size_t length) {
+    volatile unsigned char *bytes = (volatile unsigned char *)buffer;
+    while (length-- > 0) {
+        *bytes++ = 0;
+    }
+}
+
+static int parse_u64(const char *text, uint64_t *value) {
+    if (!text || !*text || !value) return -1;
+    errno = 0;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(text, &end, 10);
+    if (errno != 0 || !end || *end != '\0') return -1;
+    *value = (uint64_t)parsed;
+    return 0;
+}
+
+static int parse_u32(const char *text, uint32_t *value) {
+    uint64_t parsed = 0;
+    if (parse_u64(text, &parsed) != 0 || parsed > UINT32_MAX) return -1;
+    *value = (uint32_t)parsed;
+    return 0;
+}
+
+static int parse_fd(const char *text, int *value) {
+    uint64_t parsed = 0;
+    if (parse_u64(text, &parsed) != 0 || parsed > INT_MAX) return -1;
+    *value = (int)parsed;
+    return 0;
+}
+
+static int read_password_fd(int fd, unsigned char *buffer, size_t capacity,
+                            size_t *length_out) {
+    if (fd < 0 || !buffer || capacity == 0 || !length_out) return -1;
+
+    size_t length = 0;
+    while (length < capacity) {
+        ssize_t result = read(fd, buffer + length, capacity - length);
+        if (result < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (result == 0) break;
+        length += (size_t)result;
+    }
+
+    if (length == capacity) {
+        unsigned char extra = 0;
+        ssize_t result;
+        do {
+            result = read(fd, &extra, 1);
+        } while (result < 0 && errno == EINTR);
+        if (result != 0) {
+            secure_zero(&extra, sizeof(extra));
+            return -1;
+        }
+    }
+
+    if (length == 0) return -1;
+    *length_out = length;
+    return 0;
+}
+
+static void print_usage(const char *program) {
+    fprintf(stderr,
+            "usage:\n"
+            "  %s <cipher.img> <32-hex-key> <mountpoint>\n"
+            "  %s --device <raw-device> <vid> <pid> <device-size> "
+            "<partition-type> <password-fd> <mountpoint>\n",
+            program, program);
+}
 
 static int m_getattr(const char *path, struct stat *st) {
     memset(st, 0, sizeof(*st));
@@ -150,19 +228,60 @@ static struct fuse_operations ops = {
 };
 
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "usage: %s <cipher.img> <32-hex-key> <mountpoint>\n", argv[0]);
+    const char *mountpoint = NULL;
+
+    if (argc == 9 && strcmp(argv[1], "--device") == 0) {
+        uint64_t device_size = 0;
+        uint32_t partition_type = 0;
+        int password_fd = -1;
+        if (parse_u64(argv[5], &device_size) != 0 || device_size == 0 ||
+            parse_u32(argv[6], &partition_type) != 0 ||
+            (partition_type != 2 && partition_type != 4) ||
+            parse_fd(argv[7], &password_fd) != 0) {
+            print_usage(argv[0]);
+            return 64;
+        }
+
+        unsigned char password[4096];
+        size_t password_length = 0;
+        if (read_password_fd(password_fd, password, sizeof(password),
+                             &password_length) != 0) {
+            close(password_fd);
+            secure_zero(password, sizeof(password));
+            fprintf(stderr, "EDP_FUSE_PASSWORD_FD_READ_FAILED\n");
+            return 65;
+        }
+        close(password_fd);
+
+        block_handle = edp_ro_open_device(
+            argv[2], argv[3], argv[4],
+            (unsigned long long)device_size,
+            password,
+            (unsigned long long)password_length,
+            partition_type
+        );
+        secure_zero(password, sizeof(password));
+        if (!block_handle) {
+            fprintf(stderr, "EDP_FUSE_BRIDGE_OPEN_DEVICE_FAILED\n");
+            return 65;
+        }
+        mountpoint = argv[8];
+    } else if (argc == 4) {
+        block_handle = edp_ro_open(argv[1], argv[2]);
+        if (!block_handle) {
+            fprintf(stderr, "EDP_FUSE_BRIDGE_OPEN_FAILED\n");
+            return 65;
+        }
+        mountpoint = argv[3];
+    } else {
+        print_usage(argv[0]);
         return 64;
     }
 
-    block_handle = edp_ro_open(argv[1], argv[2]);
-    if (!block_handle) {
-        fprintf(stderr, "EDP_FUSE_BRIDGE_OPEN_FAILED\n");
-        return 65;
-    }
     volume_size = (uint64_t)edp_ro_size(block_handle);
     if (volume_size == 0) {
         edp_ro_close(block_handle);
+        block_handle = NULL;
         fprintf(stderr, "EDP_FUSE_BRIDGE_INVALID_SIZE\n");
         return 66;
     }
@@ -174,7 +293,7 @@ int main(int argc, char **argv) {
         "-f",
         "-o",
         options,
-        argv[3],
+        (char *)mountpoint,
         NULL,
     };
 
