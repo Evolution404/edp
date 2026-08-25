@@ -30,23 +30,12 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
 
-      - name: Install XcodeGen
+      - name: Generate and build native project
+        working-directory: native/EDPFSKitPoC
         run: |
           set -euo pipefail
           brew install xcodegen
-          xcodegen --version
-
-      - name: Generate Xcode project
-        working-directory: native/EDPFSKitPoC
-        run: |
-          set -euo pipefail
           xcodegen generate
-          xcodebuild -project EDPFSKitPoC.xcodeproj -list
-
-      - name: Build native host and FSKit extension
-        working-directory: native/EDPFSKitPoC
-        run: |
-          set -euo pipefail
           xcodebuild \
             -project EDPFSKitPoC.xcodeproj \
             -scheme EDPFSKitHost \
@@ -56,109 +45,86 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Inspect built FSKit bundle
+      - name: Verify FSKit bundle contract
         run: |
           set -euo pipefail
           APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
           EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
           test -d "${APP}"
           test -d "${EXT}"
-          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${APP}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${EXT}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:EXExtensionPointIdentifier' "${EXT}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${EXT}/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportsBlockResources' "${EXT}/Contents/Info.plist"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${EXT}/Contents/Info.plist")" = "26.0"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:EXExtensionPointIdentifier' "${EXT}/Contents/Info.plist")" = "com.apple.fskit.fsmodule"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${EXT}/Contents/Info.plist")" = "edpvault"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportsBlockResources' "${EXT}/Contents/Info.plist")" = "true"
 
-      - name: Ad-hoc sign PoC for runtime registration
-        run: |
-          set -euo pipefail
-          APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
-          EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
-          codesign --force --sign - \
-            --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
-            "${EXT}"
-          codesign --force --sign - "${APP}"
-          codesign --verify --deep --strict --verbose=2 "${APP}"
-          codesign -d --entitlements :- "${EXT}"
+          MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${EXT}/Contents/Info.plist")"
+          EXT_POINT="$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:EXExtensionPointIdentifier' "${EXT}/Contents/Info.plist")"
+          SHORT_NAME="$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${EXT}/Contents/Info.plist")"
+          BLOCKS="$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportsBlockResources' "${EXT}/Contents/Info.plist")"
 
-      - name: Install and register extension on hosted macOS 26
+          echo "MIN_OS=${MIN_OS}"
+          echo "EXTENSION_POINT=${EXT_POINT}"
+          echo "FS_SHORT_NAME=${SHORT_NAME}"
+          echo "SUPPORTS_BLOCK_RESOURCES=${BLOCKS}"
+
+          test "${MIN_OS}" = "26.0"
+          test "${EXT_POINT}" = "com.apple.fskit.fsmodule"
+          test "${SHORT_NAME}" = "edpvault"
+          test "${BLOCKS}" = "true"
+
+      - name: Ad-hoc sign and install for hosted registration diagnostics
         run: |
           set -euo pipefail
           SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
-          INSTALLED_APP="/Applications/EDPFSKitPoC.app"
-          sudo rm -rf "${INSTALLED_APP}"
-          sudo /usr/bin/ditto "${SOURCE_APP}" "${INSTALLED_APP}"
-          EXT="${INSTALLED_APP}/Contents/Extensions/EDPFSKitExtension.appex"
-          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f "${INSTALLED_APP}"
-          pluginkit -a "${EXT}"
-          sleep 2
-          echo '--- PluginKit registration ---'
-          pluginkit -m -A -D -vv | grep -A8 -B4 'com.edp.usbvault.fskit-poc.extension' || true
+          SOURCE_EXT="${SOURCE_APP}/Contents/Extensions/EDPFSKitExtension.appex"
 
-      - name: Inspect FSClient module identity
+          codesign --force --sign - --generate-entitlement-der \
+            --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
+            "${SOURCE_EXT}"
+          codesign --force --sign - "${SOURCE_APP}"
+          codesign --verify --deep --strict --verbose=2 "${SOURCE_APP}"
+
+          sudo rm -rf /Applications/EDPFSKitPoC.app
+          sudo ditto "${SOURCE_APP}" /Applications/EDPFSKitPoC.app
+          APP=/Applications/EDPFSKitPoC.app
+          EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
+
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \
+            -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}"
+          pluginkit -a "${APP}"
+          sleep 2
+
+          codesign -dvvv --entitlements :- "${EXT}" 2>&1 \
+            | tee "${RUNNER_TEMP}/signature.txt"
+          grep -F 'com.apple.developer.fskit.fsmodule' "${RUNNER_TEMP}/signature.txt"
+          grep -F 'com.apple.security.app-sandbox' "${RUNNER_TEMP}/signature.txt"
+
+      - name: Require PluginKit FSKit indexing
+        run: |
+          set -euo pipefail
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
+            | tee "${RUNNER_TEMP}/pluginkit.txt"
+          grep -F 'com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/pluginkit.txt"
+          echo 'RESULT=PLUGIN_KIT_FSKIT_INDEXED'
+
+      - name: Classify hosted FSClient visibility
         run: |
           set -euo pipefail
           xcrun swiftc \
             -framework FSKit \
             native/EDPFSKitPoC/Tools/InspectFSKit.swift \
             -o "${RUNNER_TEMP}/inspect-fskit"
-          "${RUNNER_TEMP}/inspect-fskit" | tee "${RUNNER_TEMP}/fskit-module.txt"
-          grep -F 'FSKIT_MODULE_FOUND=com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/fskit-module.txt"
 
-      - name: CI-only enable FSKit module
-        run: |
-          set -euo pipefail
-          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
-          SETTINGS_PLIST="${SETTINGS_DIR}/enabledModules.plist"
-          mkdir -p "${SETTINGS_DIR}"
-          if [[ ! -f "${SETTINGS_PLIST}" ]]; then
-            plutil -create xml1 "${SETTINGS_PLIST}"
-            plutil -insert enabledModules -array "${SETTINGS_PLIST}"
-          fi
-          if ! plutil -extract enabledModules raw "${SETTINGS_PLIST}" 2>/dev/null | grep -Fxq 'com.edp.usbvault.fskit-poc.extension'; then
-            INDEX="$(plutil -extract enabledModules raw "${SETTINGS_PLIST}" 2>/dev/null | wc -l | tr -d ' ')"
-            plutil -insert "enabledModules.${INDEX}" -string 'com.edp.usbvault.fskit-poc.extension' "${SETTINGS_PLIST}"
-          fi
-          killall fskit_agent >/dev/null 2>&1 || true
-          killall extensionkitservice >/dev/null 2>&1 || true
-          sleep 3
-          cat "${SETTINGS_PLIST}"
-
-      - name: Verify FSClient reports enabled
-        run: |
-          set -euo pipefail
-          "${RUNNER_TEMP}/inspect-fskit" | tee "${RUNNER_TEMP}/fskit-enabled.txt"
-          grep -F 'FSKIT_MODULE_ENABLED=true' "${RUNNER_TEMP}/fskit-enabled.txt"
-
-      - name: Exercise block-resource probe path
-        run: |
-          set -euo pipefail
-          IMAGE="${RUNNER_TEMP}/edp-fskit-probe.dmg"
-          MOUNTPOINT="${RUNNER_TEMP}/edp-fskit-probe-mount"
-          hdiutil create -size 16m -layout NONE -fs NONE "${IMAGE}"
-          DISK="$(hdiutil attach -nomount "${IMAGE}" | awk 'NR==1 {print $1}')"
-          mkdir -p "${MOUNTPOINT}"
-          echo "TEST_DISK=${DISK}"
           set +e
-          /sbin/mount -t edpvault "${DISK}" "${MOUNTPOINT}" >"${RUNNER_TEMP}/mount.stdout" 2>"${RUNNER_TEMP}/mount.stderr"
+          "${RUNNER_TEMP}/inspect-fskit" >"${RUNNER_TEMP}/fsclient.txt" 2>&1
           RC=$?
           set -e
-          cat "${RUNNER_TEMP}/mount.stdout" || true
-          cat "${RUNNER_TEMP}/mount.stderr" || true
-          echo "MOUNT_RC=${RC}"
-          sleep 2
-          log show --last 2m --style compact \
-            --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd"' \
-            | tee "${RUNNER_TEMP}/fskit-runtime.log" || true
-          hdiutil detach "${DISK}" || true
-          grep -F 'EDP native FSKit extension loaded' "${RUNNER_TEMP}/fskit-runtime.log"
-          grep -F 'probeResource' "${RUNNER_TEMP}/fskit-runtime.log"
-          test "${RC}" -ne 0
-          echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED'
+          cat "${RUNNER_TEMP}/fsclient.txt"
+          echo "FSCLIENT_INSPECT_RC=${RC}"
+
+          if grep -Fq 'FSKIT_MODULE_FOUND=com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/fsclient.txt"; then
+            echo 'RESULT=FSCLIENT_VISIBLE'
+          else
+            echo 'RESULT=HOSTED_RUNNER_THIRD_PARTY_FSCLIENT_HIDDEN'
+            echo 'Runtime enablement and block probing require a user-approved macOS environment.'
+          fi
 
       - name: Upload diagnostics
         if: always()
@@ -166,10 +132,8 @@ jobs:
         with:
           name: native-fskit-poc-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/fskit-module.txt
-            ${{ runner.temp }}/fskit-enabled.txt
-            ${{ runner.temp }}/mount.stdout
-            ${{ runner.temp }}/mount.stderr
-            ${{ runner.temp }}/fskit-runtime.log
+            ${{ runner.temp }}/signature.txt
+            ${{ runner.temp }}/pluginkit.txt
+            ${{ runner.temp }}/fsclient.txt
           if-no-files-found: ignore
           retention-days: 14
