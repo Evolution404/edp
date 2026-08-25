@@ -3,10 +3,17 @@ name: Native FSKit Block Probe
 on:
   push:
     branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "native/EDPFSKitPoC/**"
+      - ".github/workflows/native-fskit-block-probe.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: native-fskit-block-probe-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   probe:
