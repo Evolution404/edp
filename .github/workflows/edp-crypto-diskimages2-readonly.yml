@@ -16,6 +16,7 @@ on:
       - "native/EDPFSKitPoC/Tools/PrepareEncryptedDiskImage.swift"
       - "native/EDPFSKitPoC/Tools/EDPReadOnlyBlockCBridge.swift"
       - "native/EDPFSKitPoC/Tools/EDPReadOnlyFuseBridge.c"
+      - "native/EDPFSKitPoC/Tools/probe-edp-device-unlock.sh"
       - "native/EDPFSKitPoC/Tools/probe-edp-crypto-diskimages2.sh"
   workflow_dispatch:
 
@@ -94,6 +95,11 @@ jobs:
           killall extensionkitservice 2>/dev/null || true
           sleep 2
           echo 'RESULT=CI_ONLY_MACFUSE_MODULE_STATE_SEEDED'
+
+      - name: Run real-metadata product unlock smoke
+        run: |
+          set -euo pipefail
+          bash native/EDPFSKitPoC/Tools/probe-edp-device-unlock.sh
 
       - name: Run encrypted-reader block bridge proof
         run: |
