@@ -12,6 +12,7 @@
 //! - [`lba11`]：LBA11 PDKB 块解出 device_id
 //! - [`lba12`]：LBA12 分区元数据（EDPF 条目、密码双路径解包）
 //! - [`device`]：identify_disk 的 device_id 候选生成
+//! - [`probe`]：LBA4 + LBA7 的无密码保守 EDP 介质识别
 //! - [`volume`]：RawIo 抽象与透明加解密随机访问 IO
 //! - [`discovery`]：discover_volume 三级候选编排
 
@@ -22,6 +23,7 @@ pub mod edp_aes;
 pub mod lba11;
 pub mod lba12;
 pub mod lba7;
+pub mod probe;
 pub mod qos;
 pub mod sm4_ecb;
 #[cfg(target_arch = "aarch64")]
