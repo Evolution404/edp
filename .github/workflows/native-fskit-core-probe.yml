@@ -6,6 +6,7 @@ on:
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
+      - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
@@ -21,6 +22,7 @@ on:
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
+      - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
@@ -151,8 +153,20 @@ jobs:
           xcrun swiftc -framework FSKit native/EDPFSKitPoC/Tools/InspectFSKit.swift \
             -o "${RUNNER_TEMP}/inspect-fskit-compile-check" &
           inspect_pid=$!
+          xcrun swiftc -parse-as-library \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift \
+            -o "${RUNNER_TEMP}/capture-edp-fixture-compile-check" &
+          capture_pid=$!
 
           wait "${extension_pid}"
+          echo 'RESULT=FSKIT_READ_ONLY_VOLUME_CONTRACT_TYPECHECKED'
           wait "${host_pid}"
           wait "${inspect_pid}"
+          wait "${capture_pid}"
+          echo 'RESULT=EDP_CAPTURE_TOOL_COMPILED'
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
