@@ -11,23 +11,36 @@ trap 'rm -rf "${WORK_DIR}"' EXIT
     exit 1
 }
 
-compile_probe() {
+write_probe() {
     local name="$1"
     local source="$2"
-    local file="${WORK_DIR}/${name}.swift"
-    printf '%s\n' "${source}" >"${file}"
-    if xcrun swiftc -typecheck "${file}" >/dev/null 2>&1; then
-        printf 'true'
-    else
-        printf 'false'
-    fi
+    printf '%s\n' "${source}" >"${WORK_DIR}/${name}.swift"
 }
 
-VOLUME_OPERATIONS="$(compile_probe volume-operations $'import FSKit\nprotocol EDPProbeVolumeOperations: FSVolume.Operations {}')"
-READ_WRITE_OPERATIONS="$(compile_probe read-write-operations $'import FSKit\nprotocol EDPProbeReadWriteOperations: FSVolume.ReadWriteOperations {}')"
-VOLUME_HANDLER="$(compile_probe volume-handler $'import FSKit\nprotocol EDPProbeVolumeHandler: FSVolume.Handler {}')"
-READ_WRITE_HANDLER="$(compile_probe read-write-handler $'import FSKit\nprotocol EDPProbeReadWriteHandler: FSVolume.ReadWriteHandler {}')"
-DIRECT_SETTINGS="$(compile_probe direct-settings $'import FSKit\nfunc probeDirectSettings() { _ = FSClient.shared.openFileSystemExtensionsSettings() }')"
+write_probe volume-operations $'import FSKit\nprotocol EDPProbeVolumeOperations: FSVolume.Operations {}'
+write_probe read-write-operations $'import FSKit\nprotocol EDPProbeReadWriteOperations: FSVolume.ReadWriteOperations {}'
+write_probe volume-handler $'import FSKit\nprotocol EDPProbeVolumeHandler: FSVolume.Handler {}'
+write_probe read-write-handler $'import FSKit\nprotocol EDPProbeReadWriteHandler: FSVolume.ReadWriteHandler {}'
+write_probe direct-settings $'import FSKit\nfunc probeDirectSettings() { _ = FSClient.shared.openFileSystemExtensionsSettings() }'
+
+# These probes are independent. Running the Swift frontends in parallel keeps
+# this diagnostic from adding serial compiler startup cost to every fast CI run.
+xcrun swiftc -typecheck "${WORK_DIR}/volume-operations.swift" >/dev/null 2>&1 &
+volume_operations_pid=$!
+xcrun swiftc -typecheck "${WORK_DIR}/read-write-operations.swift" >/dev/null 2>&1 &
+read_write_operations_pid=$!
+xcrun swiftc -typecheck "${WORK_DIR}/volume-handler.swift" >/dev/null 2>&1 &
+volume_handler_pid=$!
+xcrun swiftc -typecheck "${WORK_DIR}/read-write-handler.swift" >/dev/null 2>&1 &
+read_write_handler_pid=$!
+xcrun swiftc -typecheck "${WORK_DIR}/direct-settings.swift" >/dev/null 2>&1 &
+direct_settings_pid=$!
+
+if wait "${volume_operations_pid}"; then VOLUME_OPERATIONS=true; else VOLUME_OPERATIONS=false; fi
+if wait "${read_write_operations_pid}"; then READ_WRITE_OPERATIONS=true; else READ_WRITE_OPERATIONS=false; fi
+if wait "${volume_handler_pid}"; then VOLUME_HANDLER=true; else VOLUME_HANDLER=false; fi
+if wait "${read_write_handler_pid}"; then READ_WRITE_HANDLER=true; else READ_WRITE_HANDLER=false; fi
+if wait "${direct_settings_pid}"; then DIRECT_SETTINGS=true; else DIRECT_SETTINGS=false; fi
 
 printf 'FSKIT_SDK_PATH=%s\n' "${SDK}"
 printf 'FSKIT_SDK_PRODUCT_VERSION=%s\n' "$(sw_vers -productVersion)"
@@ -37,7 +50,7 @@ printf 'FSKIT_SDK_VOLUME_HANDLER=%s\n' "${VOLUME_HANDLER}"
 printf 'FSKIT_SDK_READ_WRITE_HANDLER=%s\n' "${READ_WRITE_HANDLER}"
 printf 'FSKIT_SDK_CLIENT_DIRECT_SETTINGS=%s\n' "${DIRECT_SETTINGS}"
 
-# Do not hard-code a specific API generation here. The production source graph
-# is the compatibility gate. This probe records which generation the installed
-# Swift SDK actually exposes and produces a stable marker for CI diagnostics.
+# The production source graph remains the compatibility gate. These results are
+# informational and let CI tell us when Apple's installed Swift SDK actually
+# exposes a newer FSKit generation.
 echo 'RESULT=FSKIT_SDK_CAPABILITIES_PROBED'
