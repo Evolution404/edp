@@ -6,6 +6,7 @@ on:
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
+      - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
       - "native/EDPFSKitPoC/Tools/verify-approved-runtime.sh"
@@ -18,6 +19,7 @@ on:
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
+      - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
       - "native/EDPFSKitPoC/Tools/verify-approved-runtime.sh"
@@ -105,4 +107,5 @@ jobs:
           set -euo pipefail
           xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Extension/*.swift
           xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift
+          xcrun swiftc -framework FSKit -parse-as-library -typecheck native/EDPFSKitPoC/Tools/InspectFSKit.swift
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
