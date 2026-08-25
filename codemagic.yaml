@@ -1,0 +1,264 @@
+workflows:
+  fskit-macos-15-5:
+    name: FSKit probe — macOS 15.5
+    instance_type: mac_mini_m2
+    max_build_duration: 20
+    environment:
+      xcode: 16.4
+    scripts:
+      - name: Probe Apple FSKit direct mount path
+        script: |
+          set -uo pipefail
+          OUT="$CM_BUILD_DIR/fskit-diag-15.5.txt"
+          LOG="$CM_BUILD_DIR/fskit-unified-15.5.log"
+          IMG="$CM_BUILD_DIR/fskit-fat16-15.5.dmg"
+          MP="$CM_BUILD_DIR/fskit-direct-15.5"
+          mkdir -p "$MP"
+          : > "$OUT"
+
+          cleanup() {
+            set +e
+            if [[ -n "${DEVICE:-}" ]]; then
+              /sbin/umount "$DEVICE" >/dev/null 2>&1 || diskutil unmount "$DEVICE" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${WHOLE:-}" ]]; then
+              hdiutil detach -force "$WHOLE" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          {
+            echo '=== SYSTEM ==='
+            sw_vers
+            uname -a
+            uname -m
+            echo
+            echo '=== COMPONENT HASHES ==='
+            shasum -a 256 /sbin/mount /usr/libexec/fskitd
+            echo
+            echo '=== MOUNT SIGNATURE ==='
+            codesign -dv --verbose=4 /sbin/mount 2>&1 || true
+            echo
+            echo '=== MOUNT ENTITLEMENTS ==='
+            codesign -d --entitlements :- /sbin/mount 2>&1 || true
+            echo
+            echo '=== FSKITD SIGNATURE ==='
+            codesign -dv --verbose=4 /usr/libexec/fskitd 2>&1 || true
+            echo
+            echo '=== FSKITD ENTITLEMENTS ==='
+            codesign -d --entitlements :- /usr/libexec/fskitd 2>&1 || true
+            echo
+            echo '=== DISKARBITRATIOND ENTITLEMENTS ==='
+            codesign -d --entitlements :- /usr/libexec/diskarbitrationd 2>&1 || true
+            echo
+            echo '=== MOUNT DEPENDENCIES ==='
+            otool -L /sbin/mount || true
+          } | tee -a "$OUT"
+
+          cat > "$CM_BUILD_DIR/fskit-protocols.m" <<'EOF'
+          #import <Foundation/Foundation.h>
+          #import <objc/runtime.h>
+          #include <dlfcn.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          static void dump_methods(Protocol *p, BOOL required, BOOL instance) {
+              unsigned int count = 0;
+              struct objc_method_description *methods = protocol_copyMethodDescriptionList(p, required, instance, &count);
+              printf("  %s %s count=%u\n", required ? "required" : "optional", instance ? "instance" : "class", count);
+              for (unsigned int i = 0; i < count; i++) if (methods[i].name) printf("    %s\n", sel_getName(methods[i].name));
+              free(methods);
+          }
+          static void dump_protocol(const char *name) {
+              Protocol *p = objc_getProtocol(name);
+              printf("PROTO %s: %s\n", name, p ? "FOUND" : "MISSING");
+              if (!p) return;
+              dump_methods(p, YES, YES); dump_methods(p, YES, NO); dump_methods(p, NO, YES); dump_methods(p, NO, NO);
+          }
+          int main(void) {
+              void *h1 = dlopen("/System/Library/PrivateFrameworks/LiveFS.framework/Versions/A/LiveFS", RTLD_LAZY | RTLD_LOCAL);
+              void *h2 = dlopen("/System/Library/Frameworks/FSKit.framework/Versions/A/FSKit", RTLD_LAZY | RTLD_LOCAL);
+              printf("dlopen LiveFS: %s\n", h1 ? "OK" : dlerror());
+              printf("dlopen FSKit: %s\n", h2 ? "OK" : dlerror());
+              dump_protocol("LiveFSMounterUnentitled");
+              dump_protocol("LiveFSMounter");
+              return 0;
+          }
+          EOF
+          clang -fobjc-arc -framework Foundation "$CM_BUILD_DIR/fskit-protocols.m" -o "$CM_BUILD_DIR/fskit-protocols"
+          "$CM_BUILD_DIR/fskit-protocols" | tee -a "$OUT"
+
+          echo '=== CREATE FAT16 ===' | tee -a "$OUT"
+          hdiutil create -quiet -size 32m -layout MBRSPUD -fs 'MS-DOS FAT16' -volname EDPFAT "$IMG"
+          ATTACH="$(hdiutil attach -nomount "$IMG")"
+          printf '%s\n' "$ATTACH" | tee -a "$OUT"
+          WHOLE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+$/ {print $1; exit}')"
+          DEVICE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+s[0-9]+$/ {d=$1} END {print d}')"
+          echo "WHOLE=$WHOLE" | tee -a "$OUT"
+          echo "DEVICE=$DEVICE" | tee -a "$OUT"
+          diskutil info "$DEVICE" | tee -a "$OUT"
+
+          echo '=== DIRECT /sbin/mount -F ===' | tee -a "$OUT"
+          set +e
+          DIRECT_OUTPUT="$(/sbin/mount -F -t msdos "$DEVICE" "$MP" 2>&1)"
+          DIRECT_RC=$?
+          set -e
+          printf '%s\n' "$DIRECT_OUTPUT" | tee -a "$OUT"
+          echo "DIRECT_RC=$DIRECT_RC" | tee -a "$OUT"
+          if mount | grep -Fq "$DEVICE"; then
+            echo 'DIRECT_MOUNTED=1' | tee -a "$OUT"
+            /sbin/umount "$DEVICE" || diskutil unmount "$DEVICE" || true
+          else
+            echo 'DIRECT_MOUNTED=0' | tee -a "$OUT"
+          fi
+
+          echo '=== DISK ARBITRATION ===' | tee -a "$OUT"
+          set +e
+          DA_OUTPUT="$(diskutil mount "$DEVICE" 2>&1)"
+          DA_RC=$?
+          set -e
+          printf '%s\n' "$DA_OUTPUT" | tee -a "$OUT"
+          echo "DA_RC=$DA_RC" | tee -a "$OUT"
+          mount | grep -F "$DEVICE" | tee -a "$OUT" || true
+          if mount | grep -Fq "$DEVICE"; then echo 'DA_MOUNTED=1' | tee -a "$OUT"; else echo 'DA_MOUNTED=0' | tee -a "$OUT"; fi
+
+          set +e
+          /usr/bin/log show --last 5m --style compact --info --debug \
+            --predicate '(process == "fskitd") OR (process == "diskarbitrationd") OR (process == "mount") OR (process == "diskutil")' \
+            > "$LOG" 2>&1
+          set -e
+          grep -E -i 'entitled 0|entitlement no|mountVolume:fileSystem|NSXPC|Couldn.t communicate|Unable to invoke|mounted disk|entitled 1|entitlement yes' "$LOG" | tail -n 200 | tee -a "$OUT" || true
+    artifacts:
+      - fskit-diag-15.5.txt
+      - fskit-unified-15.5.log
+
+  fskit-macos-15-7:
+    name: FSKit probe — macOS 15.7
+    instance_type: mac_mini_m2
+    max_build_duration: 20
+    environment:
+      xcode: 26.0
+    scripts:
+      - name: Probe Apple FSKit direct mount path
+        script: |
+          set -uo pipefail
+          OUT="$CM_BUILD_DIR/fskit-diag-15.7.txt"
+          LOG="$CM_BUILD_DIR/fskit-unified-15.7.log"
+          IMG="$CM_BUILD_DIR/fskit-fat16-15.7.dmg"
+          MP="$CM_BUILD_DIR/fskit-direct-15.7"
+          mkdir -p "$MP"
+          : > "$OUT"
+
+          cleanup() {
+            set +e
+            if [[ -n "${DEVICE:-}" ]]; then
+              /sbin/umount "$DEVICE" >/dev/null 2>&1 || diskutil unmount "$DEVICE" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${WHOLE:-}" ]]; then
+              hdiutil detach -force "$WHOLE" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          {
+            echo '=== SYSTEM ==='
+            sw_vers
+            uname -a
+            uname -m
+            echo
+            echo '=== COMPONENT HASHES ==='
+            shasum -a 256 /sbin/mount /usr/libexec/fskitd
+            echo
+            echo '=== MOUNT SIGNATURE ==='
+            codesign -dv --verbose=4 /sbin/mount 2>&1 || true
+            echo
+            echo '=== MOUNT ENTITLEMENTS ==='
+            codesign -d --entitlements :- /sbin/mount 2>&1 || true
+            echo
+            echo '=== FSKITD SIGNATURE ==='
+            codesign -dv --verbose=4 /usr/libexec/fskitd 2>&1 || true
+            echo
+            echo '=== FSKITD ENTITLEMENTS ==='
+            codesign -d --entitlements :- /usr/libexec/fskitd 2>&1 || true
+            echo
+            echo '=== DISKARBITRATIOND ENTITLEMENTS ==='
+            codesign -d --entitlements :- /usr/libexec/diskarbitrationd 2>&1 || true
+            echo
+            echo '=== MOUNT DEPENDENCIES ==='
+            otool -L /sbin/mount || true
+          } | tee -a "$OUT"
+
+          cat > "$CM_BUILD_DIR/fskit-protocols.m" <<'EOF'
+          #import <Foundation/Foundation.h>
+          #import <objc/runtime.h>
+          #include <dlfcn.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          static void dump_methods(Protocol *p, BOOL required, BOOL instance) {
+              unsigned int count = 0;
+              struct objc_method_description *methods = protocol_copyMethodDescriptionList(p, required, instance, &count);
+              printf("  %s %s count=%u\n", required ? "required" : "optional", instance ? "instance" : "class", count);
+              for (unsigned int i = 0; i < count; i++) if (methods[i].name) printf("    %s\n", sel_getName(methods[i].name));
+              free(methods);
+          }
+          static void dump_protocol(const char *name) {
+              Protocol *p = objc_getProtocol(name);
+              printf("PROTO %s: %s\n", name, p ? "FOUND" : "MISSING");
+              if (!p) return;
+              dump_methods(p, YES, YES); dump_methods(p, YES, NO); dump_methods(p, NO, YES); dump_methods(p, NO, NO);
+          }
+          int main(void) {
+              void *h1 = dlopen("/System/Library/PrivateFrameworks/LiveFS.framework/Versions/A/LiveFS", RTLD_LAZY | RTLD_LOCAL);
+              void *h2 = dlopen("/System/Library/Frameworks/FSKit.framework/Versions/A/FSKit", RTLD_LAZY | RTLD_LOCAL);
+              printf("dlopen LiveFS: %s\n", h1 ? "OK" : dlerror());
+              printf("dlopen FSKit: %s\n", h2 ? "OK" : dlerror());
+              dump_protocol("LiveFSMounterUnentitled");
+              dump_protocol("LiveFSMounter");
+              return 0;
+          }
+          EOF
+          clang -fobjc-arc -framework Foundation "$CM_BUILD_DIR/fskit-protocols.m" -o "$CM_BUILD_DIR/fskit-protocols"
+          "$CM_BUILD_DIR/fskit-protocols" | tee -a "$OUT"
+
+          echo '=== CREATE FAT16 ===' | tee -a "$OUT"
+          hdiutil create -quiet -size 32m -layout MBRSPUD -fs 'MS-DOS FAT16' -volname EDPFAT "$IMG"
+          ATTACH="$(hdiutil attach -nomount "$IMG")"
+          printf '%s\n' "$ATTACH" | tee -a "$OUT"
+          WHOLE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+$/ {print $1; exit}')"
+          DEVICE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+s[0-9]+$/ {d=$1} END {print d}')"
+          echo "WHOLE=$WHOLE" | tee -a "$OUT"
+          echo "DEVICE=$DEVICE" | tee -a "$OUT"
+          diskutil info "$DEVICE" | tee -a "$OUT"
+
+          echo '=== DIRECT /sbin/mount -F ===' | tee -a "$OUT"
+          set +e
+          DIRECT_OUTPUT="$(/sbin/mount -F -t msdos "$DEVICE" "$MP" 2>&1)"
+          DIRECT_RC=$?
+          set -e
+          printf '%s\n' "$DIRECT_OUTPUT" | tee -a "$OUT"
+          echo "DIRECT_RC=$DIRECT_RC" | tee -a "$OUT"
+          if mount | grep -Fq "$DEVICE"; then
+            echo 'DIRECT_MOUNTED=1' | tee -a "$OUT"
+            /sbin/umount "$DEVICE" || diskutil unmount "$DEVICE" || true
+          else
+            echo 'DIRECT_MOUNTED=0' | tee -a "$OUT"
+          fi
+
+          echo '=== DISK ARBITRATION ===' | tee -a "$OUT"
+          set +e
+          DA_OUTPUT="$(diskutil mount "$DEVICE" 2>&1)"
+          DA_RC=$?
+          set -e
+          printf '%s\n' "$DA_OUTPUT" | tee -a "$OUT"
+          echo "DA_RC=$DA_RC" | tee -a "$OUT"
+          mount | grep -F "$DEVICE" | tee -a "$OUT" || true
+          if mount | grep -Fq "$DEVICE"; then echo 'DA_MOUNTED=1' | tee -a "$OUT"; else echo 'DA_MOUNTED=0' | tee -a "$OUT"; fi
+
+          set +e
+          /usr/bin/log show --last 5m --style compact --info --debug \
+            --predicate '(process == "fskitd") OR (process == "diskarbitrationd") OR (process == "mount") OR (process == "diskutil")' \
+            > "$LOG" 2>&1
+          set -e
+          grep -E -i 'entitled 0|entitlement no|mountVolume:fileSystem|NSXPC|Couldn.t communicate|Unable to invoke|mounted disk|entitled 1|entitlement yes' "$LOG" | tail -n 200 | tee -a "$OUT" || true
+    artifacts:
+      - fskit-diag-15.7.txt
+      - fskit-unified-15.7.log
