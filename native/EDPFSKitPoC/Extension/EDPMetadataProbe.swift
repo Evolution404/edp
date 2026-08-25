@@ -135,8 +135,7 @@ enum EDPMetadataProbe {
         }
 
         let rawWord = UInt16(raw[0]) | (UInt16(raw[1]) << 8)
-        let edWord = UInt16(Character("E").asciiValue!) |
-            (UInt16(Character("D").asciiValue!) << 8)
+        let edWord: UInt16 = 0x4445 // little-endian bytes "ED"
         let k0 = rawWord ^ edWord
 
         var plaintext = raw
