@@ -1,0 +1,97 @@
+name: macFUSE Block Boundary
+
+on:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+    paths:
+      - ".github/workflows/macfuse-block-boundary.yml"
+      - "native/EDPFSKitPoC/Tools/probe-macfuse-block-boundary.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+jobs:
+  boundary:
+    name: FSKit transport vs block publication
+    runs-on: macos-26
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Record runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -a
+          uname -m
+          xcodebuild -version
+
+      - name: Install official macFUSE
+        run: |
+          set -euo pipefail
+          brew install --cask macfuse
+          pkgutil --pkg-info io.macfuse.pkg.Core
+          pkg-config --exists fuse
+          pkg-config --modversion fuse
+
+          GENERIC="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
+          test -d "${GENERIC}"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${GENERIC}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${GENERIC}/Contents/Info.plist"
+          echo 'RESULT=OFFICIAL_MACFUSE_FSKIT_MODULE_INSTALLED'
+
+      - name: Enable official macFUSE FSKit module on ephemeral runner
+        run: |
+          set -euo pipefail
+          MODULE="io.macfuse.app.fsmodule.macfuse"
+          /usr/bin/pluginkit -e use -i "${MODULE}" || true
+
+          SETTINGS_DIR="$HOME/Library/Group Containers/group.com.apple.fskit.settings"
+          SETTINGS="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${SETTINGS}" "${MODULE}" <<'PY'
+          import os
+          import plistlib
+          import sys
+
+          path, module = sys.argv[1:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, "rb") as handle:
+                      value = plistlib.load(handle)
+                  if isinstance(value, list):
+                      enabled = value
+              except Exception:
+                  pass
+          if module not in enabled:
+              enabled.append(module)
+          with open(path, "wb") as handle:
+              plistlib.dump(enabled, handle, fmt=plistlib.FMT_BINARY)
+          PY
+          plutil -p "${SETTINGS}"
+
+          killall fskit_agent 2>/dev/null || true
+          killall extensionkitservice 2>/dev/null || true
+          sleep 2
+
+      - name: Prove macFUSE FSKit does not publish a block device
+        run: |
+          set -euo pipefail
+          bash native/EDPFSKitPoC/Tools/probe-macfuse-block-boundary.sh
+
+      - name: Upload boundary report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macfuse-block-boundary-${{ github.run_id }}
+          path: ${{ runner.temp }}/edp-macfuse-boundary/
+          if-no-files-found: ignore
+          retention-days: 14
