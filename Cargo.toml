@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/edp-core",
-    "crates/edp-fskit-bridge",
     "crates/edp-macos",
     "crates/edp-proto",
     "crates/usbcore",

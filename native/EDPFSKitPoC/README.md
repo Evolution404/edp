@@ -2,9 +2,28 @@
 
 Minimal macOS 26+ proof of concept for replacing the macFUSE backend with an EDP-owned FSKit extension.
 
+## Architecture rule
+
+The macOS 26 native product path is Swift/Apple-framework only. The FSKit host and extension do not build, link, or call Rust, C ABI bridge code, macFUSE, or an external helper daemon.
+
+Legacy Rust crates remain in the repository temporarily as the previous implementation and as behavior references while functionality is migrated. They are not dependencies of `native/EDPFSKitPoC`.
+
+Native layering:
+
+```text
+FSKit
+  -> FSBlockDeviceResource
+  -> FSBlockRawAccessor (alignment + exact byte reads)
+  -> EDPRawReadable (Swift storage boundary)
+  -> EDP metadata / key / crypto parsers in Swift
+  -> native FSVolume implementation
+```
+
+Crypto, LBA11/LBA12 parsing, partition mapping, and filesystem semantics must be added on the Swift side. Do not reintroduce a Rust bridge into the native target.
+
 ## Current gate
 
-The extension already builds, embeds in `Contents/Extensions`, registers as `com.apple.fskit.fsmodule`, declares block-resource support, and is associated with `edpvault` by Disk Arbitration on GitHub-hosted macOS 26 runners.
+The extension builds, embeds in `Contents/Extensions`, registers as `com.apple.fskit.fsmodule`, declares block-resource support, and is associated with `edpvault` by Disk Arbitration on GitHub-hosted macOS 26 runners.
 
 A fresh hosted runner stops at the expected macOS user-approval boundary:
 
@@ -13,6 +32,8 @@ Module com.edp.usbvault.fskit-poc.extension is disabled!
 ```
 
 Do not treat that as an FSKit implementation failure. Hosted runners cannot interactively approve third-party File System Extensions.
+
+The native probe already reads EDP LBA4/LBA7 through `FSBlockRawAccessor`, decodes the legacy rolling-XOR metadata in Swift, requires the serial marker plus partition types `[1, 2, 4]`, and returns `.recognized(...)` only when both signals match.
 
 ## First-run flow on a normal Mac
 
@@ -32,44 +53,21 @@ After the extension is installed and enabled, run from the repository root:
 bash native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
 ```
 
-The verifier:
-
-- requires macOS 26+;
-- verifies the installed app signature structure;
-- requires `FSClient` to find the EDP module with `isEnabled == true`;
-- creates a temporary 16 MiB raw disk image and attaches a real `/dev/diskN`;
-- invokes `mount -t edpvault` to drive FSKit probing;
-- captures EDP/fskitd diagnostics;
-- cleans up the temporary block device;
-- succeeds only if EDP's own extension logs the exact marker:
-
-```text
-PROBE_BLOCK_DEVICE=diskN
-```
+The verifier seeds captured EDP LBA4/LBA7 metadata into a temporary raw block device, drives `mount -t edpvault`, and succeeds only when the EDP extension logs the native Swift recognition markers.
 
 Expected final result:
 
 ```text
-RESULT=NATIVE_FSKIT_BLOCK_RESOURCE_DELIVERED:diskN
+RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:diskN
 ```
 
 Set `EDP_RUNTIME_DIAG_DIR=/path` to choose where evidence is retained. Set `EDP_FSKIT_APP=/path/to/app` only when testing an app outside `/Applications/EDPFSKitPoC.app`.
 
-The manual GitHub workflow `Native FSKit Approved Runtime Gate` runs this same verifier on a self-hosted, already-approved macOS runner.
+## Next implementation order
 
-## Block I/O architecture
-
-`FSBlockDeviceResource` direct I/O has device transfer-alignment requirements, while `edp-core::volume::RawIo` intentionally supports arbitrary byte ranges and `EncryptedPartitionIO` commonly operates at 16-byte SM4 boundaries.
-
-`Extension/FSBlockRawAccessor.swift` is therefore the first adapter layer. Its read path expands an arbitrary range to `max(blockSize, physicalBlockSize)`, performs one exact aligned FSKit direct read, then returns only the requested bytes. It is currently unused by `probeResource` so the runtime gate remains minimal and unambiguous.
-
-Do not connect EDP discovery/decryption until the approved runtime verifier proves delivery of a real `FSBlockDeviceResource`.
-
-After that gate passes, the intended order is:
-
-1. read a small aligned metadata range through `FSBlockRawAccessor`;
-2. expose a narrow C ABI/callback bridge into `edp-core::RawIo` rather than duplicating crypto in Swift;
-3. run existing `discover_volume()` / `probe_boot_sector()` logic;
-4. implement the smallest read-only FSKit volume exposing `/volume.raw`;
-5. route `/volume.raw` reads through the existing `EncryptedPartitionIO`;
+1. port LBA11/LBA12 parsing and volume descriptors to Swift;
+2. implement native SM4 plus key derivation with golden-vector parity tests;
+3. add a Swift encrypted-partition reader on top of `EDPRawReadable`;
+4. prove plaintext reads from captured media/fixtures;
+5. implement the smallest read-only `FSVolume` and filesystem semantics;
 6. add write support only after read-only mount/unmount correctness is proven.

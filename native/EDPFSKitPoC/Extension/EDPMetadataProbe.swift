@@ -1,10 +1,9 @@
 import Foundation
-import FSKit
 
 /// Conservative, passwordless EDP metadata recognition for native FSKit.
 ///
-/// This mirrors `edp-core::probe`: automatic recognition requires two
-/// independent reserved-sector signals instead of claiming media from one magic.
+/// Automatic recognition requires two independent reserved-sector signals
+/// instead of claiming media from a single magic value.
 enum EDPMetadataProbe {
     static let legacySectorSize: UInt64 = 512
     static let lba4Index: UInt64 = 4
@@ -58,9 +57,8 @@ enum EDPMetadataProbe {
         let sliceLength: Int
     }
 
-    /// Returns the physical-sector-aligned I/O request containing a logical
-    /// byte range. This is required because legacy 512-byte LBAs may sit inside
-    /// a 4 KiB physical sector.
+    /// Pure arithmetic regression helper for the legacy 512-byte metadata
+    /// layout on devices whose physical transfer size may be larger.
     static func alignedWindow(
         byteOffset: UInt64,
         byteLength: UInt64,
@@ -110,45 +108,6 @@ enum EDPMetadataProbe {
         )
     }
 
-    /// Reads LBA4 through LBA7 in one physically aligned request, then extracts
-    /// the two sectors used by the conservative EDP probe.
-    static func readReservedSectors(from block: FSBlockDeviceResource) throws -> ReservedSectors {
-        let window = try alignedWindow(
-            byteOffset: lba4ByteOffset,
-            byteLength: reservedProbeByteLength,
-            physicalBlockSize: block.physicalBlockSize
-        )
-
-        let storage = UnsafeMutableRawPointer.allocate(
-            byteCount: window.length,
-            alignment: 4096
-        )
-        defer { storage.deallocate() }
-
-        let buffer = UnsafeMutableRawBufferPointer(start: storage, count: window.length)
-        let bytesRead = try block.read(
-            into: buffer,
-            startingAt: off_t(window.start),
-            length: window.length
-        )
-
-        let requiredBytes = window.sliceOffset + window.sliceLength
-        guard bytesRead >= requiredBytes else {
-            throw ProbeError.shortRead(expected: requiredBytes, actual: bytesRead)
-        }
-
-        let lba4Start = window.sliceOffset
-        let lba4End = lba4Start + Int(legacySectorByteLength)
-        let lba7Start = window.sliceOffset + Int(lba7ByteOffset - lba4ByteOffset)
-        let lba7End = lba7Start + Int(legacySectorByteLength)
-
-        return ReservedSectors(
-            lba4: Array(buffer[lba4Start..<lba4End]),
-            lba7: Array(buffer[lba7Start..<lba7End])
-        )
-    }
-
-    /// Mirrors `edp-core::probe::probe_edp_reserved_sectors`.
     static func recognizeReservedSectors(lba4: [UInt8], lba7: [UInt8]) -> Recognition? {
         guard let serial = lba4Serial(lba4),
               let oldFormat = recognizeOldFormatLBA7(lba7) else {
@@ -176,8 +135,8 @@ enum EDPMetadataProbe {
         )
     }
 
-    /// Extracts the plaintext `$$$serial$$$` marker from LBA4 with the same
-    /// conservative bounds as the Rust core probe.
+    /// Extracts the plaintext `$$$serial$$$` marker from LBA4 with conservative
+    /// bounds so random media is not claimed accidentally.
     static func lba4Serial(_ raw: [UInt8]) -> String? {
         guard raw.count == Int(legacySectorByteLength) else {
             return nil
@@ -213,8 +172,7 @@ enum EDPMetadataProbe {
         return String(bytes: payload, encoding: .utf8)
     }
 
-    /// Mirrors `crates/edp-core/src/lba7.rs::recover_lba7` and
-    /// `crates/edp-core/src/xor.rs::xor_decode`.
+    /// Decodes the legacy LBA7 rolling-XOR format natively in Swift.
     static func recognizeOldFormatLBA7(_ raw: [UInt8]) -> OldFormatRecognition? {
         guard raw.count == Int(legacySectorByteLength) else {
             return nil

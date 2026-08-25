@@ -112,8 +112,8 @@ fi
 if ! grep -Fq 'PROBE_RESERVED_SECTORS_READ=true' "${DIAG_DIR}/runtime.log"; then
     fail "EDP_reserved_sector_read_not_observed"
 fi
-if ! grep -Fq 'PROBE_CORE=rust-c-abi' "${DIAG_DIR}/runtime.log"; then
-    fail "Rust_edp_core_bridge_not_observed"
+if ! grep -Fq 'PROBE_CORE=swift-native' "${DIAG_DIR}/runtime.log"; then
+    fail "Swift_native_EDP_core_not_observed"
 fi
 if ! grep -Fq 'PROBE_EDP_RESERVED_SIGNATURE=true' "${DIAG_DIR}/runtime.log"; then
     fail "EDP_reserved_signature_not_recognized"
@@ -122,5 +122,5 @@ if ! grep -Fq 'PROBE_MATCH=recognized' "${DIAG_DIR}/runtime.log"; then
     fail "FSKit_probe_did_not_return_recognized"
 fi
 
-echo "RESULT=NATIVE_FSKIT_RUST_CORE_RECOGNIZED:${BSD_NAME}"
+echo "RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:${BSD_NAME}"
 echo "DIAGNOSTICS=${DIAG_DIR}"

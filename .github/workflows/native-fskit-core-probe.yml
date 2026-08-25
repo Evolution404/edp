@@ -1,13 +1,12 @@
-name: Native FSKit Core Probe
+name: Native FSKit Swift Core Probe
 
 on:
   push:
     branches: ["feat/macos26-native-fskit"]
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/edp-core/**"
-      - "crates/edp-fskit-bridge/**"
+      - "native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
+      - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
       - ".github/workflows/native-fskit-core-probe.yml"
@@ -17,41 +16,33 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-fskit-core-probe-${{ github.ref }}
+  group: native-fskit-swift-core-probe-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    name: Swift metadata parity
+    runs-on: macos-26
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: swatinem/rust-cache@v2
-        with:
-          shared-key: native-fskit-core-probe-v2
 
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      - name: Clippy probe core and bridge
-        run: cargo clippy -p edp-core -p edp-fskit-bridge --all-targets -- -D warnings
-
-      - name: Passwordless reserved-sector probe regression
-        run: cargo test -p edp-core probe::tests -- --nocapture
-
-      - name: Existing LBA7 golden regression
-        run: cargo test -p edp-core lba7::tests::golden_lba7_auth -- --nocapture
-
-      - name: FSKit C ABI regression
-        run: cargo test -p edp-fskit-bridge -- --nocapture
-
-      - name: Build FSKit static bridge library
+      - name: Compile native Swift probe
         run: |
           set -euo pipefail
-          cargo build -p edp-fskit-bridge --release
-          test -f target/release/libedp_fskit_bridge.a
-          nm -g target/release/libedp_fskit_bridge.a \
-            | grep -F 'edp_probe_reserved_sectors'
+          xcrun swiftc \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
+            -o "${RUNNER_TEMP}/validate-edp-probe"
+
+      - name: Golden fixture regression
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/validate-edp-probe" fixtures/golden/disks.json \
+            | tee "${RUNNER_TEMP}/swift-core-probe.txt"
+          grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/swift-core-probe.txt"
+          grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/swift-core-probe.txt"
+          grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-core-probe.txt"
+          grep -F 'RESULT=SWIFT_EDP_LBA7_GOLDEN_OK' "${RUNNER_TEMP}/swift-core-probe.txt"
+          grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/swift-core-probe.txt"
+          echo 'RESULT=PURE_SWIFT_EDP_CORE_PROBE_OK'

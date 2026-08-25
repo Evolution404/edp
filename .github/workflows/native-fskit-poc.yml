@@ -5,11 +5,6 @@ on:
     branches: ["feat/macos26-native-fskit"]
     paths:
       - "native/EDPFSKitPoC/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "crates/edp-core/**"
-      - "crates/edp-fskit-bridge/**"
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
@@ -25,7 +20,7 @@ concurrency:
 
 jobs:
   macos26:
-    name: macOS 26 / native FSKit extension
+    name: macOS 26 / pure native FSKit extension
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -41,26 +36,15 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
 
-      - name: Rust toolchain for native core bridge
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust bridge build
-        uses: Swatinem/rust-cache@v2.9.2
-        with:
-          shared-key: native-fskit-macos26
-          cache-targets: true
-          cache-on-failure: true
-
       - name: Validate runtime helper syntax
         run: |
           set -euo pipefail
           bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
 
-      - name: Validate Swift EDP metadata probe against golden fixtures
+      - name: Validate native Swift EDP metadata probe against golden fixtures
         run: |
           set -euo pipefail
           xcrun swiftc \
-            -framework FSKit \
             native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
             native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
             -o "${RUNNER_TEMP}/validate-edp-probe"
@@ -110,13 +94,18 @@ jobs:
           test "${SHORT_NAME}" = "edpvault"
           test "${BLOCKS}" = "true"
 
-      - name: Verify Rust bridge is linked into extension
+      - name: Verify extension is independent of Rust bridge
         run: |
           set -euo pipefail
           EXT_BIN="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app/Contents/Extensions/EDPFSKitExtension.appex/Contents/MacOS/EDPFSKitExtension"
           test -x "${EXT_BIN}"
-          nm -gU "${EXT_BIN}" | grep -F 'edp_probe_reserved_sectors'
-          echo 'RESULT=RUST_EDP_CORE_BRIDGE_LINKED'
+          if nm -gU "${EXT_BIN}" | grep -E 'edp_probe_reserved_sectors|edp_raw_io_'; then
+            echo 'unexpected Rust C ABI symbol in native extension' >&2
+            exit 1
+          fi
+          ! grep -Fq 'cargo build' native/EDPFSKitPoC/project.yml
+          ! grep -Fq 'edp_fskit_bridge' native/EDPFSKitPoC/project.yml
+          echo 'RESULT=PURE_SWIFT_NATIVE_FSKIT'
 
       - name: Ad-hoc sign and install for hosted registration diagnostics
         run: |

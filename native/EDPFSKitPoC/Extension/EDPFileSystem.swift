@@ -5,9 +5,9 @@ import os
 final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
     private let logger = Logger(subsystem: "com.edp.usbvault.fskit-poc.extension", category: "filesystem")
 
-    private static let legacySectorSize = UInt64(EDP_PROBE_SECTOR_SIZE)
-    private static let lba4Offset = 4 * legacySectorSize
-    private static let lba7Offset = 7 * legacySectorSize
+    private static let lba4Offset = EDPMetadataProbe.lba4ByteOffset
+    private static let lba7Offset = EDPMetadataProbe.lba7ByteOffset
+    private static let sectorLength = Int(EDPMetadataProbe.legacySectorByteLength)
 
     func didFinishLoading() {
         logger.notice("EDP native FSKit extension loaded")
@@ -23,38 +23,40 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
             return
         }
 
-        let raw = FSBlockRawAccessor(resource: block)
-        logger.notice("PROBE_BLOCK_DEVICE=\(raw.bsdName, privacy: .public)")
+        let accessor = FSBlockRawAccessor(resource: block)
+        let raw: any EDPRawReadable = accessor
+        logger.notice("PROBE_BLOCK_DEVICE=\(accessor.bsdName, privacy: .public)")
         logger.notice(
             "PROBE_GEOMETRY=physical:\(block.physicalBlockSize, privacy: .public) logical:\(block.blockSize, privacy: .public) blocks:\(block.blockCount, privacy: .public)"
         )
 
         do {
-            let sectorLength = Int(Self.legacySectorSize)
-            let lba4 = try raw.readExact(at: Self.lba4Offset, length: sectorLength)
-            let lba7 = try raw.readExact(at: Self.lba7Offset, length: sectorLength)
+            let lba4 = try raw.readExact(at: Self.lba4Offset, length: Self.sectorLength)
+            let lba7 = try raw.readExact(at: Self.lba7Offset, length: Self.sectorLength)
             logger.notice("PROBE_RESERVED_SECTORS_READ=true")
+            logger.notice("PROBE_CORE=swift-native")
 
-            guard let serial = try EDPCoreProbe.recognize(lba4: lba4, lba7: lba7) else {
-                logger.notice("PROBE_CORE=rust-c-abi")
+            guard let evidence = EDPMetadataProbe.recognizeReservedSectors(
+                lba4: [UInt8](lba4),
+                lba7: [UInt8](lba7)
+            ) else {
                 logger.notice("PROBE_EDP_RESERVED_SIGNATURE=false")
                 logger.notice("PROBE_MATCH=notRecognized")
                 reply(.notRecognized, nil)
                 return
             }
 
-            logger.notice("PROBE_CORE=rust-c-abi")
             logger.notice("PROBE_EDP_RESERVED_SIGNATURE=true")
-            logger.notice("PROBE_EDP_SERIAL=\(serial, privacy: .public)")
+            logger.notice("PROBE_EDP_SERIAL=\(evidence.serial, privacy: .public)")
 
             // The passwordless reserved-sector evidence does not expose a
             // durable container UUID. A stable identifier can be introduced
-            // later when LBA11/device identity is wired into the Rust bridge.
+            // when LBA11/device identity is implemented in the native core.
             let containerID = FSContainerIdentifier()
             logger.notice("PROBE_MATCH=recognized")
             reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
         } catch {
-            logger.error("PROBE_CORE_OR_READ_ERROR=\(String(describing: error), privacy: .public)")
+            logger.error("PROBE_NATIVE_OR_READ_ERROR=\(String(describing: error), privacy: .public)")
             reply(nil, error)
         }
     }

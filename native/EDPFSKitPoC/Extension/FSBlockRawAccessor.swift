@@ -1,14 +1,15 @@
 import Foundation
 import FSKit
 
-/// Adapts FSBlockDeviceResource's sector-constrained direct I/O to the
-/// arbitrary byte ranges expected by the EDP core RawIo abstraction.
+/// Adapts FSBlockDeviceResource's sector-constrained direct I/O to the native
+/// byte-oriented EDP storage boundary.
 ///
 /// Phase 1 is intentionally read-only. Write support will add sector-level
-/// read-modify-write only after the native block-resource callback is proven on
-/// an approved macOS 26 machine.
-final class FSBlockRawAccessor {
+/// read-modify-write after the native filesystem path is proven on an approved
+/// macOS 26 machine.
+final class FSBlockRawAccessor: EDPRawReadable {
     private let resource: FSBlockDeviceResource
+    private let readLock = NSLock()
 
     init(resource: FSBlockDeviceResource) {
         self.resource = resource
@@ -98,15 +99,18 @@ final class FSBlockRawAccessor {
             throw POSIXError(.EINVAL)
         }
 
+        readLock.lock()
+        defer { readLock.unlock() }
+
         let bytesRead = try resource.read(
             into: buffer,
             startingAt: off_t(offset),
             length: buffer.count
         )
         guard bytesRead == buffer.count else {
-            // RawIo::pread_exact requires exact completion. Reissuing a short
-            // direct-I/O remainder could violate the device's sector alignment,
-            // so treat a partial transfer as an I/O error instead.
+            // Exact completion is part of the native EDP storage contract.
+            // Reissuing an unaligned remainder could violate the block device's
+            // transfer requirements, so a partial direct read is an I/O error.
             throw POSIXError(.EIO)
         }
     }

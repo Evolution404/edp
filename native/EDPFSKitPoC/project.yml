@@ -36,14 +36,6 @@ targets:
         excludes:
           - Info.plist
           - EDPFSKitExtension.entitlements
-          - EDPFSKitBridge.h
-    preBuildScripts:
-      - name: Build Rust FSKit probe bridge
-        basedOnDependencyAnalysis: false
-        script: |
-          set -euo pipefail
-          cd "${SRCROOT}/../.."
-          cargo build -p edp-fskit-bridge --release
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc.extension
@@ -53,10 +45,3 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Extension/EDPFSKitExtension.entitlements
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
-        SWIFT_OBJC_BRIDGING_HEADER: Extension/EDPFSKitBridge.h
-        LIBRARY_SEARCH_PATHS:
-          - "$(inherited)"
-          - "$(SRCROOT)/../../target/release"
-        OTHER_LDFLAGS:
-          - "$(inherited)"
-          - "-ledp_fskit_bridge"
