@@ -67,11 +67,17 @@ xcrun swiftc -emit-library -module-name EDPReadOnlyBridge \
   native/EDPFSKitPoC/Tools/EDPReadOnlyBlockCBridge.swift \
   -o "${SWIFT_LIB}"
 
+/usr/bin/nm -gU "${SWIFT_LIB}" | tee "${WORK_DIR}/swift-symbols.txt"
+for symbol in _edp_ro_open _edp_ro_size _edp_ro_read _edp_ro_close; do
+  /usr/bin/grep -F "${symbol}" "${WORK_DIR}/swift-symbols.txt"
+done
+log "RESULT=EDP_SWIFT_C_SYMBOLS_EXPORTED"
+
 FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 /usr/bin/cc native/EDPFSKitPoC/Tools/EDPReadOnlyFuseBridge.c \
   -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} \
-  -L"${WORK_DIR}" -lEDPReadOnlyBridge \
+  "${SWIFT_LIB}" \
   -Wl,-rpath,"${WORK_DIR}" \
   -o "${FUSE_BIN}"
 log "RESULT=EDP_CRYPTO_BRIDGE_TOOLS_BUILT"
