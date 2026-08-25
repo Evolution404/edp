@@ -25,7 +25,14 @@ snapshot_devices() {
 
 cleanup() {
   if /sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " >/dev/null 2>&1; then
-    /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || sudo /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || true
+    python3 - "${MOUNT_POINT}" <<'PY' >/dev/null 2>&1 || true
+import subprocess
+import sys
+try:
+    subprocess.run(["/sbin/umount", sys.argv[1]], timeout=5)
+except subprocess.TimeoutExpired:
+    pass
+PY
   fi
   if [[ -n "${PID}" ]] && kill -0 "${PID}" >/dev/null 2>&1; then
     kill "${PID}" >/dev/null 2>&1 || true
@@ -99,7 +106,6 @@ static int p_read(const char *path, char *buf, size_t size, off_t offset,
     if ((uint64_t)size > volume_size - (uint64_t)offset) {
         size = (size_t)(volume_size - (uint64_t)offset);
     }
-    /* Deterministic pseudo block contents. This is deliberately filesystem-agnostic. */
     for (size_t i = 0; i < size; ++i) {
         buf[i] = (char)(((uint64_t)offset + i) & 0xff);
     }
@@ -172,10 +178,10 @@ log "BSD_DEVICE_COUNT_BEFORE=$(wc -l <"${BEFORE_DEVICES}" | tr -d ' ')"
 "${BINARY_FILE}" -f -o "backend=fskit,uid=$(id -u),gid=$(id -g),nobrowse" "${MOUNT_POINT}" >"${SERVER_LOG}" 2>&1 &
 PID=$!
 
-READY=0
-for _ in $(seq 1 50); do
-  if [[ -f "${MOUNT_POINT}/volume.raw" ]]; then
-    READY=1
+MOUNT_LINE=""
+for _ in $(seq 1 75); do
+  MOUNT_LINE="$(/sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " || true)"
+  if [[ -n "${MOUNT_LINE}" ]]; then
     break
   fi
   if ! kill -0 "${PID}" >/dev/null 2>&1; then
@@ -184,13 +190,12 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
-if [[ "${READY}" != "1" ]]; then
+if [[ -z "${MOUNT_LINE}" ]]; then
   log "FAIL=MACFUSE_MOUNT_NOT_READY"
   cat "${SERVER_LOG}" | tee -a "${REPORT_FILE}"
   exit 1
 fi
 
-MOUNT_LINE="$(/sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " || true)"
 log "MOUNT_LINE=${MOUNT_LINE}"
 if ! printf '%s\n' "${MOUNT_LINE}" | /usr/bin/grep -Eq '^macfuse://[^ ]+ on .+\(macfuse,.*fskit'; then
   log "FAIL=EXPECTED_GENERIC_MACFUSE_FSKIT_MOUNT_NOT_OBSERVED"
@@ -199,22 +204,36 @@ fi
 log "RESULT=MACFUSE_GENERIC_FSKIT_MOUNT_OK"
 
 VIRTUAL_FILE="${MOUNT_POINT}/volume.raw"
-if [[ ! -f "${VIRTUAL_FILE}" || -b "${VIRTUAL_FILE}" || -c "${VIRTUAL_FILE}" ]]; then
-  log "FAIL=VIRTUAL_OBJECT_NOT_REGULAR_FILE"
-  /usr/bin/stat -f 'mode=%Sp type=%HT size=%z' "${VIRTUAL_FILE}" | tee -a "${REPORT_FILE}" || true
-  exit 1
-fi
-/usr/bin/stat -f 'VIRTUAL_STAT=mode=%Sp type=%HT size=%z' "${VIRTUAL_FILE}" | tee -a "${REPORT_FILE}"
-log "RESULT=MACFUSE_EXPOSED_OBJECT_REGULAR_FILE"
+python3 - "${VIRTUAL_FILE}" "${REPORT_FILE}" <<'PY'
+import stat
+import subprocess
+import sys
 
-EXPECTED_HEX="000102030405060708090a0b0c0d0e0f"
-ACTUAL_HEX="$(/usr/bin/dd if="${VIRTUAL_FILE}" bs=16 count=1 2>/dev/null | /usr/bin/xxd -p | tr -d '\n')"
-log "READ_HEAD_HEX=${ACTUAL_HEX}"
-if [[ "${ACTUAL_HEX}" != "${EXPECTED_HEX}" ]]; then
-  log "FAIL=FUSE_RANDOM_READ_MISMATCH"
-  exit 1
-fi
-log "RESULT=MACFUSE_RANDOM_READ_OK"
+path, report = sys.argv[1:]
+
+def run(args, timeout=5):
+    return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+
+st = run(["/usr/bin/stat", "-f", "mode=%Sp type=%HT size=%z", path])
+with open(report, "ab") as handle:
+    handle.write(b"VIRTUAL_STAT=" + st.stdout)
+if st.returncode != 0:
+    print("FAIL=VIRTUAL_OBJECT_STAT_FAILED")
+    sys.exit(10)
+
+mode_text = st.stdout.decode("utf-8", errors="replace")
+if "Regular File" not in mode_text:
+    print("FAIL=VIRTUAL_OBJECT_NOT_REGULAR_FILE")
+    sys.exit(11)
+print("RESULT=MACFUSE_EXPOSED_OBJECT_REGULAR_FILE")
+
+read = run(["/usr/bin/dd", f"if={path}", "bs=16", "count=1"])
+if read.returncode != 0 or read.stdout != bytes(range(16)):
+    print("FAIL=FUSE_RANDOM_READ_MISMATCH")
+    sys.exit(12)
+print("READ_HEAD_HEX=" + read.stdout.hex())
+print("RESULT=MACFUSE_RANDOM_READ_OK")
+PY
 
 snapshot_devices >"${AFTER_DEVICES}"
 log "BSD_DEVICE_COUNT_AFTER=$(wc -l <"${AFTER_DEVICES}" | tr -d ' ')"
@@ -227,47 +246,32 @@ if [[ -n "${NEW_DEVICES}" ]]; then
 fi
 log "RESULT=NO_NEW_BSD_BLOCK_DEVICE"
 
-set +e
-python3 - "${VIRTUAL_FILE}" "${REPORT_FILE}" <<'PY'
+DISKUTIL_INFO_RC="$(python3 - "${VIRTUAL_FILE}" "${REPORT_FILE}" <<'PY'
 import subprocess
 import sys
 
-virtual_file, report = sys.argv[1:]
+path, report = sys.argv[1:]
 try:
     completed = subprocess.run(
-        ["/usr/sbin/diskutil", "info", virtual_file],
+        ["/usr/sbin/diskutil", "info", path],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
         timeout=5,
     )
     rc = completed.returncode
     output = completed.stdout
 except subprocess.TimeoutExpired as error:
     rc = 124
-    output = (error.stdout or "") + "\nDISKUTIL_PROBE_TIMEOUT=5s\n"
-with open(report, "a", encoding="utf-8") as handle:
+    output = (error.stdout or b"") + b"\nDISKUTIL_PROBE_TIMEOUT=5s\n"
+with open(report, "ab") as handle:
     handle.write(output)
 print(rc)
 PY
-DISKUTIL_INFO_RC=$?
-# The Python helper prints the child rc; capture it from the last report-independent probe below.
-DISKUTIL_INFO_RC="$(python3 - "${VIRTUAL_FILE}" <<'PY'
-import subprocess
-import sys
-try:
-    result = subprocess.run(["/usr/sbin/diskutil", "info", sys.argv[1]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-    print(result.returncode)
-except subprocess.TimeoutExpired:
-    print(124)
-PY
 )"
-set -e
 log "DISKUTIL_INFO_RC=${DISKUTIL_INFO_RC}"
 if [[ "${DISKUTIL_INFO_RC}" -eq 0 ]]; then
   log "FAIL=DISKUTIL_ACCEPTED_FUSE_REGULAR_FILE_AS_DISK"
   exit 1
 fi
 log "RESULT=DISKUTIL_REJECTS_FUSE_REGULAR_FILE_AS_DISK"
-
 log "RESULT=MACFUSE_IS_FILESYSTEM_TRANSPORT_NOT_BLOCK_PUBLISHER"
