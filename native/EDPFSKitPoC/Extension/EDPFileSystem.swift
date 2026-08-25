@@ -5,6 +5,10 @@ import os
 final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
     private let logger = Logger(subsystem: "com.edp.usbvault.fskit-poc.extension", category: "filesystem")
 
+    private static let legacySectorSize = UInt64(EDP_PROBE_SECTOR_SIZE)
+    private static let lba4Offset = 4 * legacySectorSize
+    private static let lba7Offset = 7 * legacySectorSize
+
     func didFinishLoading() {
         logger.notice("EDP native FSKit extension loaded")
     }
@@ -19,65 +23,38 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
             return
         }
 
-        logger.notice("PROBE_BLOCK_DEVICE=\(block.bsdName, privacy: .public)")
+        let raw = FSBlockRawAccessor(resource: block)
+        logger.notice("PROBE_BLOCK_DEVICE=\(raw.bsdName, privacy: .public)")
         logger.notice(
             "PROBE_GEOMETRY=physical:\(block.physicalBlockSize, privacy: .public) logical:\(block.blockSize, privacy: .public) blocks:\(block.blockCount, privacy: .public)"
         )
 
         do {
-            let reserved = try EDPMetadataProbe.readReservedSectors(from: block)
+            let sectorLength = Int(Self.legacySectorSize)
+            let lba4 = try raw.readExact(at: Self.lba4Offset, length: sectorLength)
+            let lba7 = try raw.readExact(at: Self.lba7Offset, length: sectorLength)
             logger.notice("PROBE_RESERVED_SECTORS_READ=true")
 
-            var serialBuffer = [CChar](
-                repeating: 0,
-                count: Int(EDP_PROBE_SERIAL_CAPACITY)
-            )
-
-            let probeRC: Int32 = reserved.lba4.withUnsafeBufferPointer { lba4 in
-                reserved.lba7.withUnsafeBufferPointer { lba7 in
-                    serialBuffer.withUnsafeMutableBufferPointer { serial in
-                        edp_probe_reserved_sectors(
-                            lba4.baseAddress,
-                            lba7.baseAddress,
-                            serial.baseAddress,
-                            serial.count
-                        )
-                    }
-                }
-            }
-
-            switch probeRC {
-            case EDP_PROBE_NOT_RECOGNIZED:
+            guard let serial = try EDPCoreProbe.recognize(lba4: lba4, lba7: lba7) else {
                 logger.notice("PROBE_CORE=rust-c-abi")
                 logger.notice("PROBE_EDP_RESERVED_SIGNATURE=false")
                 logger.notice("PROBE_MATCH=notRecognized")
                 reply(.notRecognized, nil)
-
-            case EDP_PROBE_RECOGNIZED:
-                guard let serialBase = serialBuffer.withUnsafeBufferPointer({ $0.baseAddress }) else {
-                    logger.error("PROBE_CORE_SERIAL_BUFFER_MISSING")
-                    reply(nil, POSIXError(.EIO))
-                    return
-                }
-
-                let serial = String(cString: serialBase)
-                logger.notice("PROBE_CORE=rust-c-abi")
-                logger.notice("PROBE_EDP_RESERVED_SIGNATURE=true")
-                logger.notice("PROBE_EDP_SERIAL=\(serial, privacy: .public)")
-
-                // The passwordless reserved-sector evidence does not expose a
-                // durable container UUID. A stable identifier can be introduced
-                // later when LBA11/device identity is wired into the Rust bridge.
-                let containerID = FSContainerIdentifier()
-                logger.notice("PROBE_MATCH=recognized")
-                reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
-
-            default:
-                logger.error("PROBE_CORE_ERROR=\(probeRC, privacy: .public)")
-                reply(nil, POSIXError(.EIO))
+                return
             }
+
+            logger.notice("PROBE_CORE=rust-c-abi")
+            logger.notice("PROBE_EDP_RESERVED_SIGNATURE=true")
+            logger.notice("PROBE_EDP_SERIAL=\(serial, privacy: .public)")
+
+            // The passwordless reserved-sector evidence does not expose a
+            // durable container UUID. A stable identifier can be introduced
+            // later when LBA11/device identity is wired into the Rust bridge.
+            let containerID = FSContainerIdentifier()
+            logger.notice("PROBE_MATCH=recognized")
+            reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
         } catch {
-            logger.error("PROBE_RESERVED_READ_ERROR=\(String(describing: error), privacy: .public)")
+            logger.error("PROBE_CORE_OR_READ_ERROR=\(String(describing: error), privacy: .public)")
             reply(nil, error)
         }
     }
