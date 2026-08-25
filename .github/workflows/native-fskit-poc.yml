@@ -2,7 +2,7 @@ name: Native FSKit Hosted Contract
 
 on:
   push:
-    branches: ["feat/macos26-native-fskit"]
+    branches: ["feat/macos26-native-fskit", "feat/macos26-fskit-*"]
     paths:
       - "native/EDPFSKitPoC/project.yml"
       - "native/EDPFSKitPoC/Host/Info.plist"
@@ -12,6 +12,8 @@ on:
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.swift"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - ".github/workflows/native-fskit-poc.yml"
+  pull_request:
+    branches: ["feat/macos26-native-fskit"]
   workflow_dispatch:
 
 permissions:
