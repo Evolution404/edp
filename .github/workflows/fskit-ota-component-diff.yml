@@ -1,0 +1,78 @@
+name: FSKit OTA component diff
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - install/one-click-installer
+    paths:
+      - .github/workflows/fskit-ota-component-diff.yml
+
+jobs:
+  ota-diff:
+    name: Inspect 24G624 -> 24G716/720 OTA payloads
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Install ipsw
+        run: |
+          set -euo pipefail
+          brew install ipsw
+          ipsw version
+
+      - name: Download ARM64 delta 24G624 -> 24G716
+        env:
+          OTA_URL: https://updates.cdn-apple.com/2026SpringSeed/patches/122-35216/30DB8053-283F-4B64-B890-FFA0136CA356/com_apple_MobileAsset_MacSoftwareUpdate/dacc1a1076d3ee670297be6308d99831aeb1766b.zip
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 3 --progress-bar "$OTA_URL" -o "$RUNNER_TEMP/24G624-to-24G716.zip"
+          ls -lh "$RUNNER_TEMP/24G624-to-24G716.zip"
+
+      - name: Inspect 24G624 -> 24G716 file set
+        run: |
+          set -uo pipefail
+          OTA="$RUNNER_TEMP/24G624-to-24G716.zip"
+          echo '=== ZIP CONTENTS RELEVANT TO FSKIT ==='
+          unzip -l "$OTA" | grep -Ei 'fskit|livefs|diskarbitration|/mount$|post\.bom|pre\.bom|payload' | head -n 300 || true
+          echo
+          echo '=== IPSW OTA LS RELEVANT FILES ==='
+          ipsw ota ls "$OTA" 2>&1 | grep -Ei '(^|/)(sbin/mount|usr/libexec/fskitd|usr/libexec/diskarbitrationd)|LiveFS\.framework|FSKit\.framework' | head -n 500 || true
+
+      - name: Extract target components from 24G716 delta
+        run: |
+          set -uo pipefail
+          OTA="$RUNNER_TEMP/24G624-to-24G716.zip"
+          OUT="$RUNNER_TEMP/ota-extract-716"
+          mkdir -p "$OUT"
+          ipsw ota extract "$OTA" '(^|/)(sbin/mount|usr/libexec/fskitd|usr/libexec/diskarbitrationd)$|LiveFS\.framework|FSKit\.framework' --output "$OUT" 2>&1 | tee "$RUNNER_TEMP/ota-extract-716.log" || true
+          echo '=== EXTRACTED FILES ==='
+          find "$OUT" -type f -maxdepth 12 -print 2>/dev/null | sort || true
+          echo '=== COMPONENT HASHES / SIGNATURES ==='
+          while IFS= read -r f; do
+            case "$f" in
+              */sbin/mount|*/usr/libexec/fskitd|*/usr/libexec/diskarbitrationd|*/LiveFS.framework/*/LiveFS|*/FSKit.framework/*/FSKit)
+                echo "--- $f"
+                shasum -a 256 "$f" || true
+                codesign -dv --verbose=4 "$f" 2>&1 | grep -E 'Identifier=|CDHash=|Signed Time=|VersionMin=|VersionSDK=' || true
+                ;;
+            esac
+          done < <(find "$OUT" -type f 2>/dev/null)
+
+      - name: Download ARM64 delta 24G716 -> 24G720
+        env:
+          OTA_URL: https://updates.cdn-apple.com/2026SpringSeed/patches/122-63999/877873B7-7ABD-427D-8340-83913C4A3A03/com_apple_MobileAsset_MacSoftwareUpdate/067bae47227fb5df841d4e3ed29b5928536fd8ae.zip
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/24G624-to-24G716.zip"
+          curl -fL --retry 5 --retry-delay 3 --progress-bar "$OTA_URL" -o "$RUNNER_TEMP/24G716-to-24G720.zip"
+          ls -lh "$RUNNER_TEMP/24G716-to-24G720.zip"
+
+      - name: Inspect 24G716 -> 24G720 file set
+        run: |
+          set -uo pipefail
+          OTA="$RUNNER_TEMP/24G716-to-24G720.zip"
+          echo '=== ZIP CONTENTS RELEVANT TO FSKIT ==='
+          unzip -l "$OTA" | grep -Ei 'fskit|livefs|diskarbitration|/mount$|post\.bom|pre\.bom|payload' | head -n 300 || true
+          echo
+          echo '=== IPSW OTA LS RELEVANT FILES ==='
+          ipsw ota ls "$OTA" 2>&1 | grep -Ei '(^|/)(sbin/mount|usr/libexec/fskitd|usr/libexec/diskarbitrationd)|LiveFS\.framework|FSKit\.framework' | head -n 500 || true
