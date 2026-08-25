@@ -1,0 +1,50 @@
+name: EDPFSKitPoC
+options:
+  bundleIdPrefix: com.edp.usbvault
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_VERSION: "6.0"
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+
+targets:
+  EDPFSKitHost:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Host
+    info:
+      path: Host/Info.plist
+    dependencies:
+      - target: EDPFSKitExtension
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc
+        PRODUCT_NAME: EDPFSKitPoC
+        GENERATE_INFOPLIST_FILE: NO
+
+  EDPFSKitExtension:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Extension
+        excludes:
+          - Info.plist
+          - EDPFSKitExtension.entitlements
+    info:
+      path: Extension/Info.plist
+    entitlements:
+      path: Extension/EDPFSKitExtension.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc.extension
+        PRODUCT_NAME: EDPFSKitExtension
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES

@@ -1,0 +1,174 @@
+name: Native FSKit PoC
+
+on:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-fskit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos26:
+    name: macOS 26 / native FSKit extension
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Runtime and SDK
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        working-directory: native/EDPFSKitPoC
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -project EDPFSKitPoC.xcodeproj -list
+
+      - name: Build native host and FSKit extension
+        working-directory: native/EDPFSKitPoC
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project EDPFSKitPoC.xcodeproj \
+            -scheme EDPFSKitHost \
+            -configuration Release \
+            -derivedDataPath "${RUNNER_TEMP}/EDPFSKitDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Inspect built FSKit bundle
+        run: |
+          set -euo pipefail
+          APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
+          EXT="${APP}/Contents/PlugIns/EDPFSKitExtension.appex"
+          test -d "${APP}"
+          test -d "${EXT}"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${APP}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${EXT}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:EXExtensionPointIdentifier' "${EXT}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${EXT}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportsBlockResources' "${EXT}/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${EXT}/Contents/Info.plist")" = "26.0"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:EXExtensionPointIdentifier' "${EXT}/Contents/Info.plist")" = "com.apple.fskit.fsmodule"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${EXT}/Contents/Info.plist")" = "edpvault"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportsBlockResources' "${EXT}/Contents/Info.plist")" = "true"
+
+      - name: Ad-hoc sign PoC for runtime registration
+        run: |
+          set -euo pipefail
+          APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
+          EXT="${APP}/Contents/PlugIns/EDPFSKitExtension.appex"
+          codesign --force --sign - \
+            --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
+            "${EXT}"
+          codesign --force --sign - "${APP}"
+          codesign --verify --deep --strict --verbose=2 "${APP}"
+          codesign -d --entitlements :- "${EXT}"
+
+      - name: Install and register extension on hosted macOS 26
+        run: |
+          set -euo pipefail
+          SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
+          INSTALLED_APP="/Applications/EDPFSKitPoC.app"
+          sudo rm -rf "${INSTALLED_APP}"
+          sudo /usr/bin/ditto "${SOURCE_APP}" "${INSTALLED_APP}"
+          EXT="${INSTALLED_APP}/Contents/PlugIns/EDPFSKitExtension.appex"
+          pluginkit -a "${EXT}"
+          sleep 2
+          echo '--- PluginKit registration ---'
+          pluginkit -m -A -D -vv | grep -A8 -B4 'com.edp.usbvault.fskit-poc.extension' || true
+
+      - name: Inspect FSClient module identity
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -framework FSKit \
+            native/EDPFSKitPoC/Tools/InspectFSKit.swift \
+            -o "${RUNNER_TEMP}/inspect-fskit"
+          "${RUNNER_TEMP}/inspect-fskit" | tee "${RUNNER_TEMP}/fskit-module.txt"
+          grep -F 'FSKIT_MODULE_FOUND=com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/fskit-module.txt"
+
+      - name: CI-only enable FSKit module
+        run: |
+          set -euo pipefail
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          SETTINGS_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          if [[ ! -f "${SETTINGS_PLIST}" ]]; then
+            plutil -create xml1 "${SETTINGS_PLIST}"
+            plutil -insert enabledModules -array "${SETTINGS_PLIST}"
+          fi
+          if ! plutil -extract enabledModules raw "${SETTINGS_PLIST}" 2>/dev/null | grep -Fxq 'com.edp.usbvault.fskit-poc.extension'; then
+            INDEX="$(plutil -extract enabledModules raw "${SETTINGS_PLIST}" 2>/dev/null | wc -l | tr -d ' ')"
+            plutil -insert "enabledModules.${INDEX}" -string 'com.edp.usbvault.fskit-poc.extension' "${SETTINGS_PLIST}"
+          fi
+          killall fskit_agent >/dev/null 2>&1 || true
+          killall extensionkitservice >/dev/null 2>&1 || true
+          sleep 3
+          cat "${SETTINGS_PLIST}"
+
+      - name: Verify FSClient reports enabled
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/inspect-fskit" | tee "${RUNNER_TEMP}/fskit-enabled.txt"
+          grep -F 'FSKIT_MODULE_ENABLED=true' "${RUNNER_TEMP}/fskit-enabled.txt"
+
+      - name: Exercise block-resource probe path
+        run: |
+          set -euo pipefail
+          IMAGE="${RUNNER_TEMP}/edp-fskit-probe.dmg"
+          MOUNTPOINT="${RUNNER_TEMP}/edp-fskit-probe-mount"
+          hdiutil create -size 16m -layout NONE -fs NONE "${IMAGE}"
+          DISK="$(hdiutil attach -nomount "${IMAGE}" | awk 'NR==1 {print $1}')"
+          mkdir -p "${MOUNTPOINT}"
+          echo "TEST_DISK=${DISK}"
+          set +e
+          /sbin/mount -t edpvault "${DISK}" "${MOUNTPOINT}" >"${RUNNER_TEMP}/mount.stdout" 2>"${RUNNER_TEMP}/mount.stderr"
+          RC=$?
+          set -e
+          cat "${RUNNER_TEMP}/mount.stdout" || true
+          cat "${RUNNER_TEMP}/mount.stderr" || true
+          echo "MOUNT_RC=${RC}"
+          sleep 2
+          log show --last 2m --style compact \
+            --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd"' \
+            | tee "${RUNNER_TEMP}/fskit-runtime.log" || true
+          hdiutil detach "${DISK}" || true
+          grep -F 'EDP native FSKit extension loaded' "${RUNNER_TEMP}/fskit-runtime.log"
+          grep -F 'probeResource' "${RUNNER_TEMP}/fskit-runtime.log"
+          test "${RC}" -ne 0
+          echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED'
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-fskit-poc-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fskit-module.txt
+            ${{ runner.temp }}/fskit-enabled.txt
+            ${{ runner.temp }}/mount.stdout
+            ${{ runner.temp }}/mount.stderr
+            ${{ runner.temp }}/fskit-runtime.log
+          if-no-files-found: ignore
+          retention-days: 14
