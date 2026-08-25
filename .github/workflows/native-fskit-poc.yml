@@ -67,16 +67,28 @@ jobs:
           EXT_POINT="$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:EXExtensionPointIdentifier' "${EXT}/Contents/Info.plist")"
           SHORT_NAME="$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${EXT}/Contents/Info.plist")"
           BLOCKS="$(/usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSSupportsBlockResources' "${EXT}/Contents/Info.plist")"
+          SOURCE_EXT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' native/EDPFSKitPoC/Extension/Info.plist)"
+          BUILT_EXT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${EXT}/Contents/Info.plist")"
+          SOURCE_HOST_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' native/EDPFSKitPoC/Host/Info.plist)"
+          BUILT_HOST_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${APP}/Contents/Info.plist")"
 
           echo "MIN_OS=${MIN_OS}"
           echo "EXTENSION_POINT=${EXT_POINT}"
           echo "FS_SHORT_NAME=${SHORT_NAME}"
           echo "SUPPORTS_BLOCK_RESOURCES=${BLOCKS}"
+          echo "SOURCE_EXT_BUILD=${SOURCE_EXT_BUILD}"
+          echo "BUILT_EXT_BUILD=${BUILT_EXT_BUILD}"
+          echo "SOURCE_HOST_BUILD=${SOURCE_HOST_BUILD}"
+          echo "BUILT_HOST_BUILD=${BUILT_HOST_BUILD}"
 
           test "${MIN_OS}" = "26.0"
           test "${EXT_POINT}" = "com.apple.fskit.fsmodule"
           test "${SHORT_NAME}" = "edpvault"
           test "${BLOCKS}" = "true"
+          test "${BUILT_EXT_BUILD}" = "${SOURCE_EXT_BUILD}"
+          test "${BUILT_HOST_BUILD}" = "${SOURCE_HOST_BUILD}"
+          echo "EDP_EXPECTED_BUILD_VERSION=${SOURCE_EXT_BUILD}" >> "${GITHUB_ENV}"
+          echo "RESULT=EDP_FSKIT_BUILD_VERSION_MATCH:${SOURCE_EXT_BUILD}"
 
       - name: Verify native extension independence
         run: |
@@ -196,6 +208,8 @@ jobs:
           cat "${RUNNER_TEMP}/runtime.log" || true
 
           if grep -Fq "PROBE_BLOCK_DEVICE=${BSD_NAME}" "${RUNNER_TEMP}/runtime.log"; then
+            grep -Fq "PROBE_BUILD_VERSION=${EDP_EXPECTED_BUILD_VERSION}" "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_WRONG_BUILD_VERSION'; exit 1; }
             grep -Fq 'PROBE_RESERVED_SECTORS_READ=true' "${RUNNER_TEMP}/runtime.log" \
               || { echo 'RESULT=NATIVE_FSKIT_PROBE_MISSING_RESERVED_READ'; exit 1; }
             grep -Fq 'PROBE_CORE=swift-native' "${RUNNER_TEMP}/runtime.log" \
@@ -204,7 +218,7 @@ jobs:
               || { echo 'RESULT=NATIVE_FSKIT_PROBE_DID_NOT_RECOGNIZE_EDP'; exit 1; }
             grep -Fq 'PROBE_MATCH=recognized' "${RUNNER_TEMP}/runtime.log" \
               || { echo 'RESULT=NATIVE_FSKIT_PROBE_MATCH_NOT_RECOGNIZED'; exit 1; }
-            echo "RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:${BSD_NAME}"
+            echo "RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:${BSD_NAME}:build=${EDP_EXPECTED_BUILD_VERSION}"
             exit 0
           fi
 

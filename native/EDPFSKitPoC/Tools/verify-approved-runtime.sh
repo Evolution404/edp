@@ -6,6 +6,7 @@ APP="${EDP_FSKIT_APP:-/Applications/EDPFSKitPoC.app}"
 EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+SOURCE_EXT_INFO="${REPO_ROOT}/native/EDPFSKitPoC/Extension/Info.plist"
 FIXTURE_DISK_DIR="${EDP_RUNTIME_FIXTURE_DIR:-${REPO_ROOT}/fixtures/real_disks/disk4}"
 DIAG_DIR="${EDP_RUNTIME_DIAG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/edp-fskit-runtime.XXXXXX")}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edp-fskit-work.XXXXXX")"
@@ -39,8 +40,20 @@ OS_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 
 test -d "${APP}" || fail "host_app_missing:${APP}"
 test -d "${EXT}" || fail "embedded_extension_missing:${EXT}"
+test -f "${SOURCE_EXT_INFO}" || fail "source_extension_Info_plist_missing"
 test -f "${FIXTURE_DISK_DIR}/LBA4.bin" || fail "fixture_LBA4_missing:${FIXTURE_DISK_DIR}"
 test -f "${FIXTURE_DISK_DIR}/LBA7.bin" || fail "fixture_LBA7_missing:${FIXTURE_DISK_DIR}"
+
+EXPECTED_BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${SOURCE_EXT_INFO}" 2>/dev/null)" \
+    || fail "source_extension_build_version_unreadable"
+INSTALLED_BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${EXT}/Contents/Info.plist" 2>/dev/null)" \
+    || fail "installed_extension_build_version_unreadable"
+
+echo "EXPECTED_FSKIT_BUILD_VERSION=${EXPECTED_BUILD_VERSION}"
+echo "INSTALLED_FSKIT_BUILD_VERSION=${INSTALLED_BUILD_VERSION}"
+[[ "${INSTALLED_BUILD_VERSION}" == "${EXPECTED_BUILD_VERSION}" ]] \
+    || fail "installed_extension_version_mismatch:installed=${INSTALLED_BUILD_VERSION}:expected=${EXPECTED_BUILD_VERSION}"
+echo "RESULT=EDP_FSKIT_BUILD_VERSION_MATCH:${EXPECTED_BUILD_VERSION}"
 
 codesign --verify --deep --strict --verbose=2 "${APP}" \
     >"${DIAG_DIR}/codesign.out" 2>"${DIAG_DIR}/codesign.err" \
@@ -62,25 +75,16 @@ if ! grep -Fq 'FSKIT_MODULE_ENABLED=true' "${DIAG_DIR}/fsclient.txt"; then
 fi
 echo 'RESULT=EDP_FSKIT_APPROVED_AND_ENABLED'
 
+LBA4="${FIXTURE_DISK_DIR}/LBA4.bin"
+LBA7="${FIXTURE_DISK_DIR}/LBA7.bin"
+[[ "$(stat -f %z "${LBA4}")" -eq 512 ]] || fail "fixture_LBA4_size_invalid"
+[[ "$(stat -f %z "${LBA7}")" -eq 512 ]] || fail "fixture_LBA7_size_invalid"
+
 mkfile 16m "${RAW}"
-python3 - "${RAW}" "${FIXTURE_DISK_DIR}/LBA4.bin" "${FIXTURE_DISK_DIR}/LBA7.bin" <<'PY'
-from pathlib import Path
-import sys
-
-raw = Path(sys.argv[1])
-lba4 = Path(sys.argv[2]).read_bytes()
-lba7 = Path(sys.argv[3]).read_bytes()
-if len(lba4) != 512 or len(lba7) != 512:
-    raise SystemExit("reserved-sector fixtures must each be exactly 512 bytes")
-
-with raw.open("r+b") as handle:
-    handle.seek(4 * 512)
-    handle.write(lba4)
-    handle.seek(7 * 512)
-    handle.write(lba7)
-PY
-
+dd if="${LBA4}" of="${RAW}" bs=512 seek=4 conv=notrunc status=none
+dd if="${LBA7}" of="${RAW}" bs=512 seek=7 conv=notrunc status=none
 echo "RESULT=EDP_RESERVED_FIXTURE_SEEDED:${FIXTURE_DISK_DIR}"
+
 ATTACH_OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${RAW}")"
 printf '%s\n' "${ATTACH_OUT}" | tee "${DIAG_DIR}/hdiutil-attach.txt"
 DISK="$(printf '%s\n' "${ATTACH_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
@@ -106,6 +110,9 @@ log show --start "${LOG_START}" --style compact \
 cat "${DIAG_DIR}/runtime.log" || true
 
 BSD_NAME="$(basename "${DISK}")"
+if ! grep -Fq "PROBE_BUILD_VERSION=${EXPECTED_BUILD_VERSION}" "${DIAG_DIR}/runtime.log"; then
+    fail "running_extension_version_not_observed:${EXPECTED_BUILD_VERSION}"
+fi
 if ! grep -Fq "PROBE_BLOCK_DEVICE=${BSD_NAME}" "${DIAG_DIR}/runtime.log"; then
     fail "EDP_FSBlockDeviceResource_probe_not_observed:${BSD_NAME}"
 fi
@@ -122,5 +129,5 @@ if ! grep -Fq 'PROBE_MATCH=recognized' "${DIAG_DIR}/runtime.log"; then
     fail "FSKit_probe_did_not_return_recognized"
 fi
 
-echo "RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:${BSD_NAME}"
+echo "RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:${BSD_NAME}:build=${EXPECTED_BUILD_VERSION}"
 echo "DIAGNOSTICS=${DIAG_DIR}"

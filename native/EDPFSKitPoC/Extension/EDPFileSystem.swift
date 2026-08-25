@@ -8,9 +8,10 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
     private static let lba4Offset = EDPMetadataProbe.lba4ByteOffset
     private static let lba7Offset = EDPMetadataProbe.lba7ByteOffset
     private static let sectorLength = Int(EDPMetadataProbe.legacySectorByteLength)
+    private static let buildVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
 
     func didFinishLoading() {
-        logger.notice("EDP native FSKit extension loaded")
+        logger.notice("EDP native FSKit extension loaded build=\(Self.buildVersion, privacy: .public)")
     }
 
     func probeResource(
@@ -25,6 +26,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
 
         let accessor = FSBlockRawAccessor(resource: block)
         let raw: any EDPRawReadable = accessor
+        logger.notice("PROBE_BUILD_VERSION=\(Self.buildVersion, privacy: .public)")
         logger.notice("PROBE_BLOCK_DEVICE=\(accessor.bsdName, privacy: .public)")
         logger.notice(
             "PROBE_GEOMETRY=physical:\(block.physicalBlockSize, privacy: .public) logical:\(block.blockSize, privacy: .public) blocks:\(block.blockCount, privacy: .public)"
@@ -51,7 +53,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
 
             // The passwordless reserved-sector evidence does not expose a
             // durable container UUID. A stable identifier can be introduced
-            // when LBA11/device identity is implemented in the native core.
+            // when LBA11/device identity is wired through the live FSKit path.
             let containerID = FSContainerIdentifier()
             logger.notice("PROBE_MATCH=recognized")
             reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
