@@ -88,7 +88,8 @@ jobs:
             plutil -p "${SETTINGS}/enabledModules.plist" || true
           fi
 
-      - name: Enable FSKit modules through FSClient
+      - name: Attempt FSKit enablement through FSClient
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -166,6 +167,39 @@ jobs:
             echo '--- enabledModules after FSClient ---'
             plutil -p "${SETTINGS}"
           fi
+
+      - name: Seed FSKit approval state for ephemeral CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          SETTINGS="$HOME/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
+          test -f "${SETTINGS}"
+
+          python3 - "${SETTINGS}" <<'PY'
+          import plistlib
+          import sys
+
+          path = sys.argv[1]
+          with open(path, "rb") as handle:
+              enabled = plistlib.load(handle)
+
+          for identifier in (
+              "io.macfuse.app.fsmodule.macfuse",
+              "io.macfuse.app.fsmodule.macfuse-local",
+          ):
+              if identifier not in enabled:
+                  enabled.append(identifier)
+
+          with open(path, "wb") as handle:
+              plistlib.dump(enabled, handle, fmt=plistlib.FMT_BINARY)
+          PY
+
+          echo '--- enabledModules after CI seed ---'
+          plutil -p "${SETTINGS}"
+
+          killall fskit_agent 2>/dev/null || true
+          killall extensionkitservice 2>/dev/null || true
+          sleep 2
 
       - name: Run real FSKit mount smoke test
         id: smoke
