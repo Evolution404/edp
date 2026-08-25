@@ -54,9 +54,24 @@ jobs:
           pluginkit -a "${EXT}"
           pluginkit -a "${APP}"
 
-          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
-            | tee "${RUNNER_TEMP}/pluginkit.txt"
-          grep -F 'com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/pluginkit.txt"
+          indexed=false
+          for attempt in 1 2 3 4 5; do
+            echo "PLUGIN_KIT_INDEX_ATTEMPT=${attempt}"
+            pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
+              | tee "${RUNNER_TEMP}/pluginkit.txt"
+            if grep -Fq 'com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/pluginkit.txt"; then
+              indexed=true
+              break
+            fi
+            sleep 1
+          done
+
+          echo "EDP_PLUGIN_INDEXED=${indexed}" >> "${GITHUB_ENV}"
+          if [[ "${indexed}" == "true" ]]; then
+            echo 'RESULT=PLUGIN_KIT_FSKIT_INDEXED'
+          else
+            echo 'RESULT=HOSTED_RUNNER_PLUGIN_KIT_INDEXING_UNAVAILABLE'
+          fi
 
       - name: Attach real raw block device
         run: |
@@ -102,6 +117,11 @@ jobs:
 
           if grep -Fq 'Module com.edp.usbvault.fskit-poc.extension is disabled!' "${RUNNER_TEMP}/mount.err"; then
             echo 'RESULT=HOSTED_RUNNER_FSKIT_APPROVAL_REQUIRED'
+            exit 0
+          fi
+
+          if [[ "${EDP_PLUGIN_INDEXED:-false}" != "true" ]]; then
+            echo 'RESULT=HOSTED_RUNNER_PLUGIN_KIT_INDEXING_UNAVAILABLE'
             exit 0
           fi
 
