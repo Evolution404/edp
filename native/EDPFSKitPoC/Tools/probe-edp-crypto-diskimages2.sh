@@ -51,12 +51,12 @@ log "libfuse=$(pkg-config --modversion fuse)"
   native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
   -framework Foundation -o "${ATTACH_BIN}"
 
-xcrun swiftc \
+xcrun swiftc -O \
   native/EDPFSKitPoC/Extension/EDPCrypto.swift \
   native/EDPFSKitPoC/Tools/PrepareEncryptedDiskImage.swift \
   -o "${ENCRYPT_BIN}"
 
-xcrun swiftc -emit-library -module-name EDPReadOnlyBridge \
+xcrun swiftc -O -emit-library -module-name EDPReadOnlyBridge \
   native/EDPFSKitPoC/Extension/EDPRawIO.swift \
   native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
   native/EDPFSKitPoC/Extension/EDPCrypto.swift \
