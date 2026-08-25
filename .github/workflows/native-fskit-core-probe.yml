@@ -7,7 +7,6 @@ on:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
       - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
-      - "native/EDPFSKitPoC/Tools/PrepareEDPCaptureFixtureImage.swift"
       - "native/EDPFSKitPoC/Tools/build-capture-tool.sh"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
@@ -26,7 +25,6 @@ on:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
       - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
-      - "native/EDPFSKitPoC/Tools/PrepareEDPCaptureFixtureImage.swift"
       - "native/EDPFSKitPoC/Tools/build-capture-tool.sh"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
@@ -153,14 +151,6 @@ jobs:
             "${RUNNER_TEMP}/capture-edp-fixture-compile-check" \
             >"${RUNNER_TEMP}/capture-build.txt" &
           capture_pid=$!
-          xcrun swiftc -parse-as-library \
-            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
-            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
-            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
-            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
-            native/EDPFSKitPoC/Tools/PrepareEDPCaptureFixtureImage.swift \
-            -o "${RUNNER_TEMP}/prepare-edp-capture-image" &
-          prepare_capture_pid=$!
 
           wait "${extension_pid}"
           echo 'RESULT=FSKIT_READ_ONLY_VOLUME_CONTRACT_TYPECHECKED'
@@ -171,8 +161,6 @@ jobs:
           grep -F 'EDP_CAPTURE_TOOL_TARGET=arm64-apple-macosx15.0' "${RUNNER_TEMP}/capture-build.txt"
           grep -F 'RESULT=EDP_CAPTURE_TOOL_BUILT' "${RUNNER_TEMP}/capture-build.txt"
           echo 'RESULT=EDP_CAPTURE_TOOL_COMPILED_FOR_MACOS15'
-          wait "${prepare_capture_pid}"
-          echo 'RESULT=EDP_CAPTURE_TEST_IMAGE_TOOL_COMPILED'
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
 
       - name: End-to-end capture tool contract
@@ -184,7 +172,8 @@ jobs:
           OUTPUT="${RUNNER_TEMP}/edp-capture-output"
           mkdir -p "${OUTPUT}"
 
-          "${RUNNER_TEMP}/prepare-edp-capture-image" \
+          "${RUNNER_TEMP}/capture-edp-fixture-compile-check" \
+            --prepare-ci-image \
             fixtures/real_disks/disk4/LBA11.bin \
             fixtures/real_disks/disk4/LBA12.bin \
             21c4 \
