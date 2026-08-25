@@ -1,0 +1,58 @@
+name: Native FSKit SDK Surface
+
+on:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+    paths:
+      - ".github/workflows/native-fskit-sdk-surface.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dump macOS 26 FSKit Swift surface
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          MODULE="${SDK}/System/Library/Frameworks/FSKit.framework/Modules/FSKit.swiftmodule"
+          INTERFACE="$(find "${MODULE}" -maxdepth 1 -name '*arm64*.swiftinterface' | head -n 1)"
+          if [ -z "${INTERFACE}" ]; then
+            INTERFACE="$(find "${MODULE}" -maxdepth 1 -name '*.swiftinterface' | head -n 1)"
+          fi
+          test -f "${INTERFACE}"
+          echo "FSKIT_INTERFACE=${INTERFACE}"
+          cp "${INTERFACE}" "${RUNNER_TEMP}/FSKit.swiftinterface"
+
+          for token in \
+            'protocol Handler' \
+            'protocol ReadWriteHandler' \
+            'protocol PathConfOperations' \
+            'class FSItem' \
+            'class Attributes' \
+            'class FSActivateResult' \
+            'class FSLookupItemResult' \
+            'class FSGetAttributesResult' \
+            'class FSEnumerateDirectoryResult' \
+            'class FSReadFileResult' \
+            'class FSDirectoryEntryPacker' \
+            'class FSStatFSResult' \
+            'class SupportedCapabilities' \
+            'class FSFileName'; do
+            echo "===== ${token} ====="
+            grep -n -A80 -B5 "${token}" "${INTERFACE}" | head -n 180 || true
+          done | tee "${RUNNER_TEMP}/fskit-surface.txt"
+
+      - name: Upload FSKit interface evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: fskit-sdk-surface-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fskit-surface.txt
+            ${{ runner.temp }}/FSKit.swiftinterface
+          retention-days: 7
