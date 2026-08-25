@@ -5,6 +5,14 @@ on:
     branches: ["feat/macos26-native-fskit"]
     paths:
       - "native/EDPFSKitPoC/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/edp-core/**"
+      - "crates/edp-fskit-bridge/**"
+      - "fixtures/golden/disks.json"
+      - "fixtures/real_disks/**/LBA4.bin"
+      - "fixtures/real_disks/**/LBA7.bin"
       - ".github/workflows/native-fskit-poc.yml"
   workflow_dispatch:
 
@@ -33,6 +41,9 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
 
+      - name: Rust toolchain for native core bridge
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Validate runtime helper syntax
         run: |
           set -euo pipefail
@@ -50,7 +61,9 @@ jobs:
             | tee "${RUNNER_TEMP}/edp-probe-golden.txt"
           grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
           grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
+          grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
           grep -F 'RESULT=SWIFT_EDP_LBA7_GOLDEN_OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
+          grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
 
       - name: Generate and build native project
         working-directory: native/EDPFSKitPoC
@@ -89,6 +102,14 @@ jobs:
           test "${EXT_POINT}" = "com.apple.fskit.fsmodule"
           test "${SHORT_NAME}" = "edpvault"
           test "${BLOCKS}" = "true"
+
+      - name: Verify Rust bridge is linked into extension
+        run: |
+          set -euo pipefail
+          EXT_BIN="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app/Contents/Extensions/EDPFSKitExtension.appex/Contents/MacOS/EDPFSKitExtension"
+          test -x "${EXT_BIN}"
+          nm -gU "${EXT_BIN}" | grep -F 'edp_probe_reserved_sectors'
+          echo 'RESULT=RUST_EDP_CORE_BRIDGE_LINKED'
 
       - name: Ad-hoc sign and install for hosted registration diagnostics
         run: |
