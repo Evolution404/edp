@@ -41,27 +41,35 @@ jobs:
           pkg-config --exists fuse
           pkg-config --modversion fuse
 
-          GENERIC="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
+          APP="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app"
+          GENERIC="${APP}/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
+          LOCAL="${APP}/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
           test -d "${GENERIC}"
+          test -d "${LOCAL}"
+          "${APP}/Contents/MacOS/macfuse" install --force || true
+
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${GENERIC}/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${GENERIC}/Contents/Info.plist"
           echo 'RESULT=OFFICIAL_MACFUSE_FSKIT_MODULE_INSTALLED'
 
-      - name: Enable official macFUSE FSKit module on ephemeral runner
+      - name: Enable official macFUSE FSKit modules on ephemeral runner
         run: |
           set -euo pipefail
-          MODULE="io.macfuse.app.fsmodule.macfuse"
-          /usr/bin/pluginkit -e use -i "${MODULE}" || true
+          GENERIC_MODULE="io.macfuse.app.fsmodule.macfuse"
+          LOCAL_MODULE="io.macfuse.app.fsmodule.macfuse-local"
+          /usr/bin/pluginkit -e use -i "${GENERIC_MODULE}" || true
+          /usr/bin/pluginkit -e use -i "${LOCAL_MODULE}" || true
 
           SETTINGS_DIR="$HOME/Library/Group Containers/group.com.apple.fskit.settings"
           SETTINGS="${SETTINGS_DIR}/enabledModules.plist"
           mkdir -p "${SETTINGS_DIR}"
-          python3 - "${SETTINGS}" "${MODULE}" <<'PY'
+          python3 - "${SETTINGS}" "${GENERIC_MODULE}" "${LOCAL_MODULE}" <<'PY'
           import os
           import plistlib
           import sys
 
-          path, module = sys.argv[1:]
+          path = sys.argv[1]
+          modules = sys.argv[2:]
           enabled = []
           if os.path.exists(path):
               try:
@@ -71,8 +79,9 @@ jobs:
                       enabled = value
               except Exception:
                   pass
-          if module not in enabled:
-              enabled.append(module)
+          for module in modules:
+              if module not in enabled:
+                  enabled.append(module)
           with open(path, "wb") as handle:
               plistlib.dump(enabled, handle, fmt=plistlib.FMT_BINARY)
           PY
@@ -81,6 +90,7 @@ jobs:
           killall fskit_agent 2>/dev/null || true
           killall extensionkitservice 2>/dev/null || true
           sleep 2
+          echo 'RESULT=CI_ONLY_MACFUSE_MODULE_STATE_SEEDED'
 
       - name: Prove macFUSE FSKit does not publish a block device
         run: |
