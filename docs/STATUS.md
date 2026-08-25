@@ -554,6 +554,44 @@ RESULT=EDP_PRODUCT_UNLOCK_FUSE_DEVICE_MODE_OK
 
 ## 9. 下一步实施顺序
 
+### 0.5.0 产品化增量（2026-08-26）
+
+已新增非商业统一安装包路径：
+
+```text
+EDP-USB-Vault-0.5.0-arm64-Clean.pkg
+  ├─ original macFUSE 5.3.3 Core + PreferencePane components
+  ├─ Swift EDP read/write block runtime
+  ├─ NTFS-3G 2026.7.7 relocatable runtime
+  ├─ exact NTFS-3G source archive + GPL/LGPL licenses
+  └─ root LaunchDaemon auto-mount orchestrator
+```
+
+新增 `product/EDPVaultRuntime.swift`，负责外置物理盘发现、USB VID/PID
+解析、EDP 双 metadata 信号识别、root-only AES-GCM 密码库、自动解锁、
+隐藏 FSKit block mount、DiskImages2 writable/no-auto-mount attach、文件系统
+magic 分流和异常会话回收。
+
+ExFAT 继续由 Apple 原生驱动挂载。NTFS 必须先通过
+`ntfs-3g.probe --readwrite`；exit 14（休眠）、15（未干净卸载）以及其他
+不一致/占用状态全部 fail closed。NTFS-3G 参数固定使用
+`backend=fskit,norecover,windows_names,streams_interface=openxattr`，不提供
+破坏性修复选项。
+
+组合包已通过静态/合成验证：
+
+- 三个 package id（macFUSE Core、PreferencePane、EDP runtime）存在；
+- 所有 EDP/NTFS Mach-O 均为 arm64 且 ad-hoc code signature 有效；
+- EDP bridge dylib 使用 `@rpath`；NTFS-3G dylib 使用 `@loader_path`；
+- 随包 NTFS-3G 源码 SHA-256 与官方 2026.7.7 完全一致；
+- `DiskImages2 --writable-noautomount` 发布 `Media Read-Only: No`；
+- 随包 `ntfs-3g.probe` 与 `ntfslabel` 可识别 synthetic NTFS image。
+
+当前组合 product archive 未使用 Developer ID Installer 证书签名；构建脚本
+支持通过 `PRODUCT_SIGN_IDENTITY` 注入正式签名身份。安装 macFUSE 后的完整
+NTFS-3G FSKit 文件写入/重挂载测试仍须在恢复了官方 macFUSE runtime 的
+测试系统执行，不能把当前合成 preflight 误报为物理 EDP NTFS 写入完成。
+
 ### P0 — 真实 EDP read-only Finder mount
 
 当前 P0 已完成：

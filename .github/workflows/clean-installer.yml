@@ -1,0 +1,68 @@
+name: Clean ExFAT + NTFS Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "product/**"
+      - "installer/build-clean-installer.sh"
+      - "scripts/build-ntfs3g-runtime.sh"
+      - "scripts/verify-clean-installer.sh"
+      - "native/EDPFSKitPoC/Extension/**"
+      - "native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift"
+      - "native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c"
+      - "native/EDPFSKitPoC/Tools/DiskImages2Attach.m"
+      - ".github/workflows/clean-installer.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download and install pinned macFUSE
+        run: |
+          set -euo pipefail
+          brew install pkgconf
+          DMG="${RUNNER_TEMP}/macfuse-5.3.3.dmg"
+          MOUNT="${RUNNER_TEMP}/macfuse"
+          curl --fail --location --retry 3 \
+            --output "${DMG}" \
+            https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg
+          printf '%s  %s\n' \
+            7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15 \
+            "${DMG}" | shasum -a 256 -c -
+          mkdir -p "${MOUNT}"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "${MOUNT}" "${DMG}"
+          sudo installer -pkg "${MOUNT}/Install macFUSE.pkg" -target /
+          hdiutil detach -quiet "${MOUNT}"
+          echo "MACFUSE_DMG=${DMG}" >> "${GITHUB_ENV}"
+
+      - name: Build clean combined installer
+        run: |
+          set -euo pipefail
+          ./installer/build-clean-installer.sh artifacts | tee "${RUNNER_TEMP}/build.txt"
+          grep -F 'RESULT=EDP_CLEAN_COMBINED_INSTALLER_BUILT' "${RUNNER_TEMP}/build.txt"
+
+      - name: Verify package and writable DiskImages2 mode
+        env:
+          EDP_INSTALLER_SYSTEM_TESTS: "1"
+        run: |
+          set -euo pipefail
+          ./scripts/verify-clean-installer.sh \
+            artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg \
+            | tee "${RUNNER_TEMP}/verify.txt"
+          grep -F 'RESULT=EDP_CLEAN_INSTALLER_VERIFIED' "${RUNNER_TEMP}/verify.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EDP-USB-Vault-0.5.0-arm64-Clean
+          path: |
+            artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg
+            artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg.sha256
+          if-no-files-found: error

@@ -2,6 +2,55 @@
 
 本分支 `feat/macos26-native-fskit` 维护 **macOS 26+** 产品方向。
 
+## 0.5.0 干净读写安装包
+
+当前产品包不再依赖 iBoysoft，也不包含任何 iBoysoft 文件、授权数据或
+提取组件。统一安装包包含：
+
+- EDP Swift 可写透明块层；
+- macFUSE 5.3.3 官方 FSKit 运行时组件；
+- 从官方源码可复现构建的 NTFS-3G 2026.7.7；
+- NTFS-3G 对应完整源码、GPL/LGPL 文本和 macFUSE 许可文本；
+- `com.edp.usbvault.mountd` root LaunchDaemon 自动挂载服务。
+
+文件系统分流保持明确：
+
+```text
+decrypted block device
+  ├─ ExFAT -> Apple native ExFAT -> read/write
+  └─ NTFS  -> ntfs-3g.probe --readwrite
+             -> macFUSE backend=fskit -> read/write
+```
+
+NTFS 卷处于休眠、Windows Fast Startup、dirty journal 或不一致状态时，
+服务拒绝写挂载；产品不使用 `force`、`recover` 或 `remove_hiberfile`。
+
+构建组合安装包：
+
+```bash
+MACFUSE_DMG=/path/to/macfuse-5.3.3.dmg \
+  ./installer/build-clean-installer.sh artifacts
+./scripts/verify-clean-installer.sh \
+  artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg
+```
+
+安装后先对每个 EDP 设备做一次本地密码登记：
+
+```bash
+sudo edp-vaultctl doctor
+sudo edp-vaultctl list
+sudo edp-vaultctl authorize diskN
+```
+
+密码验证成功后以 AES-GCM 加密保存于 root-only 的
+`/var/db/com.edp.usbvault`。此后插入同一设备时，后台服务自动解锁并按
+ExFAT/NTFS 类型读写挂载。`edp-vaultctl status` 可查看当前公开会话状态，
+其中不含密码或派生密钥。
+
+macFUSE 当前许可允许二进制再分发，但禁止未经书面许可随商业软件捆绑；
+因此这个组合安装包只适用于本项目声明的非商业分发。若用途变为商业，
+必须先取得 macFUSE 商业许可。
+
 ## 唯一架构
 
 ```text

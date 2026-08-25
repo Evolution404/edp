@@ -5,11 +5,16 @@
 artifacts/
 DerivedData/
 native/EDPFSKitPoC/EDPFSKitPoC.xcodeproj/
+gui/node_modules/
+gui/src-tauri/target/
 
 # Runtime diagnostics and real-media captures
 *.log
 .edp-captures/
 fixtures/**/*.local.*
+
+# Locally extracted proprietary vendor drivers (never commit or redistribute)
+.local/iboysoft-driver/
 
 # IDE
 .idea/

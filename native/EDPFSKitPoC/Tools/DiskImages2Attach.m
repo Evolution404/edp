@@ -11,7 +11,7 @@ static void printError(NSError *error) {
     fprintf(stderr, "DI_ERROR=%s\n", error.description.UTF8String ?: "(null)");
 }
 
-static int attachReadOnly(NSURL *url) {
+static int attachCommon(NSURL *url, BOOL readOnly, BOOL autoMount) {
     Class commonAttachClass = NSClassFromString(@"DICommonAttach");
     if (!commonAttachClass) {
         fprintf(stderr, "DI_PRIVATE_CLASS_MISSING=DICommonAttach\n");
@@ -23,7 +23,10 @@ static int attachReadOnly(NSURL *url) {
         fprintf(stderr, "DI_SELECTOR_MISSING=diskImageAttach:readOnly:autoMount:BSDName:error:\n");
         return 11;
     }
-    printf("RESULT=DISKIMAGES2_READONLY_SELECTOR_FOUND\n");
+    printf("RESULT=DISKIMAGES2_COMMON_SELECTOR_FOUND\n");
+    if (readOnly) {
+        printf("RESULT=DISKIMAGES2_READONLY_SELECTOR_FOUND\n");
+    }
 
     NSString *bsdName = nil;
     NSError *attachError = nil;
@@ -32,19 +35,24 @@ static int attachReadOnly(NSURL *url) {
         commonAttachClass,
         attachSel,
         url,
-        YES,
-        NO,
+        readOnly,
+        autoMount,
         &bsdName,
         &attachError
     );
 
     if (!ok || attachError || bsdName.length == 0) {
-        fprintf(stderr, "DI_READONLY_ATTACH_OK=%d\n", ok ? 1 : 0);
+        fprintf(stderr, "DI_COMMON_ATTACH_OK=%d\n", ok ? 1 : 0);
         printError(attachError);
         return 12;
     }
 
-    printf("RESULT=DISKIMAGES2_READONLY_ATTACH_OK\n");
+    printf("RESULT=DISKIMAGES2_COMMON_ATTACH_OK\n");
+    if (readOnly) {
+        printf("RESULT=DISKIMAGES2_READONLY_ATTACH_OK\n");
+    }
+    printf("DI_READ_ONLY=%s\n", readOnly ? "YES" : "NO");
+    printf("DI_AUTO_MOUNT=%s\n", autoMount ? "YES" : "NO");
     printf("DI_BSD_NAME=%s\n", bsdName.UTF8String);
     printf("RESULT=DISKIMAGES2_PUBLISHED_BSD_DEVICE\n");
     fflush(stdout);
@@ -113,14 +121,25 @@ static int attachDefault(NSURL *url) {
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         BOOL readOnly = NO;
+        BOOL useCommonAttach = NO;
+        BOOL autoMount = YES;
         const char *path = NULL;
         if (argc == 2) {
             path = argv[1];
         } else if (argc == 3 && strcmp(argv[1], "--readonly") == 0) {
             readOnly = YES;
+            useCommonAttach = YES;
+            autoMount = NO;
+            path = argv[2];
+        } else if (argc == 3 && strcmp(argv[1], "--writable-noautomount") == 0) {
+            useCommonAttach = YES;
+            autoMount = NO;
             path = argv[2];
         } else {
-            fprintf(stderr, "usage: %s [--readonly] <raw-backing-file>\n", argv[0]);
+            fprintf(stderr,
+                    "usage: %s [--readonly|--writable-noautomount] "
+                    "<raw-backing-file>\n",
+                    argv[0]);
             return 64;
         }
 
@@ -132,7 +151,9 @@ int main(int argc, const char *argv[]) {
         printf("RESULT=DISKIMAGES2_FRAMEWORK_LOADED\n");
 
         NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
-        int rc = readOnly ? attachReadOnly(url) : attachDefault(url);
+        int rc = useCommonAttach
+            ? attachCommon(url, readOnly, autoMount)
+            : attachDefault(url);
         dlclose(framework);
         return rc;
     }
