@@ -7,7 +7,7 @@ EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 FIXTURE_DISK_DIR="${EDP_RUNTIME_FIXTURE_DIR:-${REPO_ROOT}/fixtures/real_disks/disk4}"
-DIAG_DIR="${EDP_RUNTIME_DIAG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/edp-fskit-runtime.XXXXXX")}" 
+DIAG_DIR="${EDP_RUNTIME_DIAG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/edp-fskit-runtime.XXXXXX")}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edp-fskit-work.XXXXXX")"
 INSPECTOR="${WORK_DIR}/inspect-fskit"
 RAW="${WORK_DIR}/probe.raw"
@@ -112,6 +112,9 @@ fi
 if ! grep -Fq 'PROBE_RESERVED_SECTORS_READ=true' "${DIAG_DIR}/runtime.log"; then
     fail "EDP_reserved_sector_read_not_observed"
 fi
+if ! grep -Fq 'PROBE_CORE=rust-c-abi' "${DIAG_DIR}/runtime.log"; then
+    fail "Rust_edp_core_bridge_not_observed"
+fi
 if ! grep -Fq 'PROBE_EDP_RESERVED_SIGNATURE=true' "${DIAG_DIR}/runtime.log"; then
     fail "EDP_reserved_signature_not_recognized"
 fi
@@ -119,5 +122,5 @@ if ! grep -Fq 'PROBE_MATCH=recognized' "${DIAG_DIR}/runtime.log"; then
     fail "FSKit_probe_did_not_return_recognized"
 fi
 
-echo "RESULT=NATIVE_FSKIT_EDP_RECOGNIZED:${BSD_NAME}"
+echo "RESULT=NATIVE_FSKIT_RUST_CORE_RECOGNIZED:${BSD_NAME}"
 echo "DIAGNOSTICS=${DIAG_DIR}"
