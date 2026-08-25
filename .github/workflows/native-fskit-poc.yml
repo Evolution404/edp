@@ -33,6 +33,11 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
 
+      - name: Validate runtime helper syntax
+        run: |
+          set -euo pipefail
+          bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
+
       - name: Generate and build native project
         working-directory: native/EDPFSKitPoC
         run: |
