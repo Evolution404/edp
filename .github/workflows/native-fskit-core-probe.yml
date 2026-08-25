@@ -32,6 +32,8 @@ jobs:
         run: |
           set -euo pipefail
           xcrun swiftc \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
             native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
             native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
             -o "${RUNNER_TEMP}/validate-edp-probe"
@@ -43,6 +45,7 @@ jobs:
             | tee "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'ALIGNED_SHORT_READ_CONTINUATION=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
 

@@ -35,6 +35,7 @@ struct ValidateEDPMetadataProbe {
 
         let goldenPath = CommandLine.arguments[1]
         try validateAlignmentMath()
+        try validateShortReadContinuation()
         try validateLBA7GoldenFixtures(path: goldenPath)
         try validateReservedSectorProbe(goldenPath: goldenPath)
         print("RESULT=SWIFT_EDP_LBA7_GOLDEN_OK")
@@ -42,19 +43,19 @@ struct ValidateEDPMetadataProbe {
     }
 
     private static func validateAlignmentMath() throws {
-        let sector512 = try EDPMetadataProbe.alignedWindow(
+        let sector512 = try EDPAlignedRead.window(
             byteOffset: EDPMetadataProbe.lba4ByteOffset,
             byteLength: EDPMetadataProbe.reservedProbeByteLength,
-            physicalBlockSize: 512
+            transferAlignment: 512
         )
         guard sector512 == .init(start: 2048, length: 2048, sliceOffset: 0, sliceLength: 2048) else {
             throw ValidationError.mismatch("512-byte reserved window mismatch: \(sector512)")
         }
 
-        let sector4096 = try EDPMetadataProbe.alignedWindow(
+        let sector4096 = try EDPAlignedRead.window(
             byteOffset: EDPMetadataProbe.lba4ByteOffset,
             byteLength: EDPMetadataProbe.reservedProbeByteLength,
-            physicalBlockSize: 4096
+            transferAlignment: 4096
         )
         guard sector4096 == .init(start: 0, length: 4096, sliceOffset: 2048, sliceLength: 2048) else {
             throw ValidationError.mismatch("4096-byte reserved window mismatch: \(sector4096)")
@@ -62,6 +63,40 @@ struct ValidateEDPMetadataProbe {
 
         print("ALIGNMENT_512=OK")
         print("ALIGNMENT_4096=OK")
+    }
+
+    private static func validateShortReadContinuation() throws {
+        try EDPAlignedRead.validateContinuation(
+            completed: 512,
+            totalLength: 2048,
+            transferAlignment: 512
+        )
+        try EDPAlignedRead.validateContinuation(
+            completed: 4096,
+            totalLength: 8192,
+            transferAlignment: 4096
+        )
+        try EDPAlignedRead.validateContinuation(
+            completed: 2048,
+            totalLength: 2048,
+            transferAlignment: 4096
+        )
+
+        var rejectedUnalignedShortRead = false
+        do {
+            try EDPAlignedRead.validateContinuation(
+                completed: 512,
+                totalLength: 4096,
+                transferAlignment: 4096
+            )
+        } catch {
+            rejectedUnalignedShortRead = true
+        }
+        guard rejectedUnalignedShortRead else {
+            throw ValidationError.mismatch("4096-byte transfer accepted an unaligned short-read continuation")
+        }
+
+        print("ALIGNED_SHORT_READ_CONTINUATION=OK")
     }
 
     /// Keeps the Swift rolling-XOR decoder pinned byte-for-byte to the existing

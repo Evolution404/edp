@@ -48,38 +48,23 @@ final class FSBlockRawAccessor: EDPRawReadable {
             return
         }
 
-        let length = UInt64(buffer.count)
-        let (requestedEnd, overflow) = offset.addingReportingOverflow(length)
-        guard !overflow else {
-            throw POSIXError(.EOVERFLOW)
-        }
-        if let sizeBytes, requestedEnd > sizeBytes {
-            throw POSIXError(.EINVAL)
-        }
+        let window = try EDPAlignedRead.window(
+            byteOffset: offset,
+            byteLength: UInt64(buffer.count),
+            transferAlignment: transferAlignment,
+            sizeBytes: sizeBytes
+        )
 
-        let alignment = transferAlignment
-        let alignedStart = offset - (offset % alignment)
-        let alignedEnd = try roundUp(requestedEnd, to: alignment)
-        if let sizeBytes, alignedEnd > sizeBytes {
-            throw POSIXError(.EINVAL)
-        }
-
-        if alignedStart == offset && alignedEnd == requestedEnd {
-            try readAligned(at: alignedStart, into: buffer)
+        if window.start == offset && window.length == buffer.count {
+            try readAlignedFully(at: window.start, into: buffer)
             return
         }
 
-        let expandedLength = alignedEnd - alignedStart
-        guard expandedLength <= UInt64(Int.max) else {
-            throw POSIXError(.EOVERFLOW)
-        }
-
-        var expanded = Data(count: Int(expandedLength))
+        var expanded = Data(count: window.length)
         try expanded.withUnsafeMutableBytes { expandedBuffer in
-            try readAligned(at: alignedStart, into: expandedBuffer)
+            try readAlignedFully(at: window.start, into: expandedBuffer)
         }
 
-        let sliceStart = Int(offset - alignedStart)
         guard let destination = buffer.baseAddress else {
             throw POSIXError(.EFAULT)
         }
@@ -87,43 +72,50 @@ final class FSBlockRawAccessor: EDPRawReadable {
             guard let source = expandedBuffer.baseAddress else {
                 return
             }
-            memcpy(destination, source.advanced(by: sliceStart), buffer.count)
+            memcpy(destination, source.advanced(by: window.sliceOffset), buffer.count)
         }
     }
 
-    private func readAligned(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+    private func readAlignedFully(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
         let alignment = transferAlignment
-        guard offset % alignment == 0,
+        guard !buffer.isEmpty,
+              offset % alignment == 0,
               UInt64(buffer.count) % alignment == 0,
-              offset <= UInt64(Int64.max) else {
+              offset <= UInt64(Int64.max),
+              let baseAddress = buffer.baseAddress else {
             throw POSIXError(.EINVAL)
         }
 
         readLock.lock()
         defer { readLock.unlock() }
 
-        let bytesRead = try resource.read(
-            into: buffer,
-            startingAt: off_t(offset),
-            length: buffer.count
-        )
-        guard bytesRead == buffer.count else {
-            // Exact completion is part of the native EDP storage contract.
-            // Reissuing an unaligned remainder could violate the block device's
-            // transfer requirements, so a partial direct read is an I/O error.
-            throw POSIXError(.EIO)
-        }
-    }
+        var completed = 0
+        while completed < buffer.count {
+            let (requestOffset, overflow) = offset.addingReportingOverflow(UInt64(completed))
+            guard !overflow, requestOffset <= UInt64(Int64.max) else {
+                throw POSIXError(.EOVERFLOW)
+            }
 
-    private func roundUp(_ value: UInt64, to alignment: UInt64) throws -> UInt64 {
-        let remainder = value % alignment
-        guard remainder != 0 else {
-            return value
+            let remaining = buffer.count - completed
+            let requestBuffer = UnsafeMutableRawBufferPointer(
+                start: baseAddress.advanced(by: completed),
+                count: remaining
+            )
+            let bytesRead = try resource.read(
+                into: requestBuffer,
+                startingAt: off_t(requestOffset),
+                length: remaining
+            )
+            guard bytesRead > 0, bytesRead <= remaining else {
+                throw POSIXError(.EIO)
+            }
+
+            completed += bytesRead
+            try EDPAlignedRead.validateContinuation(
+                completed: completed,
+                totalLength: buffer.count,
+                transferAlignment: alignment
+            )
         }
-        let (rounded, overflow) = value.addingReportingOverflow(alignment - remainder)
-        guard !overflow else {
-            throw POSIXError(.EOVERFLOW)
-        }
-        return rounded
     }
 }
