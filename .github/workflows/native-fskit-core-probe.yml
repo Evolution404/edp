@@ -4,8 +4,9 @@ on:
   push:
     branches: ["feat/macos26-native-fskit"]
     paths:
-      - "native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Extension/**"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
@@ -21,13 +22,13 @@ concurrency:
 
 jobs:
   probe:
-    name: Swift metadata parity
+    name: Swift native metadata and crypto parity
     runs-on: macos-26
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
-      - name: Compile native Swift probe
+      - name: Compile reserved-sector recognition probe
         run: |
           set -euo pipefail
           xcrun swiftc \
@@ -35,14 +36,36 @@ jobs:
             native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
             -o "${RUNNER_TEMP}/validate-edp-probe"
 
-      - name: Golden fixture regression
+      - name: Reserved-sector golden regression
         run: |
           set -euo pipefail
           "${RUNNER_TEMP}/validate-edp-probe" fixtures/golden/disks.json \
-            | tee "${RUNNER_TEMP}/swift-core-probe.txt"
-          grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/swift-core-probe.txt"
-          grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/swift-core-probe.txt"
-          grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-core-probe.txt"
-          grep -F 'RESULT=SWIFT_EDP_LBA7_GOLDEN_OK' "${RUNNER_TEMP}/swift-core-probe.txt"
-          grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/swift-core-probe.txt"
+            | tee "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+
+      - name: Compile pure Swift native crypto core
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
+            -o "${RUNNER_TEMP}/validate-native-core"
+
+      - name: Real-disk crypto and volume golden regression
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/validate-native-core" fixtures/golden/disks.json \
+            | tee "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_CRC32_GOLDEN=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_SM4_GOLDEN=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           echo 'RESULT=PURE_SWIFT_EDP_CORE_PROBE_OK'
