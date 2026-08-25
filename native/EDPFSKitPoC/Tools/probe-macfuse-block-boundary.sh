@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-MOUNT_POINT="${RUNNER_TEMP:-/tmp}/edp-macfuse-boundary-mnt"
+MOUNT_POINT="/Volumes/edp-macfuse-block-boundary"
 WORK_DIR="${RUNNER_TEMP:-/tmp}/edp-macfuse-boundary"
 SOURCE_FILE="${WORK_DIR}/boundary.c"
 BINARY_FILE="${WORK_DIR}/boundary"
@@ -31,7 +31,7 @@ cleanup() {
     kill "${PID}" >/dev/null 2>&1 || true
     wait "${PID}" >/dev/null 2>&1 || true
   fi
-  rm -rf "${MOUNT_POINT}" >/dev/null 2>&1 || true
+  sudo /bin/rm -rf "${MOUNT_POINT}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -161,9 +161,10 @@ FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 /usr/bin/cc "${SOURCE_FILE}" -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} -o "${BINARY_FILE}"
 
-rm -rf "${MOUNT_POINT}"
-mkdir -p "${MOUNT_POINT}"
-chmod 700 "${MOUNT_POINT}"
+sudo /bin/rm -rf "${MOUNT_POINT}"
+sudo /bin/mkdir -p "${MOUNT_POINT}"
+sudo /usr/sbin/chown "$(id -u):$(id -g)" "${MOUNT_POINT}"
+/bin/chmod 700 "${MOUNT_POINT}"
 
 snapshot_devices >"${BEFORE_DEVICES}"
 log "BSD_DEVICE_COUNT_BEFORE=$(wc -l <"${BEFORE_DEVICES}" | tr -d ' ')"
@@ -227,8 +228,40 @@ fi
 log "RESULT=NO_NEW_BSD_BLOCK_DEVICE"
 
 set +e
-/usr/sbin/diskutil info "${VIRTUAL_FILE}" >>"${REPORT_FILE}" 2>&1
+python3 - "${VIRTUAL_FILE}" "${REPORT_FILE}" <<'PY'
+import subprocess
+import sys
+
+virtual_file, report = sys.argv[1:]
+try:
+    completed = subprocess.run(
+        ["/usr/sbin/diskutil", "info", virtual_file],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=5,
+    )
+    rc = completed.returncode
+    output = completed.stdout
+except subprocess.TimeoutExpired as error:
+    rc = 124
+    output = (error.stdout or "") + "\nDISKUTIL_PROBE_TIMEOUT=5s\n"
+with open(report, "a", encoding="utf-8") as handle:
+    handle.write(output)
+print(rc)
+PY
 DISKUTIL_INFO_RC=$?
+# The Python helper prints the child rc; capture it from the last report-independent probe below.
+DISKUTIL_INFO_RC="$(python3 - "${VIRTUAL_FILE}" <<'PY'
+import subprocess
+import sys
+try:
+    result = subprocess.run(["/usr/sbin/diskutil", "info", sys.argv[1]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    print(result.returncode)
+except subprocess.TimeoutExpired:
+    print(124)
+PY
+)"
 set -e
 log "DISKUTIL_INFO_RC=${DISKUTIL_INFO_RC}"
 if [[ "${DISKUTIL_INFO_RC}" -eq 0 ]]; then
