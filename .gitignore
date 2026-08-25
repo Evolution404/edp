@@ -1,21 +1,15 @@
-# Rust
-/target/
-**/*.rs.bk
-
-# Node / Tauri
-node_modules/
-gui/dist/
-gui/src-tauri/target/
-gui/src-tauri/gen/
-/artifacts/
-
 # macOS
 .DS_Store
 
-# 日志与本地文件
+# Native/Xcode generated output
+artifacts/
+DerivedData/
+native/EDPFSKitPoC/EDPFSKitPoC.xcodeproj/
+
+# Runtime diagnostics and real-media captures
 *.log
+.edp-captures/
 fixtures/**/*.local.*
-/.edp-captures/
 
 # IDE
 .idea/

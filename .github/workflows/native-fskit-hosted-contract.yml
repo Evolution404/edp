@@ -10,7 +10,7 @@ on:
       - "native/EDPFSKitPoC/Extension/Info.plist"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.swift"
-      - ".github/workflows/native-fskit-poc.yml"
+      - ".github/workflows/native-fskit-hosted-contract.yml"
   pull_request:
     branches: ["feat/macos26-native-fskit"]
     paths:
@@ -20,7 +20,7 @@ on:
       - "native/EDPFSKitPoC/Extension/Info.plist"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.swift"
-      - ".github/workflows/native-fskit-poc.yml"
+      - ".github/workflows/native-fskit-hosted-contract.yml"
   workflow_dispatch:
 
 permissions:
@@ -133,7 +133,7 @@ jobs:
           EXT_BIN="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Debug/EDPFSKitPoC.app/Contents/Extensions/EDPFSKitExtension.appex/Contents/MacOS/EDPFSKitExtension"
           test -x "${EXT_BIN}"
           if nm -gU "${EXT_BIN}" | grep -E 'edp_probe_reserved_sectors|edp_raw_io_'; then
-            echo 'unexpected Rust C ABI symbol in native extension' >&2
+            echo 'unexpected legacy C ABI symbol in native extension' >&2
             exit 1
           fi
           ! grep -Fq 'cargo build' native/EDPFSKitPoC/project.yml

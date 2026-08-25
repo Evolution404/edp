@@ -1,101 +1,72 @@
-# EDP USB Vault — EDP 加密 U 盘 macOS 客户端
+# EDP USB Vault — macOS 26 Native FSKit
 
-[![macOS App](https://github.com/Evolution404/edp-usb-vault/actions/workflows/macos-app.yml/badge.svg)](https://github.com/Evolution404/edp-usb-vault/actions/workflows/macos-app.yml)
+本分支 `feat/macos26-native-fskit` 只维护 **macOS 26+ 原生实现**。
 
-VRV/CEMS **EDP 加密 U 盘**的 macOS 互操作客户端：**Rust 内核（CLI + 常驻守护进程）+ Tauri 状态栏 GUI**。
-插入已登记密码的 EDP U 盘即**自动解密挂载**，无需每次 sudo、无需手输密码。
+目标：Swift/SwiftUI + Apple FSKit，最终做到原生 App、一键安装，不依赖 macFUSE、Rust bridge 或常驻 helper daemon。
 
+## 当前架构
 
-## 功能特性
-
-- **U 盘密码记录**：root-only AES-256-GCM 加密密码库，按 `(device_id, 分区类型)` 管理多条密码
-- **逐盘授权自动挂载**：只有用户批准的 EDP 盘/分区才会自动挂载；普通 U 盘只读识别后忽略
-- **状态栏 GUI**：Tauri 2 常驻 macOS 菜单栏，密码管理 / 会话管理 / 设置 / 日志
-- **终端 CLI**：`usbcore` 一套命令完成 list/probe/mount/unmount/keys 等全部操作
-- **透明读写**：SM4-ECB 透明解密 + macFUSE 桥 + 原生 exFAT 驱动，Finder 直接读写
-- **密码双路径**：默认密码与用户修改后密码的验证逻辑分别实现（见 `docs/EDP-FORMAT.md`）
-
-## 架构
-
-```
-EDP USB Vault.app
- ├─ Contents/Library/LaunchDaemons/com.edp.usbvault.daemon.plist
- └─ Contents/Resources/usbcore      ← SMAppService 注册的 root 守护进程
-     ├─ DiskArbitration 监听
-     ├─ 密码库 /var/db/com.edp.usbvault/store.enc（AES-256-GCM）
-     ├─ UDS JSON-RPC /var/run/com.edp.usbvault.daemon.sock
-     ├─ spawn: usbcore bridge       ← macFUSE 单文件桥（file_key 走匿名管道）
-     └─ hdiutil attach → 原生 exFAT → /Volumes/...
-
-usbcore <cmd>（终端 CLI）──┐
-EDP USB Vault.app（菜单栏）───┴── 走 UDS socket 免 sudo
+```text
+FSKit / fskitd
+  -> FSBlockDeviceResource
+  -> FSBlockRawAccessor
+  -> EDPRawReadable
+  -> EDP metadata / key derivation / SM4 translation
+  -> EDPEncryptedPartitionReader
+  -> read-only filesystem semantics
+  -> FSVolume
 ```
 
-`usbcore` 使用单独的 Hardened Runtime entitlement 加载由 macFUSE 官方签名的用户态库；路径固定在 root 管理的 macFUSE 安装目录，不从用户可写目录加载代码。
+Apple 公开 FSKit API 当前没有受支持的方式把任意解密后的字节流重新包装成新的 real `FSBlockDeviceResource` 再交给系统内置 exFAT FSKit 模块，因此产品方案不依赖 FSKit module chaining。
 
-详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+## 当前状态
 
-## 环境要求
+已经完成：
 
-- macOS 13+
-- [macFUSE](https://macfuse.github.io/)（**唯一**需要单独安装的组件，一次性；GUI 内置检测与引导）
-- Rust 1.75+（仅构建期）
+- macOS 26.0+ SwiftUI Host App + FSKit File System Extension 骨架；
+- `com.apple.developer.fskit.fsmodule` entitlement 与 block-resource 声明；
+- `Contents/Extensions` 正确嵌入、ad-hoc 签名、PluginKit 注册和 hosted contract；
+- `FSBlockDeviceResource` 对齐读取适配层；
+- Swift 原生 EDP LBA4/LBA7 识别；
+- Swift 原生 LBA11/LBA12、CRC32、SM4、密码/key 校验、分区描述；
+- `EDPEncryptedPartitionReader`；
+- 3,200 个 deterministic property/random cases + golden/negative regressions；
+- macOS 15-target 的真实 EDP 数据采集工具及端到端 CI；
+- 当前稳定 SDK 下的只读 `FSVolume` compile contract。
 
-## 快速上手
+当前唯一不能由 GitHub hosted runner 越过的关键门槛是 **用户批准第三方 File System Extension**。Hosted runner 已证明 bundle/注册/原始块调用链到达系统批准边界，但会得到：
 
-**GUI（推荐）**——构建并运行状态栏客户端：
-
-```bash
-cd gui && npm ci && npx tauri dev     # 开发运行
-# 或打包 .app：npx tauri build       # 产物在 gui/src-tauri/target/release/bundle/
+```text
+Module com.edp.usbvault.fskit-poc.extension is disabled!
 ```
 
-GUI 首次使用：打开主窗口 → 设置页「启用后台服务」→ 在 macOS“登录项与扩展”中批准 → 设备页选择目标 U 盘 →
-在分区行设置密码并开启逐盘授权。新盘默认不授权；daemon 安装后，**关闭窗口或退出 GUI
-都不影响后台服务**。
+因此 `EDPFileSystem.loadResource` 目前仍故意返回 `ENOTSUP`；在正常 macOS 26 机器通过 approved-runtime gate 前，不提前接完整 `FSVolume`。
 
-## GitHub 自动构建
+## CI
 
-- 推送到 `main` 或手动运行 **macOS App** workflow，会完成 Rust/前端测试与严格 Clippy，随后构建 Apple Silicon (`arm64`) 客户端。
-- 构建产物可从对应 Actions run 下载，包含保留 macOS 可执行权限的 `.app.zip`、可拖入“应用程序”的 `.dmg` 及 SHA-256 校验文件。
-- 推送 `v*` 标签（例如 `v0.4.0`）会自动创建或更新 GitHub Release，并附加 arm64 安装包。
-- 未配置 Apple Developer 证书时 CI 使用 ad-hoc 签名，不执行 Apple 公证；首次打开下载包可能需要在 Finder 中右键选择“打开”。
+保留四条有效工作流：
 
-> **macOS 15（Sequoia）注意**：系统默认禁止后台守护进程访问可移动磁盘。安装 daemon 后
-> 需**一次性**在「系统设置 → 隐私与安全性 → 完整磁盘访问权限」中添加
-> `EDP USB Vault.app`，否则 daemon 无法读取 U 盘（GUI 设置页会提示）。
-> `usbcore status` 输出 `disk_access_ok: false` 即表示未授予。
+- **Native Swift Fast Checks**：Swift core、3,200 随机/性质测试、source graph、macOS 15 capture tool、capture E2E；
+- **Native FSKit Hosted Contract**：一次完整 Xcode build + bundle/sign/register/PluginKit/raw-block approval-boundary contract；
+- **Native FSKit SDK Surface**：低频检查 runner 实际 Swift FSKit API；
+- **Native FSKit Approved Runtime Gate**：正常、已批准扩展的 macOS 26 self-hosted 机器运行最终 runtime gate。
 
-**CLI**：
+详见 [`docs/STATUS.md`](docs/STATUS.md)。
 
-```bash
-make build
-sudo target/release/usbcore mount /dev/rdisk4        # 手动挂载（输密码）
-target/release/usbcore probe /dev/rdisk4             # 只读探测（密码/key/分区闭环）
-target/release/usbcore status                        # daemon 在线状态
-target/release/usbcore keys add --disk /dev/rdisk4   # 录入密码（daemon 闭环验证）
+## 当前开发规则
+
+1. 不重新引入 macFUSE。
+2. 不重新引入 Rust/C ABI bridge。
+3. 不增加 helper daemon 作为文件系统数据路径依赖。
+4. `FSBlockRawAccessor` 是唯一 FSKit-specific raw-device adapter。
+5. 文件系统语义与 FSKit I/O 解耦，先实现可独立测试的 read-only backend。
+6. 写支持必须晚于 read-only mount/read/unmount 正确性。
+
+## 目录
+
+```text
+.github/workflows/     当前 native CI gates
+native/EDPFSKitPoC/    Host、FSKit Extension、Swift core 与工具
+fixtures/              golden vectors 与真实 EDP reserved-sector captures
+docs/STATUS.md         当前唯一项目状态/交接文档
 ```
-
-daemon 在线时，`mount/unmount/mounts/keys` 等命令走 RPC，**无需 sudo**。
-
-## 文档
-
-| 文档 | 内容 |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 进程模型、模块划分、数据流、安全模型 |
-| [docs/EDP-FORMAT.md](docs/EDP-FORMAT.md) | EDP 格式逆向知识（LBA 布局/EDPF/算法/密码双路径） |
-| [docs/PROTOCOL.md](docs/PROTOCOL.md) | UDS JSON-RPC 协议规范 |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 构建环境、代码结构、测试指南 |
-| [docs/TESTING.md](docs/TESTING.md) | 测试策略与实盘检测清单 |
-
-## 开发
-
-```bash
-make lint      # fmt + clippy（CI 同款门禁）
-make test      # 单元测试
-make test-integration  # 集成测试（sudo + macFUSE）
-```
-
-## License
-
-私有项目，仅供研究与个人使用。
