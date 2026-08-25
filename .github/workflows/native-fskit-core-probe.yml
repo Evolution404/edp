@@ -4,7 +4,10 @@ on:
   push:
     branches: ["feat/macos26-native-fskit"]
     paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "crates/edp-core/**"
+      - "crates/edp-fskit-bridge/**"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
       - ".github/workflows/native-fskit-core-probe.yml"
@@ -28,16 +31,27 @@ jobs:
           components: rustfmt, clippy
       - uses: swatinem/rust-cache@v2
         with:
-          shared-key: native-fskit-core-probe-v1
+          shared-key: native-fskit-core-probe-v2
 
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Clippy edp-core
-        run: cargo clippy -p edp-core --all-targets -- -D warnings
+      - name: Clippy probe core and bridge
+        run: cargo clippy -p edp-core -p edp-fskit-bridge --all-targets -- -D warnings
 
       - name: Passwordless reserved-sector probe regression
         run: cargo test -p edp-core probe::tests -- --nocapture
 
       - name: Existing LBA7 golden regression
         run: cargo test -p edp-core lba7::tests::golden_lba7_auth -- --nocapture
+
+      - name: FSKit C ABI regression
+        run: cargo test -p edp-fskit-bridge -- --nocapture
+
+      - name: Build FSKit static bridge library
+        run: |
+          set -euo pipefail
+          cargo build -p edp-fskit-bridge --release
+          test -f target/release/libedp_fskit_bridge.a
+          nm -g target/release/libedp_fskit_bridge.a \
+            | grep -F 'edp_probe_reserved_sectors'
