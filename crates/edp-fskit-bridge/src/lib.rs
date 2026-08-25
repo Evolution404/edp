@@ -109,9 +109,7 @@ mod tests {
         };
         assert_eq!(rc, EDP_PROBE_RECOGNIZED);
         // SAFETY: success guarantees NUL termination inside the output buffer.
-        let value = unsafe { CStr::from_ptr(serial.as_ptr()) }
-            .to_str()
-            .unwrap();
+        let value = unsafe { CStr::from_ptr(serial.as_ptr()) }.to_str().unwrap();
         assert!(!value.is_empty());
     }
 
