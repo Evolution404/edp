@@ -23,6 +23,10 @@ private final class EDPReadOnlyBridgeContext {
     }
 }
 
+private func logBridgeError(_ message: String) {
+    FileHandle.standardError.write(Data(message.utf8))
+}
+
 private func parseHexKey(_ pointer: UnsafePointer<CChar>?) -> [UInt8]? {
     guard let pointer else { return nil }
     let text = String(cString: pointer)
@@ -57,7 +61,7 @@ func edp_ro_open(
         )
         return Unmanaged.passRetained(context).toOpaque()
     } catch {
-        fputs("EDP_RO_OPEN_ERROR=\(error)\n", stderr)
+        logBridgeError("EDP_RO_OPEN_ERROR=\(error)\n")
         return nil
     }
 }
@@ -90,7 +94,7 @@ func edp_ro_read(
         data.copyBytes(to: buffer.assumingMemoryBound(to: UInt8.self), count: data.count)
         return Int64(data.count)
     } catch {
-        fputs("EDP_RO_READ_ERROR offset=\(offset) length=\(length64) error=\(error)\n", stderr)
+        logBridgeError("EDP_RO_READ_ERROR offset=\(offset) length=\(length64) error=\(error)\n")
         return -5
     }
 }
