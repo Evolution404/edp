@@ -1,0 +1,81 @@
+name: Native FSKit Registration Debug
+
+on:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  registration:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build native ExtensionKit FSKit bundle
+        working-directory: native/EDPFSKitPoC
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild \
+            -project EDPFSKitPoC.xcodeproj \
+            -scheme EDPFSKitHost \
+            -configuration Release \
+            -derivedDataPath "${RUNNER_TEMP}/EDPFSKitDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Sign and install PoC
+        run: |
+          set -euo pipefail
+          SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
+          SOURCE_EXT="${SOURCE_APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          codesign --force --sign - \
+            --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
+            "${SOURCE_EXT}"
+          codesign --force --sign - "${SOURCE_APP}"
+          sudo rm -rf "/Applications/EDPFSKitPoC.app"
+          sudo /usr/bin/ditto "${SOURCE_APP}" "/Applications/EDPFSKitPoC.app"
+          codesign -dvvv --entitlements :- \
+            "/Applications/EDPFSKitPoC.app/Contents/Extensions/EDPFSKitExtension.appex" || true
+
+      - name: Diagnose ExtensionKit registration
+        run: |
+          set -u
+          APP="/Applications/EDPFSKitPoC.app"
+          EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          echo '--- pre-registration FSKit modules ---'
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv || true
+          echo '--- pluginkit add extension ---'
+          pluginkit -a "${EXT}"
+          echo "pluginkit_add_rc=$?"
+          echo '--- pluginkit add host app ---'
+          pluginkit -a "${APP}"
+          echo "pluginkit_add_app_rc=$?"
+          echo '--- LaunchServices register host ---'
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \
+            -f -R -trusted "${APP}"
+          echo "lsregister_rc=$?"
+          open -a "${APP}" || true
+          sleep 3
+          echo '--- matching PluginKit records ---'
+          pluginkit -m -A -D -vv | grep -A12 -B6 'com.edp.usbvault.fskit-poc.extension' || true
+          echo '--- FSKit protocol records ---'
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv || true
+          echo '--- system registration logs ---'
+          log show --last 5m --style compact \
+            --predicate 'process == "pkd" OR process == "extensionkitservice" OR process == "fskitd" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc.extension"' \
+            || true
+
+      - name: Ask FSClient
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -framework FSKit \
+            native/EDPFSKitPoC/Tools/InspectFSKit.swift \
+            -o "${RUNNER_TEMP}/inspect-fskit"
+          "${RUNNER_TEMP}/inspect-fskit" || true
