@@ -222,7 +222,7 @@ Automatic branch validation is split by cost and responsibility:
 2. `Native FSKit Hosted Contract`
    - automatic triggers are limited to project/bundle metadata, host entrypoint, extension entrypoint/entitlements, and the hosted-contract workflow itself;
    - changes to `InspectFSKit.swift` do not trigger the heavy Xcode build; they are compile-checked on the Fast Checks path;
-   - performs one XcodeGen + one arm64 Debug `xcodebuild`, with code signing/indexing/previews/debug-dylib/localization-emission overhead disabled where safe for this contract build;
+   - performs one XcodeGen + one arm64 Debug `xcodebuild`, with code signing/indexing/previews/debug-dylib/localization-emission/debug-symbol/debug-option-serialization overhead disabled where safe for this contract build;
    - validates bundle structure, build-version consistency, and native-only linkage;
    - signs, installs, and registers the same build once;
    - validates PluginKit indexing;
@@ -236,13 +236,14 @@ Measured on GitHub-hosted `macos-26-arm64` after the current split:
 
 - `Native Swift Fast Checks`: representative runs are about **20–22 seconds** from runner start through cleanup; hosted-runner variance can move this somewhat;
 - all 3,200 deterministic property/random cases plus fixed golden/negative controls remain enabled at that speed;
-- automatic `Native FSKit Hosted Contract`: about **58 seconds** on the measured optimized run;
-- inside that hosted build path, XcodeGen installation was about 4 seconds, project generation under 1 second, and `xcodebuild` about 41 seconds;
+- automatic `Native FSKit Hosted Contract`: measured optimized runs are about **58–61 seconds** end-to-end depending on hosted-runner/Homebrew/log-collection variance;
+- the latest debug-metadata A/B run measured XcodeGen installation at 6 seconds, project generation under 1 second, and clean `xcodebuild` at **35 seconds**;
+- before disabling Debug symbol generation and Swift debug-option serialization, the same clean `xcodebuild` phase measured about 41 seconds, so the compiler phase improved by roughly **15%** while the full bundle/sign/register/raw-block contract remained green;
 - the previous successful PoC + Block Probe pair consumed roughly two 76-second macOS jobs for an equivalent full hosted validation path.
 
-This reduces heavy hosted macOS runner consumption from roughly 152 seconds to about 58 seconds for that path (about **62% less**). This is runner consumption, not a claim of identical wall-clock improvement, because the old jobs could run concurrently. Ordinary Swift core edits avoid the heavyweight Xcode build entirely.
+This reduces heavy hosted macOS runner consumption from roughly 152 seconds to about 58–61 seconds for that path (roughly **60–62% less**). This is runner consumption, not a claim of identical wall-clock improvement, because the old jobs could run concurrently. Ordinary Swift core edits avoid the heavyweight Xcode build entirely.
 
-The remaining obvious CI bottleneck is the approximately 41-second clean `xcodebuild`; XcodeGen generation itself is no longer material. Further CI work should only target that compile cost if it can preserve the same bundle/registration contract.
+The remaining obvious CI bottleneck is the approximately 35-second clean `xcodebuild`; XcodeGen generation itself is no longer material. Further CI work should only target that compile cost if it can preserve the same bundle/registration contract. Total hosted-job timing should be treated as a range because runner provisioning, Homebrew download/install, and log collection are externally variable.
 
 Manual diagnostics remain available for signing A/B, enablement negative control, hosted FSClient behavior, and the approved runtime gate.
 
