@@ -107,5 +107,5 @@ jobs:
           set -euo pipefail
           xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Extension/*.swift
           xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift
-          xcrun swiftc -framework FSKit -parse-as-library -typecheck native/EDPFSKitPoC/Tools/InspectFSKit.swift
+          xcrun swiftc -framework FSKit native/EDPFSKitPoC/Tools/InspectFSKit.swift -o "${RUNNER_TEMP}/inspect-fskit-compile-check"
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
