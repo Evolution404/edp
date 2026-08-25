@@ -46,30 +46,102 @@ jobs:
           LOCAL="${APP}/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
           test -d "${GENERIC}"
           test -d "${LOCAL}"
-          "${APP}/Contents/MacOS/macfuse" install --force || true
-
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${GENERIC}/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :EXAppExtensionAttributes:FSShortName' "${GENERIC}/Contents/Info.plist"
           echo 'RESULT=OFFICIAL_MACFUSE_FSKIT_MODULE_INSTALLED'
 
-      - name: Enable official macFUSE FSKit modules on ephemeral runner
+      - name: Request PluginKit use state
         run: |
           set -euo pipefail
-          GENERIC_MODULE="io.macfuse.app.fsmodule.macfuse"
-          LOCAL_MODULE="io.macfuse.app.fsmodule.macfuse-local"
-          /usr/bin/pluginkit -e use -i "${GENERIC_MODULE}" || true
-          /usr/bin/pluginkit -e use -i "${LOCAL_MODULE}" || true
+          /usr/bin/pluginkit -e use -i io.macfuse.app.fsmodule.macfuse || true
+          /usr/bin/pluginkit -e use -i io.macfuse.app.fsmodule.macfuse-local || true
+          /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse || true
 
+      - name: Attempt FSKit enablement through FSClient
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="${RUNNER_TEMP}/enable-fskit.m"
+          BIN="${RUNNER_TEMP}/enable-fskit"
+
+          cat > "${SRC}" <<'OBJC'
+          #import <Foundation/Foundation.h>
+          #import <objc/message.h>
+          #import <dlfcn.h>
+          #import <dispatch/dispatch.h>
+
+          static int enableModule(id client, NSString *identifier) {
+              SEL sel = NSSelectorFromString(@"setEnabledStateForIdentifier:newState:replyHandler:");
+              if (![client respondsToSelector:sel]) {
+                  fprintf(stderr, "missing selector setEnabledStateForIdentifier:newState:replyHandler:\n");
+                  return 2;
+              }
+
+              dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+              __block BOOL replied = NO;
+              __block NSInteger errorCode = 0;
+              void (^reply)(NSError *) = ^(NSError *error) {
+                  replied = YES;
+                  if (error) {
+                      errorCode = error.code;
+                      fprintf(stderr,
+                              "enable id=%s error_domain=%s error_code=%ld error=%s\n",
+                              identifier.UTF8String,
+                              error.domain.UTF8String,
+                              (long)error.code,
+                              error.localizedDescription.UTF8String);
+                  }
+                  dispatch_semaphore_signal(sem);
+              };
+
+              typedef void (*SetFn)(id, SEL, NSString *, BOOL, void (^)(NSError *));
+              ((SetFn)objc_msgSend)(client, sel, identifier, YES, reply);
+              long wait = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC));
+              printf("enable id=%s replied=%d wait=%ld error_code=%ld\n",
+                     identifier.UTF8String, replied, wait, (long)errorCode);
+              if (wait != 0 || !replied) return 124;
+              return errorCode == 0 ? 0 : 1;
+          }
+
+          int main(void) {
+              @autoreleasepool {
+                  if (!dlopen("/System/Library/Frameworks/FSKit.framework/FSKit", RTLD_NOW | RTLD_LOCAL)) {
+                      fprintf(stderr, "dlopen FSKit failed: %s\n", dlerror());
+                      return 2;
+                  }
+                  Class cls = NSClassFromString(@"FSClient");
+                  SEL shared = NSSelectorFromString(@"sharedInstance");
+                  if (!cls || ![cls respondsToSelector:shared]) {
+                      fprintf(stderr, "FSClient sharedInstance unavailable\n");
+                      return 2;
+                  }
+                  typedef id (*SharedFn)(id, SEL);
+                  id client = ((SharedFn)objc_msgSend)(cls, shared);
+                  int a = enableModule(client, @"io.macfuse.app.fsmodule.macfuse");
+                  int b = enableModule(client, @"io.macfuse.app.fsmodule.macfuse-local");
+                  return a != 0 ? a : b;
+              }
+          }
+          OBJC
+
+          xcrun clang -fobjc-arc -fblocks "${SRC}" -framework Foundation -o "${BIN}"
+          "${BIN}"
+
+      - name: Seed FSKit approval state for ephemeral CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
           SETTINGS_DIR="$HOME/Library/Group Containers/group.com.apple.fskit.settings"
           SETTINGS="${SETTINGS_DIR}/enabledModules.plist"
           mkdir -p "${SETTINGS_DIR}"
-          python3 - "${SETTINGS}" "${GENERIC_MODULE}" "${LOCAL_MODULE}" <<'PY'
+
+          python3 - "${SETTINGS}" <<'PY'
           import os
           import plistlib
           import sys
 
           path = sys.argv[1]
-          modules = sys.argv[2:]
           enabled = []
           if os.path.exists(path):
               try:
@@ -79,14 +151,19 @@ jobs:
                       enabled = value
               except Exception:
                   pass
-          for module in modules:
-              if module not in enabled:
-                  enabled.append(module)
+
+          for identifier in (
+              "io.macfuse.app.fsmodule.macfuse",
+              "io.macfuse.app.fsmodule.macfuse-local",
+          ):
+              if identifier not in enabled:
+                  enabled.append(identifier)
+
           with open(path, "wb") as handle:
               plistlib.dump(enabled, handle, fmt=plistlib.FMT_BINARY)
           PY
-          plutil -p "${SETTINGS}"
 
+          plutil -p "${SETTINGS}"
           killall fskit_agent 2>/dev/null || true
           killall extensionkitservice 2>/dev/null || true
           sleep 2
