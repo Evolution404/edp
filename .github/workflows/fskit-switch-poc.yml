@@ -1,0 +1,158 @@
+name: FSKit switchToFSKit PoC
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - install/one-click-installer
+    paths:
+      - 'tools/diagnostics/fskit_switch_poc.m'
+      - '.github/workflows/fskit-switch-poc.yml'
+
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System identity
+        run: |
+          set -euxo pipefail
+          sw_vers
+          uname -a
+          uname -m
+          shasum -a 256 /sbin/mount /usr/libexec/fskitd || true
+          codesign -d --entitlements :- /sbin/mount 2>&1 || true
+          codesign -d --entitlements :- /usr/libexec/diskarbitrationd 2>&1 || true
+
+      - name: Compile switch/helper PoC
+        run: |
+          set -euxo pipefail
+          clang \
+            -fobjc-arc \
+            -fblocks \
+            -Wall -Wextra \
+            -framework Foundation \
+            tools/diagnostics/fskit_switch_poc.m \
+            -o /tmp/fskit_switch_poc
+          file /tmp/fskit_switch_poc
+          codesign -s - /tmp/fskit_switch_poc
+          codesign -d --entitlements :- /tmp/fskit_switch_poc 2>&1 || true
+
+      - name: Prepare FAT16 test device
+        id: disk
+        run: |
+          set -euxo pipefail
+          IMG=/tmp/fskit-switch-test.dmg
+          rm -f "$IMG"
+          hdiutil create -quiet -size 32m -layout MBRSPUD -fs 'MS-DOS FAT16' -volname EDPFAT "$IMG"
+          ATTACH="$(hdiutil attach -nomount "$IMG")"
+          printf '%s\n' "$ATTACH"
+          WHOLE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+$/ {print $1; exit}')"
+          DEVICE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+s[0-9]+$/ {d=$1} END {print d}')"
+          test -n "$WHOLE"
+          test -n "$DEVICE"
+          echo "whole=$WHOLE" >> "$GITHUB_OUTPUT"
+          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
+          echo "bsd=${DEVICE#/dev/}" >> "$GITHUB_OUTPUT"
+          diskutil info "$DEVICE"
+
+      - name: Start unified log capture
+        run: |
+          (log stream --style syslog --level debug \
+            --predicate 'process == "fskitd" OR process == "diskarbitrationd" OR eventMessage CONTAINS[c] "LiveFS" OR eventMessage CONTAINS[c] "FSClient" OR eventMessage CONTAINS[c] "switchToFSKit"' \
+            > /tmp/fskit-live.log 2>&1 & echo $! > /tmp/fskit-log.pid) || true
+          sleep 1
+
+      - name: Baseline direct mount-F should fail
+        continue-on-error: true
+        run: |
+          set +e
+          MP=/tmp/fskit-direct
+          rm -rf "$MP" && mkdir -p "$MP"
+          /sbin/mount -F -t msdos '${{ steps.disk.outputs.device }}' "$MP" 2>&1 | tee /tmp/direct-mount.txt
+          rc=${PIPESTATUS[0]}
+          echo "DIRECT_RC=$rc" | tee -a /tmp/direct-mount.txt
+          if mount | grep -Fq '${{ steps.disk.outputs.device }}'; then
+            echo 'DIRECT_MOUNTED=1' | tee -a /tmp/direct-mount.txt
+            /sbin/umount '${{ steps.disk.outputs.device }}' || true
+          else
+            echo 'DIRECT_MOUNTED=0' | tee -a /tmp/direct-mount.txt
+          fi
+          exit 0
+
+      - name: Run FSClient switch and FSKitDiskArbHelper PoC
+        continue-on-error: true
+        run: |
+          set +e
+          MP=/tmp/fskit-helper
+          rm -rf "$MP" && mkdir -p "$MP"
+          /tmp/fskit_switch_poc '${{ steps.disk.outputs.bsd }}' "$MP" 2>&1 | tee /tmp/helper-poc.txt
+          rc=${PIPESTATUS[0]}
+          echo "POC_PROCESS_RC=$rc" | tee -a /tmp/helper-poc.txt
+          echo '=== mount table after helper ===' | tee -a /tmp/helper-poc.txt
+          mount | tee -a /tmp/helper-poc.txt
+          if mount | grep -Fq '${{ steps.disk.outputs.device }}'; then
+            echo 'HELPER_MOUNTED=1' | tee -a /tmp/helper-poc.txt
+            /sbin/umount '${{ steps.disk.outputs.device }}' || diskutil unmount '${{ steps.disk.outputs.device }}' || true
+          else
+            echo 'HELPER_MOUNTED=0' | tee -a /tmp/helper-poc.txt
+          fi
+          exit 0
+
+      - name: Disk Arbitration control
+        continue-on-error: true
+        run: |
+          set +e
+          diskutil mount '${{ steps.disk.outputs.device }}' 2>&1 | tee /tmp/diskutil-mount.txt
+          rc=${PIPESTATUS[0]}
+          echo "DA_RC=$rc" | tee -a /tmp/diskutil-mount.txt
+          if mount | grep -Fq '${{ steps.disk.outputs.device }}'; then
+            echo 'DA_MOUNTED=1' | tee -a /tmp/diskutil-mount.txt
+            diskutil unmount '${{ steps.disk.outputs.device }}' || true
+          else
+            echo 'DA_MOUNTED=0' | tee -a /tmp/diskutil-mount.txt
+          fi
+          exit 0
+
+      - name: Collect final logs and summary
+        if: always()
+        run: |
+          if [ -f /tmp/fskit-log.pid ]; then kill "$(cat /tmp/fskit-log.pid)" 2>/dev/null || true; fi
+          sleep 1
+          log show --last 5m --style syslog --info --debug \
+            --predicate 'process == "fskitd" OR process == "diskarbitrationd" OR eventMessage CONTAINS[c] "LiveFS" OR eventMessage CONTAINS[c] "FSClient" OR eventMessage CONTAINS[c] "switchToFSKit" OR eventMessage CONTAINS[c] "NSXPCDecoder"' \
+            > /tmp/fskit-show.log 2>&1 || true
+          {
+            echo '=== SYSTEM ==='
+            sw_vers
+            uname -m
+            echo
+            echo '=== DIRECT ==='
+            cat /tmp/direct-mount.txt 2>/dev/null || true
+            echo
+            echo '=== HELPER POC ==='
+            cat /tmp/helper-poc.txt 2>/dev/null || true
+            echo
+            echo '=== DISK ARBITRATION ==='
+            cat /tmp/diskutil-mount.txt 2>/dev/null || true
+            echo
+            echo '=== KEY LOG LINES ==='
+            grep -Ei 'switchToFSKit|Hello FSClient|entitle|NSXPCDecoder|mountVolume|ReallyMount|loadResource|FSKitDiskArbHelper' /tmp/fskit-show.log | tail -n 300 || true
+          } | tee /tmp/summary.txt
+          hdiutil detach -force '${{ steps.disk.outputs.whole }}' || true
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fskit-switch-poc-${{ runner.arch }}
+          path: |
+            /tmp/summary.txt
+            /tmp/direct-mount.txt
+            /tmp/helper-poc.txt
+            /tmp/diskutil-mount.txt
+            /tmp/fskit-live.log
+            /tmp/fskit-show.log
+          if-no-files-found: warn
