@@ -36,13 +36,12 @@ targets:
         excludes:
           - Info.plist
           - EDPFSKitExtension.entitlements
-    entitlements:
-      path: Extension/EDPFSKitExtension.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc.extension
         PRODUCT_NAME: EDPFSKitExtension
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Extension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Extension/EDPFSKitExtension.entitlements
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
