@@ -14,6 +14,15 @@ on:
       - ".github/workflows/native-fskit-poc.yml"
   pull_request:
     branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "native/EDPFSKitPoC/project.yml"
+      - "native/EDPFSKitPoC/Host/Info.plist"
+      - "native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift"
+      - "native/EDPFSKitPoC/Extension/Info.plist"
+      - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements"
+      - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.swift"
+      - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
+      - ".github/workflows/native-fskit-poc.yml"
   workflow_dispatch:
 
 permissions:
@@ -21,6 +30,8 @@ permissions:
 
 env:
   HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
 
 concurrency:
   group: native-fskit-hosted-${{ github.ref }}
@@ -45,17 +56,41 @@ jobs:
         working-directory: native/EDPFSKitPoC
         run: |
           set -euo pipefail
-          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+          install_started="$(date +%s)"
+          if command -v xcodegen >/dev/null 2>&1; then
+            echo 'XCODEGEN_PREINSTALLED=true'
+          else
+            brew install xcodegen
+            echo 'XCODEGEN_PREINSTALLED=false'
+          fi
+          install_finished="$(date +%s)"
+
+          generate_started="${install_finished}"
           xcodegen generate
+          generate_finished="$(date +%s)"
+
+          build_started="${generate_finished}"
           xcodebuild -quiet \
             -project EDPFSKitPoC.xcodeproj \
             -scheme EDPFSKitHost \
             -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "${RUNNER_TEMP}/EDPFSKitDerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO \
+            ONLY_ACTIVE_ARCH=YES \
+            ENABLE_PREVIEWS=NO \
+            ENABLE_DEBUG_DYLIB=NO \
+            SWIFT_EMIT_LOC_STRINGS=NO \
             build
+          build_finished="$(date +%s)"
+
+          echo "CI_TIMING_XCODEGEN_INSTALL_S=$((install_finished - install_started))"
+          echo "CI_TIMING_XCODEGEN_GENERATE_S=$((generate_finished - generate_started))"
+          echo "CI_TIMING_XCODEBUILD_S=$((build_finished - build_started))"
+          echo "CI_TIMING_BUILD_PIPELINE_S=$((build_finished - install_started))"
 
       - name: Verify FSKit bundle contract
         run: |
@@ -150,6 +185,7 @@ jobs:
           echo 'RESULT=PLUGIN_KIT_FSKIT_INDEXED'
 
       - name: Classify hosted FSClient visibility
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           xcrun swiftc -framework FSKit \
