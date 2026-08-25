@@ -3,6 +3,9 @@ name: Native FSKit PoC
 on:
   push:
     branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "native/EDPFSKitPoC/**"
+      - ".github/workflows/native-fskit-poc.yml"
   workflow_dispatch:
 
 permissions:
