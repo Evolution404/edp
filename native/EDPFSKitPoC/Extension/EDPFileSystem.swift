@@ -28,29 +28,54 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
             let reserved = try EDPMetadataProbe.readReservedSectors(from: block)
             logger.notice("PROBE_RESERVED_SECTORS_READ=true")
 
-            guard let recognition = EDPMetadataProbe.recognizeReservedSectors(
-                lba4: reserved.lba4,
-                lba7: reserved.lba7
-            ) else {
+            var serialBuffer = [CChar](
+                repeating: 0,
+                count: Int(EDP_PROBE_SERIAL_CAPACITY)
+            )
+
+            let probeRC: Int32 = reserved.lba4.withUnsafeBufferPointer { lba4 in
+                reserved.lba7.withUnsafeBufferPointer { lba7 in
+                    serialBuffer.withUnsafeMutableBufferPointer { serial in
+                        edp_probe_reserved_sectors(
+                            lba4.baseAddress,
+                            lba7.baseAddress,
+                            serial.baseAddress,
+                            serial.count
+                        )
+                    }
+                }
+            }
+
+            switch probeRC {
+            case EDP_PROBE_NOT_RECOGNIZED:
+                logger.notice("PROBE_CORE=rust-c-abi")
                 logger.notice("PROBE_EDP_RESERVED_SIGNATURE=false")
                 logger.notice("PROBE_MATCH=notRecognized")
                 reply(.notRecognized, nil)
-                return
+
+            case EDP_PROBE_RECOGNIZED:
+                guard let serialBase = serialBuffer.withUnsafeBufferPointer({ $0.baseAddress }) else {
+                    logger.error("PROBE_CORE_SERIAL_BUFFER_MISSING")
+                    reply(nil, POSIXError(.EIO))
+                    return
+                }
+
+                let serial = String(cString: serialBase)
+                logger.notice("PROBE_CORE=rust-c-abi")
+                logger.notice("PROBE_EDP_RESERVED_SIGNATURE=true")
+                logger.notice("PROBE_EDP_SERIAL=\(serial, privacy: .public)")
+
+                // The passwordless reserved-sector evidence does not expose a
+                // durable container UUID. A stable identifier can be introduced
+                // later when LBA11/device identity is wired into the Rust bridge.
+                let containerID = FSContainerIdentifier()
+                logger.notice("PROBE_MATCH=recognized")
+                reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
+
+            default:
+                logger.error("PROBE_CORE_ERROR=\(probeRC, privacy: .public)")
+                reply(nil, POSIXError(.EIO))
             }
-
-            let k0 = String(format: "0x%04x", recognition.lba7K0)
-            let partitionTypes = recognition.partitionTypes.map(String.init).joined(separator: ",")
-            logger.notice("PROBE_EDP_RESERVED_SIGNATURE=true")
-            logger.notice("PROBE_EDP_SERIAL=\(recognition.serial, privacy: .public)")
-            logger.notice("PROBE_LBA7_K0=\(k0, privacy: .public)")
-            logger.notice("PROBE_PARTITION_TYPES=\(partitionTypes, privacy: .public)")
-
-            // No durable container UUID is exposed by these two passwordless
-            // sectors. FSKit permits a unary file system to use a random ID in
-            // this case. A stable identity can be introduced when LBA11 is wired.
-            let containerID = FSContainerIdentifier()
-            logger.notice("PROBE_MATCH=recognized")
-            reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
         } catch {
             logger.error("PROBE_RESERVED_READ_ERROR=\(String(describing: error), privacy: .public)")
             reply(nil, error)
