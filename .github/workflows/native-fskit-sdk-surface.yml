@@ -16,59 +16,50 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - name: Dump macOS 26 FSKit imported Swift surface
+      - name: Ask Swift compiler for FSKit Handler surface
         run: |
           set -euo pipefail
-          SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          echo "SDK=${SDK}"
-          TOOL="$(xcrun --find swift-ide-test 2>/dev/null || true)"
-          if [ -n "${TOOL}" ]; then
-            "${TOOL}" \
-              -print-module \
-              -module-to-print FSKit \
-              -source-filename /dev/null \
-              -sdk "${SDK}" \
-              -target arm64-apple-macos26.0 \
-              > "${RUNNER_TEMP}/FSKit.imported.swift"
-          else
-            echo 'swift-ide-test unavailable; dumping generated Objective-C/Swift headers instead' >&2
-            find "${SDK}/System/Library/Frameworks/FSKit.framework" -maxdepth 4 -type f \
-              \( -name '*.h' -o -name '*.swiftinterface' \) -print \
-              > "${RUNNER_TEMP}/fskit-files.txt"
-            cat "${SDK}/System/Library/Frameworks/FSKit.framework/Headers/FSKit.h" \
-              > "${RUNNER_TEMP}/FSKit.imported.swift" 2>/dev/null || true
-          fi
+          cat > "${RUNNER_TEMP}/ProbeFSKit.swift" <<'SWIFT'
+          import Foundation
+          import FSKit
 
-          test -s "${RUNNER_TEMP}/FSKit.imported.swift"
-          for token in \
-            'protocol Handler' \
-            'protocol ReadWriteHandler' \
-            'protocol PathConfOperations' \
-            'class FSItem' \
-            'class Attributes' \
-            'class FSActivateResult' \
-            'class FSLookupItemResult' \
-            'class FSGetAttributesResult' \
-            'class FSEnumerateDirectoryResult' \
-            'class FSReadFileResult' \
-            'class FSDirectoryEntryPacker' \
-            'class FSStatFSResult' \
-            'class SupportedCapabilities' \
-            'class FSFileName' \
-            'func lookupItem' \
-            'func enumerateDirectory' \
-            'func read('; do
-            echo "===== ${token} ====="
-            grep -n -A90 -B8 "${token}" "${RUNNER_TEMP}/FSKit.imported.swift" | head -n 220 || true
-          done | tee "${RUNNER_TEMP}/fskit-surface.txt"
+          final class ProbeVolume: FSVolume, FSVolume.Handler, FSVolume.ReadWriteHandler {
+          }
 
-      - name: Upload FSKit surface evidence
+          func probeInitializers() {
+              _ = FSItem()
+              _ = FSItem.Identifier()
+              _ = FSItem.Attributes()
+              _ = FSVolume.Identifier()
+              _ = FSActivateResult()
+              _ = FSLookupItemResult()
+              _ = FSGetAttributesResult()
+              _ = FSEnumerateDirectoryResult()
+              _ = FSReadFileResult()
+              _ = FSStatFSResult()
+              _ = FSVolume.SupportedCapabilities()
+          }
+          SWIFT
+
+          set +e
+          xcrun swiftc \
+            -typecheck \
+            -target arm64-apple-macos26.0 \
+            "${RUNNER_TEMP}/ProbeFSKit.swift" \
+            >"${RUNNER_TEMP}/fskit-compiler.out" \
+            2>"${RUNNER_TEMP}/fskit-compiler.err"
+          RC=$?
+          set -e
+          echo "TYPECHECK_EXPECTED_RC=${RC}"
+          test "${RC}" -ne 0
+          cat "${RUNNER_TEMP}/fskit-compiler.err"
+
+      - name: Upload FSKit compiler evidence
         uses: actions/upload-artifact@v7
         with:
           name: fskit-sdk-surface-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/fskit-surface.txt
-            ${{ runner.temp }}/FSKit.imported.swift
-            ${{ runner.temp }}/fskit-files.txt
-          if-no-files-found: ignore
+            ${{ runner.temp }}/ProbeFSKit.swift
+            ${{ runner.temp }}/fskit-compiler.out
+            ${{ runner.temp }}/fskit-compiler.err
           retention-days: 7
