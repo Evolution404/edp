@@ -1,8 +1,6 @@
 name: Native FSKit Signing A-B
 
 on:
-  push:
-    branches: ["feat/macos26-native-fskit"]
   workflow_dispatch:
 
 permissions:
