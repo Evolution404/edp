@@ -16,19 +16,30 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - name: Dump macOS 26 FSKit Swift surface
+      - name: Dump macOS 26 FSKit imported Swift surface
         run: |
           set -euo pipefail
           SDK="$(xcrun --sdk macosx --show-sdk-path)"
-          MODULE="${SDK}/System/Library/Frameworks/FSKit.framework/Modules/FSKit.swiftmodule"
-          INTERFACE="$(find "${MODULE}" -maxdepth 1 -name '*arm64*.swiftinterface' | head -n 1)"
-          if [ -z "${INTERFACE}" ]; then
-            INTERFACE="$(find "${MODULE}" -maxdepth 1 -name '*.swiftinterface' | head -n 1)"
+          echo "SDK=${SDK}"
+          TOOL="$(xcrun --find swift-ide-test 2>/dev/null || true)"
+          if [ -n "${TOOL}" ]; then
+            "${TOOL}" \
+              -print-module \
+              -module-to-print FSKit \
+              -source-filename /dev/null \
+              -sdk "${SDK}" \
+              -target arm64-apple-macos26.0 \
+              > "${RUNNER_TEMP}/FSKit.imported.swift"
+          else
+            echo 'swift-ide-test unavailable; dumping generated Objective-C/Swift headers instead' >&2
+            find "${SDK}/System/Library/Frameworks/FSKit.framework" -maxdepth 4 -type f \
+              \( -name '*.h' -o -name '*.swiftinterface' \) -print \
+              > "${RUNNER_TEMP}/fskit-files.txt"
+            cat "${SDK}/System/Library/Frameworks/FSKit.framework/Headers/FSKit.h" \
+              > "${RUNNER_TEMP}/FSKit.imported.swift" 2>/dev/null || true
           fi
-          test -f "${INTERFACE}"
-          echo "FSKIT_INTERFACE=${INTERFACE}"
-          cp "${INTERFACE}" "${RUNNER_TEMP}/FSKit.swiftinterface"
 
+          test -s "${RUNNER_TEMP}/FSKit.imported.swift"
           for token in \
             'protocol Handler' \
             'protocol ReadWriteHandler' \
@@ -43,16 +54,21 @@ jobs:
             'class FSDirectoryEntryPacker' \
             'class FSStatFSResult' \
             'class SupportedCapabilities' \
-            'class FSFileName'; do
+            'class FSFileName' \
+            'func lookupItem' \
+            'func enumerateDirectory' \
+            'func read('; do
             echo "===== ${token} ====="
-            grep -n -A80 -B5 "${token}" "${INTERFACE}" | head -n 180 || true
+            grep -n -A90 -B8 "${token}" "${RUNNER_TEMP}/FSKit.imported.swift" | head -n 220 || true
           done | tee "${RUNNER_TEMP}/fskit-surface.txt"
 
-      - name: Upload FSKit interface evidence
+      - name: Upload FSKit surface evidence
         uses: actions/upload-artifact@v7
         with:
           name: fskit-sdk-surface-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/fskit-surface.txt
-            ${{ runner.temp }}/FSKit.swiftinterface
+            ${{ runner.temp }}/FSKit.imported.swift
+            ${{ runner.temp }}/fskit-files.txt
+          if-no-files-found: ignore
           retention-days: 7
