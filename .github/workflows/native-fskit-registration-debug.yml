@@ -34,10 +34,17 @@ jobs:
           set -euo pipefail
           SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
           SOURCE_EXT="${SOURCE_APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          echo '--- requested entitlements ---'
+          plutil -p native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements
           codesign --force --sign - \
+            --generate-entitlement-der \
             --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
             "${SOURCE_EXT}"
+          echo '--- extension immediately after signing ---'
+          codesign -dvvv --entitlements :- "${SOURCE_EXT}" || true
           codesign --force --sign - "${SOURCE_APP}"
+          echo '--- extension after parent signing ---'
+          codesign -dvvv --entitlements :- "${SOURCE_EXT}" || true
           sudo rm -rf "/Applications/EDPFSKitPoC.app"
           sudo /usr/bin/ditto "${SOURCE_APP}" "/Applications/EDPFSKitPoC.app"
           codesign -dvvv --entitlements :- \
