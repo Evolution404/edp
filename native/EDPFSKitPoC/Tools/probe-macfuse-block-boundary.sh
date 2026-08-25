@@ -260,7 +260,12 @@ fi
 log "RESULT=MACFUSE_EXPOSED_OBJECT_REGULAR_FILE"
 
 EXPECTED_HEX="000102030405060708090a0b0c0d0e0f"
-ACTUAL_HEX="$(/usr/bin/dd if="${VIRTUAL_FILE}" bs=16 count=1 2>/dev/null | /usr/bin/xxd -p | tr -d '\n')"
+ACTUAL_HEX="$(python3 - "${VIRTUAL_FILE}" <<'PY'
+import sys
+with open(sys.argv[1], "rb", buffering=0) as handle:
+    print(handle.read(16).hex())
+PY
+)"
 log "READ_HEAD_HEX=${ACTUAL_HEX}"
 if [[ "${ACTUAL_HEX}" != "${EXPECTED_HEX}" ]]; then
   log "FAIL=FUSE_RANDOM_READ_MISMATCH"
