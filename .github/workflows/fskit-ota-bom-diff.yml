@@ -1,0 +1,53 @@
+name: FSKit OTA BOM diff
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - install/one-click-installer
+    paths:
+      - .github/workflows/fskit-ota-bom-diff.yml
+
+jobs:
+  bom-diff:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Compare 24G624 -> 24G716 BOM
+        env:
+          OTA_URL: https://updates.cdn-apple.com/2026SpringSeed/patches/122-35216/30DB8053-283F-4B64-B890-FFA0136CA356/com_apple_MobileAsset_MacSoftwareUpdate/dacc1a1076d3ee670297be6308d99831aeb1766b.zip
+        run: |
+          set -euo pipefail
+          OTA="$RUNNER_TEMP/a.zip"
+          curl -fsSL --retry 5 "$OTA_URL" -o "$OTA"
+          unzip -p "$OTA" AssetData/pre.bom > "$RUNNER_TEMP/a-pre.bom"
+          unzip -p "$OTA" AssetData/post.bom > "$RUNNER_TEMP/a-post.bom"
+          PAT='(^|\./)(sbin/mount$|usr/libexec/fskitd$|usr/libexec/fskit_agent$|usr/libexec/fskit_helper$|usr/libexec/diskarbitrationd$)|LiveFS\.framework/.*/LiveFS$|FSKit\.framework/.*/FSKit$'
+          echo '=== 24G624 PRE ==='
+          lsbom -p fsc "$RUNNER_TEMP/a-pre.bom" | grep -E "$PAT" || true
+          echo '=== 24G716 POST ==='
+          lsbom -p fsc "$RUNNER_TEMP/a-post.bom" | grep -E "$PAT" || true
+          echo '=== TARGETED DIFF ==='
+          lsbom -p fsc "$RUNNER_TEMP/a-pre.bom" | grep -E "$PAT" > "$RUNNER_TEMP/a-pre.txt" || true
+          lsbom -p fsc "$RUNNER_TEMP/a-post.bom" | grep -E "$PAT" > "$RUNNER_TEMP/a-post.txt" || true
+          diff -u "$RUNNER_TEMP/a-pre.txt" "$RUNNER_TEMP/a-post.txt" || true
+          rm -f "$OTA"
+
+      - name: Compare 24G716 -> 24G720 BOM
+        env:
+          OTA_URL: https://updates.cdn-apple.com/2026SpringSeed/patches/122-63999/877873B7-7ABD-427D-8340-83913C4A3A03/com_apple_MobileAsset_MacSoftwareUpdate/067bae47227fb5df841d4e3ed29b5928536fd8ae.zip
+        run: |
+          set -euo pipefail
+          OTA="$RUNNER_TEMP/b.zip"
+          curl -fsSL --retry 5 "$OTA_URL" -o "$OTA"
+          unzip -p "$OTA" AssetData/pre.bom > "$RUNNER_TEMP/b-pre.bom"
+          unzip -p "$OTA" AssetData/post.bom > "$RUNNER_TEMP/b-post.bom"
+          PAT='(^|\./)(sbin/mount$|usr/libexec/fskitd$|usr/libexec/fskit_agent$|usr/libexec/fskit_helper$|usr/libexec/diskarbitrationd$)|LiveFS\.framework/.*/LiveFS$|FSKit\.framework/.*/FSKit$'
+          echo '=== 24G716 PRE ==='
+          lsbom -p fsc "$RUNNER_TEMP/b-pre.bom" | grep -E "$PAT" || true
+          echo '=== 24G720 POST ==='
+          lsbom -p fsc "$RUNNER_TEMP/b-post.bom" | grep -E "$PAT" || true
+          echo '=== TARGETED DIFF ==='
+          lsbom -p fsc "$RUNNER_TEMP/b-pre.bom" | grep -E "$PAT" > "$RUNNER_TEMP/b-pre.txt" || true
+          lsbom -p fsc "$RUNNER_TEMP/b-post.bom" | grep -E "$PAT" > "$RUNNER_TEMP/b-post.txt" || true
+          diff -u "$RUNNER_TEMP/b-pre.txt" "$RUNNER_TEMP/b-post.txt" || true
