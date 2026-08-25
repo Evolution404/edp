@@ -12,6 +12,7 @@ REPORT_FILE="${WORK_DIR}/report.txt"
 PID=""
 BSD_NAME=""
 TEST_VOLUME="EDPDI2TEST"
+CLEANUP_DONE=0
 
 mkdir -p "${WORK_DIR}"
 : >"${SERVER_LOG}"
@@ -20,19 +21,76 @@ mkdir -p "${WORK_DIR}"
 
 log() { printf '%s\n' "$*" | tee -a "${REPORT_FILE}"; }
 
-cleanup() {
-  if [[ -n "${BSD_NAME}" ]]; then
-    /usr/sbin/diskutil eject "${BSD_NAME}" >/dev/null 2>&1 || /usr/sbin/diskutil unmountDisk force "${BSD_NAME}" >/dev/null 2>&1 || true
-  fi
+is_backing_mounted() {
+  /sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " >/dev/null 2>&1
+}
+
+run_bounded() {
+  local timeout_s="$1"
+  shift
+  "$@" &
+  local command_pid=$!
+  local deadline=$((SECONDS + timeout_s))
+
+  while kill -0 "${command_pid}" >/dev/null 2>&1; do
+    if (( SECONDS >= deadline )); then
+      kill -TERM "${command_pid}" >/dev/null 2>&1 || true
+      sleep 0.2
+      kill -KILL "${command_pid}" >/dev/null 2>&1 || true
+      wait "${command_pid}" >/dev/null 2>&1 || true
+      return 124
+    fi
+    sleep 0.1
+  done
+
+  wait "${command_pid}"
+}
+
+stop_fuse_server() {
   if [[ -n "${PID}" ]] && kill -0 "${PID}" >/dev/null 2>&1; then
     kill -TERM "${PID}" >/dev/null 2>&1 || true
     sleep 0.2
     kill -KILL "${PID}" >/dev/null 2>&1 || true
   fi
-  /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || sudo /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || true
-  sudo /bin/rm -rf "${MOUNT_POINT}" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+
+cleanup() {
+  if (( CLEANUP_DONE )); then
+    return 0
+  fi
+  CLEANUP_DONE=1
+
+  if [[ -n "${BSD_NAME}" ]]; then
+    run_bounded 5 /usr/sbin/diskutil eject "${BSD_NAME}" >/dev/null 2>&1 || \
+      run_bounded 5 /usr/sbin/diskutil unmountDisk force "${BSD_NAME}" >/dev/null 2>&1 || true
+  fi
+
+  # Keep the FUSE server alive while asking FSKit/macFUSE to dismantle the
+  # mount. Killing the server first can strand the mount and make umount hang.
+  if is_backing_mounted; then
+    if ! run_bounded 5 /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1; then
+      log "WARN=MACFUSE_BACKING_UNMOUNT_TIMEOUT_OR_FAILURE"
+      run_bounded 5 sudo -n /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  stop_fuse_server
+
+  # Last-resort cleanup is also bounded so CI can always reach diagnostics.
+  if is_backing_mounted; then
+    log "WARN=MACFUSE_BACKING_RETRYING_FORCE_UNMOUNT"
+    run_bounded 5 sudo -n /sbin/umount -f "${MOUNT_POINT}" >/dev/null 2>&1 || true
+  fi
+
+  if ! is_backing_mounted; then
+    /bin/rmdir "${MOUNT_POINT}" >/dev/null 2>&1 || sudo -n /bin/rmdir "${MOUNT_POINT}" >/dev/null 2>&1 || true
+  else
+    log "ERROR=MACFUSE_BACKING_STILL_MOUNTED_AFTER_CLEANUP"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 log "=== macFUSE FSKit + Private DiskImages2 PoC ==="
 log "macOS=$(/usr/bin/sw_vers -productVersion)"
@@ -246,4 +304,12 @@ log "RESULT=NATIVE_EXFAT_MOUNT_READ_WRITE_OK"
 /usr/sbin/diskutil eject "${BSD_NAME}" | tee -a "${REPORT_FILE}"
 BSD_NAME=""
 log "RESULT=DISKIMAGES2_TEARDOWN_OK"
+
+cleanup
+if is_backing_mounted; then
+  log "ERROR=MACFUSE_FSKIT_BACKING_TEARDOWN_FAILED"
+  exit 1
+fi
+trap - EXIT INT TERM
+log "RESULT=MACFUSE_FSKIT_BACKING_TEARDOWN_OK"
 log "RESULT=MACFUSE_FSKIT_DISKIMAGES2_NATIVE_FS_E2E_OK"

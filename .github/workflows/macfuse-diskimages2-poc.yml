@@ -89,9 +89,32 @@ jobs:
           echo 'RESULT=CI_ONLY_MACFUSE_MODULE_STATE_SEEDED'
 
       - name: Run complete private DiskImages2 proof
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           bash native/EDPFSKitPoC/Tools/probe-macfuse-diskimages2.sh
+
+      - name: Capture live state after proof failure
+        if: failure()
+        timeout-minutes: 1
+        run: |
+          set +e
+          OUT="${RUNNER_TEMP}/edp-macfuse-di2/live-state.txt"
+          mkdir -p "$(dirname "${OUT}")"
+          {
+            echo '=== timestamp ==='
+            date -u
+            echo '=== mounts ==='
+            /sbin/mount
+            echo '=== disks ==='
+            /usr/sbin/diskutil list
+            echo '=== relevant processes ==='
+            /bin/ps -axo pid,ppid,state,etime,command | /usr/bin/grep -E 'blockfs|macfuse|fskit|DiskImages2|umount' || true
+            echo '=== plugin state ==='
+            /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse || true
+            /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse-local || true
+          } >"${OUT}" 2>&1
+          cat "${OUT}"
 
       - name: Upload PoC diagnostics
         if: always()
