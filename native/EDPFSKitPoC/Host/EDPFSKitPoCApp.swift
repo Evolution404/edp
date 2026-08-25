@@ -1,5 +1,4 @@
 import FSKit
-import ServiceManagement
 import SwiftUI
 
 private let edpFSKitBundleID = "com.edp.usbvault.fskit-poc.extension"
@@ -105,8 +104,8 @@ private struct FSKitSetupView: View {
         HStack(spacing: 10) {
             switch moduleState {
             case .awaitingApproval, .disabled:
-                Button("Open Login Items & Extensions") {
-                    SMAppService.openSystemSettingsLoginItems()
+                Button("Open File System Extensions") {
+                    _ = FSClient.shared.openFileSystemExtensionsSettings()
                 }
                 .buttonStyle(.borderedProminent)
 
