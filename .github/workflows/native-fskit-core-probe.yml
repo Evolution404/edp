@@ -49,13 +49,37 @@ jobs:
       - name: Validate runtime verifier syntax
         run: bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
 
-      - name: Compile aligned read-loop regression
+      - name: Compile fast regression binaries in parallel
         run: |
           set -euo pipefail
+
           xcrun swiftc \
             native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
             native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift \
-            -o "${RUNNER_TEMP}/validate-aligned-read"
+            -o "${RUNNER_TEMP}/validate-aligned-read" &
+          aligned_pid=$!
+
+          xcrun swiftc \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
+            -o "${RUNNER_TEMP}/validate-edp-probe" &
+          metadata_pid=$!
+
+          xcrun swiftc \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
+            -o "${RUNNER_TEMP}/validate-native-core" &
+          core_pid=$!
+
+          wait "${aligned_pid}"
+          wait "${metadata_pid}"
+          wait "${core_pid}"
 
       - name: Execute production aligned read-loop regression
         run: |
@@ -66,16 +90,6 @@ jobs:
           grep -F 'ALIGNED_READ_INVALID_RESULTS=OK' "${RUNNER_TEMP}/aligned-read.txt"
           grep -F 'ALIGNED_READ_OFFSET_OVERFLOW=OK' "${RUNNER_TEMP}/aligned-read.txt"
           grep -F 'RESULT=ALIGNED_READ_LOOP_OK' "${RUNNER_TEMP}/aligned-read.txt"
-
-      - name: Compile reserved-sector recognition tests
-        run: |
-          set -euo pipefail
-          xcrun swiftc \
-            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
-            native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
-            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
-            native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
-            -o "${RUNNER_TEMP}/validate-edp-probe"
 
       - name: Reserved-sector and alignment regressions
         run: |
@@ -92,18 +106,6 @@ jobs:
           grep -F 'LBA7_SHAPE_GUARDS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
-
-      - name: Compile native crypto and volume tests
-        run: |
-          set -euo pipefail
-          xcrun swiftc \
-            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
-            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
-            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
-            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
-            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
-            native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
-            -o "${RUNNER_TEMP}/validate-native-core"
 
       - name: Crypto, metadata, and encrypted-reader regressions
         run: |
@@ -122,10 +124,19 @@ jobs:
           grep -F 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
 
-      - name: Typecheck production Swift source graph
+      - name: Validate production Swift source graph in parallel
         run: |
           set -euo pipefail
-          xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Extension/*.swift
-          xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift
-          xcrun swiftc -framework FSKit native/EDPFSKitPoC/Tools/InspectFSKit.swift -o "${RUNNER_TEMP}/inspect-fskit-compile-check"
+
+          xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Extension/*.swift &
+          extension_pid=$!
+          xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift &
+          host_pid=$!
+          xcrun swiftc -framework FSKit native/EDPFSKitPoC/Tools/InspectFSKit.swift \
+            -o "${RUNNER_TEMP}/inspect-fskit-compile-check" &
+          inspect_pid=$!
+
+          wait "${extension_pid}"
+          wait "${host_pid}"
+          wait "${inspect_pid}"
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
