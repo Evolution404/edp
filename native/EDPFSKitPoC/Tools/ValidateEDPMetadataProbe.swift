@@ -21,7 +21,7 @@ struct ValidateEDPMetadataProbe {
             case .missingField(let field):
                 return "missing fixture field: \(field)"
             case .recognitionFailed(let name):
-                return "Swift LBA7 recognizer rejected golden disk \(name)"
+                return "Swift EDP recognizer rejected fixture \(name)"
             case .mismatch(let message):
                 return message
             }
@@ -33,35 +33,40 @@ struct ValidateEDPMetadataProbe {
             throw ValidationError.usage
         }
 
+        let goldenPath = CommandLine.arguments[1]
         try validateAlignmentMath()
-        try validateGoldenFixtures(path: CommandLine.arguments[1])
+        try validateLBA7GoldenFixtures(path: goldenPath)
+        try validateReservedSectorProbe(goldenPath: goldenPath)
         print("RESULT=SWIFT_EDP_LBA7_GOLDEN_OK")
+        print("RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK")
     }
 
     private static func validateAlignmentMath() throws {
         let sector512 = try EDPMetadataProbe.alignedWindow(
-            byteOffset: EDPMetadataProbe.lba7ByteOffset,
-            byteLength: EDPMetadataProbe.lba7ByteLength,
+            byteOffset: EDPMetadataProbe.lba4ByteOffset,
+            byteLength: EDPMetadataProbe.reservedProbeByteLength,
             physicalBlockSize: 512
         )
-        guard sector512 == .init(start: 3584, length: 512, sliceOffset: 0, sliceLength: 512) else {
-            throw ValidationError.mismatch("512-byte aligned LBA7 window mismatch: \(sector512)")
+        guard sector512 == .init(start: 2048, length: 2048, sliceOffset: 0, sliceLength: 2048) else {
+            throw ValidationError.mismatch("512-byte reserved window mismatch: \(sector512)")
         }
 
         let sector4096 = try EDPMetadataProbe.alignedWindow(
-            byteOffset: EDPMetadataProbe.lba7ByteOffset,
-            byteLength: EDPMetadataProbe.lba7ByteLength,
+            byteOffset: EDPMetadataProbe.lba4ByteOffset,
+            byteLength: EDPMetadataProbe.reservedProbeByteLength,
             physicalBlockSize: 4096
         )
-        guard sector4096 == .init(start: 0, length: 4096, sliceOffset: 3584, sliceLength: 512) else {
-            throw ValidationError.mismatch("4096-byte aligned LBA7 window mismatch: \(sector4096)")
+        guard sector4096 == .init(start: 0, length: 4096, sliceOffset: 2048, sliceLength: 2048) else {
+            throw ValidationError.mismatch("4096-byte reserved window mismatch: \(sector4096)")
         }
 
         print("ALIGNMENT_512=OK")
         print("ALIGNMENT_4096=OK")
     }
 
-    private static func validateGoldenFixtures(path: String) throws {
+    /// Keeps the Swift rolling-XOR decoder pinned byte-for-byte to the existing
+    /// Rust golden fixture for every captured disk.
+    private static func validateLBA7GoldenFixtures(path: String) throws {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let disks = root["disks"] as? [[String: Any]],
@@ -101,6 +106,42 @@ struct ValidateEDPMetadataProbe {
         }
 
         print("GOLDEN_LBA7_COUNT=\(validated)")
+    }
+
+    /// Matches the conservative Rust `edp-core::probe` regression against the
+    /// captured disk4/disk5 reserved sectors and verifies that either missing
+    /// signal prevents automatic recognition.
+    private static func validateReservedSectorProbe(goldenPath: String) throws {
+        let goldenURL = URL(fileURLWithPath: goldenPath).standardizedFileURL
+        let fixturesURL = goldenURL
+            .deletingLastPathComponent() // golden
+            .deletingLastPathComponent() // fixtures
+
+        for diskName in ["disk4", "disk5"] {
+            let diskURL = fixturesURL.appendingPathComponent("real_disks/\(diskName)")
+            let lba4 = [UInt8](try Data(contentsOf: diskURL.appendingPathComponent("LBA4.bin")))
+            let lba7 = [UInt8](try Data(contentsOf: diskURL.appendingPathComponent("LBA7.bin")))
+
+            guard let evidence = EDPMetadataProbe.recognizeReservedSectors(lba4: lba4, lba7: lba7) else {
+                throw ValidationError.recognitionFailed("\(diskName) reserved sectors")
+            }
+            guard evidence.partitionTypes == [1, 2, 4], !evidence.serial.isEmpty else {
+                throw ValidationError.mismatch("\(diskName): invalid reserved-sector evidence")
+            }
+
+            print(
+                "RESERVED_PROBE_OK=\(diskName) serial=\(evidence.serial) " +
+                "k0=\(String(format: "0x%04x", evidence.lba7K0))"
+            )
+
+            let zeros = [UInt8](repeating: 0, count: 512)
+            guard EDPMetadataProbe.recognizeReservedSectors(lba4: zeros, lba7: lba7) == nil,
+                  EDPMetadataProbe.recognizeReservedSectors(lba4: lba4, lba7: zeros) == nil else {
+                throw ValidationError.mismatch("\(diskName): recognizer accepted only one signal")
+            }
+        }
+
+        print("RESERVED_PROBE_NEGATIVE_CONTROLS=OK")
     }
 
     private static func decodeHex(_ value: String) throws -> [UInt8] {
