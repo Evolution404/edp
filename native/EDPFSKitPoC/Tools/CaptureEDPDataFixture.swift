@@ -110,7 +110,7 @@ private enum CaptureEDPDataFixture {
         guard (6...8).contains(args.count) else {
             throw CaptureError.usage(
                 "usage: CaptureEDPDataFixture <raw-device-or-image> <vid-hex> <pid-hex> <device-size-bytes> <output-dir> [partition-type=2] [capture-bytes=65536]\n" +
-                "set EDP_PASSWORD in the environment; the password and derived file key are never written to the output"
+                "password is read from EDP_PASSWORD when set, otherwise it is requested interactively without echo"
             )
         }
 
@@ -133,11 +133,7 @@ private enum CaptureEDPDataFixture {
               captureBytes % 16 == 0 else {
             throw CaptureError.usage("capture-bytes must be 512...8388608 and a multiple of 16")
         }
-        guard let passwordString = ProcessInfo.processInfo.environment["EDP_PASSWORD"],
-              !passwordString.isEmpty else {
-            throw CaptureError.usage("EDP_PASSWORD is required in the environment")
-        }
-        let password = Array(passwordString.utf8)
+        let password = try readPassword()
 
         try prepareOutputDirectory(outputURL)
         let raw = try RawFileReader(path: source, sizeBytes: deviceSize)
@@ -219,6 +215,24 @@ private enum CaptureEDPDataFixture {
         print("CAPTURE_OUTPUT=\(outputURL.path)")
         print("CAPTURE_SECRETS_WRITTEN=false")
         print("RESULT=EDP_REAL_DATA_FIXTURE_CAPTURED")
+    }
+
+    private static func readPassword() throws -> [UInt8] {
+        if let value = ProcessInfo.processInfo.environment["EDP_PASSWORD"], !value.isEmpty {
+            return Array(value.utf8)
+        }
+
+        guard Darwin.isatty(STDIN_FILENO) == 1,
+              let pointer = Darwin.getpass("EDP password: ") else {
+            throw CaptureError.usage(
+                "EDP password is required; set EDP_PASSWORD for automation or run interactively"
+            )
+        }
+        let value = String(cString: pointer)
+        guard !value.isEmpty else {
+            throw CaptureError.usage("EDP password must not be empty")
+        }
+        return Array(value.utf8)
     }
 
     private static func normalizedHex4(_ raw: String) -> String {
