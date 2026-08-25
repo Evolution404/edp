@@ -82,6 +82,8 @@ jobs:
             ENABLE_PREVIEWS=NO \
             ENABLE_DEBUG_DYLIB=NO \
             SWIFT_EMIT_LOC_STRINGS=NO \
+            GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
+            SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO \
             build
           build_finished="$(date +%s)"
 
