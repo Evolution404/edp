@@ -51,7 +51,7 @@ physical EDP USB
 4. **Apple 原生文件系统负责分区、目录、文件和具体 filesystem metadata。**
 5. EDP 项目中不得新增 exFAT cluster/FAT/directory parser 作为产品依赖。
 
-## 3. 已完成的两级架构证明
+## 3. 已完成的三级架构/边界证明
 
 ### 3.1 结构性块桥 E2E：已完成
 
@@ -99,11 +99,12 @@ GitHub Actions：
 
 ```text
 workflow: EDP Crypto + DiskImages2 Read-Only E2E
-run:      32851503960
-runner:   macOS 26.5.2 (25F84), arm64
-Xcode:    26.6
-macFUSE:  5.3.3
-libfuse:  2.9.9
+original proof run: 32851503960
+latest combined run: 32865857756
+runner:             macOS 26.5.2 (25F84), arm64
+Xcode:              26.6
+macFUSE:            5.3.3
+libfuse:            2.9.9
 ```
 
 这一级不再使用“直接返回明文的内存 backing”。测试先创建一个正常的原生 exFAT raw image，再把整个 128 MiB image 用现有 Swift `EDPSM4` 加密。随后实际读取路径为：
@@ -182,6 +183,41 @@ actual   SHA-256 = be3fe57d3683161305fa72d30cb09a2d2621c60e420961ce516f56358b365
 > **现有 Swift `EDPEncryptedPartitionReader` 的随机解密结果，可以通过 macFUSE FSKit + Private DiskImages2 被 Apple 原生文件系统当作真实只读磁盘读取。**
 
 因此产品不需要、也不应开发任何 exFAT 实现。
+
+### 3.3 产品式 real-device unlock -> FUSE 边界：已完成
+
+GitHub Actions run `32865857756` 新增了独立 gate，使用仓库中已采集的真实 Lexar LBA11/LBA12 metadata 构造只读 sparse raw-device fixture，并走与产品一致的入口：
+
+```text
+real LBA11/LBA12 fixture
++ actual VID/PID/device size metadata
++ password bytes from inherited FD
+  -> EDPFileRawDevice(declaredSizeBytes:)
+  -> EDPReadOnlyUnlock
+  -> edp_ro_open_device
+  -> EDPEncryptedReadOnlyBlockDevice
+  -> EDPReadOnlyFuseBridge --device
+  -> macFUSE backend=fskit
+  -> volume.raw
+```
+
+关键结果：
+
+```text
+RESULT=EDP_DEVICE_MODE_BRIDGE_BUILT
+RESULT=EDP_REAL_METADATA_FIXTURE_READY
+RESULT=EDP_DEVICE_MODE_WRONG_PASSWORD_REJECTED
+RESULT=EDP_DEVICE_UNLOCK_EXPOSED_DESCRIPTOR_SIZE_OK
+RESULT=EDP_DEVICE_MODE_RANDOM_READS_OK
+RESULT=EDP_DEVICE_PASSWORD_FD_TRANSPORT_OK
+RESULT=EDP_PRODUCT_UNLOCK_FUSE_DEVICE_MODE_OK
+```
+
+该 gate 确认真实 type-2 descriptor 的逻辑尺寸保持为 `118477684736` bytes，没有因 NTFS boot-sector 自报尺寸少 1 sector 而被擅自归一化。
+
+密码不进入 argv/env；FUSE C 边界只接收 password FD，读取后立即清零临时 buffer。derived file key 仍然只存在于 Swift unlock/core 内部，不跨越 C ABI。
+
+这一级**不是**真实 U 盘 Finder mount：sparse fixture 只用于验证真实 metadata + 产品 unlock API + secret transport + FUSE 边界。真实 encrypted partition plaintext 正确性由物理采集证据和 synthetic crypto E2E 分别覆盖。
 
 ## 4. 证据边界：真实 EDP crypto 已证明，Finder 实盘挂载仍待 macOS 26
 
@@ -328,6 +364,18 @@ edp_ro_close
 
 `edp_ro_open_device` 接收 raw path、VID/PID、declared device size、进程内密码 bytes 和 partition type，并调用统一 `EDPReadOnlyUnlock`；derived file key 不跨越该 ABI。
 
+FUSE executable 现同时支持：
+
+```text
+synthetic/manual-key:
+EDPReadOnlyFuseBridge <cipher.img> <32-hex-key> <mountpoint>
+
+product/real-device:
+EDPReadOnlyFuseBridge --device <raw-device> <vid> <pid> <device-size> <partition-type> <password-fd> <mountpoint>
+```
+
+产品模式的密码只通过已继承 FD 传入；不放 argv/env，不由 C 层派生或暴露 file key。C 临时 password buffer 在调用 Swift ABI 后立即 zeroize。
+
 ### 5.5 Private DiskImages2 bridge
 
 集中在：
@@ -420,7 +468,29 @@ RESULT=MACFUSE_FSKIT_DISKIMAGES2_NATIVE_FS_E2E_OK
 RESULT=EDP_CRYPTO_MACFUSE_DISKIMAGES2_NATIVE_FS_READ_E2E_OK
 ```
 
-这条 gate 必须覆盖任何对下列代码的修改：
+### 8.3 real-metadata 产品 unlock -> FUSE gate
+
+同一 workflow 现在先运行：
+
+```text
+native/EDPFSKitPoC/Tools/probe-edp-device-unlock.sh
+```
+
+最终 marker：
+
+```text
+RESULT=EDP_PRODUCT_UNLOCK_FUSE_DEVICE_MODE_OK
+```
+
+该 gate 必须持续验证：
+
+- 真实 LBA11/LBA12 fixture 可通过统一产品 unlock；
+- 错误密码 fail closed；
+- password 只经 FD 进入 FUSE 进程；
+- descriptor size 原样暴露，不修正真实 1-sector 差异；
+- product-mode random read 可穿过 `edp_ro_open_device -> EDPEncryptedReadOnlyBlockDevice -> FUSE`。
+
+这些 gate 必须覆盖任何对下列代码的修改：
 
 - EDP crypto / partition reader；
 - block abstraction；
@@ -429,7 +499,7 @@ RESULT=EDP_CRYPTO_MACFUSE_DISKIMAGES2_NATIVE_FS_READ_E2E_OK
 - DiskImages2 bridge；
 - macFUSE/target macOS 版本变化。
 
-现有 `Native Swift Fast Checks` 的 3,200 cases 与这两个系统级 E2E 是不同证据层，不混算测试数量。
+现有 `Native Swift Fast Checks` 的 3,200 cases 与这些系统级 E2E 是不同证据层，不混算测试数量。
 
 ## 9. 下一步实施顺序
 
@@ -443,11 +513,12 @@ RESULT=EDP_CRYPTO_MACFUSE_DISKIMAGES2_NATIVE_FS_READ_E2E_OK
 4. 真实 type-2 encrypted partition 选择；
 5. 真实 raw device -> `EDPReadOnlyUnlock` -> `EDPEncryptedPartitionReader`；
 6. `EDPEncryptedReadOnlyBlockDevice` 真实 NTFS 明文读取；
-7. `edp_ro_open_device` Swift/C ABI 导出。
+7. `edp_ro_open_device` Swift/C ABI 导出；
+8. macOS 26 CI 上真实 metadata fixture -> password FD -> `--device` FUSE product boundary 验证。
 
 剩余动作只应在 macOS 26+ 实体机执行：
 
-1. 用真实设备 API启动现有 macFUSE `backend=fskit` backing；
+1. 用真实 `/dev/rdiskN` + VID/PID/device size + password FD 启动现有 `EDPReadOnlyFuseBridge --device`；
 2. 用 DiskImages2 `--readonly` 发布 `/dev/diskN`；
 3. 确认 `Media Read-Only: Yes`；
 4. 让 Apple 原生 NTFS 实现识别并挂载；
@@ -499,10 +570,11 @@ RESULT=EDP_CRYPTO_MACFUSE_DISKIMAGES2_NATIVE_FS_READ_E2E_OK
 
 ## 11. 当前结论
 
-截至 2026-08-25，已经形成三级证据：
+截至 2026-08-25，已经形成四级证据：
 
 1. macOS 26：`macFUSE FSKit -> Private DiskImages2 -> /dev/diskN -> Apple native filesystem` 块桥成立；
 2. macOS 26：Swift `EDPEncryptedPartitionReader` 位于同一块桥中时，synthetic 整盘 SM4 ciphertext 可被 Apple 原生文件系统正确读取；
-3. 真实物理 EDP U 盘：真实 LBA11/LBA12、真实密码验证、真实 file key、真实 type-2 encrypted partition 已通过统一 `EDPReadOnlyUnlock` 解密为有效 NTFS block view。
+3. macOS 26：真实 Lexar LBA11/LBA12 metadata 可经 `edp_ro_open_device`、password FD 和 `EDPReadOnlyFuseBridge --device` 成功发布正确尺寸的 FSKit `volume.raw`，错误密码 fail closed；
+4. 真实物理 EDP U 盘：真实 LBA11/LBA12、真实密码验证、真实 file key、真实 type-2 encrypted partition 已通过统一 `EDPReadOnlyUnlock` 解密为有效 NTFS block view。
 
-因此不再研究具体文件系统，也不再研究 crypto/key derivation 是否正确。**唯一剩余 P0 是在 macOS 26+ 实体机上把已经验证的真实 block view 接到已经验证的 macFUSE FSKit + DiskImages2 块桥，完成 Finder 实盘只读。**
+因此不再研究具体文件系统，也不再研究 crypto/key derivation 是否正确，也不再补造另一套 real-device FUSE API。**唯一剩余 P0 是在 macOS 26+ 实体机上把真实 `/dev/rdiskN` 交给已经通过 CI 的 `--device` FUSE product boundary，再接已经验证的 DiskImages2 块桥，完成 Finder 实盘只读。**
