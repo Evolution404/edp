@@ -86,6 +86,6 @@ jobs:
       - name: Typecheck production Swift source graph
         run: |
           set -euo pipefail
-          xcrun swiftc -typecheck native/EDPFSKitPoC/Extension/*.swift
-          xcrun swiftc -typecheck native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift
+          xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Extension/*.swift
+          xcrun swiftc -parse-as-library -typecheck native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
