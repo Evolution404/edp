@@ -8,118 +8,82 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: native-fskit-block-probe-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  block-probe:
+  probe:
     runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
-      - name: Build and install native FSKit PoC
+      - name: Build register and enable
         run: |
           set -euo pipefail
           brew install xcodegen
           cd native/EDPFSKitPoC
           xcodegen generate
-          xcodebuild \
-            -project EDPFSKitPoC.xcodeproj \
-            -scheme EDPFSKitHost \
-            -configuration Release \
-            -derivedDataPath "${RUNNER_TEMP}/EDPFSKitDerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build
+          xcodebuild -project EDPFSKitPoC.xcodeproj -scheme EDPFSKitHost -configuration Release -derivedDataPath "${RUNNER_TEMP}/DD" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
           cd "${GITHUB_WORKSPACE}"
-
-          SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
-          SOURCE_EXT="${SOURCE_APP}/Contents/Extensions/EDPFSKitExtension.appex"
-          codesign --force --sign - --generate-entitlement-der \
-            --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
-            "${SOURCE_EXT}"
-          codesign --force --sign - "${SOURCE_APP}"
-
+          SRC="${RUNNER_TEMP}/DD/Build/Products/Release/EDPFSKitPoC.app"
+          EXT="${SRC}/Contents/Extensions/EDPFSKitExtension.appex"
+          codesign --force --sign - --generate-entitlement-der --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements "${EXT}"
+          codesign --force --sign - "${SRC}"
           sudo rm -rf /Applications/EDPFSKitPoC.app
-          sudo ditto "${SOURCE_APP}" /Applications/EDPFSKitPoC.app
-          APP="/Applications/EDPFSKitPoC.app"
+          sudo ditto "${SRC}" /Applications/EDPFSKitPoC.app
+          APP=/Applications/EDPFSKitPoC.app
           EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
-          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \
-            -f -R -trusted "${APP}"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
           pluginkit -a "${EXT}"
           pluginkit -a "${APP}"
           pluginkit -e use -i com.edp.usbvault.fskit-poc.extension || true
-          sleep 2
 
-      - name: Seed FSKit approval state
-        run: |
-          set -euo pipefail
           SETTINGS="${HOME}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
           mkdir -p "$(dirname "${SETTINGS}")"
           python3 - "${SETTINGS}" <<'PY'
-          import plistlib
-          import sys
+          import plistlib, sys
           from pathlib import Path
-          path = Path(sys.argv[1])
-          enabled = []
-          if path.exists():
-              with path.open("rb") as f:
-                  enabled = plistlib.load(f)
-          if not isinstance(enabled, list):
-              raise SystemExit(f"unexpected enabledModules root: {type(enabled).__name__}")
-          identifier = "com.edp.usbvault.fskit-poc.extension"
-          if identifier not in enabled:
-              enabled.append(identifier)
-          with path.open("wb") as f:
-              plistlib.dump(enabled, f, fmt=plistlib.FMT_BINARY)
+          p = Path(sys.argv[1])
+          a = plistlib.load(p.open("rb")) if p.exists() else []
+          assert isinstance(a, list)
+          x = "com.edp.usbvault.fskit-poc.extension"
+          if x not in a: a.append(x)
+          plistlib.dump(a, p.open("wb"), fmt=plistlib.FMT_BINARY)
           PY
           plutil -p "${SETTINGS}"
           killall fskit_agent 2>/dev/null || true
           killall extensionkitservice 2>/dev/null || true
           sleep 3
 
-      - name: Attach raw block device
+      - name: Attach raw disk
         run: |
           set -euo pipefail
-          RAW="${RUNNER_TEMP}/edp-fskit-probe.raw"
-          /usr/bin/mkfile 16m "${RAW}"
-          ATTACH="$(hdiutil attach -nomount \
-            -imagekey diskimage-class=CRawDiskImage "${RAW}")"
-          echo "${ATTACH}"
-          DISK="$(printf '%s\n' "${ATTACH}" | awk 'NR==1 {print $1}')"
+          RAW="${RUNNER_TEMP}/probe.raw"
+          mkfile 16m "${RAW}"
+          OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${RAW}")"
+          echo "${OUT}"
+          DISK="$(printf '%s\n' "${OUT}" | awk 'NR==1 {print $1}')"
           test -b "${DISK}"
           echo "EDP_TEST_DISK=${DISK}" >> "${GITHUB_ENV}"
-          echo "TEST_DISK=${DISK}"
 
-      - name: Mount explicitly as edpvault
+      - name: Trigger edpvault probe
         run: |
           set -euo pipefail
-          MOUNTPOINT="${RUNNER_TEMP}/edp-fskit-mount"
-          mkdir -p "${MOUNTPOINT}"
+          MP="${RUNNER_TEMP}/mnt"
+          mkdir -p "${MP}"
           set +e
-          /sbin/mount -t edpvault "${EDP_TEST_DISK}" "${MOUNTPOINT}" \
-            >"${RUNNER_TEMP}/mount.stdout" 2>"${RUNNER_TEMP}/mount.stderr"
+          /sbin/mount -t edpvault "${EDP_TEST_DISK}" "${MP}" >"${RUNNER_TEMP}/mount.out" 2>"${RUNNER_TEMP}/mount.err"
           RC=$?
           set -e
           echo "MOUNT_RC=${RC}"
-          cat "${RUNNER_TEMP}/mount.stdout" || true
-          cat "${RUNNER_TEMP}/mount.stderr" || true
+          cat "${RUNNER_TEMP}/mount.err" || true
           sleep 3
-
-          log show --last 3m --style compact \
-            --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd" OR process == "extensionkitservice" OR eventMessage CONTAINSî÷ÿ◊HôYò][à‘à]ô[ùY\‹ÿYŸH””ïRSî÷ÿ◊Hò€€KôYù\ÿùò][ôú⁄⁄]\ÿÀô^[ú⁄[€àâ»àYHâ‘ïSìëTó’STK‹ù[ù[YKõŸ»àùYBÇà–QQLàì–ëQLà‹ô\Qà	—Qò]]ôHî“⁄]^[ú⁄[€àÿYY	»â‘ïSìëTó’STK‹ù[ù[YKõŸ»à	âà–QQLHùYBà‹ô\Qà	‹õÿôTô\€›\òŸI»â‘ïSìëTó’STK‹ù[ù[YKõŸ»à	âàì–ëu<@Ù1 || true
-          echo "EXTENSION_LOADED=${LOADED}"
-          echo "PROBE_REACHED=${PROBED}"
-
+          log show --last 2m --style compact >"${RUNNER_TEMP}/all.log" || true
+          grep -E 'EDP native FSKit|probeResource|edpvault|com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/all.log" | tee "${RUNNER_TEMP}/runtime.log" || true
           hdiutil detach "${EDP_TEST_DISK}" || true
-
-          if [[ "${LOADED}" == 1 && "${PROBED}" == 1 ]]; then
-            echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED'
+          if grep -Fq 'probeResource' "${RUNNER_TEMP}/runtime.log"; then
+            echo RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED
             exit 0
           fi
-          echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_NOT_REACHED'
+          echo RESULT=NATIVE_FSKIT_BLOCK_PROBE_NOT_REACHED
           exit 1
 
       - name: Upload diagnostics
@@ -128,8 +92,7 @@ jobs:
         with:
           name: native-fskit-block-probe-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/mount.stdout
-            ${{ runner.temp }}/mount.stderr
+            ${{ runner.temp }}/mount.out
+            ${{ runner.temp }}/mount.err
             ${{ runner.temp }}/runtime.log
           if-no-files-found: ignore
-          retention-days: 14
