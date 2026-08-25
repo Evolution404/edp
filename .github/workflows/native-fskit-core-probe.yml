@@ -1,0 +1,43 @@
+name: Native FSKit Core Probe
+
+on:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "crates/edp-core/**"
+      - "fixtures/real_disks/**/LBA4.bin"
+      - "fixtures/real_disks/**/LBA7.bin"
+      - ".github/workflows/native-fskit-core-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-fskit-core-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          shared-key: native-fskit-core-probe-v1
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy edp-core
+        run: cargo clippy -p edp-core --all-targets -- -D warnings
+
+      - name: Passwordless reserved-sector probe regression
+        run: cargo test -p edp-core probe::tests -- --nocapture
+
+      - name: Existing LBA7 golden regression
+        run: cargo test -p edp-core lba7::tests::golden_lba7_auth -- --nocapture
