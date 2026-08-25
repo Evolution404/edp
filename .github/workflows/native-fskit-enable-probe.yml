@@ -1,0 +1,170 @@
+name: Native FSKit Enable Probe
+
+on:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-fskit-enable-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build native FSKit PoC
+        working-directory: native/EDPFSKitPoC
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild \
+            -project EDPFSKitPoC.xcodeproj \
+            -scheme EDPFSKitHost \
+            -configuration Release \
+            -derivedDataPath "${RUNNER_TEMP}/EDPFSKitDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Sign, install, and register
+        run: |
+          set -euo pipefail
+          SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
+          SOURCE_EXT="${SOURCE_APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          codesign --force --sign - --generate-entitlement-der \
+            --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
+            "${SOURCE_EXT}"
+          codesign --force --sign - "${SOURCE_APP}"
+          sudo rm -rf /Applications/EDPFSKitPoC.app
+          sudo ditto "${SOURCE_APP}" /Applications/EDPFSKitPoC.app
+
+          APP="/Applications/EDPFSKitPoC.app"
+          EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \
+            -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}"
+          pluginkit -a "${APP}"
+          pluginkit -e use -i com.edp.usbvault.fskit-poc.extension || true
+          sleep 2
+
+          codesign -dvvv --entitlements :- "${EXT}" || true
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
+            | grep -A14 -B4 'com.edp.usbvault.fskit-poc.extension' || true
+
+      - name: Compile FSClient inspector
+        run: |
+          set -euo pipefail
+          xcrun swiftc -framework FSKit \
+            native/EDPFSKitPoC/Tools/InspectFSKit.swift \
+            -o "${RUNNER_TEMP}/inspect-fskit"
+          set +e
+          "${RUNNER_TEMP}/inspect-fskit" | tee "${RUNNER_TEMP}/before-enable.txt"
+          echo "BEFORE_ENABLE_RC=${PIPESTATUS[0]}"
+          set -e
+
+      - name: Seed top-level FSKit enabledModules array
+        run: |
+          set -euo pipefail
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          SETTINGS_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+
+          python3 - "${SETTINGS_PLIST}" <<'PY'
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          if path.exists():
+              with path.open("rb") as handle:
+                  enabled = plistlib.load(handle)
+          else:
+              enabled = []
+
+          if not isinstance(enabled, list):
+              raise SystemExit(f"unexpected plist root: {type(enabled).__name__}")
+
+          identifier = "com.edp.usbvault.fskit-poc.extension"
+          if identifier not in enabled:
+              enabled.append(identifier)
+
+          with path.open("wb") as handle:
+              plistlib.dump(enabled, handle, fmt=plistlib.FMT_BINARY)
+          PY
+
+          echo '--- enabledModules.plist ---'
+          plutil -p "${SETTINGS_PLIST}"
+          killall fskit_agent 2>/dev/null || true
+          killall extensionkitservice 2>/dev/null || true
+          sleep 3
+
+      - name: Inspect after enablement seed
+        run: |
+          set -euo pipefail
+          set +e
+          "${RUNNER_TEMP}/inspect-fskit" | tee "${RUNNER_TEMP}/after-enable.txt"
+          echo "AFTER_ENABLE_RC=${PIPESTATUS[0]}"
+          set -e
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
+            | grep -A14 -B4 'com.edp.usbvault.fskit-poc.extension' || true
+
+      - name: Trigger real block-resource probe
+        run: |
+          set -euo pipefail
+          IMAGE="${RUNNER_TEMP}/edp-native-fskit-probe.dmg"
+          MOUNTPOINT="${RUNNER_TEMP}/edp-native-fskit-probe-mount"
+          hdiutil create -size 16m -layout NONE -fs NONE "${IMAGE}"
+          DISK="$(hdiutil attach -nomount "${IMAGE}" | awk 'NR==1 {print $1}')"
+          mkdir -p "${MOUNTPOINT}"
+          echo "TEST_DISK=${DISK}"
+
+          set +e
+          /sbin/mount -t edpvault "${DISK}" "${MOUNTPOINT}" \
+            >"${RUNNER_TEMP}/mount.stdout" 2>"${RUNNER_TEMP}/mount.stderr"
+          MOUNT_RC=$?
+          set -e
+          echo "MOUNT_RC=${MOUNT_RC}"
+          cat "${RUNNER_TEMP}/mount.stdout" || true
+          cat "${RUNNER_TEMP}/mount.stderr" || true
+          sleep 3
+
+          log show --last 3m --style compact \
+            --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd" OR process == "extensionkitservice" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc.extension"' \
+            | tee "${RUNNER_TEMP}/runtime.log" || true
+
+          hdiutil detach "${DISK}" || true
+
+          LOADED=0
+          PROBED=0
+          grep -F 'EDP native FSKit extension loaded' "${RUNNER_TEMP}/runtime.log" && LOADED=1 || true
+          grep -F 'probeResource' "${RUNNER_TEMP}/runtime.log" && PROBED=1 || true
+          echo "EXTENSION_LOADED=${LOADED}"
+          echo "PROBE_REACHED=${PROBED}"
+          if [[ "${LOADED}" == 1 && "${PROBED}" == 1 ]]; then
+            echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED'
+            exit 0
+          fi
+          echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_NOT_REACHED'
+          exit 1
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-fskit-enable-probe-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/before-enable.txt
+            ${{ runner.temp }}/after-enable.txt
+            ${{ runner.temp }}/mount.stdout
+            ${{ runner.temp }}/mount.stderr
+            ${{ runner.temp }}/runtime.log
+          if-no-files-found: ignore
+          retention-days: 14
