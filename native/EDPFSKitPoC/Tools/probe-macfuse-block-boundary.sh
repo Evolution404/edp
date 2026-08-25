@@ -24,33 +24,13 @@ snapshot_devices() {
 }
 
 cleanup() {
-  if /sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " >/dev/null 2>&1; then
-    python3 - "${MOUNT_POINT}" <<'PY' >/dev/null 2>&1 || true
-import subprocess
-import sys
-try:
-    subprocess.run(["/sbin/umount", sys.argv[1]], timeout=5)
-except subprocess.TimeoutExpired:
-    pass
-PY
-  fi
-
   if [[ -n "${PID}" ]] && kill -0 "${PID}" >/dev/null 2>&1; then
     kill -TERM "${PID}" >/dev/null 2>&1 || true
-    for _ in $(seq 1 20); do
-      if ! kill -0 "${PID}" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.1
-    done
-    if kill -0 "${PID}" >/dev/null 2>&1; then
-      kill -KILL "${PID}" >/dev/null 2>&1 || true
-    fi
+    sleep 0.2
+    kill -KILL "${PID}" >/dev/null 2>&1 || true
   fi
-
-  if ! /sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " >/dev/null 2>&1; then
-    sudo /bin/rmdir "${MOUNT_POINT}" >/dev/null 2>&1 || true
-  fi
+  /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || sudo /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || true
+  sudo /bin/rm -rf "${MOUNT_POINT}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -71,21 +51,35 @@ cat >"${SOURCE_FILE}" <<'EOF'
 #include <sys/statvfs.h>
 #include <unistd.h>
 
+#ifndef ENOATTR
+#ifdef ENODATA
+#define ENOATTR ENODATA
+#else
+#define ENOATTR ENOENT
+#endif
+#endif
+
 static const uint64_t volume_size = 8ULL * 1024ULL * 1024ULL;
 static const char *volume_path = "/volume.raw";
 
-static int p_getattr(const char *path, struct stat *st) {
+static int m_getattr(const char *path, struct stat *st) {
     memset(st, 0, sizeof(*st));
     st->st_uid = getuid();
     st->st_gid = getgid();
+    st->st_atime = 1;
+    st->st_mtime = 1;
+    st->st_ctime = 1;
     st->st_blksize = 4096;
+
     if (strcmp(path, "/") == 0) {
-        st->st_mode = S_IFDIR | 0700;
+        st->st_ino = 1;
+        st->st_mode = S_IFDIR | 0755;
         st->st_nlink = 2;
         return 0;
     }
     if (strcmp(path, volume_path) == 0) {
-        st->st_mode = S_IFREG | 0600;
+        st->st_ino = 2;
+        st->st_mode = S_IFREG | 0644;
         st->st_nlink = 1;
         st->st_size = (off_t)volume_size;
         st->st_blocks = (blkcnt_t)((volume_size + 511) / 512);
@@ -94,22 +88,30 @@ static int p_getattr(const char *path, struct stat *st) {
     return -ENOENT;
 }
 
-static int p_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+static int m_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                      off_t offset, struct fuse_file_info *fi) {
-    (void)offset; (void)fi;
-    if (strcmp(path, "/") != 0) return -ENOTDIR;
+    (void)offset;
+    (void)fi;
+    if (strcmp(path, "/") != 0) return -ENOENT;
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     filler(buf, "volume.raw", NULL, 0);
     return 0;
 }
 
-static int p_open(const char *path, struct fuse_file_info *fi) {
-    (void)fi;
-    return strcmp(path, volume_path) == 0 ? 0 : -ENOENT;
+static int m_access(const char *path, int mask) {
+    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0) return -ENOENT;
+    if (mask & X_OK && strcmp(path, "/") != 0) return -EACCES;
+    return 0;
 }
 
-static int p_read(const char *path, char *buf, size_t size, off_t offset,
+static int m_open(const char *path, struct fuse_file_info *fi) {
+    if (strcmp(path, volume_path) != 0) return -ENOENT;
+    fi->fh = 42;
+    return 0;
+}
+
+static int m_read(const char *path, char *buf, size_t size, off_t offset,
                   struct fuse_file_info *fi) {
     (void)fi;
     if (strcmp(path, volume_path) != 0) return -ENOENT;
@@ -124,28 +126,54 @@ static int p_read(const char *path, char *buf, size_t size, off_t offset,
     return (int)size;
 }
 
-static int p_write(const char *path, const char *buf, size_t size, off_t offset,
+static int m_write(const char *path, const char *buf, size_t size, off_t offset,
                    struct fuse_file_info *fi) {
-    (void)buf; (void)fi;
+    (void)buf;
+    (void)fi;
     if (strcmp(path, volume_path) != 0) return -ENOENT;
     if (offset < 0) return -EINVAL;
-    if ((uint64_t)offset > volume_size || (uint64_t)size > volume_size - (uint64_t)offset) {
-        return -ENOSPC;
-    }
+    if ((uint64_t)offset > volume_size || (uint64_t)size > volume_size - (uint64_t)offset) return -ENOSPC;
     return (int)size;
 }
 
-static int p_flush(const char *path, struct fuse_file_info *fi) {
+static int m_release(const char *path, struct fuse_file_info *fi) {
+    (void)path;
+    (void)fi;
+    return 0;
+}
+
+static int m_flush(const char *path, struct fuse_file_info *fi) {
     (void)fi;
     return strcmp(path, volume_path) == 0 ? 0 : -ENOENT;
 }
 
-static int p_fsync(const char *path, int datasync, struct fuse_file_info *fi) {
+static int m_fsync(const char *path, int datasync, struct fuse_file_info *fi) {
     (void)datasync;
-    return p_flush(path, fi);
+    return m_flush(path, fi);
 }
 
-static int p_statfs(const char *path, struct statvfs *st) {
+#ifdef __APPLE__
+static int m_getxattr(const char *path, const char *name, char *value,
+                      size_t size, uint32_t position) {
+    (void)value; (void)size; (void)position;
+#else
+static int m_getxattr(const char *path, const char *name, char *value,
+                      size_t size) {
+    (void)value; (void)size;
+#endif
+    (void)name;
+    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0) return -ENOENT;
+    return -ENOATTR;
+}
+
+static int m_listxattr(const char *path, char *list, size_t size) {
+    (void)list;
+    (void)size;
+    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0) return -ENOENT;
+    return 0;
+}
+
+static int m_statfs(const char *path, struct statvfs *st) {
     (void)path;
     memset(st, 0, sizeof(*st));
     st->f_bsize = 4096;
@@ -160,14 +188,18 @@ static int p_statfs(const char *path, struct statvfs *st) {
 }
 
 static struct fuse_operations ops = {
-    .getattr = p_getattr,
-    .readdir = p_readdir,
-    .open = p_open,
-    .read = p_read,
-    .write = p_write,
-    .flush = p_flush,
-    .fsync = p_fsync,
-    .statfs = p_statfs,
+    .getattr = m_getattr,
+    .readdir = m_readdir,
+    .access = m_access,
+    .open = m_open,
+    .read = m_read,
+    .write = m_write,
+    .release = m_release,
+    .flush = m_flush,
+    .fsync = m_fsync,
+    .getxattr = m_getxattr,
+    .listxattr = m_listxattr,
+    .statfs = m_statfs,
 };
 
 int main(int argc, char **argv) {
@@ -179,21 +211,24 @@ FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 /usr/bin/cc "${SOURCE_FILE}" -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} -o "${BINARY_FILE}"
 
+sudo -v
 sudo /bin/rm -rf "${MOUNT_POINT}"
-sudo /bin/mkdir -p "${MOUNT_POINT}"
+sudo /bin/mkdir "${MOUNT_POINT}"
 sudo /usr/sbin/chown "$(id -u):$(id -g)" "${MOUNT_POINT}"
 /bin/chmod 700 "${MOUNT_POINT}"
 
 snapshot_devices >"${BEFORE_DEVICES}"
 log "BSD_DEVICE_COUNT_BEFORE=$(wc -l <"${BEFORE_DEVICES}" | tr -d ' ')"
 
-"${BINARY_FILE}" -f -o "backend=fskit,uid=$(id -u),gid=$(id -g),nobrowse" "${MOUNT_POINT}" >"${SERVER_LOG}" 2>&1 &
+log "COMMAND=${BINARY_FILE} -f -o backend=fskit,uid=$(id -u),gid=$(id -g) ${MOUNT_POINT}"
+"${BINARY_FILE}" -f -o "backend=fskit,uid=$(id -u),gid=$(id -g)" "${MOUNT_POINT}" >"${SERVER_LOG}" 2>&1 &
 PID=$!
+log "SERVER_PID=${PID}"
 
-MOUNT_LINE=""
-for _ in $(seq 1 75); do
-  MOUNT_LINE="$(/sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " || true)"
-  if [[ -n "${MOUNT_LINE}" ]]; then
+READY=0
+for _ in $(seq 1 50); do
+  if [[ -r "${MOUNT_POINT}/volume.raw" ]]; then
+    READY=1
     break
   fi
   if ! kill -0 "${PID}" >/dev/null 2>&1; then
@@ -202,12 +237,13 @@ for _ in $(seq 1 75); do
   sleep 0.2
 done
 
-if [[ -z "${MOUNT_LINE}" ]]; then
+if [[ "${READY}" != "1" ]]; then
   log "FAIL=MACFUSE_MOUNT_NOT_READY"
-  cat "${SERVER_LOG}" | tee -a "${REPORT_FILE}"
+  /bin/cat "${SERVER_LOG}" | tee -a "${REPORT_FILE}" || true
   exit 1
 fi
 
+MOUNT_LINE="$(/sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " || true)"
 log "MOUNT_LINE=${MOUNT_LINE}"
 if ! printf '%s\n' "${MOUNT_LINE}" | /usr/bin/grep -Eq '^macfuse://[^ ]+ on .+\(macfuse,.*fskit'; then
   log "FAIL=EXPECTED_GENERIC_MACFUSE_FSKIT_MOUNT_NOT_OBSERVED"
@@ -216,51 +252,28 @@ fi
 log "RESULT=MACFUSE_GENERIC_FSKIT_MOUNT_OK"
 
 VIRTUAL_FILE="${MOUNT_POINT}/volume.raw"
-python3 - "${VIRTUAL_FILE}" "${REPORT_FILE}" <<'PY'
-import subprocess
-import sys
+/usr/bin/stat -f 'VIRTUAL_STAT=mode=%Sp type=%HT size=%z' "${VIRTUAL_FILE}" | tee -a "${REPORT_FILE}"
+if [[ ! -f "${VIRTUAL_FILE}" || -b "${VIRTUAL_FILE}" || -c "${VIRTUAL_FILE}" ]]; then
+  log "FAIL=VIRTUAL_OBJECT_NOT_REGULAR_FILE"
+  exit 1
+fi
+log "RESULT=MACFUSE_EXPOSED_OBJECT_REGULAR_FILE"
 
-path, report = sys.argv[1:]
-
-def run(args, timeout=5):
-    return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
-
-try:
-    st = run(["/usr/bin/stat", "-f", "mode=%Sp type=%HT size=%z", path])
-except subprocess.TimeoutExpired:
-    print("FAIL=VIRTUAL_OBJECT_STAT_TIMEOUT")
-    sys.exit(10)
-with open(report, "ab") as handle:
-    handle.write(b"VIRTUAL_STAT=" + st.stdout)
-if st.returncode != 0:
-    print("FAIL=VIRTUAL_OBJECT_STAT_FAILED")
-    sys.exit(11)
-
-mode_text = st.stdout.decode("utf-8", errors="replace")
-if "Regular File" not in mode_text:
-    print("FAIL=VIRTUAL_OBJECT_NOT_REGULAR_FILE")
-    sys.exit(12)
-print("RESULT=MACFUSE_EXPOSED_OBJECT_REGULAR_FILE")
-
-try:
-    read = run(["/usr/bin/dd", f"if={path}", "bs=16", "count=1"])
-except subprocess.TimeoutExpired:
-    print("FAIL=FUSE_RANDOM_READ_TIMEOUT")
-    sys.exit(13)
-if read.returncode != 0 or read.stdout != bytes(range(16)):
-    print("FAIL=FUSE_RANDOM_READ_MISMATCH")
-    sys.exit(14)
-print("READ_HEAD_HEX=" + read.stdout.hex())
-print("RESULT=MACFUSE_RANDOM_READ_OK")
-PY
+EXPECTED_HEX="000102030405060708090a0b0c0d0e0f"
+ACTUAL_HEX="$(/usr/bin/dd if="${VIRTUAL_FILE}" bs=16 count=1 2>/dev/null | /usr/bin/xxd -p | tr -d '\n')"
+log "READ_HEAD_HEX=${ACTUAL_HEX}"
+if [[ "${ACTUAL_HEX}" != "${EXPECTED_HEX}" ]]; then
+  log "FAIL=FUSE_RANDOM_READ_MISMATCH"
+  exit 1
+fi
+log "RESULT=MACFUSE_RANDOM_READ_OK"
 
 snapshot_devices >"${AFTER_DEVICES}"
 log "BSD_DEVICE_COUNT_AFTER=$(wc -l <"${AFTER_DEVICES}" | tr -d ' ')"
 NEW_DEVICES="$(/usr/bin/comm -13 "${BEFORE_DEVICES}" "${AFTER_DEVICES}" || true)"
 if [[ -n "${NEW_DEVICES}" ]]; then
-  log "UNEXPECTED_NEW_BSD_DEVICES_BEGIN"
+  log "FAIL=UNEXPECTED_NEW_BSD_DEVICE"
   printf '%s\n' "${NEW_DEVICES}" | tee -a "${REPORT_FILE}"
-  log "UNEXPECTED_NEW_BSD_DEVICES_END"
   exit 1
 fi
 log "RESULT=NO_NEW_BSD_BLOCK_DEVICE"
@@ -268,7 +281,6 @@ log "RESULT=NO_NEW_BSD_BLOCK_DEVICE"
 DISKUTIL_INFO_RC="$(python3 - "${VIRTUAL_FILE}" "${REPORT_FILE}" <<'PY'
 import subprocess
 import sys
-
 path, report = sys.argv[1:]
 try:
     completed = subprocess.run(
