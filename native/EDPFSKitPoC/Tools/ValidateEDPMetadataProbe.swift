@@ -28,6 +28,19 @@ struct ValidateEDPMetadataProbe {
         }
     }
 
+    private struct DeterministicRNG {
+        private var state: UInt64
+
+        init(seed: UInt64) {
+            state = seed
+        }
+
+        mutating func next() -> UInt64 {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            return state
+        }
+    }
+
     static func main() throws {
         guard CommandLine.arguments.count == 2 else {
             throw ValidationError.usage
@@ -35,6 +48,7 @@ struct ValidateEDPMetadataProbe {
 
         let goldenPath = CommandLine.arguments[1]
         try validateAlignmentMath()
+        try validateAlignmentProperties()
         try validateAlignmentErrorPaths()
         try validateShortReadContinuation()
         try validateLBA4SerialRules()
@@ -76,6 +90,55 @@ struct ValidateEDPMetadataProbe {
 
         print("ALIGNMENT_512=OK")
         print("ALIGNMENT_4096=OK")
+    }
+
+    private static func validateAlignmentProperties() throws {
+        var rng = DeterministicRNG(seed: 0x4544_502d_414c_4947)
+        let alignments: [UInt64] = [1, 16, 512, 4096, 8192]
+        var validated = 0
+
+        for alignment in alignments {
+            for _ in 0..<256 {
+                let byteOffset = rng.next() % (2 * 1024 * 1024)
+                let byteLength = (rng.next() % 32_768) + 1
+                let window = try EDPAlignedRead.window(
+                    byteOffset: byteOffset,
+                    byteLength: byteLength,
+                    transferAlignment: alignment
+                )
+
+                let targetEnd = byteOffset + byteLength
+                let requestEnd = window.start + UInt64(window.length)
+                guard window.start % alignment == 0,
+                      UInt64(window.length) % alignment == 0,
+                      window.start <= byteOffset,
+                      requestEnd >= targetEnd,
+                      window.sliceOffset == Int(byteOffset - window.start),
+                      window.sliceLength == Int(byteLength),
+                      window.sliceOffset >= 0,
+                      window.sliceLength > 0,
+                      window.sliceOffset + window.sliceLength <= window.length else {
+                    throw ValidationError.mismatch(
+                        "alignment property failed: alignment=\(alignment) offset=\(byteOffset) length=\(byteLength) window=\(window)"
+                    )
+                }
+
+                let bounded = try EDPAlignedRead.window(
+                    byteOffset: byteOffset,
+                    byteLength: byteLength,
+                    transferAlignment: alignment,
+                    sizeBytes: requestEnd
+                )
+                guard bounded == window else {
+                    throw ValidationError.mismatch(
+                        "bounded alignment property changed window: alignment=\(alignment) offset=\(byteOffset) length=\(byteLength)"
+                    )
+                }
+                validated += 1
+            }
+        }
+
+        print("ALIGNED_WINDOW_PROPERTIES=OK:cases=\(validated)")
     }
 
     private static func validateAlignmentErrorPaths() throws {
@@ -150,7 +213,32 @@ struct ValidateEDPMetadataProbe {
             )
         }
 
+        var rng = DeterministicRNG(seed: 0x4544_502d_5348_4f52)
+        var propertyCases = 0
+        for alignment in [UInt64(16), 512, 4096] {
+            for _ in 0..<128 {
+                let totalBlocks = Int(rng.next() % 16) + 2
+                let completedBlocks = Int(rng.next() % UInt64(totalBlocks - 1)) + 1
+                let total = Int(alignment) * totalBlocks
+                let completed = Int(alignment) * completedBlocks
+                try EDPAlignedRead.validateContinuation(
+                    completed: completed,
+                    totalLength: total,
+                    transferAlignment: alignment
+                )
+                try expectThrows("accepted randomized unaligned continuation") {
+                    try EDPAlignedRead.validateContinuation(
+                        completed: completed + 1,
+                        totalLength: total,
+                        transferAlignment: alignment
+                    )
+                }
+                propertyCases += 1
+            }
+        }
+
         print("ALIGNED_SHORT_READ_CONTINUATION=OK")
+        print("ALIGNED_CONTINUATION_PROPERTIES=OK:cases=\(propertyCases)")
     }
 
     private static func validateLBA4SerialRules() throws {
