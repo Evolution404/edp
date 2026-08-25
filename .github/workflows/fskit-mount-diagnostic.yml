@@ -1,0 +1,154 @@
+name: FSKit mount diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - install/one-click-installer
+    paths:
+      - .github/workflows/fskit-mount-diagnostic.yml
+
+jobs:
+  direct-vs-diskarbitration:
+    name: direct mount -F vs Disk Arbitration
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: System and LiveFS baseline
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/fskit-diag"
+          OUT="$RUNNER_TEMP/fskit-diag/baseline.txt"
+          {
+            echo '=== sw_vers ==='
+            sw_vers
+            echo
+            echo '=== uname ==='
+            uname -a
+            echo
+            echo '=== arch ==='
+            uname -m
+            echo
+            echo '=== /sbin/mount signature ==='
+            codesign -dv --verbose=4 /sbin/mount 2>&1 || true
+            echo
+            echo '=== /sbin/mount entitlements ==='
+            codesign -d --entitlements :- /sbin/mount 2>&1 || true
+            echo
+            echo '=== diskarbitrationd entitlements ==='
+            codesign -d --entitlements :- /usr/libexec/diskarbitrationd 2>&1 || true
+            echo
+            echo '=== fskitd entitlements ==='
+            codesign -d --entitlements :- /usr/libexec/fskitd 2>&1 || true
+            echo
+            echo '=== LiveFS relevant strings ==='
+            LIVEFS=''
+            for p in \
+              /System/Library/PrivateFrameworks/LiveFS.framework/LiveFS \
+              /System/Library/Frameworks/LiveFS.framework/LiveFS; do
+              if [[ -f "$p" ]]; then LIVEFS="$p"; break; fi
+            done
+            echo "LiveFS=$LIVEFS"
+            if [[ -n "$LIVEFS" ]]; then
+              strings "$LIVEFS" | grep -E 'LiveFSMounter(Unentitled)?|mountVolume:fileSystem|switchToFSKit' | sort -u || true
+            fi
+            echo
+            echo '=== mount relevant strings ==='
+            strings /sbin/mount | grep -E 'mountVolume:fileSystem|LiveFSMountClient|FSClient|switchToFSKit' | sort -u || true
+          } | tee "$OUT"
+
+      - name: FAT16 direct FSKit mount A/B
+        shell: bash
+        run: |
+          set -uo pipefail
+          DIAG="$RUNNER_TEMP/fskit-diag"
+          IMG="$RUNNER_TEMP/fskit-fat16.dmg"
+          DIRECT_MP="$RUNNER_TEMP/fskit-direct"
+          RESULT="$DIAG/result.txt"
+          mkdir -p "$DIRECT_MP"
+          : > "$RESULT"
+
+          cleanup() {
+            set +e
+            if [[ -n "${DEVICE:-}" ]]; then
+              /sbin/umount "$DEVICE" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${WHOLE:-}" ]]; then
+              hdiutil detach -force "$WHOLE" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          echo '=== create FAT16 image ===' | tee -a "$RESULT"
+          hdiutil create -quiet -size 32m -layout MBRSPUD -fs 'MS-DOS FAT16' -volname EDPFAT "$IMG"
+          ATTACH="$(hdiutil attach -nomount "$IMG")"
+          printf '%s\n' "$ATTACH" | tee -a "$RESULT"
+          WHOLE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+$/ {print $1; exit}')"
+          DEVICE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+s[0-9]+$/ {d=$1} END {print d}')"
+          if [[ -z "$DEVICE" ]]; then
+            DEVICE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+$/ {d=$1} END {print d}')"
+          fi
+          echo "WHOLE=$WHOLE" | tee -a "$RESULT"
+          echo "DEVICE=$DEVICE" | tee -a "$RESULT"
+          diskutil info "$DEVICE" | tee -a "$RESULT"
+
+          echo | tee -a "$RESULT"
+          echo '=== direct /sbin/mount -F ===' | tee -a "$RESULT"
+          set +e
+          DIRECT_OUTPUT="$(/sbin/mount -F -t msdos "$DEVICE" "$DIRECT_MP" 2>&1)"
+          DIRECT_RC=$?
+          set -e
+          printf '%s\n' "$DIRECT_OUTPUT" | tee -a "$RESULT"
+          echo "DIRECT_RC=$DIRECT_RC" | tee -a "$RESULT"
+          mount | grep -F "$DEVICE" | tee -a "$RESULT" || true
+
+          if mount | grep -Fq "$DEVICE"; then
+            echo 'DIRECT_MOUNTED=1' | tee -a "$RESULT"
+            /sbin/umount "$DEVICE" || diskutil unmount "$DEVICE" || true
+          else
+            echo 'DIRECT_MOUNTED=0' | tee -a "$RESULT"
+          fi
+
+          echo | tee -a "$RESULT"
+          echo '=== Disk Arbitration via diskutil ===' | tee -a "$RESULT"
+          set +e
+          DA_OUTPUT="$(diskutil mount "$DEVICE" 2>&1)"
+          DA_RC=$?
+          set -e
+          printf '%s\n' "$DA_OUTPUT" | tee -a "$RESULT"
+          echo "DA_RC=$DA_RC" | tee -a "$RESULT"
+          mount | grep -F "$DEVICE" | tee -a "$RESULT" || true
+          if mount | grep -Fq "$DEVICE"; then
+            echo 'DA_MOUNTED=1' | tee -a "$RESULT"
+          else
+            echo 'DA_MOUNTED=0' | tee -a "$RESULT"
+          fi
+
+          echo | tee -a "$RESULT"
+          echo '=== summary ===' | tee -a "$RESULT"
+          echo "DIRECT_RC=$DIRECT_RC" | tee -a "$RESULT"
+          echo "DA_RC=$DA_RC" | tee -a "$RESULT"
+
+      - name: Unified logs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          DIAG="$RUNNER_TEMP/fskit-diag"
+          sudo /usr/bin/log show \
+            --last 5m \
+            --style compact \
+            --info \
+            --debug \
+            --predicate '(process == "fskitd") OR (process == "diskarbitrationd") OR (process == "mount") OR (process == "diskutil")' \
+            > "$DIAG/unified.log" 2>&1
+          grep -E -i 'entitled|mountVolume|NSXPC|helper|FSKit|LiveFS|error|fault' "$DIAG/unified.log" | tail -n 300 || true
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fskit-mount-diagnostic-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/fskit-diag
+          if-no-files-found: warn
