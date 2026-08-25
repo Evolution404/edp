@@ -4,12 +4,17 @@ import Foundation
 ///
 /// This protocol intentionally knows nothing about macFUSE, DiskImages2,
 /// FSKit, partitions inside the decrypted volume, or any concrete filesystem.
-/// The first product milestone is read-only; write/flush are added only after
-/// real-device read-only mounting is proven safe.
+/// Read-only and explicit read/write product modes share this boundary while
+/// preserving separate unlock and C-ABI entry points.
 protocol EDPBlockReadable: AnyObject {
     var sizeBytes: UInt64 { get }
 
     func read(at offset: UInt64, length: Int) throws -> Data
+}
+
+protocol EDPBlockWritable: EDPBlockReadable {
+    func write(at offset: UInt64, data: Data) throws
+    func synchronize() throws
 }
 
 /// Adapts the existing encrypted-partition reader to the product block-view
@@ -29,6 +34,37 @@ final class EDPEncryptedReadOnlyBlockDevice: EDPBlockReadable {
 
     func read(at offset: UInt64, length: Int) throws -> Data {
         try reader.readExact(at: offset, length: length)
+    }
+}
+
+/// Read/write block view. All overlapping crypto read-modify-write operations
+/// are serialized by `EDPEncryptedPartitionReader`.
+final class EDPEncryptedReadWriteBlockDevice: EDPBlockWritable {
+    private let reader: EDPEncryptedPartitionReader
+
+    init(reader: EDPEncryptedPartitionReader) throws {
+        guard let sizeBytes = reader.sizeBytes else {
+            throw EDPNativeCoreError.invalidInput("EDP encrypted partition has no logical size")
+        }
+        guard reader.isWritable else {
+            throw EDPNativeCoreError.invalidInput("EDP encrypted partition is not writable")
+        }
+        self.reader = reader
+        self.sizeBytes = sizeBytes
+    }
+
+    let sizeBytes: UInt64
+
+    func read(at offset: UInt64, length: Int) throws -> Data {
+        try reader.readExact(at: offset, length: length)
+    }
+
+    func write(at offset: UInt64, data: Data) throws {
+        try reader.writeExact(at: offset, data: data)
+    }
+
+    func synchronize() throws {
+        try reader.synchronize()
     }
 }
 
@@ -54,6 +90,33 @@ enum EDPReadOnlyUnlock {
         raw: EDPRawReadable,
         request: EDPReadOnlyUnlockRequest
     ) throws -> EDPUnlockedReadOnlyVolume {
+        let resolved = try EDPUnlockCore.resolve(raw: raw, request: request)
+        let reader = try EDPEncryptedPartitionReader(
+            raw: raw,
+            descriptor: resolved.descriptor
+        )
+        let block = try EDPEncryptedReadOnlyBlockDevice(reader: reader)
+        return EDPUnlockedReadOnlyVolume(
+            deviceID: resolved.deviceID,
+            partitionType: resolved.descriptor.partitionType,
+            partitionStartSector: resolved.descriptor.startSector,
+            partitionSizeBytes: resolved.descriptor.sizeBytes,
+            algorithm: resolved.descriptor.algorithm,
+            block: block
+        )
+    }
+}
+
+private struct EDPResolvedUnlock {
+    let deviceID: String
+    let descriptor: EDPVolumeDescriptor
+}
+
+private enum EDPUnlockCore {
+    static func resolve(
+        raw: EDPRawReadable,
+        request: EDPReadOnlyUnlockRequest
+    ) throws -> EDPResolvedUnlock {
         guard [UInt32(2), 4].contains(request.partitionType) else {
             throw EDPNativeCoreError.invalidInput("partition type must be 2 or 4")
         }
@@ -110,14 +173,44 @@ enum EDPReadOnlyUnlock {
             )
         }
 
-        let reader = try EDPEncryptedPartitionReader(raw: raw, descriptor: descriptor)
-        let block = try EDPEncryptedReadOnlyBlockDevice(reader: reader)
-        return EDPUnlockedReadOnlyVolume(
+        return EDPResolvedUnlock(
             deviceID: deviceID,
-            partitionType: descriptor.partitionType,
-            partitionStartSector: descriptor.startSector,
-            partitionSizeBytes: descriptor.sizeBytes,
-            algorithm: descriptor.algorithm,
+            descriptor: descriptor
+        )
+    }
+}
+
+typealias EDPReadWriteUnlockRequest = EDPReadOnlyUnlockRequest
+
+struct EDPUnlockedReadWriteVolume {
+    let deviceID: String
+    let partitionType: UInt32
+    let partitionStartSector: UInt64
+    let partitionSizeBytes: UInt64
+    let algorithm: UInt32
+    let block: EDPEncryptedReadWriteBlockDevice
+}
+
+enum EDPReadWriteUnlock {
+    static func unlock(
+        raw: any EDPRawWritable,
+        request: EDPReadWriteUnlockRequest
+    ) throws -> EDPUnlockedReadWriteVolume {
+        guard raw.allowsWrites else {
+            throw EDPNativeCoreError.invalidInput("raw EDP device was opened read-only")
+        }
+        let resolved = try EDPUnlockCore.resolve(raw: raw, request: request)
+        let reader = try EDPEncryptedPartitionReader(
+            raw: raw,
+            descriptor: resolved.descriptor
+        )
+        let block = try EDPEncryptedReadWriteBlockDevice(reader: reader)
+        return EDPUnlockedReadWriteVolume(
+            deviceID: resolved.deviceID,
+            partitionType: resolved.descriptor.partitionType,
+            partitionStartSector: resolved.descriptor.startSector,
+            partitionSizeBytes: resolved.descriptor.sizeBytes,
+            algorithm: resolved.descriptor.algorithm,
             block: block
         )
     }

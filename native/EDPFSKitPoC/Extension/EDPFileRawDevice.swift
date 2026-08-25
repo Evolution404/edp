@@ -1,16 +1,22 @@
 import Darwin
 import Foundation
 
-/// File-descriptor-backed raw storage adapter used by hosted block-bridge
-/// regression tests and by future user-space raw-device plumbing.
+/// File-descriptor-backed raw storage adapter used by block-bridge regression
+/// tests and product user-space raw-device plumbing.
 ///
-/// `pread` keeps reads position-independent and safe for concurrent callers.
-final class EDPFileRawDevice: EDPRawReadable {
+/// `pread`/`pwrite` keep I/O position-independent. Higher-layer crypto locking
+/// serializes overlapping read-modify-write windows.
+final class EDPFileRawDevice: EDPRawWritable {
     private let fd: Int32
     private let byteCount: UInt64
+    private let writable: Bool
 
-    init(path: String, declaredSizeBytes: UInt64? = nil) throws {
-        let descriptor = Darwin.open(path, O_RDONLY | O_CLOEXEC)
+    init(
+        path: String,
+        declaredSizeBytes: UInt64? = nil,
+        writable: Bool = false
+    ) throws {
+        let descriptor = Darwin.open(path, (writable ? O_RDWR : O_RDONLY) | O_CLOEXEC)
         guard descriptor >= 0 else {
             throw EDPNativeCoreError.invalidInput("open failed for raw storage: errno=\(errno)")
         }
@@ -43,6 +49,7 @@ final class EDPFileRawDevice: EDPRawReadable {
             byteCount = statSize
         }
         fd = descriptor
+        self.writable = writable
     }
 
     deinit {
@@ -50,6 +57,7 @@ final class EDPFileRawDevice: EDPRawReadable {
     }
 
     var sizeBytes: UInt64? { byteCount }
+    var allowsWrites: Bool { writable }
 
     func readExact(at offset: UInt64, length: Int) throws -> Data {
         guard length >= 0 else {
@@ -91,5 +99,64 @@ final class EDPFileRawDevice: EDPRawReadable {
             }
         }
         return output
+    }
+
+    func writeExact(at offset: UInt64, data: Data) throws {
+        guard writable else {
+            throw EDPNativeCoreError.invalidInput("raw storage was opened read-only")
+        }
+        let length = data.count
+        let length64 = UInt64(length)
+        let (end, overflow) = offset.addingReportingOverflow(length64)
+        guard !overflow, end <= byteCount else {
+            throw EDPNativeCoreError.invalidInput("raw write exceeds storage bounds")
+        }
+        guard length > 0 else { return }
+        guard offset <= UInt64(Int64.max) else {
+            throw EDPNativeCoreError.invalidInput("raw write offset exceeds off_t range")
+        }
+
+        try data.withUnsafeBytes { rawBuffer in
+            guard let base = rawBuffer.baseAddress else { return }
+            var completed = 0
+            while completed < length {
+                let absoluteOffset = offset + UInt64(completed)
+                guard absoluteOffset <= UInt64(Int64.max) else {
+                    throw EDPNativeCoreError.invalidInput(
+                        "raw write continuation exceeds off_t range"
+                    )
+                }
+                let result = Darwin.pwrite(
+                    fd,
+                    base.advanced(by: completed),
+                    length - completed,
+                    off_t(absoluteOffset)
+                )
+                if result < 0 {
+                    if errno == EINTR { continue }
+                    throw EDPNativeCoreError.invalidInput("pwrite failed: errno=\(errno)")
+                }
+                if result == 0 {
+                    throw EDPNativeCoreError.verify("zero-byte result during exact raw write")
+                }
+                completed += result
+            }
+        }
+    }
+
+    func synchronize() throws {
+        guard writable else { return }
+        while Darwin.fsync(fd) != 0 {
+            if errno == EINTR { continue }
+            throw EDPNativeCoreError.invalidInput("fsync failed: errno=\(errno)")
+        }
+
+        #if os(macOS)
+        if Darwin.fcntl(fd, F_FULLFSYNC) != 0,
+           errno != EINVAL,
+           errno != ENOTSUP {
+            throw EDPNativeCoreError.invalidInput("F_FULLFSYNC failed: errno=\(errno)")
+        }
+        #endif
     }
 }

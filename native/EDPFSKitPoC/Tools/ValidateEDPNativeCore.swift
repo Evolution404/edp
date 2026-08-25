@@ -8,9 +8,15 @@ private enum ValidationFailure: Error, CustomStringConvertible {
     }
 }
 
-private final class MemoryRawReadable: EDPRawReadable {
-    let bytes: Data
-    init(_ bytes: Data) { self.bytes = bytes }
+private final class MemoryRawReadable: EDPRawWritable {
+    private(set) var bytes: Data
+    let allowsWrites: Bool
+    private(set) var synchronizeCount = 0
+
+    init(_ bytes: Data, allowsWrites: Bool = true) {
+        self.bytes = bytes
+        self.allowsWrites = allowsWrites
+    }
     var sizeBytes: UInt64? { UInt64(bytes.count) }
 
     func readExact(at offset: UInt64, length: Int) throws -> Data {
@@ -25,6 +31,29 @@ private final class MemoryRawReadable: EDPRawReadable {
             throw ValidationFailure.message("memory read past end")
         }
         return bytes.subdata(in: start..<end)
+    }
+
+    func writeExact(at offset: UInt64, data: Data) throws {
+        guard allowsWrites else {
+            throw ValidationFailure.message("memory storage is read-only")
+        }
+        guard offset <= UInt64(Int.max),
+              UInt64(data.count) <= UInt64(Int.max) - offset else {
+            throw ValidationFailure.message("invalid memory write")
+        }
+        let start = Int(offset)
+        let end = start + data.count
+        guard end <= bytes.count else {
+            throw ValidationFailure.message("memory write past end")
+        }
+        bytes.replaceSubrange(start..<end, with: data)
+    }
+
+    func synchronize() throws {
+        guard allowsWrites else {
+            throw ValidationFailure.message("memory storage is read-only")
+        }
+        synchronizeCount += 1
     }
 }
 
@@ -56,6 +85,7 @@ struct ValidateEDPNativeCore {
         try validateCRC()
         try validateSM4()
         try validateEncryptedReader()
+        try validateEncryptedWriter()
         try validateMetadataErrorPaths()
 
         var lba12Count = 0
@@ -132,6 +162,7 @@ struct ValidateEDPNativeCore {
         print("RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK")
         print("RESULT=SWIFT_NATIVE_LBA11_LBA12_OK")
         print("RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK")
+        print("RESULT=SWIFT_NATIVE_ENCRYPTED_WRITER_OK")
     }
 
     private static func validateCRC() throws {
@@ -245,6 +276,80 @@ struct ValidateEDPNativeCore {
             "non-SM4 partition should read through without decryption"
         )
         print("NATIVE_ENCRYPTED_READER_BOUNDARIES=OK")
+    }
+
+    private static func validateEncryptedWriter() throws {
+        let key = try hexBytes("0123456789abcdeffedcba9876543210")
+        var expected = (0..<256).map { UInt8(($0 * 11 + 5) & 0xff) }
+        let cipher = try EDPSM4(key: key)
+        let encrypted = try cipher.encryptAligned(expected)
+        let prefix = [UInt8](repeating: 0xa5, count: 512)
+        let suffix = [UInt8](repeating: 0x5a, count: 64)
+        let raw = MemoryRawReadable(Data(prefix + encrypted + suffix))
+        let descriptor = EDPVolumeDescriptor(
+            partitionType: 2,
+            startSector: 1,
+            sizeBytes: UInt64(expected.count),
+            algorithm: 2,
+            fileKey: key,
+            passwordCRC: 0,
+            keyCRC: EDPCrypto.crc32Bare(key)
+        )
+        let reader = try EDPEncryptedPartitionReader(raw: raw, descriptor: descriptor)
+        let block = try EDPEncryptedReadWriteBlockDevice(reader: reader)
+
+        let unaligned = (0..<37).map { UInt8(0xf0 ^ $0) }
+        try block.write(at: 7, data: Data(unaligned))
+        expected.replaceSubrange(7..<44, with: unaligned)
+
+        let aligned = (0..<32).map { UInt8(0x80 &+ UInt8($0)) }
+        try block.write(at: 64, data: Data(aligned))
+        expected.replaceSubrange(64..<96, with: aligned)
+
+        let spanning = (0..<65).map { UInt8(($0 * 19 + 1) & 0xff) }
+        try block.write(at: 127, data: Data(spanning))
+        expected.replaceSubrange(127..<192, with: spanning)
+        try block.write(at: UInt64(expected.count), data: Data())
+        try block.synchronize()
+
+        try require(
+            [UInt8](try block.read(at: 0, length: expected.count)) == expected,
+            "encrypted writer plaintext readback mismatch"
+        )
+        try require(raw.synchronizeCount == 1, "encrypted writer sync was not forwarded")
+        try require(
+            [UInt8](raw.bytes.prefix(prefix.count)) == prefix,
+            "encrypted writer modified bytes before the partition"
+        )
+        try require(
+            [UInt8](raw.bytes.suffix(suffix.count)) == suffix,
+            "encrypted writer modified bytes after the partition"
+        )
+        let storedCipher = [UInt8](raw.bytes[512..<(512 + expected.count)])
+        try require(
+            try cipher.decryptAligned(storedCipher) == expected,
+            "encrypted writer persisted incorrect ciphertext"
+        )
+        try require(storedCipher != expected, "encrypted writer stored plaintext")
+
+        try expectThrows("encrypted writer accepted out-of-bounds write") {
+            try block.write(at: UInt64(expected.count), data: Data([1]))
+        }
+        try expectThrows("encrypted writer accepted overflowing offset") {
+            try block.write(at: UInt64.max, data: Data([1]))
+        }
+
+        let readOnlyRaw = MemoryRawReadable(raw.bytes, allowsWrites: false)
+        let readOnlyReader = try EDPEncryptedPartitionReader(
+            raw: readOnlyRaw,
+            descriptor: descriptor
+        )
+        try expectThrows("read/write block accepted a read-only backing") {
+            _ = try EDPEncryptedReadWriteBlockDevice(reader: readOnlyReader)
+        }
+
+        print("NATIVE_ENCRYPTED_WRITER_BOUNDARIES=OK")
+        print("NATIVE_ENCRYPTED_WRITER_CIPHERTEXT_PERSISTENCE=OK")
     }
 
     private static func validateRandomizedEncryptedReads(

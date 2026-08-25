@@ -1,6 +1,6 @@
 # EDP USB Vault — macOS 26 当前状态与唯一实施方案
 
-更新时间：2026-08-25  
+更新时间：2026-08-26
 分支：`feat/macos26-native-fskit`
 
 > 本文件是该分支唯一的状态、架构和后续实施交接文档。若 README、旧代码或历史结论与本文冲突，以本文和最新可复现实验证据为准。
@@ -219,6 +219,39 @@ RESULT=EDP_PRODUCT_UNLOCK_FUSE_DEVICE_MODE_OK
 
 这一级**不是**真实 U 盘 Finder mount：sparse fixture 只用于验证真实 metadata + 产品 unlock API + secret transport + FUSE 边界。真实 encrypted partition plaintext 正确性由物理采集证据和 synthetic crypto E2E 分别覆盖。
 
+### 3.4 Swift EDP crypto read/write 路径：已完成
+
+2026-08-26 本机 macOS 26.6.2 完成新的永久回归：
+
+```text
+native ExFAT whole-disk image
+  -> SM4 ciphertext
+  -> writable EDPFileRawDevice
+  -> serialized SM4 partial-block read-modify-write
+  -> EDPEncryptedReadWriteBlockDevice
+  -> edp_rw_* C ABI
+  -> macFUSE FSKit writable volume.raw
+  -> DiskImages2 Media Read-Only: No
+  -> native filesystem create/write/sync
+  -> eject + FUSE process exit
+  -> restart + reattach + SHA-256 verification
+```
+
+关键结果：
+
+```text
+RESULT=SWIFT_NATIVE_ENCRYPTED_WRITER_OK
+RESULT=EDP_CRYPTO_READWRITE_FUSE_READY
+RESULT=NATIVE_EXFAT_MOUNTED_READWRITE_THROUGH_EDP_CRYPTO
+RESULT=EDP_ENCRYPTED_WRITE_CHANGED_CIPHERTEXT
+RESULT=EDP_FILESYSTEM_WRITE_SURVIVES_FULL_REMOUNT
+RESULT=EDP_CRYPTO_DISKIMAGES2_NATIVE_FS_READWRITE_E2E_OK
+```
+
+这证明 EDP 自己负责的可写透明块层已经闭环。具体 NTFS 写入仍由外部 NTFS driver 决定；不能用 ExFAT 的通过替代 NTFS driver gate。
+
+本机 iBoysoft 4.5 实测：DiskImages2 发布的介质为 `Media Read-Only: No`，但 iBoysoft 自动挂载和显式 `-o rw` 都返回 `Volume Read-Only: Yes`。测试因此在创建真实 NTFS 文件前 fail closed。物理 `/dev/rdisk6` 另受 `root:operator 0640` 限制，产品 helper 必须先 `O_RDWR` 打开并继承 `/dev/fd/N`，不能让普通 App 直接打开 raw path。
+
 ## 4. 证据边界：真实 EDP crypto 已证明，Finder 实盘挂载仍待 macOS 26
 
 2026-08-25 已在真实物理 EDP U 盘上完成只读采集，并用新的统一 `EDPReadOnlyUnlock` 产品路径再次回归成功。
@@ -326,16 +359,18 @@ EDPReadOnlyUnlock.unlock(raw:request:)
 
 它不 import FSKit，不 import macFUSE，不 import DiskImages2，也不知道 exFAT/APFS/FAT。
 
-写接口暂不加入，直到真实 EDP read-only mount 证明完成。
+现已加入独立的 `EDPBlockWritable`、`EDPEncryptedReadWriteBlockDevice` 和 `EDPReadWriteUnlock`；只读 API 保留且继续独立回归。
 
 ### 5.3 raw storage adapter
 
 `Extension/EDPFileRawDevice.swift`：
 
-- `O_RDONLY | O_CLOEXEC`；
+- 显式 read-only / read-write open mode；
 - `fstat` size；
 - 对 `/dev/rdiskN` 支持由设备发现层提供可信 `declaredSizeBytes`，不依赖 device node 的 `st_size`；
 - exact `pread`；
+- exact `pwrite`；
+- `fsync` + macOS `F_FULLFSYNC` durability boundary；
 - position-independent，可支持并发随机读取；
 - 严格 bounds/EOF/error handling。
 
@@ -348,6 +383,8 @@ EDPReadOnlyUnlock.unlock(raw:request:)
 ```text
 Tools/EDPReadOnlyBlockCBridge.swift
 Tools/EDPReadOnlyFuseBridge.c
+Tools/EDPReadWriteBlockCBridge.swift
+Tools/EDPReadWriteFuseBridge.c
 ```
 
 C 代码只承担 libfuse callback ABI；所有 SM4 和 offset expansion 仍在 Swift core 中完成。不要在 C 层复制 crypto 实现。
@@ -375,6 +412,20 @@ EDPReadOnlyFuseBridge --device <raw-device> <vid> <pid> <device-size> <partition
 ```
 
 产品模式的密码只通过已继承 FD 传入；不放 argv/env，不由 C 层派生或暴露 file key。C 临时 password buffer 在调用 Swift ABI 后立即 zeroize。
+
+可写 ABI 保持独立命名空间：
+
+```text
+edp_rw_open
+edp_rw_open_device
+edp_rw_size
+edp_rw_read
+edp_rw_write
+edp_rw_sync
+edp_rw_close
+```
+
+可写 FUSE bridge 提供 `write`、`flush`、`fsync`，退出前再次同步。真实 raw device 必须由 privileged helper 以 `O_RDWR` 打开，并将继承的 `/dev/fd/N` 作为 `--device` 的 raw path；密码仍单独走 password FD。
 
 ### 5.5 Private DiskImages2 bridge
 
@@ -433,14 +484,14 @@ backend=fskit
 - 关闭 SIP；
 - `/sbin/mount -F` 旧路径。
 
-macFUSE filesystem 本身保持极小：
+macFUSE block filesystem 本身保持极小：
 
 ```text
 /
 └── volume.raw
 ```
 
-它只提供 size / open / random read；read-only milestone 不提供 write callback。
+只读 bridge 继续只提供 size / open / random read。可写 bridge 在同一最小 namespace 上额外提供 random write / flush / fsync，且不包含任何具体文件系统语义。
 
 ## 8. 永久 CI gates
 
@@ -527,18 +578,24 @@ RESULT=EDP_PRODUCT_UNLOCK_FUSE_DEVICE_MODE_OK
 
 ### P1 — 写支持
 
-真实 read-only 闭环之前不实现。
+已完成：
 
-之后再增加：
-
-1. `EDPBlockWritable` / `write(offset,data)` / `flush`；
+1. `EDPBlockWritable` / `write(offset,data)` / `synchronize`；
 2. SM4 partial-block read-modify-write；
-3. sector/block alignment；
+3. crypto alignment / bounds；
 4. concurrent read/write serialization；
-5. fsync / DiskImages2 eject 顺序；
-6. filesystem metadata 写入；
-7. 拔盘、进程 crash、断电 fault tests；
-8. 最后才开放 Finder 正常写入。
+5. `pwrite` / `fsync` / `F_FULLFSYNC`；
+6. FUSE `write` / `flush` / `fsync`；
+7. DiskImages2 writable media；
+8. native filesystem metadata/data 写入和完整重挂载验证。
+
+剩余 NTFS 产品 gate：
+
+1. helper 以 `O_RDWR` 打开真实 raw device 并继承 FD；
+2. iBoysoft（或另一受支持 NTFS driver）实际挂载为 `Volume Read-Only: No`；
+3. 真实 EDP NTFS 小文件写入、sync、重挂载 hash 验证；
+4. 拔盘、进程 crash、断电 fault tests；
+5. 最后开放 Finder 正常写入。
 
 ### P2 — 产品化 App
 
@@ -570,11 +627,12 @@ RESULT=EDP_PRODUCT_UNLOCK_FUSE_DEVICE_MODE_OK
 
 ## 11. 当前结论
 
-截至 2026-08-25，已经形成四级证据：
+截至 2026-08-26，已经形成五级证据：
 
 1. macOS 26：`macFUSE FSKit -> Private DiskImages2 -> /dev/diskN -> Apple native filesystem` 块桥成立；
 2. macOS 26：Swift `EDPEncryptedPartitionReader` 位于同一块桥中时，synthetic 整盘 SM4 ciphertext 可被 Apple 原生文件系统正确读取；
 3. macOS 26：真实 Lexar LBA11/LBA12 metadata 可经 `edp_ro_open_device`、password FD 和 `EDPReadOnlyFuseBridge --device` 成功发布正确尺寸的 FSKit `volume.raw`，错误密码 fail closed；
 4. 真实物理 EDP U 盘：真实 LBA11/LBA12、真实密码验证、真实 file key、真实 type-2 encrypted partition 已通过统一 `EDPReadOnlyUnlock` 解密为有效 NTFS block view。
+5. macOS 26.6.2：可写 Swift crypto block、FUSE FSKit、DiskImages2 和原生文件系统写入闭环成立，ciphertext 变化且完整重挂载后文件 hash 一致。
 
-因此不再研究具体文件系统，也不再研究 crypto/key derivation 是否正确，也不再补造另一套 real-device FUSE API。**唯一剩余 P0 是在 macOS 26+ 实体机上把真实 `/dev/rdiskN` 交给已经通过 CI 的 `--device` FUSE product boundary，再接已经验证的 DiskImages2 块桥，完成 Finder 实盘只读。**
+因此 EDP 透明块层的读写实现已完成，仍不自行实现具体文件系统。当前剩余产品 gate 是 privileged helper 的真实 raw `O_RDWR` FD 交接，以及让受支持的 NTFS driver 真正返回 `Volume Read-Only: No` 后完成真实 EDP NTFS 写入/重挂载验证。本机 iBoysoft 4.5 当前强制只读，不能绕过该 gate 或误报成功。

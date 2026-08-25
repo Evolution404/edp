@@ -83,6 +83,7 @@ jobs:
             native/EDPFSKitPoC/Extension/EDPCrypto.swift \
             native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
             native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
             native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
             -o "${RUNNER_TEMP}/validate-native-core" &
           core_pid=$!
@@ -127,6 +128,8 @@ jobs:
           grep -F 'NATIVE_SM4_GOLDEN=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_CRYPTO_NEGATIVE_PATHS=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_ENCRYPTED_READER_BOUNDARIES=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_ENCRYPTED_WRITER_BOUNDARIES=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_ENCRYPTED_WRITER_CIPHERTEXT_PERSISTENCE=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_METADATA_NEGATIVE_PATHS=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_REAL_KEY_RANDOM_READS=OK:disk4_real_lexar:cases=512' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_REAL_KEY_RANDOM_READS=OK:disk5_real_sandisk:cases=512' "${RUNNER_TEMP}/swift-native-core.txt"
@@ -134,6 +137,7 @@ jobs:
           grep -F 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_WRITER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
 
       - name: Validate production Swift source graph in parallel
         run: |

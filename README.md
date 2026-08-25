@@ -21,7 +21,7 @@ EDP USB Vault **不自行实现 exFAT/APFS/FAT/NTFS 等任何具体文件系统*
 
 产品 runtime 不使用 `hdiutil`，不使用 DriverKit block-storage entitlement，不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
 
-## 已完成的两级 E2E
+## 已完成的读写 E2E
 
 ### 1. macFUSE FSKit + DiskImages2 块桥
 
@@ -78,6 +78,31 @@ RESULT=EDP_CRYPTO_MACFUSE_DISKIMAGES2_NATIVE_FS_READ_E2E_OK
 
 这证明现有 `EDPEncryptedPartitionReader` 可以作为透明块层直接服务 Apple 原生文件系统，不需要自己实现 exFAT。
 
+### 3. Swift EDP crypto 可写数据路径
+
+2026-08-26 在 macOS 26.6.2 / Apple Silicon / macFUSE FSKit 上完成：
+
+```text
+native ExFAT image
+  -> whole-image SM4 ciphertext
+  -> EDPEncryptedReadWriteBlockDevice
+  -> macFUSE FSKit writable volume.raw
+  -> DiskImages2 writable /dev/diskN
+  -> native filesystem file write + sync
+  -> eject / bridge process exit
+  -> bridge restart / reattach / SHA-256 readback
+```
+
+最终 marker：
+
+```text
+RESULT=EDP_CRYPTO_DISKIMAGES2_NATIVE_FS_READWRITE_E2E_OK
+```
+
+已覆盖 SM4 非 16-byte 对齐写入的 read-modify-write、越界拒绝、串行化、`pwrite`、`fsync` / `F_FULLFSYNC`、FUSE `write/flush/fsync`，并确认写入后 ciphertext 哈希发生变化、完整重挂载后 4 MiB 文件哈希一致。
+
+NTFS 目录/文件语义仍由外部 NTFS 驱动承担。本机 iBoysoft 4.5 能识别可写 DiskImages2 介质，但当前实测强制返回 `Volume Read-Only: Yes`；因此不能把块层 E2E 写成“真实 EDP NTFS 已写入成功”。驱动恢复读写后，可直接复用同一可写块路径。
+
 ## 重要证据边界
 
 第二级 E2E 使用的是 synthetic encrypted whole-disk fixture 和 deterministic test key，**不是实际物理 EDP U 盘数据区**。
@@ -96,7 +121,7 @@ real EDP USB
   -> Finder read
 ```
 
-真实盘只读闭环通过之前，不实现写支持。
+真实盘只读闭环已完成；可写块路径已实现。真实 NTFS 写入仍受本机 iBoysoft 挂载状态和 privileged raw-device FD 交接约束。
 
 ## 当前核心模块
 
@@ -109,9 +134,11 @@ real EDP USB
 - password/key validation；
 - SM4；
 - arbitrary unaligned encrypted reads；
+- arbitrary unaligned encrypted read-modify-write；
 - `EDPEncryptedPartitionReader`；
-- `EDPBlockReadable` / `EDPEncryptedReadOnlyBlockDevice`；
-- `EDPFileRawDevice` exact `pread` adapter；
+- `EDPBlockReadable` / `EDPBlockWritable`；
+- `EDPEncryptedReadOnlyBlockDevice` / `EDPEncryptedReadWriteBlockDevice`；
+- `EDPFileRawDevice` exact `pread` / `pwrite` / sync adapter；
 - 3,200 deterministic property/random cases + golden/negative tests。
 
 Private DiskImages2 使用集中在 bridge 中并通过 runtime class/selector probe 调用；不兼容时必须 fail closed。
@@ -125,7 +152,10 @@ Private DiskImages2 使用集中在 bridge 中并通过 runtime class/selector p
 native/EDPFSKitPoC/Tools/DiskImages2Attach.m
 native/EDPFSKitPoC/Tools/EDPReadOnlyBlockCBridge.swift
 native/EDPFSKitPoC/Tools/EDPReadOnlyFuseBridge.c
+native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift
+native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c
 native/EDPFSKitPoC/Tools/probe-edp-crypto-diskimages2.sh
+native/EDPFSKitPoC/Tools/probe-edp-crypto-diskimages2-readwrite.sh
 ```
 
 完整状态、证据边界和后续实施顺序见 [`docs/STATUS.md`](docs/STATUS.md)。
