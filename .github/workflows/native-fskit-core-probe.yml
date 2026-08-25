@@ -15,6 +15,16 @@ on:
       - ".github/workflows/native-fskit-core-probe.yml"
   pull_request:
     branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "native/EDPFSKitPoC/Extension/**/*.swift"
+      - "native/EDPFSKitPoC/Host/**/*.swift"
+      - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
+      - "native/EDPFSKitPoC/Tools/verify-approved-runtime.sh"
+      - "fixtures/golden/disks.json"
+      - "fixtures/real_disks/**/LBA4.bin"
+      - "fixtures/real_disks/**/LBA7.bin"
+      - ".github/workflows/native-fskit-core-probe.yml"
   workflow_dispatch:
 
 permissions:
@@ -52,8 +62,10 @@ jobs:
             | tee "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'ALIGNED_WINDOW_PROPERTIES=OK:cases=1280' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNED_WINDOW_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNED_SHORT_READ_CONTINUATION=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'ALIGNED_CONTINUATION_PROPERTIES=OK:cases=384' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'LBA4_SERIAL_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'LBA7_SHAPE_GUARDS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
@@ -81,6 +93,9 @@ jobs:
           grep -F 'NATIVE_CRYPTO_NEGATIVE_PATHS=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_ENCRYPTED_READER_BOUNDARIES=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_METADATA_NEGATIVE_PATHS=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_REAL_KEY_RANDOM_READS=OK:disk4_real_lexar:cases=512' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_REAL_KEY_RANDOM_READS=OK:disk5_real_sandisk:cases=512' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_REAL_KEY_RANDOM_READS=OK:disks=2:cases=1024' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
