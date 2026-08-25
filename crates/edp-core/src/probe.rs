@@ -62,10 +62,7 @@ pub fn lba4_serial(raw: &[u8; 512]) -> Option<String> {
 
 /// Conservatively identify EDP media using only passwordless reserved-sector
 /// evidence suitable for an automatic filesystem probe.
-pub fn probe_edp_reserved_sectors(
-    lba4: &[u8; 512],
-    lba7: &[u8; 512],
-) -> Option<EdpProbeEvidence> {
+pub fn probe_edp_reserved_sectors(lba4: &[u8; 512], lba7: &[u8; 512]) -> Option<EdpProbeEvidence> {
     let serial = lba4_serial(lba4)?;
     let (lba7_k0, plain) = recover_lba7(lba7).ok()?;
 
