@@ -194,12 +194,7 @@ pub unsafe extern "C" fn edp_raw_io_read_exact(
 
     // SAFETY: pointers were validated above and the caller guarantees the output
     // region contains at least `length` writable bytes.
-    let (handle, out) = unsafe {
-        (
-            &*handle,
-            std::slice::from_raw_parts_mut(out, length),
-        )
-    };
+    let (handle, out) = unsafe { (&*handle, std::slice::from_raw_parts_mut(out, length)) };
 
     match handle.io.pread_exact(offset, out) {
         Ok(()) => EDP_RAW_IO_OK,
@@ -322,7 +317,9 @@ mod tests {
             bytes: (0u8..=255).cycle().take(4096).collect(),
         };
         let handle = edp_raw_io_create(
-            (&context as *const TestReadContext).cast_mut().cast::<c_void>(),
+            (&context as *const TestReadContext)
+                .cast_mut()
+                .cast::<c_void>(),
             Some(test_read_callback),
             context.bytes.len() as u64,
         );
@@ -346,7 +343,9 @@ mod tests {
             bytes: vec![0x5a; 512],
         };
         let handle = edp_raw_io_create(
-            (&context as *const TestReadContext).cast_mut().cast::<c_void>(),
+            (&context as *const TestReadContext)
+                .cast_mut()
+                .cast::<c_void>(),
             Some(test_read_callback),
             context.bytes.len() as u64,
         );
@@ -426,7 +425,9 @@ mod tests {
             bytes: vec![0; 512],
         };
         let handle = edp_raw_io_create(
-            (&context as *const TestReadContext).cast_mut().cast::<c_void>(),
+            (&context as *const TestReadContext)
+                .cast_mut()
+                .cast::<c_void>(),
             Some(test_read_callback),
             context.bytes.len() as u64,
         );
