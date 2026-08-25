@@ -1,0 +1,93 @@
+name: macFUSE FSKit Registration A-B
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      MACFUSE_VERSION: "5.3.3"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compile FSClient inventory tool
+        run: |
+          set -euo pipefail
+          xcrun swiftc -framework FSKit native/EDPFSKitPoC/Tools/ListFSKit.swift -o "${RUNNER_TEMP}/list-fskit"
+          echo '=== BASELINE ==='
+          "${RUNNER_TEMP}/list-fskit"
+
+      - name: Install official package
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse.dmg"
+          VOL="${RUNNER_TEMP}/macfuse-vol"
+          curl -fsSL "https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg" -o "${DMG}"
+          mkdir -p "${VOL}"
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "${VOL}" "${DMG}"
+          PKG="$(find "${VOL}" -maxdepth 2 -name 'Install macFUSE*.pkg' -print -quit)"
+          test -n "${PKG}"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach -quiet "${VOL}"
+          sleep 2
+          echo '=== AFTER PKG ==='
+          "${RUNNER_TEMP}/list-fskit"
+
+      - name: Run official file-system-extension registration
+        run: |
+          set -euo pipefail
+          CTL="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/MacOS/macfuse"
+          test -x "${CTL}"
+          echo '=== CONTROL TOOL ==='
+          set +e
+          "${CTL}" install --components file-system-extensions
+          RC=$?
+          set -e
+          echo "MACFUSE_CTL_RC=${RC}"
+          sleep 3
+          echo '=== AFTER CONTROL TOOL ==='
+          "${RUNNER_TEMP}/list-fskit"
+          echo '=== PLUGINKIT ==='
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | grep -A12 -B4 'io.macfuse.app.fsmodule.macfuse' || true
+          echo '=== SETTINGS ==='
+          SETTINGS="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          find "${SETTINGS}" -maxdepth 2 -type f -print 2>/dev/null || true
+          test ! -f "${SETTINGS}/enabledModules.plist" || plutil -p "${SETTINGS}/enabledModules.plist"
+
+      - name: Request PluginKit use then inspect
+        run: |
+          set -euo pipefail
+          pluginkit -e use -i io.macfuse.app.fsmodule.macfuse || true
+          pluginkit -e use -i io.macfuse.app.fsmodule.macfuse-local || true
+          sleep 2
+          echo '=== AFTER PLUGINKIT USE ==='
+          "${RUNNER_TEMP}/list-fskit"
+
+      - name: Seed approval then inspect
+        run: |
+          set -euo pipefail
+          SETTINGS="${HOME}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
+          python3 - "${SETTINGS}" <<'PY'
+          import plistlib, sys
+          from pathlib import Path
+          p = Path(sys.argv[1])
+          p.parent.mkdir(parents=True, exist_ok=True)
+          a = plistlib.load(p.open("rb")) if p.exists() else []
+          assert isinstance(a, list)
+          for x in ("io.macfuse.app.fsmodule.macfuse", "io.macfuse.app.fsmodule.macfuse-local"):
+              if x not in a: a.append(x)
+          plistlib.dump(a, p.open("wb"), fmt=plistlib.FMT_BINARY)
+          PY
+          plutil -p "${SETTINGS}"
+          killall fskit_agent 2>/dev/null || true
+          killall extensionkitservice 2>/dev/null || true
+          sleep 3
+          echo '=== AFTER APPROVAL SEED ==='
+          "${RUNNER_TEMP}/list-fskit"
