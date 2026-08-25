@@ -10,7 +10,6 @@ on:
       - "native/EDPFSKitPoC/Extension/Info.plist"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.swift"
-      - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - ".github/workflows/native-fskit-poc.yml"
   pull_request:
     branches: ["feat/macos26-native-fskit"]
@@ -21,7 +20,6 @@ on:
       - "native/EDPFSKitPoC/Extension/Info.plist"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements"
       - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.swift"
-      - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - ".github/workflows/native-fskit-poc.yml"
   workflow_dispatch:
 
