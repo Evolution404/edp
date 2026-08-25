@@ -195,8 +195,9 @@ pub unsafe extern "C" fn edp_raw_io_read_exact(
     // SAFETY: pointers were validated above and the caller guarantees the output
     // region contains at least `length` writable bytes.
     let (handle, out) = unsafe { (&*handle, std::slice::from_raw_parts_mut(out, length)) };
+    let io = handle.clone_io();
 
-    match handle.io.pread_exact(offset, out) {
+    match io.pread_exact(offset, out) {
         Ok(()) => EDP_RAW_IO_OK,
         Err(_) => EDP_RAW_IO_READ_FAILED,
     }
@@ -406,7 +407,7 @@ mod tests {
     #[test]
     fn ffi_validates_output_capacity() {
         let mut serial = [0 as c_char; 1];
-        // SAFETY: arrays satisfy the function contract.
+        // SAFETY: fixture arrays and output buffer satisfy the function contract.
         let rc = unsafe {
             edp_probe_reserved_sectors(
                 DISK4_LBA4.as_ptr(),
