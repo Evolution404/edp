@@ -34,9 +34,23 @@ jobs:
           set -euo pipefail
           SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
           SOURCE_EXT="${SOURCE_APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          INSTALL_APP="/Applications/EDPFSKitPoC.app"
+          INSTALL_EXT="${INSTALL_APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
 
           echo '--- requested extension entitlements ---'
           plutil -p native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements
+
+          # xcodebuild registers the unsigned DerivedData product with LaunchServices.
+          # Remove that transient record before installing the signed copy so FSKit
+          # doesn't have two candidates for the same bundle identifier.
+          pluginkit -r "${SOURCE_EXT}" || true
+          "${LSREGISTER}" -u "${SOURCE_APP}" || true
+
+          if [[ -d "${INSTALL_APP}" ]]; then
+            pluginkit -r "${INSTALL_EXT}" || true
+            "${LSREGISTER}" -u "${INSTALL_APP}" || true
+          fi
 
           codesign --force --sign - \
             --generate-entitlement-der \
@@ -44,21 +58,30 @@ jobs:
             "${SOURCE_EXT}"
           codesign --force --sign - "${SOURCE_APP}"
 
-          sudo rm -rf "/Applications/EDPFSKitPoC.app"
-          sudo /usr/bin/ditto "${SOURCE_APP}" "/Applications/EDPFSKitPoC.app"
+          sudo rm -rf "${INSTALL_APP}"
+          sudo /usr/bin/ditto "${SOURCE_APP}" "${INSTALL_APP}"
 
-          codesign --verify --deep --strict --verbose=4 "/Applications/EDPFSKitPoC.app"
+          codesign --verify --deep --strict --verbose=4 "${INSTALL_APP}"
 
       - name: Diagnose signing and runtime registration
         id: diagnose
         run: |
+          # GitHub Actions invokes bash with -e. Diagnostics intentionally execute
+          # commands that may fail (especially InspectFSKit), so disable errexit.
+          set +e
           set -u
+
           APP="/Applications/EDPFSKitPoC.app"
           EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
           BUNDLE_ID="com.edp.usbvault.fskit-poc.extension"
           DIAG="${RUNNER_TEMP}/fskit-registration-diagnostics.txt"
           SUMMARY="${GITHUB_STEP_SUMMARY}"
+          LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
           : > "${DIAG}"
+
+          # Preserve whatever evidence exists even if a later diagnostic command
+          # unexpectedly terminates the shell.
+          trap 'cp -f "${DIAG}" "${GITHUB_WORKSPACE}/fskit-registration-diagnostics.txt" 2>/dev/null || true' EXIT
 
           section() {
             printf '\n===== %s =====\n' "$1" | tee -a "${DIAG}"
@@ -115,10 +138,10 @@ jobs:
           cat "${RUNNER_TEMP}/fskit-pre.txt" | tee -a "${DIAG}"
 
           section "EXPLICIT REGISTRATION"
+          # Match known working FSKit PoCs: register the containing application
+          # with LaunchServices, then add the embedded FSKit appex to PluginKit.
+          capture "${LSREGISTER}" -f -R -trusted "${APP}" || true
           capture pluginkit -a "${EXT}" || true
-          capture pluginkit -a "${APP}" || true
-          capture /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \
-            -f -R -trusted "${APP}" || true
           capture open -a "${APP}" || true
           sleep 3
 
@@ -140,18 +163,37 @@ jobs:
             FSKIT_POINT_INDEXED=no
           fi
 
+          section "FSKIT ENABLEMENT SETTINGS"
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          echo "SETTINGS_DIR=${SETTINGS_DIR}" | tee -a "${DIAG}"
+          if [[ -d "${SETTINGS_DIR}" ]]; then
+            find "${SETTINGS_DIR}" -maxdepth 3 -type f -print | sort | tee -a "${DIAG}"
+            while IFS= read -r plist; do
+              echo "--- ${plist} ---" | tee -a "${DIAG}"
+              plutil -p "${plist}" 2>&1 | tee -a "${DIAG}" || true
+            done < <(find "${SETTINGS_DIR}" -maxdepth 3 -type f -name '*.plist' -print 2>/dev/null)
+          else
+            echo "FSKIT_SETTINGS_DIR_MISSING=yes" | tee -a "${DIAG}"
+          fi
+
           section "LAUNCH SERVICES RECORD"
-          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \
-            -dump >"${RUNNER_TEMP}/lsregister.txt" 2>&1 || true
-          grep -A20 -B8 "${BUNDLE_ID}" "${RUNNER_TEMP}/lsregister.txt" | tee -a "${DIAG}" || true
+          "${LSREGISTER}" -dump >"${RUNNER_TEMP}/lsregister.txt" 2>&1 || true
+          grep -A30 -B10 "${BUNDLE_ID}" "${RUNNER_TEMP}/lsregister.txt" | tee -a "${DIAG}" || true
 
           section "FSCLIENT"
           xcrun swiftc \
             -framework FSKit \
             native/EDPFSKitPoC/Tools/InspectFSKit.swift \
             -o "${RUNNER_TEMP}/inspect-fskit"
-          "${RUNNER_TEMP}/inspect-fskit" >"${RUNNER_TEMP}/fsclient.txt" 2>&1
-          FSCLIENT_RC=$?
+          SWIFTC_RC=$?
+          echo "FSCLIENT_COMPILE_RC=${SWIFTC_RC}" | tee -a "${DIAG}"
+          if [[ ${SWIFTC_RC} -eq 0 ]]; then
+            "${RUNNER_TEMP}/inspect-fskit" >"${RUNNER_TEMP}/fsclient.txt" 2>&1
+            FSCLIENT_RC=$?
+          else
+            echo "InspectFSKit compilation failed" >"${RUNNER_TEMP}/fsclient.txt"
+            FSCLIENT_RC=${SWIFTC_RC}
+          fi
           cat "${RUNNER_TEMP}/fsclient.txt" | tee -a "${DIAG}"
           if grep -q '^FSKIT_MODULE_FOUND=' "${RUNNER_TEMP}/fsclient.txt"; then
             FSCLIENT_VISIBLE=yes
@@ -162,13 +204,13 @@ jobs:
 
           section "SYSTEM REGISTRATION LOGS"
           log show --last 10m --style compact \
-            --predicate 'process == "pkd" OR process == "extensionkitservice" OR process == "fskitd" OR process == "lsd" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc"' \
+            --predicate 'process == "pkd" OR process == "extensionkitservice" OR process == "fskitd" OR process == "fskit_agent" OR process == "lsd" OR subsystem == "com.apple.FSKit" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc"' \
             >"${RUNNER_TEMP}/registration.log" 2>&1 || true
           cat "${RUNNER_TEMP}/registration.log" >>"${DIAG}"
 
           section "SUSPICIOUS REGISTRATION LOG LINES"
-          grep -Ei 'com\.edp\.usbvault|fskit|entitle|signature|signing|team|provision|sandbox|reject|denied|invalid|error|fail' \
-            "${RUNNER_TEMP}/registration.log" | tail -n 300 | tee -a "${DIAG}" || true
+          grep -Ei 'com\.edp\.usbvault|fskit|enable|disabled|entitle|signature|signing|team|provision|sandbox|reject|denied|invalid|error|fail' \
+            "${RUNNER_TEMP}/registration.log" | tail -n 400 | tee -a "${DIAG}" || true
 
           section "VERDICT"
           {
@@ -195,7 +237,8 @@ jobs:
             echo "Full evidence is attached as the fskit-registration-diagnostics artifact."
           } >>"${SUMMARY}"
 
-          cp "${DIAG}" "${GITHUB_WORKSPACE}/fskit-registration-diagnostics.txt"
+          cp -f "${DIAG}" "${GITHUB_WORKSPACE}/fskit-registration-diagnostics.txt"
+          trap - EXIT
 
       - name: Upload FSKit registration diagnostics
         if: always()
