@@ -45,7 +45,7 @@ private func parseHexKey(_ pointer: UnsafePointer<CChar>?) -> [UInt8]? {
 }
 
 @_cdecl("edp_ro_open")
-func edp_ro_open(
+public func edp_ro_open(
     _ cipherPathPointer: UnsafePointer<CChar>?,
     _ keyHexPointer: UnsafePointer<CChar>?
 ) -> UnsafeMutableRawPointer? {
@@ -67,14 +67,14 @@ func edp_ro_open(
 }
 
 @_cdecl("edp_ro_size")
-func edp_ro_size(_ opaque: UnsafeMutableRawPointer?) -> UInt64 {
+public func edp_ro_size(_ opaque: UnsafeMutableRawPointer?) -> UInt64 {
     guard let opaque else { return 0 }
     return Unmanaged<EDPReadOnlyBridgeContext>.fromOpaque(opaque)
         .takeUnretainedValue().block.sizeBytes
 }
 
 @_cdecl("edp_ro_read")
-func edp_ro_read(
+public func edp_ro_read(
     _ opaque: UnsafeMutableRawPointer?,
     _ offset: UInt64,
     _ buffer: UnsafeMutableRawPointer?,
@@ -100,7 +100,7 @@ func edp_ro_read(
 }
 
 @_cdecl("edp_ro_close")
-func edp_ro_close(_ opaque: UnsafeMutableRawPointer?) {
+public func edp_ro_close(_ opaque: UnsafeMutableRawPointer?) {
     guard let opaque else { return }
     Unmanaged<EDPReadOnlyBridgeContext>.fromOpaque(opaque).release()
 }
