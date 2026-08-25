@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           brew install --cask macfuse
-          pkgutil --pkg-info io.macfuse.pkg.Core
+          brew list --cask --versions macfuse
           pkg-config --exists fuse
           pkg-config --modversion fuse
 
