@@ -7,6 +7,7 @@ on:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
       - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
+      - "native/EDPFSKitPoC/Tools/build-capture-tool.sh"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
@@ -22,6 +23,7 @@ on:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
       - "native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift"
+      - "native/EDPFSKitPoC/Tools/build-capture-tool.sh"
       - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
@@ -48,8 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Validate runtime verifier syntax
-        run: bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
+      - name: Validate shell tooling syntax
+        run: |
+          bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
+          bash -n native/EDPFSKitPoC/Tools/build-capture-tool.sh
 
       - name: Compile fast regression binaries in parallel
         run: |
@@ -138,14 +142,10 @@ jobs:
           xcrun swiftc -framework FSKit native/EDPFSKitPoC/Tools/InspectFSKit.swift \
             -o "${RUNNER_TEMP}/inspect-fskit-compile-check" &
           inspect_pid=$!
-          xcrun swiftc -parse-as-library \
-            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
-            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
-            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
-            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
-            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
-            native/EDPFSKitPoC/Tools/CaptureEDPDataFixture.swift \
-            -o "${RUNNER_TEMP}/capture-edp-fixture-compile-check" &
+          EDP_CAPTURE_DEPLOYMENT_TARGET=15.0 \
+            bash native/EDPFSKitPoC/Tools/build-capture-tool.sh \
+            "${RUNNER_TEMP}/capture-edp-fixture-compile-check" \
+            >"${RUNNER_TEMP}/capture-build.txt" &
           capture_pid=$!
 
           wait "${extension_pid}"
@@ -153,5 +153,8 @@ jobs:
           wait "${host_pid}"
           wait "${inspect_pid}"
           wait "${capture_pid}"
-          echo 'RESULT=EDP_CAPTURE_TOOL_COMPILED'
+          cat "${RUNNER_TEMP}/capture-build.txt"
+          grep -F 'EDP_CAPTURE_TOOL_TARGET=arm64-apple-macosx15.0' "${RUNNER_TEMP}/capture-build.txt"
+          grep -F 'RESULT=EDP_CAPTURE_TOOL_BUILT' "${RUNNER_TEMP}/capture-build.txt"
+          echo 'RESULT=EDP_CAPTURE_TOOL_COMPILED_FOR_MACOS15'
           echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
