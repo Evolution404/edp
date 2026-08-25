@@ -1,0 +1,44 @@
+name: Probe Cirrus Sequoia images
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - install/one-click-installer
+    paths:
+      - .github/workflows/probe-cirrus-sequoia-images.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List GHCR tags for Cirrus macOS Sequoia images
+        shell: bash
+        run: |
+          set -euo pipefail
+          for repo in macos-sequoia-vanilla macos-sequoia-base macos-runner; do
+            echo "=== $repo ==="
+            scope="repository:cirruslabs/${repo}:pull"
+            token="$(curl -fsSLG 'https://ghcr.io/token' \
+              --data-urlencode 'service=ghcr.io' \
+              --data-urlencode "scope=${scope}" | jq -r '.token')"
+            curl -fsSL \
+              -H "Authorization: Bearer ${token}" \
+              "https://ghcr.io/v2/cirruslabs/${repo}/tags/list?n=10000" \
+              | tee "${repo}.json" \
+              | jq -r '.tags[]?' \
+              | sort -V \
+              | tee "${repo}.tags"
+            echo
+            echo '--- candidates containing 15.7 / sequoia / 2026 ---'
+            grep -Ei '15\.7|sequoia|2026|24G' "${repo}.tags" || true
+            echo
+          done
+
+      - name: Upload tag lists
+        uses: actions/upload-artifact@v4
+        with:
+          name: cirrus-sequoia-image-tags
+          path: |
+            *.json
+            *.tags
