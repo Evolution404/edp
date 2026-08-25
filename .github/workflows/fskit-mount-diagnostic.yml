@@ -30,33 +30,85 @@ jobs:
             echo '=== arch ==='
             uname -m
             echo
+            echo '=== component hashes ==='
+            shasum -a 256 /sbin/mount /usr/libexec/fskitd
+            echo
             echo '=== /sbin/mount signature ==='
             codesign -dv --verbose=4 /sbin/mount 2>&1 || true
             echo
             echo '=== /sbin/mount entitlements ==='
             codesign -d --entitlements :- /sbin/mount 2>&1 || true
             echo
-            echo '=== diskarbitrationd entitlements ==='
-            codesign -d --entitlements :- /usr/libexec/diskarbitrationd 2>&1 || true
+            echo '=== fskitd signature ==='
+            codesign -dv --verbose=4 /usr/libexec/fskitd 2>&1 || true
             echo
             echo '=== fskitd entitlements ==='
             codesign -d --entitlements :- /usr/libexec/fskitd 2>&1 || true
             echo
-            echo '=== LiveFS relevant strings ==='
-            LIVEFS=''
-            for p in \
-              /System/Library/PrivateFrameworks/LiveFS.framework/LiveFS \
-              /System/Library/Frameworks/LiveFS.framework/LiveFS; do
-              if [[ -f "$p" ]]; then LIVEFS="$p"; break; fi
-            done
-            echo "LiveFS=$LIVEFS"
-            if [[ -n "$LIVEFS" ]]; then
-              strings "$LIVEFS" | grep -E 'LiveFSMounter(Unentitled)?|mountVolume:fileSystem|switchToFSKit' | sort -u || true
-            fi
+            echo '=== diskarbitrationd entitlements ==='
+            codesign -d --entitlements :- /usr/libexec/diskarbitrationd 2>&1 || true
+            echo
+            echo '=== /sbin/mount dependencies ==='
+            otool -L /sbin/mount || true
             echo
             echo '=== mount relevant strings ==='
             strings /sbin/mount | grep -E 'mountVolume:fileSystem|LiveFSMountClient|FSClient|switchToFSKit' | sort -u || true
           } | tee "$OUT"
+
+      - name: Runtime LiveFS protocol contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/fskit-protocols.m"
+          BIN="$RUNNER_TEMP/fskit-protocols"
+          OUT="$RUNNER_TEMP/fskit-diag/protocols.txt"
+          cat > "$SRC" <<'EOF'
+          #import <Foundation/Foundation.h>
+          #import <objc/runtime.h>
+          #include <dlfcn.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+
+          static void dump_methods(Protocol *p, BOOL required, BOOL instance) {
+              unsigned int count = 0;
+              struct objc_method_description *methods =
+                  protocol_copyMethodDescriptionList(p, required, instance, &count);
+              printf("  %s %s count=%u\n",
+                     required ? "required" : "optional",
+                     instance ? "instance" : "class",
+                     count);
+              for (unsigned int i = 0; i < count; i++) {
+                  if (methods[i].name) {
+                      printf("    %s\n", sel_getName(methods[i].name));
+                  }
+              }
+              free(methods);
+          }
+
+          static void dump_protocol(const char *name) {
+              Protocol *p = objc_getProtocol(name);
+              printf("PROTO %s: %s\n", name, p ? "FOUND" : "MISSING");
+              if (!p) return;
+              dump_methods(p, YES, YES);
+              dump_methods(p, YES, NO);
+              dump_methods(p, NO, YES);
+              dump_methods(p, NO, NO);
+          }
+
+          int main(void) {
+              const char *livefs = "/System/Library/PrivateFrameworks/LiveFS.framework/Versions/A/LiveFS";
+              const char *fskit = "/System/Library/Frameworks/FSKit.framework/Versions/A/FSKit";
+              void *h1 = dlopen(livefs, RTLD_LAZY | RTLD_LOCAL);
+              printf("dlopen LiveFS: %s\n", h1 ? "OK" : dlerror());
+              void *h2 = dlopen(fskit, RTLD_LAZY | RTLD_LOCAL);
+              printf("dlopen FSKit: %s\n", h2 ? "OK" : dlerror());
+              dump_protocol("LiveFSMounterUnentitled");
+              dump_protocol("LiveFSMounter");
+              return 0;
+          }
+          EOF
+          clang -fobjc-arc -framework Foundation "$SRC" -o "$BIN"
+          "$BIN" | tee "$OUT"
 
       - name: FAT16 direct FSKit mount A/B
         shell: bash
@@ -143,7 +195,7 @@ jobs:
             --debug \
             --predicate '(process == "fskitd") OR (process == "diskarbitrationd") OR (process == "mount") OR (process == "diskutil")' \
             > "$DIAG/unified.log" 2>&1
-          grep -E -i 'entitled|mountVolume|NSXPC|helper|FSKit|LiveFS|error|fault' "$DIAG/unified.log" | tail -n 300 || true
+          grep -E -i 'entitled 0|entitlement no|mountVolume:fileSystem|NSXPC|Couldn.t communicate|Unable to invoke|mounted disk|entitled 1|entitlement yes' "$DIAG/unified.log" | tail -n 160 || true
 
       - name: Upload diagnostic evidence
         if: always()
