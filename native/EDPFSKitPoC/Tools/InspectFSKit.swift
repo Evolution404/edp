@@ -13,7 +13,14 @@ FSClient.shared.fetchInstalledExtensions { modules, error in
         return
     }
 
-    guard let module = modules?.first(where: { $0.bundleIdentifier == bundleID }) else {
+    let installed = modules ?? []
+    print("FSCLIENT_MODULE_COUNT=\(installed.count)")
+
+    for module in installed.sorted(by: { $0.bundleIdentifier < $1.bundleIdentifier }) {
+        print("FSCLIENT_MODULE=\(module.bundleIdentifier)|enabled=\(module.isEnabled)|url=\(module.url.path)")
+    }
+
+    guard let module = installed.first(where: { $0.bundleIdentifier == bundleID }) else {
         fputs("FSKIT_MODULE_NOT_FOUND=\(bundleID)\n", stderr)
         return
     }
