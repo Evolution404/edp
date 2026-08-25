@@ -78,43 +78,19 @@ final class FSBlockRawAccessor: EDPRawReadable {
 
     private func readAlignedFully(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
         let alignment = transferAlignment
-        guard !buffer.isEmpty,
-              offset % alignment == 0,
-              UInt64(buffer.count) % alignment == 0,
-              offset <= UInt64(Int64.max),
-              let baseAddress = buffer.baseAddress else {
-            throw POSIXError(.EINVAL)
-        }
 
         readLock.lock()
         defer { readLock.unlock() }
 
-        var completed = 0
-        while completed < buffer.count {
-            let (requestOffset, overflow) = offset.addingReportingOverflow(UInt64(completed))
-            guard !overflow, requestOffset <= UInt64(Int64.max) else {
-                throw POSIXError(.EOVERFLOW)
-            }
-
-            let remaining = buffer.count - completed
-            let requestBuffer = UnsafeMutableRawBufferPointer(
-                start: baseAddress.advanced(by: completed),
-                count: remaining
-            )
-            let bytesRead = try resource.read(
+        try EDPAlignedRead.readFully(
+            at: offset,
+            into: buffer,
+            transferAlignment: alignment
+        ) { [resource] requestBuffer, requestOffset, remaining in
+            try resource.read(
                 into: requestBuffer,
                 startingAt: off_t(requestOffset),
                 length: remaining
-            )
-            guard bytesRead > 0, bytesRead <= remaining else {
-                throw POSIXError(.EIO)
-            }
-
-            completed += bytesRead
-            try EDPAlignedRead.validateContinuation(
-                completed: completed,
-                totalLength: buffer.count,
-                transferAlignment: alignment
             )
         }
     }
