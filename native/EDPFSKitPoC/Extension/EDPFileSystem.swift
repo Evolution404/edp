@@ -25,29 +25,34 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
         )
 
         do {
-            let rawLBA7 = try EDPMetadataProbe.readLBA7(from: block)
-            logger.notice("PROBE_LBA7_READ=\(rawLBA7.count, privacy: .public)")
+            let reserved = try EDPMetadataProbe.readReservedSectors(from: block)
+            logger.notice("PROBE_RESERVED_SECTORS_READ=true")
 
-            guard let recognition = EDPMetadataProbe.recognizeOldFormatLBA7(rawLBA7) else {
-                logger.notice("PROBE_EDPF_OLD_FORMAT=false")
+            guard let recognition = EDPMetadataProbe.recognizeReservedSectors(
+                lba4: reserved.lba4,
+                lba7: reserved.lba7
+            ) else {
+                logger.notice("PROBE_EDP_RESERVED_SIGNATURE=false")
                 logger.notice("PROBE_MATCH=notRecognized")
                 reply(.notRecognized, nil)
                 return
             }
 
-            let k0 = String(format: "0x%04x", recognition.k0)
-            logger.notice("PROBE_EDPF_OLD_FORMAT=true")
+            let k0 = String(format: "0x%04x", recognition.lba7K0)
+            let partitionTypes = recognition.partitionTypes.map(String.init).joined(separator: ",")
+            logger.notice("PROBE_EDP_RESERVED_SIGNATURE=true")
+            logger.notice("PROBE_EDP_SERIAL=\(recognition.serial, privacy: .public)")
             logger.notice("PROBE_LBA7_K0=\(k0, privacy: .public)")
+            logger.notice("PROBE_PARTITION_TYPES=\(partitionTypes, privacy: .public)")
 
-            // EDP's legacy metadata doesn't expose a durable container UUID at
-            // this recognition stage. FSKit explicitly permits unary file systems
-            // to use a random FSContainerIdentifier when no durable UUID exists.
-            // Once LBA11/device identity is integrated we can make this stable.
+            // No durable container UUID is exposed by these two passwordless
+            // sectors. FSKit permits a unary file system to use a random ID in
+            // this case. A stable identity can be introduced when LBA11 is wired.
             let containerID = FSContainerIdentifier()
             logger.notice("PROBE_MATCH=recognized")
             reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
         } catch {
-            logger.error("PROBE_LBA7_READ_ERROR=\(String(describing: error), privacy: .public)")
+            logger.error("PROBE_RESERVED_READ_ERROR=\(String(describing: error), privacy: .public)")
             reply(nil, error)
         }
     }
