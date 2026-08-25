@@ -1,0 +1,103 @@
+name: macFUSE + DiskImages2 PoC
+
+on:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+    paths:
+      - ".github/workflows/macfuse-diskimages2-poc.yml"
+      - "native/EDPFSKitPoC/Tools/DiskImages2Attach.m"
+      - "native/EDPFSKitPoC/Tools/probe-macfuse-diskimages2.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_ANALYTICS: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+jobs:
+  poc:
+    name: FSKit backing -> DiskImages2 -> native exFAT
+    runs-on: macos-26
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Record runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -a
+          uname -m
+          xcodebuild -version
+          test -d /System/Library/PrivateFrameworks/DiskImages2.framework
+          echo 'RESULT=DISKIMAGES2_PRESENT'
+
+      - name: Install official macFUSE
+        run: |
+          set -euo pipefail
+          brew install --cask macfuse
+          brew list --cask --versions macfuse
+          pkg-config --exists fuse
+          pkg-config --modversion fuse
+          test -d /Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex
+          echo 'RESULT=OFFICIAL_MACFUSE_INSTALLED'
+
+      - name: Request PluginKit use state
+        run: |
+          set -euo pipefail
+          /usr/bin/pluginkit -e use -i io.macfuse.app.fsmodule.macfuse || true
+          /usr/bin/pluginkit -e use -i io.macfuse.app.fsmodule.macfuse-local || true
+
+      - name: Seed FSKit approval state for ephemeral CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          SETTINGS_DIR="$HOME/Library/Group Containers/group.com.apple.fskit.settings"
+          SETTINGS="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${SETTINGS}" <<'PY'
+          import os
+          import plistlib
+          import sys
+          path = sys.argv[1]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, "rb") as handle:
+                      value = plistlib.load(handle)
+                  if isinstance(value, list):
+                      enabled = value
+              except Exception:
+                  pass
+          for identifier in (
+              "io.macfuse.app.fsmodule.macfuse",
+              "io.macfuse.app.fsmodule.macfuse-local",
+          ):
+              if identifier not in enabled:
+                  enabled.append(identifier)
+          with open(path, "wb") as handle:
+              plistlib.dump(enabled, handle, fmt=plistlib.FMT_BINARY)
+          PY
+          plutil -p "${SETTINGS}"
+          killall fskit_agent 2>/dev/null || true
+          killall extensionkitservice 2>/dev/null || true
+          sleep 2
+          echo 'RESULT=CI_ONLY_MACFUSE_MODULE_STATE_SEEDED'
+
+      - name: Run complete private DiskImages2 proof
+        run: |
+          set -euo pipefail
+          bash native/EDPFSKitPoC/Tools/probe-macfuse-diskimages2.sh
+
+      - name: Upload PoC diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macfuse-diskimages2-poc-${{ github.run_id }}
+          path: ${{ runner.temp }}/edp-macfuse-di2/
+          if-no-files-found: ignore
+          retention-days: 14
