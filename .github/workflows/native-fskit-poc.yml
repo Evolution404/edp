@@ -38,6 +38,20 @@ jobs:
           set -euo pipefail
           bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
 
+      - name: Validate Swift EDP metadata probe against golden fixtures
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -framework FSKit \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
+            -o "${RUNNER_TEMP}/validate-edp-probe"
+          "${RUNNER_TEMP}/validate-edp-probe" fixtures/golden/disks.json \
+            | tee "${RUNNER_TEMP}/edp-probe-golden.txt"
+          grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
+          grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
+          grep -F 'RESULT=SWIFT_EDP_LBA7_GOLDEN_OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
+
       - name: Generate and build native project
         working-directory: native/EDPFSKitPoC
         run: |
@@ -140,6 +154,7 @@ jobs:
         with:
           name: native-fskit-poc-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/edp-probe-golden.txt
             ${{ runner.temp }}/signature.txt
             ${{ runner.temp }}/pluginkit.txt
             ${{ runner.temp }}/fsclient.txt
