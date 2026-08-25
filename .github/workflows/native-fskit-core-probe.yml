@@ -10,6 +10,7 @@ on:
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
+      - "native/EDPFSKitPoC/Tools/probe-fskit-sdk.sh"
       - "native/EDPFSKitPoC/Tools/verify-approved-runtime.sh"
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
@@ -24,6 +25,7 @@ on:
       - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
+      - "native/EDPFSKitPoC/Tools/probe-fskit-sdk.sh"
       - "native/EDPFSKitPoC/Tools/verify-approved-runtime.sh"
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
@@ -45,6 +47,19 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
+
+      - name: Probe installed FSKit SDK capabilities
+        run: |
+          set -euo pipefail
+          bash native/EDPFSKitPoC/Tools/probe-fskit-sdk.sh \
+            | tee "${RUNNER_TEMP}/fskit-sdk-capabilities.txt"
+          grep -F 'RESULT=FSKIT_SDK_CAPABILITIES_PROBED' "${RUNNER_TEMP}/fskit-sdk-capabilities.txt"
+          if grep -Fq 'FSKIT_SDK_VOLUME_HANDLER=true' "${RUNNER_TEMP}/fskit-sdk-capabilities.txt"; then
+            echo '::notice::This runner SDK exposes handler-style FSKit volume APIs; evaluate migration from FSVolume.Operations.'
+          fi
+          if grep -Fq 'FSKIT_SDK_CLIENT_DIRECT_SETTINGS=true' "${RUNNER_TEMP}/fskit-sdk-capabilities.txt"; then
+            echo '::notice::This runner SDK exposes direct File System Extensions settings API; evaluate replacing the ServiceManagement fallback.'
+          fi
 
       - name: Validate runtime verifier syntax
         run: bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
