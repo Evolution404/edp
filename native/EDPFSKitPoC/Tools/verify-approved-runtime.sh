@@ -5,6 +5,8 @@ BUNDLE_ID="com.edp.usbvault.fskit-poc.extension"
 APP="${EDP_FSKIT_APP:-/Applications/EDPFSKitPoC.app}"
 EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+FIXTURE_DISK_DIR="${EDP_RUNTIME_FIXTURE_DIR:-${REPO_ROOT}/fixtures/real_disks/disk4}"
 DIAG_DIR="${EDP_RUNTIME_DIAG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/edp-fskit-runtime.XXXXXX")}" 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edp-fskit-work.XXXXXX")"
 INSPECTOR="${WORK_DIR}/inspect-fskit"
@@ -37,6 +39,9 @@ OS_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 
 test -d "${APP}" || fail "host_app_missing:${APP}"
 test -d "${EXT}" || fail "embedded_extension_missing:${EXT}"
+test -f "${FIXTURE_DISK_DIR}/LBA4.bin" || fail "fixture_LBA4_missing:${FIXTURE_DISK_DIR}"
+test -f "${FIXTURE_DISK_DIR}/LBA7.bin" || fail "fixture_LBA7_missing:${FIXTURE_DISK_DIR}"
+
 codesign --verify --deep --strict --verbose=2 "${APP}" \
     >"${DIAG_DIR}/codesign.out" 2>"${DIAG_DIR}/codesign.err" \
     || fail "codesign_verification_failed"
@@ -58,6 +63,24 @@ fi
 echo 'RESULT=EDP_FSKIT_APPROVED_AND_ENABLED'
 
 mkfile 16m "${RAW}"
+python3 - "${RAW}" "${FIXTURE_DISK_DIR}/LBA4.bin" "${FIXTURE_DISK_DIR}/LBA7.bin" <<'PY'
+from pathlib import Path
+import sys
+
+raw = Path(sys.argv[1])
+lba4 = Path(sys.argv[2]).read_bytes()
+lba7 = Path(sys.argv[3]).read_bytes()
+if len(lba4) != 512 or len(lba7) != 512:
+    raise SystemExit("reserved-sector fixtures must each be exactly 512 bytes")
+
+with raw.open("r+b") as handle:
+    handle.seek(4 * 512)
+    handle.write(lba4)
+    handle.seek(7 * 512)
+    handle.write(lba7)
+PY
+
+echo "RESULT=EDP_RESERVED_FIXTURE_SEEDED:${FIXTURE_DISK_DIR}"
 ATTACH_OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${RAW}")"
 printf '%s\n' "${ATTACH_OUT}" | tee "${DIAG_DIR}/hdiutil-attach.txt"
 DISK="$(printf '%s\n' "${ATTACH_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
@@ -86,6 +109,15 @@ BSD_NAME="$(basename "${DISK}")"
 if ! grep -Fq "PROBE_BLOCK_DEVICE=${BSD_NAME}" "${DIAG_DIR}/runtime.log"; then
     fail "EDP_FSBlockDeviceResource_probe_not_observed:${BSD_NAME}"
 fi
+if ! grep -Fq 'PROBE_RESERVED_SECTORS_READ=true' "${DIAG_DIR}/runtime.log"; then
+    fail "EDP_reserved_sector_read_not_observed"
+fi
+if ! grep -Fq 'PROBE_EDP_RESERVED_SIGNATURE=true' "${DIAG_DIR}/runtime.log"; then
+    fail "EDP_reserved_signature_not_recognized"
+fi
+if ! grep -Fq 'PROBE_MATCH=recognized' "${DIAG_DIR}/runtime.log"; then
+    fail "FSKit_probe_did_not_return_recognized"
+fi
 
-echo "RESULT=NATIVE_FSKIT_BLOCK_RESOURCE_DELIVERED:${BSD_NAME}"
+echo "RESULT=NATIVE_FSKIT_EDP_RECOGNIZED:${BSD_NAME}"
 echo "DIAGNOSTICS=${DIAG_DIR}"
