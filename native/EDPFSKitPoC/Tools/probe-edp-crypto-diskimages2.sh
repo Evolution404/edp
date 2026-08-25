@@ -158,11 +158,14 @@ with open(plain, "rb", buffering=0) as lhs, open(exposed, "rb", buffering=0) as 
 print("RESULT=EDP_ENCRYPTED_READER_RANDOM_WINDOWS_MATCH")
 PY
 
-"${ATTACH_BIN}" "${MOUNT_POINT}/volume.raw" | tee "${ATTACH_CIPHER_LOG}" | tee -a "${REPORT_FILE}"
+"${ATTACH_BIN}" --readonly "${MOUNT_POINT}/volume.raw" | tee "${ATTACH_CIPHER_LOG}" | tee -a "${REPORT_FILE}"
 DECRYPTED_BSD="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "${ATTACH_CIPHER_LOG}" | /usr/bin/tail -1)"
 [[ -n "${DECRYPTED_BSD}" && -b "/dev/${DECRYPTED_BSD}" ]]
 log "DECRYPTED_BSD=${DECRYPTED_BSD}"
-/usr/sbin/diskutil info "${DECRYPTED_BSD}" | tee -a "${REPORT_FILE}"
+DISK_INFO="$(/usr/sbin/diskutil info "${DECRYPTED_BSD}")"
+printf '%s\n' "${DISK_INFO}" | tee -a "${REPORT_FILE}"
+printf '%s\n' "${DISK_INFO}" | /usr/bin/grep -Eq 'Media Read-Only:[[:space:]]+Yes'
+log "RESULT=DISKIMAGES2_READONLY_BSD_DEVICE_CONFIRMED"
 log "RESULT=EDP_DECRYPTED_VIEW_PUBLISHED_AS_BSD_DISK"
 
 /usr/sbin/diskutil mountDisk "${DECRYPTED_BSD}" >/dev/null 2>&1 || true
