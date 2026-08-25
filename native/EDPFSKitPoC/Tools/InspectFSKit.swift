@@ -21,7 +21,6 @@ FSClient.shared.fetchInstalledExtensions { modules, error in
     print("FSKIT_MODULE_FOUND=\(module.bundleIdentifier)")
     print("FSKIT_MODULE_ENABLED=\(module.isEnabled)")
     print("FSKIT_MODULE_URL=\(module.url.path)")
-    print("FSKIT_MODULE_ATTRIBUTES=\(module.attributes)")
     exitCode = 0
 }
 

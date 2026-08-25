@@ -12,13 +12,8 @@ struct EDPFSKitPoCApp: App {
                     .font(.title2)
                 Text(status)
                     .textSelection(.enabled)
-                HStack {
-                    Button("Refresh") {
-                        refresh()
-                    }
-                    Button("Open File System Extensions Settings") {
-                        FSClient.shared.openFileSystemExtensionsSettings()
-                    }
+                Button("Refresh") {
+                    refresh()
                 }
             }
             .padding(24)
@@ -39,7 +34,7 @@ struct EDPFSKitPoCApp: App {
 
                 let bundleID = "com.edp.usbvault.fskit-poc.extension"
                 if let module = modules?.first(where: { $0.bundleIdentifier == bundleID }) {
-                    status = "FSKit module discovered: \(module.bundleIdentifier)\nAttributes: \(module.attributes)"
+                    status = "FSKit module discovered: \(module.bundleIdentifier)\nEnabled: \(module.isEnabled)\nURL: \(module.url.path)"
                 } else {
                     status = "FSKit module not yet discovered: \(bundleID)"
                 }
