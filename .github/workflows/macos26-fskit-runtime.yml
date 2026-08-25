@@ -110,16 +110,28 @@ jobs:
 
               dispatch_semaphore_t sem = dispatch_semaphore_create(0);
               __block BOOL replied = NO;
-              void (^reply)(void) = ^{
+              __block NSInteger errorCode = 0;
+              void (^reply)(NSError *) = ^(NSError *error) {
                   replied = YES;
+                  if (error) {
+                      errorCode = error.code;
+                      fprintf(stderr,
+                              "enable id=%s error_domain=%s error_code=%ld error=%s\n",
+                              identifier.UTF8String,
+                              error.domain.UTF8String,
+                              (long)error.code,
+                              error.localizedDescription.UTF8String);
+                  }
                   dispatch_semaphore_signal(sem);
               };
 
-              typedef void (*SetFn)(id, SEL, NSString *, BOOL, void (^)(void));
+              typedef void (*SetFn)(id, SEL, NSString *, BOOL, void (^)(NSError *));
               ((SetFn)objc_msgSend)(client, sel, identifier, YES, reply);
               long wait = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC));
-              printf("enable id=%s replied=%d wait=%ld\n", identifier.UTF8String, replied, wait);
-              return wait == 0 && replied ? 0 : 124;
+              printf("enable id=%s replied=%d wait=%ld error_code=%ld\n",
+                     identifier.UTF8String, replied, wait, (long)errorCode);
+              if (wait != 0 || !replied) return 124;
+              return errorCode == 0 ? 0 : 1;
           }
 
           int main(void) {
