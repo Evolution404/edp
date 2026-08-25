@@ -15,75 +15,90 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Build register and enable
+      - name: Build and register native FSKit module
         run: |
           set -euo pipefail
           brew install xcodegen
           cd native/EDPFSKitPoC
           xcodegen generate
-          xcodebuild -project EDPFSKitPoC.xcodeproj -scheme EDPFSKitHost -configuration Release -derivedDataPath "${RUNNER_TEMP}/DD" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild \
+            -project EDPFSKitPoC.xcodeproj \
+            -scheme EDPFSKitHost \
+            -configuration Release \
+            -derivedDataPath "${RUNNER_TEMP}/DD" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
           cd "${GITHUB_WORKSPACE}"
+
           SRC="${RUNNER_TEMP}/DD/Build/Products/Release/EDPFSKitPoC.app"
           EXT="${SRC}/Contents/Extensions/EDPFSKitExtension.appex"
-          codesign --force --sign - --generate-entitlement-der --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements "${EXT}"
+          codesign --force --sign - --generate-entitlement-der \
+            --entitlements native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements \
+            "${EXT}"
           codesign --force --sign - "${SRC}"
+
           sudo rm -rf /Applications/EDPFSKitPoC.app
           sudo ditto "${SRC}" /Applications/EDPFSKitPoC.app
           APP=/Applications/EDPFSKitPoC.app
           EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
-          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister \
+            -f -R -trusted "${APP}"
           pluginkit -a "${EXT}"
           pluginkit -a "${APP}"
-          pluginkit -e use -i com.edp.usbvault.fskit-poc.extension || true
 
-          SETTINGS="${HOME}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
-          mkdir -p "$(dirname "${SETTINGS}")"
-          python3 - "${SETTINGS}" <<'PY'
-          import plistlib, sys
-          from pathlib import Path
-          p = Path(sys.argv[1])
-          a = plistlib.load(p.open("rb")) if p.exists() else []
-          assert isinstance(a, list)
-          x = "com.edp.usbvault.fskit-poc.extension"
-          if x not in a: a.append(x)
-          plistlib.dump(a, p.open("wb"), fmt=plistlib.FMT_BINARY)
-          PY
-          plutil -p "${SETTINGS}"
-          killall fskit_agent 2>/dev/null || true
-          killall extensionkitservice 2>/dev/null || true
-          sleep 3
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
+            | tee "${RUNNER_TEMP}/pluginkit.txt"
+          grep -F 'com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Attach raw disk
+      - name: Attach real raw block device
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/probe.raw"
           mkfile 16m "${RAW}"
           OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${RAW}")"
           echo "${OUT}"
-          DISK="$(printf '%s\n' "${OUT}" | awk 'NR==1 {print $1}')"
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${DISK}"
           test -b "${DISK}"
           echo "EDP_TEST_DISK=${DISK}" >> "${GITHUB_ENV}"
+          echo "RESULT=RAW_BLOCK_DEVICE_READY:${DISK}"
 
-      - name: Trigger edpvault probe
+      - name: Classify runtime block probe
         run: |
           set -euo pipefail
           MP="${RUNNER_TEMP}/mnt"
           mkdir -p "${MP}"
+
           set +e
-          /sbin/mount -t edpvault "${EDP_TEST_DISK}" "${MP}" >"${RUNNER_TEMP}/mount.out" 2>"${RUNNER_TEMP}/mount.err"
+          /sbin/mount -t edpvault "${EDP_TEST_DISK}" "${MP}" \
+            >"${RUNNER_TEMP}/mount.out" 2>"${RUNNER_TEMP}/mount.err"
           RC=$?
           set -e
+
           echo "MOUNT_RC=${RC}"
+          cat "${RUNNER_TEMP}/mount.out" || true
           cat "${RUNNER_TEMP}/mount.err" || true
           sleep 3
-          log show --last 2m --style compact >"${RUNNER_TEMP}/all.log" || true
-          grep -E 'EDP native FSKit|probeResource|edpvault|com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/all.log" | tee "${RUNNER_TEMP}/runtime.log" || true
-          hdiutil detach "${EDP_TEST_DISK}" || true
-          if grep -Fq 'probeResource' "${RUNNER_TEMP}/runtime.log"; then
-            echo RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED
+
+          log show --last 2m --style compact \
+            --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd"' \
+            >"${RUNNER_TEMP}/runtime.log" 2>&1 || true
+          cat "${RUNNER_TEMP}/runtime.log" || true
+
+          hdiutil detach "${EDP_TEST_DISK}" -force || true
+
+          if grep -Fq 'PROBE_BLOCK_DEVICE=' "${RUNNER_TEMP}/runtime.log"; then
+            echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED'
             exit 0
           fi
-          echo RESULT=NATIVE_FSKIT_BLOCK_PROBE_NOT_REACHED
+
+          if grep -Fq 'Module com.edp.usbvault.fskit-poc.extension is disabled!' "${RUNNER_TEMP}/mount.err"; then
+            echo 'RESULT=HOSTED_RUNNER_FSKIT_APPROVAL_REQUIRED'
+            exit 0
+          fi
+
+          echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_UNEXPECTED_FAILURE'
           exit 1
 
       - name: Upload diagnostics
@@ -92,7 +107,9 @@ jobs:
         with:
           name: native-fskit-block-probe-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/pluginkit.txt
             ${{ runner.temp }}/mount.out
             ${{ runner.temp }}/mount.err
             ${{ runner.temp }}/runtime.log
           if-no-files-found: ignore
+          retention-days: 14
