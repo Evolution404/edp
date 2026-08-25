@@ -15,6 +15,7 @@ gui/src-tauri/gen/
 # 日志与本地文件
 *.log
 fixtures/**/*.local.*
+/.edp-captures/
 
 # IDE
 .idea/
