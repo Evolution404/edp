@@ -16,7 +16,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
 
     func probeResource(
         resource: FSResource,
-        replyHandler reply: @escaping @Sendable (FSProbeResult?, (any Error)?) -> Void
+        replyHandler reply: @escaping (FSProbeResult?, (any Error)?) -> Void
     ) {
         guard let block = resource as? FSBlockDeviceResource else {
             logger.notice("PROBE_NON_BLOCK_RESOURCE")
@@ -66,7 +66,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
     func loadResource(
         resource: FSResource,
         options: FSTaskOptions,
-        replyHandler reply: @escaping @Sendable (FSVolume?, (any Error)?) -> Void
+        replyHandler reply: @escaping (FSVolume?, (any Error)?) -> Void
     ) {
         logger.notice("loadResource resource=\(String(describing: resource), privacy: .public)")
         reply(nil, POSIXError(.ENOTSUP))
@@ -75,7 +75,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
     func unloadResource(
         resource: FSResource,
         options: FSTaskOptions,
-        replyHandler reply: @escaping @Sendable ((any Error)?) -> Void
+        replyHandler reply: @escaping ((any Error)?) -> Void
     ) {
         logger.notice("unloadResource resource=\(String(describing: resource), privacy: .public)")
         reply(nil)
