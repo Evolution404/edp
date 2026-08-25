@@ -34,11 +34,23 @@ except subprocess.TimeoutExpired:
     pass
 PY
   fi
+
   if [[ -n "${PID}" ]] && kill -0 "${PID}" >/dev/null 2>&1; then
-    kill "${PID}" >/dev/null 2>&1 || true
-    wait "${PID}" >/dev/null 2>&1 || true
+    kill -TERM "${PID}" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+      if ! kill -0 "${PID}" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 "${PID}" >/dev/null 2>&1; then
+      kill -KILL "${PID}" >/dev/null 2>&1 || true
+    fi
   fi
-  sudo /bin/rm -rf "${MOUNT_POINT}" >/dev/null 2>&1 || true
+
+  if ! /sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " >/dev/null 2>&1; then
+    sudo /bin/rmdir "${MOUNT_POINT}" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -205,7 +217,6 @@ log "RESULT=MACFUSE_GENERIC_FSKIT_MOUNT_OK"
 
 VIRTUAL_FILE="${MOUNT_POINT}/volume.raw"
 python3 - "${VIRTUAL_FILE}" "${REPORT_FILE}" <<'PY'
-import stat
 import subprocess
 import sys
 
@@ -214,23 +225,31 @@ path, report = sys.argv[1:]
 def run(args, timeout=5):
     return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
 
-st = run(["/usr/bin/stat", "-f", "mode=%Sp type=%HT size=%z", path])
+try:
+    st = run(["/usr/bin/stat", "-f", "mode=%Sp type=%HT size=%z", path])
+except subprocess.TimeoutExpired:
+    print("FAIL=VIRTUAL_OBJECT_STAT_TIMEOUT")
+    sys.exit(10)
 with open(report, "ab") as handle:
     handle.write(b"VIRTUAL_STAT=" + st.stdout)
 if st.returncode != 0:
     print("FAIL=VIRTUAL_OBJECT_STAT_FAILED")
-    sys.exit(10)
+    sys.exit(11)
 
 mode_text = st.stdout.decode("utf-8", errors="replace")
 if "Regular File" not in mode_text:
     print("FAIL=VIRTUAL_OBJECT_NOT_REGULAR_FILE")
-    sys.exit(11)
+    sys.exit(12)
 print("RESULT=MACFUSE_EXPOSED_OBJECT_REGULAR_FILE")
 
-read = run(["/usr/bin/dd", f"if={path}", "bs=16", "count=1"])
+try:
+    read = run(["/usr/bin/dd", f"if={path}", "bs=16", "count=1"])
+except subprocess.TimeoutExpired:
+    print("FAIL=FUSE_RANDOM_READ_TIMEOUT")
+    sys.exit(13)
 if read.returncode != 0 or read.stdout != bytes(range(16)):
     print("FAIL=FUSE_RANDOM_READ_MISMATCH")
-    sys.exit(12)
+    sys.exit(14)
 print("READ_HEAD_HEX=" + read.stdout.hex())
 print("RESULT=MACFUSE_RANDOM_READ_OK")
 PY
