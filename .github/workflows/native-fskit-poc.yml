@@ -44,6 +44,13 @@ jobs:
       - name: Rust toolchain for native core bridge
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust bridge build
+        uses: Swatinem/rust-cache@v2.9.2
+        with:
+          shared-key: native-fskit-macos26
+          cache-targets: true
+          cache-on-failure: true
+
       - name: Validate runtime helper syntax
         run: |
           set -euo pipefail
