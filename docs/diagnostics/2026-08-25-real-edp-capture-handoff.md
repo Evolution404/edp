@@ -140,9 +140,80 @@ Use the Mac-connected session to perform a **read-only real-device capture**.
 
 Do **not** write to the real EDP disk during this phase.
 
+## Real physical capture result — completed on 2026-08-25
+
+The physical EDP USB was successfully captured read-only on the macOS 15.7.9 evidence machine. The successful run used the repository capture tool and a local hidden password dialog; no password or derived file key was written to the capture output.
+
+Observed physical-device facts:
+
+```text
+BSD whole disk:          disk5
+raw device:              /dev/rdisk5
+media:                   USB Flash Drive
+USB VID:                 21c4
+USB PID:                 0cd1
+device size:             124736503808 bytes
+device ID:               disk&ven_lexar&prod_usb_flash_drive
+selected partition type: 2
+partition start sector:  20480
+partition size:          118477684736 bytes
+captured plaintext:      1048576 bytes
+secrets written:         false
+```
+
+Successful markers:
+
+```text
+CAPTURE_DEVICE_ID=disk&ven_lexar&prod_usb_flash_drive
+CAPTURE_PARTITION_TYPE=2
+CAPTURE_PARTITION_START_SECTOR=20480
+CAPTURE_BYTES=1048576
+CAPTURE_SECRETS_WRITTEN=false
+RESULT=EDP_REAL_DATA_FIXTURE_CAPTURED
+```
+
+The decrypted partition head is a structurally valid NTFS volume boot sector:
+
+```text
+EB 52 90 "NTFS    "
+bytes/sector       = 512
+sectors/cluster    = 8
+cluster size       = 4096 bytes
+MFT LCN            = 786432
+MFT byte offset    = 3221225472
+boot signature     = 55 AA
+```
+
+The NTFS boot sector declares 231401727 sectors, or 118477684224 bytes. This is exactly one 512-byte sector smaller than the EDP type-2 descriptor size; preserve this as an observed format detail rather than normalizing it away without evidence.
+
+LBA12 plaintext also contains a type-4 descriptor near the end of the device. The current Finder milestone continues to use the successfully unlocked type-2 NTFS volume.
+
+This closes the previous evidence gap for:
+
+```text
+real physical USB
+-> real VID/PID/device size
+-> real LBA11 device identity
+-> real LBA12 decode
+-> real password validation
+-> real derived file key
+-> real encrypted partition
+-> EDPEncryptedPartitionReader
+-> valid native filesystem plaintext
+```
+
+It does **not** yet prove Finder mounting of the physical USB. The evidence Mac is macOS 15.7.9, while the accepted product block bridge is macOS 26+ only. Do not reopen the already-abandoned macOS 15 FSKit mount path merely to obtain this final proof.
+
+Capture-script compatibility findings on macOS 15.7.9:
+
+- `diskutil info -plist` uses `WholeDisk` rather than `Whole` and `Size`/`TotalSize` rather than `DiskSize`;
+- the IOUSB plane may not contain the BSD/IOMedia descendants, so VID/PID resolution must fall back from `diskutil` `DeviceTreePath` to the matching USB `IORegistryEntryLocation`;
+- `/dev/rdisk5` is `root:operator` with mode `0640`, so ordinary user processes cannot open it directly;
+- a local diagnostic Authorization Services launcher successfully allowed the capture tool to run without opening Terminal. Treat that launcher as diagnostic plumbing, not the final product privilege architecture.
+
 ## After successful capture
 
-The next engineering milestone is the full real-device read-only path:
+The next engineering milestone is the full real-device read-only path on a macOS 26+ machine with the physical EDP USB attached:
 
 ```text
 real /dev/rdiskN

@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 
@@ -146,37 +147,32 @@ private enum CaptureEDPDataFixture {
         try prepareOutputDirectory(outputURL)
         let raw = try RawFileReader(path: source, sizeBytes: deviceSize)
 
-        let lba11 = try raw.readExact(at: EDPVolumeMetadata.lba11ByteOffset, length: 512)
-        let lba12 = try raw.readExact(at: EDPVolumeMetadata.lba12ByteOffset, length: 512)
-
-        guard let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-            [UInt8](lba11),
-            vidHex: vid,
-            pidHex: pid,
-            sizeBytes: deviceSize
-        ) else {
-            throw CaptureError.metadata(
-                "LBA11 device ID derivation failed; verify VID/PID/device size"
+        let unlocked = try EDPReadOnlyUnlock.unlock(
+            raw: raw,
+            request: EDPReadOnlyUnlockRequest(
+                vidHex: vid,
+                pidHex: pid,
+                deviceSizeBytes: deviceSize,
+                passwordBytes: password,
+                partitionType: partitionType
             )
-        }
-
-        let lba12Plain = try EDPVolumeMetadata.decodeLBA12([UInt8](lba12), deviceID: deviceID)
-        let volumes = try EDPVolumeMetadata.parseLBA12Entries(lba12Plain, password: password)
-        guard let descriptor = volumes.first(where: { $0.partitionType == partitionType }) else {
-            throw CaptureError.metadata(
-                "no decryptable EDP partition type \(partitionType) was found for this password"
-            )
-        }
-        guard captureBytes <= descriptor.sizeBytes else {
+        )
+        guard captureBytes <= unlocked.partitionSizeBytes else {
             throw CaptureError.metadata("capture length exceeds selected partition")
         }
 
-        let reader = try EDPEncryptedPartitionReader(raw: raw, descriptor: descriptor)
+        let lba11 = try raw.readExact(at: EDPVolumeMetadata.lba11ByteOffset, length: 512)
+        let lba12 = try raw.readExact(at: EDPVolumeMetadata.lba12ByteOffset, length: 512)
+        let lba12Plain = try EDPVolumeMetadata.decodeLBA12(
+            [UInt8](lba12),
+            deviceID: unlocked.deviceID
+        )
+        let partitionStartBytes = unlocked.partitionStartSector * EDPMetadataProbe.legacySectorSize
         let ciphertext = try raw.readExact(
-            at: descriptor.startBytes,
+            at: partitionStartBytes,
             length: captureBytes
         )
-        let plaintext = try reader.readExact(at: 0, length: captureBytes)
+        let plaintext = try unlocked.block.read(at: 0, length: captureBytes)
 
         try lba11.write(to: outputURL.appendingPathComponent("LBA11.bin"), options: .withoutOverwriting)
         try lba12.write(to: outputURL.appendingPathComponent("LBA12.bin"), options: .withoutOverwriting)
@@ -199,11 +195,11 @@ private enum CaptureEDPDataFixture {
             vid: vid,
             pid: pid,
             deviceSizeBytes: deviceSize,
-            deviceID: deviceID,
-            partitionType: descriptor.partitionType,
-            partitionStartSector: descriptor.startSector,
-            partitionSizeBytes: descriptor.sizeBytes,
-            algorithm: descriptor.algorithm,
+            deviceID: unlocked.deviceID,
+            partitionType: unlocked.partitionType,
+            partitionStartSector: unlocked.partitionStartSector,
+            partitionSizeBytes: unlocked.partitionSizeBytes,
+            algorithm: unlocked.algorithm,
             captureOffsetBytes: 0,
             captureLengthBytes: captureBytes,
             containsFileKey: false,
@@ -216,9 +212,9 @@ private enum CaptureEDPDataFixture {
             options: .withoutOverwriting
         )
 
-        print("CAPTURE_DEVICE_ID=\(deviceID)")
-        print("CAPTURE_PARTITION_TYPE=\(descriptor.partitionType)")
-        print("CAPTURE_PARTITION_START_SECTOR=\(descriptor.startSector)")
+        print("CAPTURE_DEVICE_ID=\(unlocked.deviceID)")
+        print("CAPTURE_PARTITION_TYPE=\(unlocked.partitionType)")
+        print("CAPTURE_PARTITION_START_SECTOR=\(unlocked.partitionStartSector)")
         print("CAPTURE_BYTES=\(captureBytes)")
         print("CAPTURE_OUTPUT=\(outputURL.path)")
         print("CAPTURE_SECRETS_WRITTEN=false")
@@ -316,13 +312,43 @@ private enum CaptureEDPDataFixture {
             return Array(value.utf8)
         }
 
-        guard Darwin.isatty(STDIN_FILENO) == 1,
-              let pointer = Darwin.getpass("EDP password: ") else {
-            throw CaptureError.usage(
-                "EDP password is required; set EDP_PASSWORD for automation or run interactively"
-            )
+        if ProcessInfo.processInfo.environment["EDP_PASSWORD_STDIN"] == "1" {
+            guard let line = readLine(strippingNewline: true) else {
+                throw CaptureError.usage("EDP password stdin is unavailable")
+            }
+            guard !line.isEmpty else {
+                throw CaptureError.usage("EDP password must not be empty")
+            }
+            return Array(line.utf8)
         }
-        let value = String(cString: pointer)
+
+        if Darwin.isatty(STDIN_FILENO) == 1,
+           let pointer = Darwin.getpass("EDP password: ") {
+            let value = String(cString: pointer)
+            guard !value.isEmpty else {
+                throw CaptureError.usage("EDP password must not be empty")
+            }
+            return Array(value.utf8)
+        }
+
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+
+        let alert = NSAlert()
+        alert.messageText = "EDP USB Vault"
+        alert.informativeText = "请输入 EDP U盘密码。密码只在本机内存中用于本次只读解锁。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "解锁")
+        alert.addButton(withTitle: "取消")
+
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        alert.accessoryView = field
+        app.activate(ignoringOtherApps: true)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            throw CaptureError.usage("EDP password entry was cancelled")
+        }
+        let value = field.stringValue
         guard !value.isEmpty else {
             throw CaptureError.usage("EDP password must not be empty")
         }

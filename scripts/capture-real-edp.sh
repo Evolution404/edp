@@ -65,13 +65,14 @@ for disk in root.get("AllDisksAndPartitions", []):
         info = plistlib.loads(subprocess.check_output(["diskutil", "info", "-plist", f"/dev/{ident}"]))
     except subprocess.CalledProcessError:
         continue
-    if info.get("Whole") is not True:
+    if info.get("Whole") is not True and info.get("WholeDisk") is not True:
         continue
     if info.get("Internal") is True:
         continue
     if info.get("VirtualOrPhysical") == "Virtual":
         continue
-    if info.get("DiskSize", 0) <= 0:
+    size = info.get("DiskSize", info.get("TotalSize", info.get("Size", 0)))
+    if size <= 0:
         continue
     candidates.append((ident, info))
 
@@ -90,7 +91,8 @@ if len(candidates) == 0:
 if len(candidates) > 1:
     print("multiple external disks found; rerun with one disk identifier:", file=sys.stderr)
     for ident, info in candidates:
-        print(f"  {ident}: {info.get('MediaName', 'unknown')}  {info.get('DiskSize', 0)} bytes  protocol={info.get('BusProtocol', 'unknown')}", file=sys.stderr)
+        size = info.get("DiskSize", info.get("TotalSize", info.get("Size", 0)))
+        print(f"  {ident}: {info.get('MediaName', 'unknown')}  {size} bytes  protocol={info.get('BusProtocol', 'unknown')}", file=sys.stderr)
     sys.exit(5)
 print(candidates[0][0])
 PY
@@ -99,28 +101,34 @@ PY
 INFO_PLIST="${TMP_DIR}/disk-info.plist"
 diskutil info -plist "/dev/${SELECTED_DISK}" >"${INFO_PLIST}"
 
-read -r DEVICE_SIZE MEDIA_NAME BUS_PROTOCOL < <(python3 - "${INFO_PLIST}" <<'PY'
+IFS=$'\t' read -r DEVICE_SIZE MEDIA_NAME BUS_PROTOCOL < <(python3 - "${INFO_PLIST}" <<'PY'
 import plistlib
-import shlex
 import sys
 with open(sys.argv[1], "rb") as handle:
     info = plistlib.load(handle)
 print(
-    int(info.get("DiskSize", 0)),
-    shlex.quote(str(info.get("MediaName", "unknown"))),
-    shlex.quote(str(info.get("BusProtocol", "unknown"))),
+    int(info.get("DiskSize", info.get("TotalSize", info.get("Size", 0)))),
+    str(info.get("MediaName", "unknown")),
+    str(info.get("BusProtocol", "unknown")),
+    sep="\t",
 )
 PY
 )
 
-read -r VID PID < <(python3 - "${USB_PLIST}" "${SELECTED_DISK}" <<'PY'
+VID_PID="$(python3 - "${USB_PLIST}" "${INFO_PLIST}" "${SELECTED_DISK}" <<'PY'
 import plistlib
 import re
 import sys
 
-path, target = sys.argv[1:]
+path, info_path, target = sys.argv[1:]
 with open(path, "rb") as handle:
     tree = plistlib.load(handle)
+with open(info_path, "rb") as handle:
+    disk_info = plistlib.load(handle)
+
+device_tree_path = str(disk_info.get("DeviceTreePath", ""))
+location_match = re.search(r"@([0-9a-fA-F]+)$", device_tree_path)
+target_location = location_match.group(1).lower() if location_match else None
 
 if isinstance(tree, dict):
     roots = [tree]
@@ -176,10 +184,34 @@ for root in roots:
         print(f"{result[0]:04x} {result[1]:04x}")
         sys.exit(0)
 
+# On macOS 15 the IOUSB plane does not necessarily contain the IOMedia/BSD
+# descendants. diskutil still provides a DeviceTreePath whose final USB
+# location component matches IORegistryEntryLocation on the USB device.
+def find_by_location(node):
+    if not isinstance(node, dict):
+        return None
+    location = str(node.get("IORegistryEntryLocation", "")).lower()
+    vid = normalize(node.get("idVendor"))
+    pid = normalize(node.get("idProduct"))
+    if target_location and location == target_location and vid is not None and pid is not None:
+        return vid, pid
+    for child in children(node):
+        result = find_by_location(child)
+        if result:
+            return result
+    return None
+
+for root in roots:
+    result = find_by_location(root)
+    if result:
+        print(f"{result[0]:04x} {result[1]:04x}")
+        sys.exit(0)
+
 print(f"unable to resolve USB VID/PID for {target} from IORegistry", file=sys.stderr)
 sys.exit(6)
 PY
-)
+)"
+read -r VID PID <<<"${VID_PID}"
 
 RAW_DEVICE="/dev/r${SELECTED_DISK}"
 [[ -e "${RAW_DEVICE}" ]] || {

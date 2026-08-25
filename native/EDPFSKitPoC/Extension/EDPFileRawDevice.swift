@@ -9,7 +9,7 @@ final class EDPFileRawDevice: EDPRawReadable {
     private let fd: Int32
     private let byteCount: UInt64
 
-    init(path: String) throws {
+    init(path: String, declaredSizeBytes: UInt64? = nil) throws {
         let descriptor = Darwin.open(path, O_RDONLY | O_CLOEXEC)
         guard descriptor >= 0 else {
             throw EDPNativeCoreError.invalidInput("open failed for raw storage: errno=\(errno)")
@@ -26,8 +26,23 @@ final class EDPFileRawDevice: EDPRawReadable {
             throw EDPNativeCoreError.invalidInput("raw storage reports a negative size")
         }
 
+        let statSize = UInt64(status.st_size)
+        if let declaredSizeBytes {
+            guard declaredSizeBytes > 0 else {
+                Darwin.close(descriptor)
+                throw EDPNativeCoreError.invalidInput("declared raw storage size must be positive")
+            }
+            byteCount = declaredSizeBytes
+        } else {
+            guard statSize > 0 else {
+                Darwin.close(descriptor)
+                throw EDPNativeCoreError.invalidInput(
+                    "raw storage size is unavailable; a declared size is required for device nodes"
+                )
+            }
+            byteCount = statSize
+        }
         fd = descriptor
-        byteCount = UInt64(status.st_size)
     }
 
     deinit {

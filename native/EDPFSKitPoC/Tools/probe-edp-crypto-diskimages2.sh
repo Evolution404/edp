@@ -68,7 +68,7 @@ xcrun swiftc -O -emit-library -module-name EDPReadOnlyBridge \
   -o "${SWIFT_LIB}"
 
 /usr/bin/nm -gU "${SWIFT_LIB}" | tee "${WORK_DIR}/swift-symbols.txt"
-for symbol in _edp_ro_open _edp_ro_size _edp_ro_read _edp_ro_close; do
+for symbol in _edp_ro_open _edp_ro_open_device _edp_ro_size _edp_ro_read _edp_ro_close; do
   /usr/bin/grep -F "${symbol}" "${WORK_DIR}/swift-symbols.txt"
 done
 log "RESULT=EDP_SWIFT_C_SYMBOLS_EXPORTED"

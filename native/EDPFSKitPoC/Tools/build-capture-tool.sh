@@ -25,6 +25,7 @@ xcrun swiftc -parse-as-library \
   "${PROJECT_DIR}/Extension/EDPCrypto.swift" \
   "${PROJECT_DIR}/Extension/EDPVolumeMetadata.swift" \
   "${PROJECT_DIR}/Extension/EDPEncryptedPartitionReader.swift" \
+  "${PROJECT_DIR}/Extension/EDPBlockDevice.swift" \
   "${SCRIPT_DIR}/CaptureEDPDataFixture.swift" \
   -o "${OUTPUT}"
 
