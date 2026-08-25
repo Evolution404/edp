@@ -7,6 +7,7 @@ on:
       - "native/EDPFSKitPoC/Extension/**"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
+      - "native/EDPFSKitPoC/Tools/ValidateEDPExFAT.swift"
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
@@ -22,7 +23,7 @@ concurrency:
 
 jobs:
   probe:
-    name: Swift native metadata and crypto parity
+    name: Swift native metadata, crypto, and exFAT parity
     runs-on: macos-26
     timeout-minutes: 10
     steps:
@@ -68,4 +69,28 @@ jobs:
           grep -F 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
+
+      - name: Compile pure Swift exFAT reader
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Extension/EDPExFATReader.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPExFAT.swift \
+            -o "${RUNNER_TEMP}/validate-native-exfat"
+
+      - name: Encrypted exFAT semantic regression
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/validate-native-exfat" \
+            | tee "${RUNNER_TEMP}/swift-native-exfat.txt"
+          grep -F 'PLAIN_EXFAT_BOOT=OK' "${RUNNER_TEMP}/swift-native-exfat.txt"
+          grep -F 'PLAIN_EXFAT_DIRECTORY=OK' "${RUNNER_TEMP}/swift-native-exfat.txt"
+          grep -F 'ENCRYPTED_EXFAT_FILE_READ=OK' "${RUNNER_TEMP}/swift-native-exfat.txt"
+          grep -F 'RESULT=SWIFT_NATIVE_EXFAT_CORE_OK' "${RUNNER_TEMP}/swift-native-exfat.txt"
+          grep -F 'RESULT=EDP_ENCRYPTED_EXFAT_CHAIN_OK' "${RUNNER_TEMP}/swift-native-exfat.txt"
           echo 'RESULT=PURE_SWIFT_EDP_CORE_PROBE_OK'
