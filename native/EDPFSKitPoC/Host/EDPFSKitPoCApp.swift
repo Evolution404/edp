@@ -26,18 +26,20 @@ struct EDPFSKitPoCApp: App {
 
     private func refresh() {
         FSClient.shared.fetchInstalledExtensions { modules, error in
-            DispatchQueue.main.async {
-                if let error {
-                    status = "FSClient error: \(error)"
-                    return
-                }
-
+            let message: String
+            if let error {
+                message = "FSClient error: \(error)"
+            } else {
                 let bundleID = "com.edp.usbvault.fskit-poc.extension"
                 if let module = modules?.first(where: { $0.bundleIdentifier == bundleID }) {
-                    status = "FSKit module discovered: \(module.bundleIdentifier)\nEnabled: \(module.isEnabled)\nURL: \(module.url.path)"
+                    message = "FSKit module discovered: \(module.bundleIdentifier)\nEnabled: \(module.isEnabled)\nURL: \(module.url.path)"
                 } else {
-                    status = "FSKit module not yet discovered: \(bundleID)"
+                    message = "FSKit module not yet discovered: \(bundleID)"
                 }
+            }
+
+            DispatchQueue.main.async {
+                status = message
             }
         }
     }
