@@ -43,6 +43,7 @@ struct ValidateEDPNativeCore {
         try validateCRC()
         try validateSM4()
         try validateEncryptedReader()
+        try validateMetadataErrorPaths()
 
         var lba12Count = 0
         var lba11Count = 0
@@ -115,6 +116,7 @@ struct ValidateEDPNativeCore {
             EDPCrypto.crc32Bare(Array("0000aaaa".utf8)) == 0x0429_735d,
             "default password CRC32 golden mismatch"
         )
+        try require(EDPCrypto.crc32Bare([]) == 0, "empty CRC32 baseline mismatch")
         print("NATIVE_CRC32_GOLDEN=OK")
     }
 
@@ -125,6 +127,20 @@ struct ValidateEDPNativeCore {
         let cipher = try EDPSM4(key: key)
         try require(try cipher.encryptAligned(plain) == expected, "SM4 standard encryption vector mismatch")
         try require(try cipher.decryptAligned(expected) == plain, "SM4 standard decryption vector mismatch")
+        try require((try cipher.encryptAligned([])).isEmpty, "SM4 empty input should remain empty")
+
+        try expectThrows("SM4 accepted a 15-byte key") {
+            _ = try EDPSM4(key: [UInt8](repeating: 0, count: 15))
+        }
+        try expectThrows("SM4 accepted unaligned ECB input") {
+            _ = try cipher.encryptAligned([UInt8](repeating: 0, count: 15))
+        }
+        try expectThrows("A6B0 accepted empty key material") {
+            _ = try EDPA6B0.decrypt([UInt8](repeating: 0, count: 16), keyRaw: [])
+        }
+        try expectThrows("A6B0 accepted unaligned input") {
+            _ = try EDPA6B0.decrypt([UInt8](repeating: 0, count: 15), keyRaw: [0x01])
+        }
 
         var entry = [UInt8](repeating: 0, count: EDPVolumeMetadata.entrySize)
         entry.replaceSubrange(0..<4, with: Array("EDPF".utf8))
@@ -133,7 +149,12 @@ struct ValidateEDPNativeCore {
         entry.replaceSubrange(0x38..<0x48, with: try hexBytes("56fd7c10288df7fd8752dc94bb2d5eee"))
         let fileKey = EDPVolumeMetadata.deriveFileKey(entry: entry, password: Array("0000aaaa".utf8))
         try require(fileKey == hexBytes("1a28e58ce2c0e3eb16877ad38586f2e2"), "real Lexar file-key unwrap mismatch")
+        try require(
+            EDPVolumeMetadata.deriveFileKey(entry: [UInt8](repeating: 0, count: 0x47), password: []) == nil,
+            "short key entry should be rejected"
+        )
         print("NATIVE_SM4_GOLDEN=OK")
+        print("NATIVE_CRYPTO_NEGATIVE_PATHS=OK")
     }
 
     private static func validateEncryptedReader() throws {
@@ -156,6 +177,105 @@ struct ValidateEDPNativeCore {
         let reader = try EDPEncryptedPartitionReader(raw: raw, descriptor: descriptor)
         let actual = try reader.readExact(at: 7, length: 37)
         try require([UInt8](actual) == Array(plaintext[7..<44]), "unaligned encrypted partition read mismatch")
+        try require((try reader.readExact(at: 64, length: 0)).isEmpty, "zero-length boundary read should succeed")
+        try require(
+            [UInt8](try reader.readExact(at: 63, length: 1)) == [plaintext[63]],
+            "last-byte encrypted partition read mismatch"
+        )
+        try expectThrows("encrypted reader accepted out-of-bounds read") {
+            _ = try reader.readExact(at: 64, length: 1)
+        }
+        try expectThrows("encrypted reader accepted overflowing range") {
+            _ = try reader.readExact(at: UInt64.max, length: 1)
+        }
+
+        let missingKey = EDPVolumeDescriptor(
+            partitionType: 4,
+            startSector: 1,
+            sizeBytes: 64,
+            algorithm: 2,
+            fileKey: nil,
+            passwordCRC: 0,
+            keyCRC: 0
+        )
+        try expectThrows("encrypted reader accepted algorithm 2 without a file key") {
+            _ = try EDPEncryptedPartitionReader(raw: raw, descriptor: missingKey)
+        }
+
+        let passthroughDescriptor = EDPVolumeDescriptor(
+            partitionType: 4,
+            startSector: 1,
+            sizeBytes: 64,
+            algorithm: 0,
+            fileKey: nil,
+            passwordCRC: 0,
+            keyCRC: 0
+        )
+        let passthrough = try EDPEncryptedPartitionReader(raw: raw, descriptor: passthroughDescriptor)
+        let passthroughBytes = try passthrough.readExact(at: 5, length: 13)
+        try require(
+            [UInt8](passthroughBytes) == Array(encrypted[5..<18]),
+            "non-SM4 partition should read through without decryption"
+        )
+        print("NATIVE_ENCRYPTED_READER_BOUNDARIES=OK")
+    }
+
+    private static func validateMetadataErrorPaths() throws {
+        let cylinderBytes: UInt64 = 255 * 63 * 512
+        try require(EDPVolumeMetadata.chsCapacity(0) == 0, "zero CHS capacity mismatch")
+        try require(
+            EDPVolumeMetadata.chsCapacity(cylinderBytes + 511) == cylinderBytes,
+            "CHS capacity should floor to a whole cylinder"
+        )
+        try require(
+            EDPVolumeMetadata.deviceIDFromLBA11([0], vidHex: "1234", pidHex: "5678", sizeBytes: 1) == nil,
+            "short LBA11 should be rejected"
+        )
+        try expectThrows("decodeLBA12 accepted a short sector") {
+            _ = try EDPVolumeMetadata.decodeLBA12([UInt8](repeating: 0, count: 511), deviceID: "device")
+        }
+        try expectThrows("parseLBA12Entries accepted a short sector") {
+            _ = try EDPVolumeMetadata.parseLBA12Entries([UInt8](repeating: 0, count: 511), password: [])
+        }
+
+        var invalidType = [UInt8](repeating: 0, count: 512)
+        invalidType.replaceSubrange(0..<4, with: Array("EDPF".utf8))
+        writeUInt32LE(99, to: &invalidType, at: 0x0c)
+        try expectThrows("LBA12 parser accepted an invalid partition type") {
+            _ = try EDPVolumeMetadata.parseLBA12Entries(invalidType, password: [])
+        }
+
+        var wrongPassword = [UInt8](repeating: 0, count: 512)
+        wrongPassword.replaceSubrange(0..<4, with: Array("EDPF".utf8))
+        writeUInt32LE(4, to: &wrongPassword, at: 0x0c)
+        writeUInt64LE(1, to: &wrongPassword, at: 0x18)
+        writeUInt64LE(512, to: &wrongPassword, at: 0x28)
+        writeUInt32LE(0xdead_beef, to: &wrongPassword, at: 0x30)
+        writeUInt32LE(2, to: &wrongPassword, at: 0x58)
+        let skipped = try EDPVolumeMetadata.parseLBA12Entries(wrongPassword, password: Array("wrong".utf8))
+        try require(skipped.isEmpty, "wrong-password LBA12 entry should be skipped")
+
+        var unsupported = [UInt8](repeating: 0, count: 512)
+        unsupported.replaceSubrange(0..<4, with: Array("EDPF".utf8))
+        writeUInt32LE(4, to: &unsupported, at: 0x0c)
+        writeUInt64LE(1, to: &unsupported, at: 0x18)
+        writeUInt64LE(512, to: &unsupported, at: 0x28)
+        writeUInt32LE(1, to: &unsupported, at: 0x34)
+        writeUInt32LE(3, to: &unsupported, at: 0x58)
+        try expectThrows("LBA12 parser accepted unsupported data algorithm") {
+            _ = try EDPVolumeMetadata.parseLBA12Entries(unsupported, password: [])
+        }
+
+        print("NATIVE_METADATA_NEGATIVE_PATHS=OK")
+    }
+
+    private static func expectThrows(_ message: String, _ body: () throws -> Void) throws {
+        do {
+            try body()
+        } catch {
+            return
+        }
+        throw ValidationFailure.message(message)
     }
 
     private static func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -166,6 +286,14 @@ struct ValidateEDPNativeCore {
 
     private static func number(_ value: Any?) -> NSNumber {
         value as? NSNumber ?? 0
+    }
+
+    private static func writeUInt32LE(_ value: UInt32, to bytes: inout [UInt8], at offset: Int) {
+        bytes.replaceSubrange(offset..<(offset + 4), with: EDPCrypto.littleEndianBytes(value))
+    }
+
+    private static func writeUInt64LE(_ value: UInt64, to bytes: inout [UInt8], at offset: Int) {
+        bytes.replaceSubrange(offset..<(offset + 8), with: EDPCrypto.littleEndianBytes(value))
     }
 
     private static func hexBytes(_ value: String) throws -> [UInt8] {

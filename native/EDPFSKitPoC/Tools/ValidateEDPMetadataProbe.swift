@@ -35,7 +35,10 @@ struct ValidateEDPMetadataProbe {
 
         let goldenPath = CommandLine.arguments[1]
         try validateAlignmentMath()
+        try validateAlignmentErrorPaths()
         try validateShortReadContinuation()
+        try validateLBA4SerialRules()
+        try validateLBA7ShapeGuards()
         try validateLBA7GoldenFixtures(path: goldenPath)
         try validateReservedSectorProbe(goldenPath: goldenPath)
         print("RESULT=SWIFT_EDP_LBA7_GOLDEN_OK")
@@ -61,8 +64,51 @@ struct ValidateEDPMetadataProbe {
             throw ValidationError.mismatch("4096-byte reserved window mismatch: \(sector4096)")
         }
 
+        let bounded = try EDPAlignedRead.window(
+            byteOffset: 1024,
+            byteLength: 512,
+            transferAlignment: 512,
+            sizeBytes: 1536
+        )
+        guard bounded == .init(start: 1024, length: 512, sliceOffset: 0, sliceLength: 512) else {
+            throw ValidationError.mismatch("bounded aligned window mismatch: \(bounded)")
+        }
+
         print("ALIGNMENT_512=OK")
         print("ALIGNMENT_4096=OK")
+    }
+
+    private static func validateAlignmentErrorPaths() throws {
+        try expectThrows("accepted zero transfer alignment") {
+            _ = try EDPAlignedRead.window(byteOffset: 0, byteLength: 512, transferAlignment: 0)
+        }
+        try expectThrows("accepted zero byte length") {
+            _ = try EDPAlignedRead.window(byteOffset: 0, byteLength: 0, transferAlignment: 512)
+        }
+        try expectThrows("accepted overflowing byte range") {
+            _ = try EDPAlignedRead.window(
+                byteOffset: UInt64.max - 31,
+                byteLength: 64,
+                transferAlignment: 512
+            )
+        }
+        try expectThrows("accepted logical range beyond device size") {
+            _ = try EDPAlignedRead.window(
+                byteOffset: 1024,
+                byteLength: 513,
+                transferAlignment: 512,
+                sizeBytes: 1536
+            )
+        }
+        try expectThrows("accepted aligned expansion beyond device size") {
+            _ = try EDPAlignedRead.window(
+                byteOffset: 1025,
+                byteLength: 1,
+                transferAlignment: 512,
+                sizeBytes: 1400
+            )
+        }
+        print("ALIGNED_WINDOW_NEGATIVE_CONTROLS=OK")
     }
 
     private static func validateShortReadContinuation() throws {
@@ -82,21 +128,63 @@ struct ValidateEDPMetadataProbe {
             transferAlignment: 4096
         )
 
-        var rejectedUnalignedShortRead = false
-        do {
+        try expectThrows("accepted unaligned 4096-byte short-read continuation") {
             try EDPAlignedRead.validateContinuation(
                 completed: 512,
                 totalLength: 4096,
                 transferAlignment: 4096
             )
-        } catch {
-            rejectedUnalignedShortRead = true
         }
-        guard rejectedUnalignedShortRead else {
-            throw ValidationError.mismatch("4096-byte transfer accepted an unaligned short-read continuation")
+        try expectThrows("accepted zero-byte short read") {
+            try EDPAlignedRead.validateContinuation(
+                completed: 0,
+                totalLength: 4096,
+                transferAlignment: 4096
+            )
+        }
+        try expectThrows("accepted completed bytes beyond requested length") {
+            try EDPAlignedRead.validateContinuation(
+                completed: 4097,
+                totalLength: 4096,
+                transferAlignment: 4096
+            )
         }
 
         print("ALIGNED_SHORT_READ_CONTINUATION=OK")
+    }
+
+    private static func validateLBA4SerialRules() throws {
+        let valid = makeLBA4(markerOffset: 8, payload: Array("LEXAR-EDP-001".utf8))
+        guard EDPMetadataProbe.lba4Serial(valid) == "LEXAR-EDP-001" else {
+            throw ValidationError.mismatch("valid LBA4 serial marker was rejected")
+        }
+
+        let empty = makeLBA4(markerOffset: 0, payload: [])
+        let tooLong = makeLBA4(markerOffset: 0, payload: [UInt8](repeating: 0x41, count: 97))
+        let tooLate = makeLBA4(markerOffset: 65, payload: Array("serial".utf8))
+        let control = makeLBA4(markerOffset: 0, payload: [0x41, 0x1f, 0x42])
+        let dollar = makeLBA4(markerOffset: 0, payload: [0x41, 0x24, 0x42])
+
+        guard EDPMetadataProbe.lba4Serial([UInt8](repeating: 0, count: 511)) == nil,
+              EDPMetadataProbe.lba4Serial([UInt8](repeating: 0, count: 512)) == nil,
+              EDPMetadataProbe.lba4Serial(empty) == nil,
+              EDPMetadataProbe.lba4Serial(tooLong) == nil,
+              EDPMetadataProbe.lba4Serial(tooLate) == nil,
+              EDPMetadataProbe.lba4Serial(control) == nil,
+              EDPMetadataProbe.lba4Serial(dollar) == nil else {
+            throw ValidationError.mismatch("LBA4 serial parser accepted an invalid marker")
+        }
+
+        print("LBA4_SERIAL_NEGATIVE_CONTROLS=OK")
+    }
+
+    private static func validateLBA7ShapeGuards() throws {
+        guard EDPMetadataProbe.recognizeOldFormatLBA7([UInt8](repeating: 0, count: 511)) == nil,
+              EDPMetadataProbe.recognizeOldFormatLBA7([UInt8](repeating: 0, count: 513)) == nil,
+              EDPMetadataProbe.recognizeOldFormatLBA7([UInt8](repeating: 0, count: 512)) == nil else {
+            throw ValidationError.mismatch("LBA7 recognizer accepted invalid-shaped/random input")
+        }
+        print("LBA7_SHAPE_GUARDS=OK")
     }
 
     /// Keeps the Swift rolling-XOR decoder pinned byte-for-byte to the existing
@@ -177,6 +265,30 @@ struct ValidateEDPMetadataProbe {
         }
 
         print("RESERVED_PROBE_NEGATIVE_CONTROLS=OK")
+    }
+
+    private static func makeLBA4(markerOffset: Int, payload: [UInt8]) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: 512)
+        let marker: [UInt8] = [0x24, 0x24, 0x24]
+        let total = marker.count + payload.count + marker.count
+        guard markerOffset >= 0, markerOffset + total <= bytes.count else {
+            return bytes
+        }
+        bytes.replaceSubrange(markerOffset..<(markerOffset + marker.count), with: marker)
+        let payloadStart = markerOffset + marker.count
+        bytes.replaceSubrange(payloadStart..<(payloadStart + payload.count), with: payload)
+        let markerEnd = payloadStart + payload.count
+        bytes.replaceSubrange(markerEnd..<(markerEnd + marker.count), with: marker)
+        return bytes
+    }
+
+    private static func expectThrows(_ message: String, _ body: () throws -> Void) throws {
+        do {
+            try body()
+        } catch {
+            return
+        }
+        throw ValidationError.mismatch(message)
     }
 
     private static func decodeHex(_ value: String) throws -> [UInt8] {

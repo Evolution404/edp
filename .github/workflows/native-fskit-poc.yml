@@ -1,80 +1,64 @@
-name: Native FSKit PoC
+name: Native FSKit Hosted Contract
 
 on:
   push:
     branches: ["feat/macos26-native-fskit"]
     paths:
-      - "native/EDPFSKitPoC/**"
-      - "fixtures/golden/disks.json"
-      - "fixtures/real_disks/**/LBA4.bin"
-      - "fixtures/real_disks/**/LBA7.bin"
+      - "native/EDPFSKitPoC/project.yml"
+      - "native/EDPFSKitPoC/Host/Info.plist"
+      - "native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift"
+      - "native/EDPFSKitPoC/Extension/Info.plist"
+      - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.entitlements"
+      - "native/EDPFSKitPoC/Extension/EDPFSKitExtension.swift"
+      - "native/EDPFSKitPoC/Tools/InspectFSKit.swift"
       - ".github/workflows/native-fskit-poc.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+
 concurrency:
-  group: native-fskit-${{ github.ref }}
+  group: native-fskit-hosted-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  macos26:
-    name: macOS 26 / pure native FSKit extension
+  hosted-contract:
+    name: Bundle, registration, and approval boundary
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-      - name: Runtime and SDK
+      - name: Runtime and SDK contract
         run: |
           set -euo pipefail
           sw_vers
-          uname -m
           xcodebuild -version
-          xcrun --sdk macosx --show-sdk-version
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
 
-      - name: Validate runtime helper syntax
-        run: |
-          set -euo pipefail
-          bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
-
-      - name: Validate native Swift EDP metadata probe against golden fixtures
-        run: |
-          set -euo pipefail
-          xcrun swiftc \
-            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
-            native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
-            -o "${RUNNER_TEMP}/validate-edp-probe"
-          "${RUNNER_TEMP}/validate-edp-probe" fixtures/golden/disks.json \
-            | tee "${RUNNER_TEMP}/edp-probe-golden.txt"
-          grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
-          grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
-          grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
-          grep -F 'RESULT=SWIFT_EDP_LBA7_GOLDEN_OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
-          grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/edp-probe-golden.txt"
-
-      - name: Generate and build native project
+      - name: Generate and build native project once
         working-directory: native/EDPFSKitPoC
         run: |
           set -euo pipefail
-          brew install xcodegen
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate
-          xcodebuild \
+          xcodebuild -quiet \
             -project EDPFSKitPoC.xcodeproj \
             -scheme EDPFSKitHost \
-            -configuration Release \
+            -configuration Debug \
             -derivedDataPath "${RUNNER_TEMP}/EDPFSKitDerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             build
 
       - name: Verify FSKit bundle contract
         run: |
           set -euo pipefail
-          APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
+          APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Debug/EDPFSKitPoC.app"
           EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
           test -d "${APP}"
           test -d "${EXT}"
@@ -94,10 +78,10 @@ jobs:
           test "${SHORT_NAME}" = "edpvault"
           test "${BLOCKS}" = "true"
 
-      - name: Verify extension is independent of Rust bridge
+      - name: Verify native extension independence
         run: |
           set -euo pipefail
-          EXT_BIN="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app/Contents/Extensions/EDPFSKitExtension.appex/Contents/MacOS/EDPFSKitExtension"
+          EXT_BIN="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Debug/EDPFSKitPoC.app/Contents/Extensions/EDPFSKitExtension.appex/Contents/MacOS/EDPFSKitExtension"
           test -x "${EXT_BIN}"
           if nm -gU "${EXT_BIN}" | grep -E 'edp_probe_reserved_sectors|edp_raw_io_'; then
             echo 'unexpected Rust C ABI symbol in native extension' >&2
@@ -107,10 +91,10 @@ jobs:
           ! grep -Fq 'edp_fskit_bridge' native/EDPFSKitPoC/project.yml
           echo 'RESULT=PURE_SWIFT_NATIVE_FSKIT'
 
-      - name: Ad-hoc sign and install for hosted registration diagnostics
+      - name: Ad-hoc sign, install, and register once
         run: |
           set -euo pipefail
-          SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Release/EDPFSKitPoC.app"
+          SOURCE_APP="${RUNNER_TEMP}/EDPFSKitDerivedData/Build/Products/Debug/EDPFSKitPoC.app"
           SOURCE_EXT="${SOURCE_APP}/Contents/Extensions/EDPFSKitExtension.appex"
 
           codesign --force --sign - --generate-entitlement-der \
@@ -128,26 +112,33 @@ jobs:
             -f -R -trusted "${APP}"
           pluginkit -a "${EXT}"
           pluginkit -a "${APP}"
-          sleep 2
 
           codesign -dvvv --entitlements :- "${EXT}" 2>&1 \
             | tee "${RUNNER_TEMP}/signature.txt"
           grep -F 'com.apple.developer.fskit.fsmodule' "${RUNNER_TEMP}/signature.txt"
           grep -F 'com.apple.security.app-sandbox' "${RUNNER_TEMP}/signature.txt"
 
-      - name: Require PluginKit FSKit indexing
+      - name: Require PluginKit indexing
         run: |
           set -euo pipefail
-          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
-            | tee "${RUNNER_TEMP}/pluginkit.txt"
-          grep -F 'com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/pluginkit.txt"
+          indexed=false
+          for attempt in 1 2 3 4 5; do
+            echo "PLUGIN_KIT_INDEX_ATTEMPT=${attempt}"
+            pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv \
+              | tee "${RUNNER_TEMP}/pluginkit.txt"
+            if grep -Fq 'com.edp.usbvault.fskit-poc.extension' "${RUNNER_TEMP}/pluginkit.txt"; then
+              indexed=true
+              break
+            fi
+            sleep 1
+          done
+          test "${indexed}" = "true"
           echo 'RESULT=PLUGIN_KIT_FSKIT_INDEXED'
 
       - name: Classify hosted FSClient visibility
         run: |
           set -euo pipefail
-          xcrun swiftc \
-            -framework FSKit \
+          xcrun swiftc -framework FSKit \
             native/EDPFSKitPoC/Tools/InspectFSKit.swift \
             -o "${RUNNER_TEMP}/inspect-fskit"
 
@@ -162,18 +153,80 @@ jobs:
             echo 'RESULT=FSCLIENT_VISIBLE'
           else
             echo 'RESULT=HOSTED_RUNNER_THIRD_PARTY_FSCLIENT_HIDDEN'
-            echo 'Runtime enablement and block probing require a user-approved macOS environment.'
           fi
 
-      - name: Upload diagnostics
+      - name: Classify hosted EDP-seeded raw-block approval boundary
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/probe.raw"
+          LBA4="fixtures/real_disks/disk4/LBA4.bin"
+          LBA7="fixtures/real_disks/disk4/LBA7.bin"
+          MP="${RUNNER_TEMP}/mnt"
+
+          test "$(stat -f %z "${LBA4}")" -eq 512
+          test "$(stat -f %z "${LBA7}")" -eq 512
+          mkfile 16m "${RAW}"
+          dd if="${LBA4}" of="${RAW}" bs=512 seek=4 conv=notrunc status=none
+          dd if="${LBA7}" of="${RAW}" bs=512 seek=7 conv=notrunc status=none
+          echo 'RESULT=EDP_RESERVED_FIXTURE_SEEDED:disk4'
+          mkdir -p "${MP}"
+
+          OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${RAW}")"
+          echo "${OUT}"
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${DISK}"
+          test -b "${DISK}"
+          BSD_NAME="$(basename "${DISK}")"
+          trap 'hdiutil detach "${DISK}" -force >/dev/null 2>&1 || true' EXIT
+          echo "RESULT=RAW_BLOCK_DEVICE_READY:${DISK}"
+
+          set +e
+          /sbin/mount -t edpvault "${DISK}" "${MP}" \
+            >"${RUNNER_TEMP}/mount.out" 2>"${RUNNER_TEMP}/mount.err"
+          RC=$?
+          set -e
+          echo "MOUNT_RC=${RC}"
+          cat "${RUNNER_TEMP}/mount.out" || true
+          cat "${RUNNER_TEMP}/mount.err" || true
+          sleep 1
+
+          log show --last 2m --style compact \
+            --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd"' \
+            >"${RUNNER_TEMP}/runtime.log" 2>&1 || true
+          cat "${RUNNER_TEMP}/runtime.log" || true
+
+          if grep -Fq "PROBE_BLOCK_DEVICE=${BSD_NAME}" "${RUNNER_TEMP}/runtime.log"; then
+            grep -Fq 'PROBE_RESERVED_SECTORS_READ=true' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_MISSING_RESERVED_READ'; exit 1; }
+            grep -Fq 'PROBE_CORE=swift-native' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_WRONG_CORE'; exit 1; }
+            grep -Fq 'PROBE_EDP_RESERVED_SIGNATURE=true' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_DID_NOT_RECOGNIZE_EDP'; exit 1; }
+            grep -Fq 'PROBE_MATCH=recognized' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_MATCH_NOT_RECOGNIZED'; exit 1; }
+            echo "RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:${BSD_NAME}"
+            exit 0
+          fi
+
+          if grep -Fq 'Module com.edp.usbvault.fskit-poc.extension is disabled!' "${RUNNER_TEMP}/mount.err"; then
+            echo 'RESULT=HOSTED_RUNNER_FSKIT_APPROVAL_REQUIRED'
+            exit 0
+          fi
+
+          echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_UNEXPECTED_FAILURE'
+          exit 1
+
+      - name: Upload hosted diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: native-fskit-poc-${{ github.run_id }}
+          name: native-fskit-hosted-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/edp-probe-golden.txt
             ${{ runner.temp }}/signature.txt
             ${{ runner.temp }}/pluginkit.txt
             ${{ runner.temp }}/fsclient.txt
+            ${{ runner.temp }}/mount.out
+            ${{ runner.temp }}/mount.err
+            ${{ runner.temp }}/runtime.log
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7

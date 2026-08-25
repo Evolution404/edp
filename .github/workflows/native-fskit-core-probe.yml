@@ -1,12 +1,14 @@
-name: Native Swift EDP Core Probe
+name: Native Swift Fast Checks
 
 on:
   push:
     branches: ["feat/macos26-native-fskit"]
     paths:
-      - "native/EDPFSKitPoC/Extension/**"
+      - "native/EDPFSKitPoC/Extension/**/*.swift"
+      - "native/EDPFSKitPoC/Host/**/*.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
+      - "native/EDPFSKitPoC/Tools/verify-approved-runtime.sh"
       - "fixtures/golden/disks.json"
       - "fixtures/real_disks/**/LBA4.bin"
       - "fixtures/real_disks/**/LBA7.bin"
@@ -17,18 +19,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-swift-edp-core-${{ github.ref }}
+  group: native-swift-fast-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  probe:
-    name: Swift native metadata and crypto parity
+  fast-checks:
+    name: Golden regressions and source typecheck
     runs-on: macos-26
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v6
 
-      - name: Compile reserved-sector recognition probe
+      - name: Validate runtime verifier syntax
+        run: bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
+
+      - name: Compile reserved-sector recognition tests
         run: |
           set -euo pipefail
           xcrun swiftc \
@@ -38,18 +43,21 @@ jobs:
             native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
             -o "${RUNNER_TEMP}/validate-edp-probe"
 
-      - name: Reserved-sector golden regression
+      - name: Reserved-sector and alignment regressions
         run: |
           set -euo pipefail
           "${RUNNER_TEMP}/validate-edp-probe" fixtures/golden/disks.json \
             | tee "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNMENT_512=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNMENT_4096=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'ALIGNED_WINDOW_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'ALIGNED_SHORT_READ_CONTINUATION=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'LBA4_SERIAL_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
+          grep -F 'LBA7_SHAPE_GUARDS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'RESERVED_PROBE_NEGATIVE_CONTROLS=OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
           grep -F 'RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK' "${RUNNER_TEMP}/swift-metadata-probe.txt"
 
-      - name: Compile pure Swift native crypto core
+      - name: Compile native crypto and volume tests
         run: |
           set -euo pipefail
           xcrun swiftc \
@@ -61,14 +69,23 @@ jobs:
             native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
             -o "${RUNNER_TEMP}/validate-native-core"
 
-      - name: Real-disk crypto and volume golden regression
+      - name: Crypto, metadata, and encrypted-reader regressions
         run: |
           set -euo pipefail
           "${RUNNER_TEMP}/validate-native-core" fixtures/golden/disks.json \
             | tee "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_CRC32_GOLDEN=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'NATIVE_SM4_GOLDEN=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_CRYPTO_NEGATIVE_PATHS=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_ENCRYPTED_READER_BOUNDARIES=OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'NATIVE_METADATA_NEGATIVE_PATHS=OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
-          echo 'RESULT=PURE_SWIFT_EDP_CORE_PROBE_OK'
+
+      - name: Typecheck production Swift source graph
+        run: |
+          set -euo pipefail
+          xcrun swiftc -typecheck native/EDPFSKitPoC/Extension/*.swift
+          xcrun swiftc -typecheck native/EDPFSKitPoC/Host/EDPFSKitPoCApp.swift
+          echo 'RESULT=NATIVE_SWIFT_SOURCE_GRAPH_TYPECHECKED'
