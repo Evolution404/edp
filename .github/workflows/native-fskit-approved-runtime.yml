@@ -1,0 +1,91 @@
+name: Native FSKit Approved Runtime Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    name: Approved macOS 26 FSKit runtime
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify approved EDP FSKit installation
+        run: |
+          set -euo pipefail
+          APP="/Applications/EDPFSKitPoC.app"
+          EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
+          BUNDLE_ID="com.edp.usbvault.fskit-poc.extension"
+
+          test -d "${APP}"
+          test -d "${EXT}"
+          codesign --verify --deep --strict --verbose=2 "${APP}"
+
+          xcrun swiftc -framework FSKit \
+            native/EDPFSKitPoC/Tools/InspectFSKit.swift \
+            -o "${RUNNER_TEMP}/inspect-fskit"
+
+          "${RUNNER_TEMP}/inspect-fskit" | tee "${RUNNER_TEMP}/fsclient.txt"
+          grep -F "FSKIT_MODULE_FOUND=${BUNDLE_ID}" "${RUNNER_TEMP}/fsclient.txt"
+          grep -F 'FSKIT_MODULE_ENABLED=true' "${RUNNER_TEMP}/fsclient.txt"
+          echo 'RESULT=EDP_FSKIT_APPROVED_AND_ENABLED'
+
+      - name: Attach real raw block device
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/edp-fskit-runtime.raw"
+          mkfile 16m "${RAW}"
+          OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${RAW}")"
+          echo "${OUT}"
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${DISK}"
+          test -b "${DISK}"
+          echo "EDP_TEST_DISK=${DISK}" >> "${GITHUB_ENV}"
+          echo "RESULT=RAW_BLOCK_DEVICE_READY:${DISK}"
+
+      - name: Require EDP FSBlockDeviceResource probe
+        run: |
+          set -euo pipefail
+          MP="${RUNNER_TEMP}/edp-fskit-mnt"
+          mkdir -p "${MP}"
+
+          cleanup() {
+            diskutil unmount force "${MP}" >/dev/null 2>&1 || true
+            hdiutil detach "${EDP_TEST_DISK}" -force >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          set +e
+          /sbin/mount -t edpvault "${EDP_TEST_DISK}" "${MP}" \
+            >"${RUNNER_TEMP}/mount.out" 2>"${RUNNER_TEMP}/mount.err"
+          RC=$?
+          set -e
+          echo "MOUNT_RC=${RC}"
+          cat "${RUNNER_TEMP}/mount.out" || true
+          cat "${RUNNER_TEMP}/mount.err" || true
+
+          sleep 3
+          log show --last 2m --style compact \
+            --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd"' \
+            >"${RUNNER_TEMP}/runtime.log" 2>&1 || true
+          cat "${RUNNER_TEMP}/runtime.log" || true
+
+          grep -F "PROBE_BLOCK_DEVICE=$(basename "${EDP_TEST_DISK}")" "${RUNNER_TEMP}/runtime.log"
+          echo 'RESULT=NATIVE_FSKIT_BLOCK_RESOURCE_DELIVERED'
+
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-fskit-approved-runtime-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fsclient.txt
+            ${{ runner.temp }}/mount.out
+            ${{ runner.temp }}/mount.err
+            ${{ runner.temp }}/runtime.log
+          if-no-files-found: ignore
+          retention-days: 14
