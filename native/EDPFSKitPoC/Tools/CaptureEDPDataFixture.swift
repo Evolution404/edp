@@ -107,6 +107,14 @@ private enum CaptureEDPDataFixture {
 
     private static func run() throws {
         let args = CommandLine.arguments
+        if args.count >= 2, args[1] == "--prepare-ci-image" {
+            try prepareCIImage(Array(args.dropFirst(2)))
+            return
+        }
+        try capture(args)
+    }
+
+    private static func capture(_ args: [String]) throws {
         guard (6...8).contains(args.count) else {
             throw CaptureError.usage(
                 "usage: CaptureEDPDataFixture <raw-device-or-image> <vid-hex> <pid-hex> <device-size-bytes> <output-dir> [partition-type=2] [capture-bytes=65536]\n" +
@@ -215,6 +223,92 @@ private enum CaptureEDPDataFixture {
         print("CAPTURE_OUTPUT=\(outputURL.path)")
         print("CAPTURE_SECRETS_WRITTEN=false")
         print("RESULT=EDP_REAL_DATA_FIXTURE_CAPTURED")
+    }
+
+    /// Internal CI helper. It reuses the exact same binary and native crypto
+    /// implementation as the capture path so Fast Checks need only one extra
+    /// Swift executable instead of compiling a second fixture-generator tool.
+    private static func prepareCIImage(_ args: [String]) throws {
+        guard args.count == 11 else {
+            throw CaptureError.usage(
+                "internal usage: --prepare-ci-image <LBA11.bin> <LBA12.bin> <vid> <pid> <device-size> <password> <partition-type> <capture-bytes> <image> <expected-plain> <expected-cipher>"
+            )
+        }
+
+        let lba11 = try Data(contentsOf: URL(fileURLWithPath: args[0]))
+        let lba12 = try Data(contentsOf: URL(fileURLWithPath: args[1]))
+        let vid = normalizedHex4(args[2])
+        let pid = normalizedHex4(args[3])
+        guard lba11.count == 512, lba12.count == 512,
+              let deviceSize = UInt64(args[4]),
+              let partitionType = UInt32(args[6]),
+              let captureBytes = Int(args[7]),
+              captureBytes >= 512,
+              captureBytes % 16 == 0 else {
+            throw CaptureError.usage("invalid CI fixture input")
+        }
+
+        let password = Array(args[5].utf8)
+        guard let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+            [UInt8](lba11),
+            vidHex: vid,
+            pidHex: pid,
+            sizeBytes: deviceSize
+        ) else {
+            throw CaptureError.metadata("unable to derive CI fixture device ID")
+        }
+
+        let lba12Plain = try EDPVolumeMetadata.decodeLBA12([UInt8](lba12), deviceID: deviceID)
+        let volumes = try EDPVolumeMetadata.parseLBA12Entries(lba12Plain, password: password)
+        guard let descriptor = volumes.first(where: { $0.partitionType == partitionType }),
+              descriptor.algorithm == 2,
+              let fileKey = descriptor.fileKey,
+              captureBytes <= descriptor.sizeBytes else {
+            throw CaptureError.metadata("CI fixture requires a valid SM4 encrypted partition")
+        }
+
+        var plaintext = [UInt8](repeating: 0, count: captureBytes)
+        for index in plaintext.indices {
+            plaintext[index] = UInt8(truncatingIfNeeded: (index &* 73) &+ 41)
+        }
+        if plaintext.count >= 11 {
+            plaintext[0] = 0xeb
+            plaintext[1] = 0x76
+            plaintext[2] = 0x90
+            plaintext.replaceSubrange(3..<11, with: Array("EXFAT   ".utf8))
+        }
+        let ciphertext = try EDPSM4(key: fileKey).encryptAligned(plaintext)
+
+        let imageURL = URL(fileURLWithPath: args[8])
+        let expectedPlainURL = URL(fileURLWithPath: args[9])
+        let expectedCipherURL = URL(fileURLWithPath: args[10])
+        let manager = FileManager.default
+        for url in [imageURL, expectedPlainURL, expectedCipherURL] {
+            try? manager.removeItem(at: url)
+            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        guard manager.createFile(atPath: imageURL.path, contents: nil) else {
+            throw CaptureError.io("unable to create CI raw image")
+        }
+
+        let handle = try FileHandle(forWritingTo: imageURL)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: EDPVolumeMetadata.lba11ByteOffset)
+        try handle.write(contentsOf: lba11)
+        try handle.seek(toOffset: EDPVolumeMetadata.lba12ByteOffset)
+        try handle.write(contentsOf: lba12)
+        try handle.seek(toOffset: descriptor.startBytes)
+        try handle.write(contentsOf: Data(ciphertext))
+        try handle.synchronize()
+
+        try Data(plaintext).write(to: expectedPlainURL, options: .atomic)
+        try Data(ciphertext).write(to: expectedCipherURL, options: .atomic)
+
+        print("PREPARED_DEVICE_ID=\(deviceID)")
+        print("PREPARED_PARTITION_START_SECTOR=\(descriptor.startSector)")
+        print("PREPARED_CAPTURE_BYTES=\(captureBytes)")
+        print("PREPARED_IMAGE_BYTES=\(descriptor.startBytes + UInt64(captureBytes))")
+        print("RESULT=EDP_CAPTURE_TEST_IMAGE_PREPARED")
     }
 
     private static func readPassword() throws -> [UInt8] {
