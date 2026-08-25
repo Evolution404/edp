@@ -42,11 +42,12 @@ Validated on GitHub Actions `macos-26` with macOS 26.5.2 / Xcode 26.6 / Apple Si
 
 ### Native block translation core
 
-The following logic is now implemented in Swift and covered by golden regressions:
+The following logic is now implemented in Swift and covered by executable regressions:
 
 - exact byte-oriented `EDPRawReadable` storage boundary;
 - sector-aligned `FSBlockRawAccessor` for `FSBlockDeviceResource`;
 - one shared aligned-window implementation used by production I/O and CI;
+- one shared `EDPAlignedRead.readFully` implementation for the exact production aligned short-read loop and executable CI regressions;
 - safe continuation of sector-aligned partial reads instead of treating every short read as immediate `EIO`;
 - LBA4 serial-marker recognition;
 - legacy LBA7 rolling-XOR decode and conservative EDP recognition;
@@ -57,30 +58,57 @@ The following logic is now implemented in Swift and covered by golden regression
 - real captured file-key derivation parity;
 - unaligned reads through the encrypted-partition reader.
 
-The fast native regression job now also exercises negative and boundary paths that were previously uncovered:
+The fast native regression job now exercises both golden vectors and deterministic property/boundary paths:
 
-- invalid/overflowing aligned windows and device-end expansion;
-- invalid aligned short-read continuation;
+- 1,280 aligned-window property cases across multiple transfer alignments;
+- 384 aligned short-read continuation property cases;
+- 512 randomized segmented-progress cases against the exact production `EDPAlignedRead.readFully` loop, verifying request offsets, remaining lengths, destination placement, and final bytes;
+- malformed/overflowing aligned windows and device-end expansion;
+- zero, oversized, unaligned-progress, invalid-offset, and `off_t` overflow read-loop failures;
 - malformed LBA4 serial markers and malformed LBA7 inputs;
 - invalid SM4 keys/lengths and A6B0 inputs;
 - short/invalid LBA11/LBA12 metadata and unsupported algorithms;
 - wrong-password LBA12 entry skipping;
 - zero-length, final-byte, out-of-bounds, overflowing, missing-key, and passthrough encrypted-partition reads;
-- full production Swift source-graph typechecking for the host and extension.
+- 1,024 deterministic randomized encrypted-reader windows using file keys derived from captured `disk4` and `disk5` LBA12 metadata;
+- full production Extension/Host Swift source-graph typechecking plus compile-checking the top-level `InspectFSKit.swift` diagnostic tool.
+
+The randomized real-key tests intentionally use deterministic synthetic plaintext/ciphertext. The repository does not contain a captured full encrypted data partition, so these tests prove reader correctness with the real derived keys but do **not** claim byte-for-byte parity against real-disk data-area ciphertext.
+
+There are currently 3,200 deterministic property/random cases in the fast path before counting the fixed golden and negative-control cases:
+
+```text
+1280 aligned-window properties
+ 384 continuation properties
+ 512 production aligned-read progression properties
+1024 real-derived-key encrypted-reader windows
+----
+3200 total
+```
 
 Current successful CI markers include:
 
 ```text
+ALIGNED_READ_SEGMENTED_PROGRESS=OK
+ALIGNED_READ_SEGMENTED_PROPERTIES=OK:cases=512
+ALIGNED_READ_INVALID_RESULTS=OK
+ALIGNED_READ_OFFSET_OVERFLOW=OK
+RESULT=ALIGNED_READ_LOOP_OK
 ALIGNMENT_512=OK
 ALIGNMENT_4096=OK
+ALIGNED_WINDOW_PROPERTIES=OK:cases=1280
 ALIGNED_WINDOW_NEGATIVE_CONTROLS=OK
 ALIGNED_SHORT_READ_CONTINUATION=OK
+ALIGNED_CONTINUATION_PROPERTIES=OK:cases=384
 LBA4_SERIAL_NEGATIVE_CONTROLS=OK
 LBA7_SHAPE_GUARDS=OK
 RESERVED_PROBE_NEGATIVE_CONTROLS=OK
 NATIVE_CRYPTO_NEGATIVE_PATHS=OK
 NATIVE_ENCRYPTED_READER_BOUNDARIES=OK
 NATIVE_METADATA_NEGATIVE_PATHS=OK
+NATIVE_REAL_KEY_RANDOM_READS=OK:disk4_real_lexar:cases=512
+NATIVE_REAL_KEY_RANDOM_READS=OK:disk5_real_sandisk:cases=512
+NATIVE_REAL_KEY_RANDOM_READS=OK:disks=2:cases=1024
 RESULT=SWIFT_EDP_RESERVED_PROBE_GOLDEN_OK
 RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK
 RESULT=SWIFT_NATIVE_LBA11_LBA12_OK
@@ -129,17 +157,18 @@ This is not currently an FSKit implementation failure. The same hosted run confi
 
 ## Strengthened hosted block gate
 
-The block-device runtime gate is now part of `Native FSKit Hosted Contract` rather than a second workflow that rebuilds the same app. It seeds captured EDP `disk4` LBA4/LBA7 metadata into the raw image before attaching it as `/dev/diskN`.
+The block-device runtime gate is part of `Native FSKit Hosted Contract` rather than a second workflow that rebuilds the same app. It seeds captured EDP `disk4` LBA4/LBA7 metadata into the raw image before attaching it as `/dev/diskN`.
 
 If Apple ever changes hosted-runner approval behavior and the EDP extension starts executing, CI will only report runtime success when the full native recognition chain is observed:
 
 ```text
 PROBE_BLOCK_DEVICE=diskN
+PROBE_BUILD_VERSION=<expected build>
 PROBE_RESERVED_SECTORS_READ=true
 PROBE_CORE=swift-native
 PROBE_EDP_RESERVED_SIGNATURE=true
 PROBE_MATCH=recognized
-RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:diskN
+RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:diskN:build=<expected build>
 ```
 
 A mere callback invocation is not sufficient for success.
@@ -153,6 +182,8 @@ A mere callback invocation is not sufficient for success.
 - FSClient exposed Apple's built-in modules.
 
 Therefore hosted Actions cannot prove user-approved third-party FSKit visibility or normal distribution behavior. They remain useful for build, bundle contract, signing structure, PluginKit, Disk Arbitration, raw-block creation, metadata translation, crypto parity, and approval-boundary classification.
+
+Because this hosted FSClient result is a stable environment diagnostic rather than a changing product invariant, executing `FSClient.fetchInstalledExtensions` is now restricted to manual `workflow_dispatch` runs. The diagnostic source still compiles on every relevant Fast Checks run, while automatic Hosted Contract runs avoid paying the roughly 9-second runtime wait.
 
 ## Enablement / onboarding
 
@@ -182,31 +213,38 @@ Automatic branch validation is split by cost and responsibility:
 1. `Native Swift Fast Checks`
    - no XcodeGen and no `xcodebuild`;
    - validates the runtime verifier shell syntax;
-   - compiles/runs LBA4/LBA7/alignment golden and negative tests;
-   - compiles/runs LBA11/LBA12/CRC32/SM4/encrypted-reader golden and negative tests;
-   - typechecks the complete production Swift source graph;
-   - runs for ordinary Swift core changes.
+   - compiles the aligned-read, metadata, and crypto/native-core regression binaries in parallel;
+   - executes the production aligned-read loop regression, LBA4/LBA7/alignment tests, and LBA11/LBA12/CRC32/SM4/encrypted-reader tests;
+   - compiles/typechecks Extension, Host, and `InspectFSKit.swift` in parallel;
+   - the aligned-read property harness alone is built with `-O` to remove test-loop overhead; production sources still receive the normal independent source-graph typecheck;
+   - runs for ordinary Swift core changes and matching pull requests.
 
 2. `Native FSKit Hosted Contract`
-   - triggers only for bundle/project/entrypoint/entitlement/hosted-contract changes;
-   - performs one XcodeGen + one Debug `xcodebuild` with the index store disabled;
-   - validates bundle structure and native-only linkage;
+   - automatic triggers are limited to project/bundle metadata, host entrypoint, extension entrypoint/entitlements, and the hosted-contract workflow itself;
+   - changes to `InspectFSKit.swift` do not trigger the heavy Xcode build; they are compile-checked on the Fast Checks path;
+   - performs one XcodeGen + one arm64 Debug `xcodebuild`, with code signing/indexing/previews/debug-dylib/localization-emission overhead disabled where safe for this contract build;
+   - validates bundle structure, build-version consistency, and native-only linkage;
    - signs, installs, and registers the same build once;
-   - validates PluginKit indexing and classifies hosted FSClient visibility;
+   - validates PluginKit indexing;
    - seeds captured disk4 LBA4/LBA7 into a real raw block device and classifies either the known approval boundary or a complete native EDP recognition result;
+   - runs the hosted FSClient visibility diagnostic only when manually dispatched;
    - uploads one consolidated diagnostics artifact.
 
-The former standalone `Native FSKit Block Probe` was retired because it duplicated XcodeGen/build/sign/register work already performed by the hosted contract.
+The former standalone `Native FSKit Block Probe` remains retired because it duplicated XcodeGen/build/sign/register work already performed by the hosted contract.
 
-Measured on GitHub-hosted `macos-26-arm64` after this split:
+Measured on GitHub-hosted `macos-26-arm64` after the current split:
 
-- `Native Swift Fast Checks`: about 23 seconds from runner start through cleanup;
-- combined `Native FSKit Hosted Contract`: about 70 seconds;
+- `Native Swift Fast Checks`: representative runs are about **20–22 seconds** from runner start through cleanup; hosted-runner variance can move this somewhat;
+- all 3,200 deterministic property/random cases plus fixed golden/negative controls remain enabled at that speed;
+- automatic `Native FSKit Hosted Contract`: about **58 seconds** on the measured optimized run;
+- inside that hosted build path, XcodeGen installation was about 4 seconds, project generation under 1 second, and `xcodebuild` about 41 seconds;
 - the previous successful PoC + Block Probe pair consumed roughly two 76-second macOS jobs for an equivalent full hosted validation path.
 
-This reduces heavy hosted macOS runner consumption from roughly 152 seconds to about 70 seconds for that path (about 54% less), while ordinary Swift core edits now avoid the heavyweight Xcode build entirely.
+This reduces heavy hosted macOS runner consumption from roughly 152 seconds to about 58 seconds for that path (about **62% less**). This is runner consumption, not a claim of identical wall-clock improvement, because the old jobs could run concurrently. Ordinary Swift core edits avoid the heavyweight Xcode build entirely.
 
-Manual diagnostics remain available for signing A/B, enablement negative control, and the approved runtime gate.
+The remaining obvious CI bottleneck is the approximately 41-second clean `xcodebuild`; XcodeGen generation itself is no longer material. Further CI work should only target that compile cost if it can preserve the same bundle/registration contract.
+
+Manual diagnostics remain available for signing A/B, enablement negative control, hosted FSClient behavior, and the approved runtime gate.
 
 ## Next required gate
 
