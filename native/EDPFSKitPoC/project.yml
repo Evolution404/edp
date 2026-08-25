@@ -28,7 +28,7 @@ targets:
         INFOPLIST_FILE: Host/Info.plist
 
   EDPFSKitExtension:
-    type: app-extension
+    type: extensionkit-extension
     platform: macOS
     deploymentTarget: "26.0"
     sources:
