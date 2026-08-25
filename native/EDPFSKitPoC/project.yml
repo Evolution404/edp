@@ -17,8 +17,6 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: Host
-    info:
-      path: Host/Info.plist
     dependencies:
       - target: EDPFSKitExtension
         embed: true
@@ -27,6 +25,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc
         PRODUCT_NAME: EDPFSKitPoC
         GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Host/Info.plist
 
   EDPFSKitExtension:
     type: app-extension
@@ -37,8 +36,6 @@ targets:
         excludes:
           - Info.plist
           - EDPFSKitExtension.entitlements
-    info:
-      path: Extension/Info.plist
     entitlements:
       path: Extension/EDPFSKitExtension.entitlements
     settings:
@@ -46,5 +43,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc.extension
         PRODUCT_NAME: EDPFSKitExtension
         GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Extension/Info.plist
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
