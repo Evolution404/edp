@@ -88,12 +88,79 @@ jobs:
             plutil -p "${SETTINGS}/enabledModules.plist" || true
           fi
 
+      - name: Enable FSKit modules through FSClient
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="${RUNNER_TEMP}/enable-fskit.m"
+          BIN="${RUNNER_TEMP}/enable-fskit"
+
+          cat > "${SRC}" <<'OBJC'
+          #import <Foundation/Foundation.h>
+          #import <objc/message.h>
+          #import <dlfcn.h>
+          #import <dispatch/dispatch.h>
+
+          static int enableModule(id client, NSString *identifier) {
+              SEL sel = NSSelectorFromString(@"setEnabledStateForIdentifier:newState:replyHandler:");
+              if (![client respondsToSelector:sel]) {
+                  fprintf(stderr, "missing selector setEnabledStateForIdentifier:newState:replyHandler:\n");
+                  return 2;
+              }
+
+              dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+              __block BOOL replied = NO;
+              void (^reply)(void) = ^{
+                  replied = YES;
+                  dispatch_semaphore_signal(sem);
+              };
+
+              typedef void (*SetFn)(id, SEL, NSString *, BOOL, void (^)(void));
+              ((SetFn)objc_msgSend)(client, sel, identifier, YES, reply);
+              long wait = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC));
+              printf("enable id=%s replied=%d wait=%ld\n", identifier.UTF8String, replied, wait);
+              return wait == 0 && replied ? 0 : 124;
+          }
+
+          int main(void) {
+              @autoreleasepool {
+                  if (!dlopen("/System/Library/Frameworks/FSKit.framework/FSKit", RTLD_NOW | RTLD_LOCAL)) {
+                      fprintf(stderr, "dlopen FSKit failed: %s\n", dlerror());
+                      return 2;
+                  }
+
+                  Class cls = NSClassFromString(@"FSClient");
+                  SEL shared = NSSelectorFromString(@"sharedInstance");
+                  if (!cls || ![cls respondsToSelector:shared]) {
+                      fprintf(stderr, "FSClient sharedInstance unavailable\n");
+                      return 2;
+                  }
+
+                  typedef id (*SharedFn)(id, SEL);
+                  id client = ((SharedFn)objc_msgSend)(cls, shared);
+                  int a = enableModule(client, @"io.macfuse.app.fsmodule.macfuse");
+                  int b = enableModule(client, @"io.macfuse.app.fsmodule.macfuse-local");
+                  return a != 0 ? a : b;
+              }
+          }
+          OBJC
+
+          xcrun clang -fobjc-arc -fblocks "${SRC}" -framework Foundation -o "${BIN}"
+          "${BIN}"
+          sleep 1
+
+          SETTINGS="$HOME/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
+          if [[ -f "${SETTINGS}" ]]; then
+            echo '--- enabledModules after FSClient ---'
+            plutil -p "${SETTINGS}"
+          fi
+
       - name: Run real FSKit mount smoke test
         id: smoke
         shell: bash
         run: |
           set +e
-          bash scripts/test-fskit-smoke.sh
+          TMPDIR="${RUNNER_TEMP}" bash scripts/test-fskit-smoke.sh
           RC=$?
           echo "rc=${RC}" >> "${GITHUB_OUTPUT}"
           exit 0
@@ -102,7 +169,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REPORT="${TMPDIR:-/tmp}/edp-fskit-smoke-report.txt"
+          REPORT="${RUNNER_TEMP}/edp-fskit-smoke-report.txt"
           test -f "${REPORT}"
           cat "${REPORT}"
 
