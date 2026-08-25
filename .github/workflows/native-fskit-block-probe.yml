@@ -5,6 +5,8 @@ on:
     branches: ["feat/macos26-native-fskit"]
     paths:
       - "native/EDPFSKitPoC/**"
+      - "fixtures/real_disks/disk4/LBA4.bin"
+      - "fixtures/real_disks/disk4/LBA7.bin"
       - ".github/workflows/native-fskit-block-probe.yml"
   workflow_dispatch:
 
@@ -73,11 +75,21 @@ jobs:
             echo 'RESULT=HOSTED_RUNNER_PLUGIN_KIT_INDEXING_UNAVAILABLE'
           fi
 
-      - name: Attach real raw block device
+      - name: Attach EDP-seeded raw block device
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/probe.raw"
+          LBA4="fixtures/real_disks/disk4/LBA4.bin"
+          LBA7="fixtures/real_disks/disk4/LBA7.bin"
+
+          test "$(stat -f %z "${LBA4}")" -eq 512
+          test "$(stat -f %z "${LBA7}")" -eq 512
+
           mkfile 16m "${RAW}"
+          dd if="${LBA4}" of="${RAW}" bs=512 seek=4 conv=notrunc status=none
+          dd if="${LBA7}" of="${RAW}" bs=512 seek=7 conv=notrunc status=none
+          echo 'RESULT=EDP_RESERVED_FIXTURE_SEEDED:disk4'
+
           OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${RAW}")"
           echo "${OUT}"
           DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
@@ -110,8 +122,17 @@ jobs:
 
           hdiutil detach "${EDP_TEST_DISK}" -force || true
 
-          if grep -Fq 'PROBE_BLOCK_DEVICE=' "${RUNNER_TEMP}/runtime.log"; then
-            echo 'RESULT=NATIVE_FSKIT_BLOCK_PROBE_REACHED'
+          BSD_NAME="$(basename "${EDP_TEST_DISK}")"
+          if grep -Fq "PROBE_BLOCK_DEVICE=${BSD_NAME}" "${RUNNER_TEMP}/runtime.log"; then
+            grep -Fq 'PROBE_RESERVED_SECTORS_READ=true' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_MISSING_RESERVED_READ'; exit 1; }
+            grep -Fq 'PROBE_CORE=swift-native' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_WRONG_CORE'; exit 1; }
+            grep -Fq 'PROBE_EDP_RESERVED_SIGNATURE=true' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_DID_NOT_RECOGNIZE_EDP'; exit 1; }
+            grep -Fq 'PROBE_MATCH=recognized' "${RUNNER_TEMP}/runtime.log" \
+              || { echo 'RESULT=NATIVE_FSKIT_PROBE_MATCH_NOT_RECOGNIZED'; exit 1; }
+            echo "RESULT=NATIVE_FSKIT_SWIFT_CORE_RECOGNIZED:${BSD_NAME}"
             exit 0
           fi
 
