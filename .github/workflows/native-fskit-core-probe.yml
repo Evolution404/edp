@@ -6,6 +6,7 @@ on:
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
+      - "native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift"
       - "native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift"
       - "native/EDPFSKitPoC/Tools/verify-approved-runtime.sh"
@@ -34,6 +35,24 @@ jobs:
 
       - name: Validate runtime verifier syntax
         run: bash -n native/EDPFSKitPoC/Tools/verify-approved-runtime.sh
+
+      - name: Compile aligned read-loop regression
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPAlignedRead.swift \
+            -o "${RUNNER_TEMP}/validate-aligned-read"
+
+      - name: Execute production aligned read-loop regression
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/validate-aligned-read" \
+            | tee "${RUNNER_TEMP}/aligned-read.txt"
+          grep -F 'ALIGNED_READ_SEGMENTED_PROGRESS=OK' "${RUNNER_TEMP}/aligned-read.txt"
+          grep -F 'ALIGNED_READ_INVALID_RESULTS=OK' "${RUNNER_TEMP}/aligned-read.txt"
+          grep -F 'ALIGNED_READ_OFFSET_OVERFLOW=OK' "${RUNNER_TEMP}/aligned-read.txt"
+          grep -F 'RESULT=ALIGNED_READ_LOOP_OK' "${RUNNER_TEMP}/aligned-read.txt"
 
       - name: Compile reserved-sector recognition tests
         run: |
