@@ -1,0 +1,88 @@
+name: FSKit Cirrus macOS version A/B
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mount-ab:
+    name: macOS ${{ matrix.macos }} direct mount -F vs Disk Arbitration
+    strategy:
+      fail-fast: false
+      matrix:
+        macos: ['15.7', '15.7.3', '15.7.7']
+    runs-on: ghcr.io/cirruslabs/macos-sequoia-vanilla:${{ matrix.macos }}
+    timeout-minutes: 15
+    steps:
+      - name: System identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -a
+          uname -m
+          shasum -a 256 /sbin/mount /usr/libexec/fskitd
+          codesign -dv --verbose=4 /sbin/mount 2>&1 || true
+          codesign -dv --verbose=4 /usr/libexec/fskitd 2>&1 || true
+
+      - name: FAT16 direct mount -F vs Disk Arbitration
+        shell: bash
+        run: |
+          set -uo pipefail
+          IMG="$RUNNER_TEMP/fskit-fat16.dmg"
+          MP="$RUNNER_TEMP/fskit-direct"
+          mkdir -p "$MP"
+
+          cleanup() {
+            set +e
+            if [[ -n "${DEVICE:-}" ]]; then
+              /sbin/umount "$DEVICE" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "${WHOLE:-}" ]]; then
+              hdiutil detach -force "$WHOLE" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          hdiutil create -quiet -size 32m -layout MBRSPUD -fs 'MS-DOS FAT16' -volname EDPFAT "$IMG"
+          ATTACH="$(hdiutil attach -nomount "$IMG")"
+          printf '%s\n' "$ATTACH"
+          WHOLE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+$/ {print $1; exit}')"
+          DEVICE="$(printf '%s\n' "$ATTACH" | awk '$1 ~ /^\/dev\/disk[0-9]+s[0-9]+$/ {d=$1} END {print d}')"
+          test -n "$DEVICE"
+
+          echo '=== DIRECT /sbin/mount -F ==='
+          set +e
+          /sbin/mount -F -t msdos "$DEVICE" "$MP"
+          DIRECT_RC=$?
+          set -e
+          echo "DIRECT_RC=$DIRECT_RC"
+          mount | grep -F "$DEVICE" || true
+          if mount | grep -Fq "$DEVICE"; then
+            echo 'DIRECT_MOUNTED=1'
+            /sbin/umount "$DEVICE" || true
+          else
+            echo 'DIRECT_MOUNTED=0'
+          fi
+
+          echo '=== DISK ARBITRATION ==='
+          set +e
+          diskutil mount "$DEVICE"
+          DA_RC=$?
+          set -e
+          echo "DA_RC=$DA_RC"
+          mount | grep -F "$DEVICE" || true
+          if mount | grep -Fq "$DEVICE"; then
+            echo 'DA_MOUNTED=1'
+          else
+            echo 'DA_MOUNTED=0'
+          fi
+
+      - name: Relevant FSKit logs
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          sudo /usr/bin/log show --last 5m --style compact --info --debug \
+            --predicate '(process == "fskitd") OR (process == "diskarbitrationd") OR (process == "mount") OR (process == "diskutil")' \
+            | grep -E -i 'entitled 0|entitlement no|entitled 1|entitlement yes|mountVolume:fileSystem|NSXPC|Couldn.t communicate|Unable to invoke|mounted disk' \
+            | tail -n 200 || true
