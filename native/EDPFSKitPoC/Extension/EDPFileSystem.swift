@@ -15,7 +15,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
     ) {
         guard let block = resource as? FSBlockDeviceResource else {
             logger.notice("PROBE_NON_BLOCK_RESOURCE")
-            reply(nil, POSIXError(.ENODEV))
+            reply(.notRecognized, nil)
             return
         }
 
@@ -28,23 +28,28 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
             let rawLBA7 = try EDPMetadataProbe.readLBA7(from: block)
             logger.notice("PROBE_LBA7_READ=\(rawLBA7.count, privacy: .public)")
 
-            if let recognition = EDPMetadataProbe.recognizeOldFormatLBA7(rawLBA7) {
-                let k0 = String(format: "0x%04x", recognition.k0)
-                logger.notice("PROBE_EDPF_OLD_FORMAT=true")
-                logger.notice("PROBE_LBA7_K0=\(k0, privacy: .public)")
-            } else {
+            guard let recognition = EDPMetadataProbe.recognizeOldFormatLBA7(rawLBA7) else {
                 logger.notice("PROBE_EDPF_OLD_FORMAT=false")
+                logger.notice("PROBE_MATCH=notRecognized")
+                reply(.notRecognized, nil)
+                return
             }
+
+            let k0 = String(format: "0x%04x", recognition.k0)
+            logger.notice("PROBE_EDPF_OLD_FORMAT=true")
+            logger.notice("PROBE_LBA7_K0=\(k0, privacy: .public)")
+
+            // EDP's legacy metadata doesn't expose a durable container UUID at
+            // this recognition stage. FSKit explicitly permits unary file systems
+            // to use a random FSContainerIdentifier when no durable UUID exists.
+            // Once LBA11/device identity is integrated we can make this stable.
+            let containerID = FSContainerIdentifier()
+            logger.notice("PROBE_MATCH=recognized")
+            reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
         } catch {
             logger.error("PROBE_LBA7_READ_ERROR=\(String(describing: error), privacy: .public)")
             reply(nil, error)
-            return
         }
-
-        // Phase 2 still stops before declaring a mountable FSVolume. The next
-        // step is to return a real FSProbeResult for recognized EDP media and
-        // then implement loadResource using the existing edp-core data model.
-        reply(nil, POSIXError(.ENOTSUP))
     }
 
     func loadResource(
