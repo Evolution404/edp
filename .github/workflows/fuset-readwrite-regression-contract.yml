@@ -15,6 +15,7 @@ on:
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPReadWriteFixtureBridge.swift"
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedReadWriteBridge.swift"
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/ValidateEDPReadWriteMatrix.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/ValidateFuseTRPCReadWrite.swift"
       - "product/EDPRawReadWriteAuthorization.c"
       - ".github/workflows/fuset-readwrite-regression-contract.yml"
   workflow_dispatch:
@@ -52,7 +53,7 @@ jobs:
             -o "${RUNNER_TEMP}/ValidateEDPReadWriteMatrix"
           echo 'RESULT=RW_MATRIX_SWIFT6_WARNINGS_AS_ERRORS_BUILD_OK'
 
-      - name: Exercise encrypted random, RMW, boundary, sync and reopen writes
+      - name: Exercise encrypted random, RMW, concurrent, boundary, sync and reopen writes
         run: |
           set -euo pipefail
           "${RUNNER_TEMP}/ValidateEDPReadWriteMatrix" | tee "${RUNNER_TEMP}/rw-matrix.txt"
@@ -63,6 +64,7 @@ jobs:
           grep -Fq 'WRITE_CASE_PASS=aligned-64K' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'WRITE_CASE_PASS=aligned-1MiB' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'WRITE_CASE_PASS=tail-1B' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'RESULT=RW_CONCURRENT_UNALIGNED_WRITES_SERIALIZED_PASS' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'RESULT=RW_RMW_NEIGHBORS_PRESERVED' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'RESULT=RW_BOUNDS_AND_ZERO_LENGTH_PASS' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'RESULT=RW_CIPHER_PERSISTENCE_AFTER_TRUE_REOPEN' "${RUNNER_TEMP}/rw-matrix.txt"
@@ -94,7 +96,7 @@ jobs:
           grep -Fq 'protocol FuseTWriteBacking: FuseTReadBacking' "${SRC}"
           grep -Fq 'func pwrite(offset: Int64, data: Data) throws' "${SRC}"
           grep -Fq 'func synchronize() throws' "${SRC}"
-          grep -Fq '"write_size": frame.payload.count' "${SRC}"
+          grep -Fq '"write_size": length64' "${SRC}"
           grep -Fq 'write exceeds fixed backing size' "${SRC}"
           if grep -Eiq 'HFS\+|Apple_HFS|APFS|ExFAT|MSDOS|FAT32|NTFS|ntfs-3g|macfuse|libfuse|go-nfsv4' "${SRC}"; then
             echo 'filesystem/provider knowledge leaked into thin transport' >&2
@@ -103,6 +105,20 @@ jobs:
           otool -L "${RUNNER_TEMP}/FuseTMinimalBridge" | tee "${RUNNER_TEMP}/thin-otool.txt"
           ! grep -Eiq 'macfuse|libfuse|ntfs|go-nfsv4' "${RUNNER_TEMP}/thin-otool.txt"
           echo 'RESULT=RW_THIN_TRANSPORT_FILESYSTEM_AGNOSTIC'
+
+      - name: Execute real Unix-socket writable RPC protocol
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library -swift-version 6 -warnings-as-errors -D FUSET_BRIDGE_LIBRARY \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/ValidateFuseTRPCReadWrite.swift \
+            -o "${RUNNER_TEMP}/ValidateFuseTRPCReadWrite"
+          "${RUNNER_TEMP}/ValidateFuseTRPCReadWrite" | tee "${RUNNER_TEMP}/rpc-rw.txt"
+          grep -Fq 'RESULT=RPC_RW_WRITE_READ_SYNC_PERSISTENCE_PASS' "${RUNNER_TEMP}/rpc-rw.txt"
+          grep -Fq 'RESULT=RPC_RW_FIXED_NAMESPACE_MUTATIONS_FAIL_CLOSED' "${RUNNER_TEMP}/rpc-rw.txt"
+          grep -Fq 'RESULT=RPC_RW_RANGE_VALIDATION_PASS' "${RUNNER_TEMP}/rpc-rw.txt"
+          grep -Fq 'RESULT=RPC_RO_WRITE_AND_MUTATION_EROFS_PASS' "${RUNNER_TEMP}/rpc-rw.txt"
+          grep -Fq 'RESULT=FUSET_THIN_RPC_READWRITE_CONTRACT_PASS' "${RUNNER_TEMP}/rpc-rw.txt"
 
       - name: Assert explicit RO and RW mode separation
         run: |
