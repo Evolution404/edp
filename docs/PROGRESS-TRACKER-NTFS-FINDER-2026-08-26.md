@@ -164,6 +164,29 @@ commit:
 - 同时审阅 libntfs-3g 更底层目录项 API，寻找可在单事务/可恢复语义内完成 replace/exchange 的 primitive；若没有，则需要明确记录上游阻塞而不是引入非原子 workaround。
 
 commit:
+- `f1db145 test: reject literal FSKit rename swap fix`
+
+#### 2026-08-26 16:20 — macFUSE/libntfs 原子能力边界
+
+目标：
+- 判断 P0 是否存在不破坏原子性的“小补丁”路径。
+
+验证：
+- 本机 macFUSE 5.3.3 FUSE2 头文件对普通 `rename`/`renamex` 明确写明：目标存在时应 **atomically replaced**；`FUSE_CAP_RENAME_SWAP` 只是声明 filesystem 支持 `renamex_np(..., RENAME_SWAP)` 的额外能力。
+- 但最小 generic FSKit 实证已表明：即使 filesystem 在 init 中清除 `FUSE_CAP_RENAME_SWAP`，普通 libc `rename(temp, existing-target)` 仍被 FSKit 转成 `renamex(..., flags=0x2)`。
+- macFUSE 官方 capability 文档同样把 `FUSE_CAP_RENAME_SWAP` 定义为 `renamex()` 的 swap-renaming 能力，而不是普通 POSIX replace 的替代语义；官方 issue #1140 也有 Tahoe/TextEdit 无法保存的同类报告。
+- 审阅固定 libntfs-3g 2026.7.7：没有公开 `ntfs_rename` / atomic exchange API；`dir.c` 仍写有 FIXME “Write ntfs_rename that uses __ntfs_link”，当前 rename 使用临时 hard-link/unlink 序列。`$LogFile` 代码主要用于检查/清理 journal，没有可直接复用的 userspace rename transaction primitive。
+
+结论：
+- PARTIAL / UPSTREAM-BOUNDARY。当前没有一个可以安全地把 `RENAME_SWAP` 直接映射成 NTFS 原子 replace 的现成 primitive。
+- 不应在 EDP/NTFS patch 中实现 delete-then-rename、link/unlink swap 或其他会在 crash 中留下双名/丢名窗口的 workaround。
+- P0 下一步转为验证 **TextEdit 实际完整保存事务**：若应用在 swap 成功后主动 unlink 临时旧文件，则真正需求是“原子 exchange”；若没有，则 macFUSE FSKit 本身把普通 POSIX rename 暴露成错误语义，必须等待/推动 upstream bridge 修复。
+
+下一步：
+- 用最小、隔离的文件监控/回调日志捕获 TextEdit 保存全过程（只对临时测试 txt），确认 swap 后是否由 TextEdit 自己删除旧内容临时路径；
+- 同时继续观察 macFUSE upstream 对 Tahoe/TextEdit/FSKit rename 的修复，不修改真实用户文件。
+
+commit:
 - pending
 
 ### T2 — P1 Finder 本地卷 + Trash
