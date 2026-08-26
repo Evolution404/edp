@@ -351,6 +351,7 @@ static struct fuse_operations ops = {
 
 int main(int argc, char **argv) {
     const char *mountpoint = NULL;
+    int authorization_mode = 0;
 
     if (argc == 9 && (strcmp(argv[1], "--device") == 0 ||
                       strcmp(argv[1], "--device-authorize") == 0)) {
@@ -377,6 +378,7 @@ int main(int argc, char **argv) {
         close(password_fd);
 
         if (strcmp(argv[1], "--device-authorize") == 0) {
+            authorization_mode = 1;
             int raw_fd = interactive_readonly_fd(argv[2]);
             if (raw_fd < 0) {
                 secure_zero(password, sizeof(password));
@@ -425,7 +427,7 @@ int main(int argc, char **argv) {
 
     char options[128];
     snprintf(options, sizeof(options), "backend=fskit,uid=%u,gid=%u", getuid(), getgid());
-    char *fuse_argv[] = {
+    char *foreground_argv[] = {
         argv[0],
         "-f",
         "-o",
@@ -433,9 +435,18 @@ int main(int argc, char **argv) {
         (char *)mountpoint,
         NULL,
     };
+    char *daemon_argv[] = {
+        argv[0],
+        "-o",
+        options,
+        (char *)mountpoint,
+        NULL,
+    };
 
     fprintf(stderr, "EDP_FUSE_BLOCK_SIZE=%llu\n", (unsigned long long)volume_size);
-    int rc = fuse_main(5, fuse_argv, &ops, NULL);
+    int rc = authorization_mode
+        ? fuse_main(4, daemon_argv, &ops, NULL)
+        : fuse_main(5, foreground_argv, &ops, NULL);
     edp_ro_close(block_handle);
     block_handle = NULL;
     return rc;

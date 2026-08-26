@@ -77,6 +77,7 @@ FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 /usr/bin/cc native/EDPFSKitPoC/Tools/EDPReadOnlyFuseBridge.c \
   -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} \
+  -framework Security \
   "${SWIFT_LIB}" \
   -Wl,-rpath,"${WORK_DIR}" \
   -o "${FUSE_BIN}"

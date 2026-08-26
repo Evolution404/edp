@@ -66,14 +66,23 @@ run_one() {
   : >"${bridge_log}"
   : >"${ntfs_log}"
   exec 3< <(printf '%s' "${EDP_PASSWORD}")
-  DYLD_LIBRARY_PATH="${TOOLS}" "${TOOLS}/edp-readonly-fuse" \
-    "${mode}" "${source}" "${DEVICE_VID}" "${DEVICE_PID}" "${DEVICE_SIZE}" \
-    "${PARTITION_TYPE}" 3 "${BRIDGE_MOUNT}" >"${bridge_log}" 2>&1 3<&3 &
-  FUSE_PID=$!
+  if [[ "${mode}" == --device-authorize ]]; then
+    # Authorization Services must run in the foreground GUI terminal session.
+    # libfuse daemonizes only after authopen has returned the O_RDONLY fd.
+    DYLD_LIBRARY_PATH="${TOOLS}" "${TOOLS}/edp-readonly-fuse" \
+      "${mode}" "${source}" "${DEVICE_VID}" "${DEVICE_PID}" "${DEVICE_SIZE}" \
+      "${PARTITION_TYPE}" 3 "${BRIDGE_MOUNT}" >"${bridge_log}" 2>&1 3<&3
+    FUSE_PID=""
+  else
+    DYLD_LIBRARY_PATH="${TOOLS}" "${TOOLS}/edp-readonly-fuse" \
+      "${mode}" "${source}" "${DEVICE_VID}" "${DEVICE_PID}" "${DEVICE_SIZE}" \
+      "${PARTITION_TYPE}" 3 "${BRIDGE_MOUNT}" >"${bridge_log}" 2>&1 3<&3 &
+    FUSE_PID=$!
+  fi
   exec 3<&-
   for _ in $(seq 1 100); do
     [[ -r "${BRIDGE_MOUNT}/volume.raw" ]] && break
-    kill -0 "${FUSE_PID}" >/dev/null 2>&1 || break
+    [[ -z "${FUSE_PID}" ]] || kill -0 "${FUSE_PID}" >/dev/null 2>&1 || break
     sleep 0.2
   done
   [[ -r "${BRIDGE_MOUNT}/volume.raw" ]] || { cat "${bridge_log}" >&2; return 1; }

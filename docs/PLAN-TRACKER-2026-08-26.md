@@ -270,3 +270,5 @@
 - `probe-real-edp-backup-readonly.sh` 依次挂载 physical 与 restored raw，两个 EDP bridge 都只暴露只读 `volume.raw`，NTFS-3G 固定 `ro,norecover,backend=fskit`；同时要求 readwrite probe 返回 0，不能借只读挂载掩盖 dirty/hibernated 状态。
 - `EDPFilesystemManifest.swift` 生成 deterministic 文件/metadata/SHA256 清单，并包含 NTFS label、解密卷逻辑尺寸、boot/tail 4 KiB SHA256；physical/restored JSON 必须 byte-for-byte 一致。
 - 本地 Swift 6 strict compile、C `-Wall -Wextra`、shell syntax、deterministic manifest round-trip 与禁止 `O_RDWR/pwrite` 静态门槛通过；真实执行等待用户在本机终端 Secure input 中输入 EDP 密码。
+- 首次 CI `32933796415` 在既有 read-only bridge probe 的 link 阶段暴露新增 Security symbols 未链接；尚未进入任何 EDP/FUSE I/O。所有既有 read-only bridge build sites 已显式补 `-framework Security`。
+- 首次真机启动同样在 background Authorization 阶段 fail closed（`EDP_FUSE_AUTHOPEN_READONLY_FAILED`），无 raw fd、无 mount；修正为前台完成 Authorization/authopen 后再由 libfuse daemonize。
