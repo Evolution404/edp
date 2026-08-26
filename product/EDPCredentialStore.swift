@@ -10,7 +10,7 @@ struct EDPCredentialRecord: Codable, Hashable, Sendable {
 }
 
 struct EDPCredentialIndex: Codable, Sendable {
-    var schemaVersion = 2
+    var schemaVersion = 3
     var records = [EDPCredentialRecord]()
 }
 
@@ -33,7 +33,8 @@ private struct LegacyCredentialFile: Codable {
 }
 
 final class EDPCredentialStore {
-    static let serviceName = "com.edp.usbvault.device-password"
+    static let serviceName = "com.edp.usbvault.device-password.v3"
+    static let legacyServiceName = "com.edp.usbvault.device-password"
 
     private let indexPath: String
     private let keychain: SecKeychain
@@ -72,6 +73,8 @@ final class EDPCredentialStore {
                 masterKeyPath: legacyMasterKeyPath
             )
         }
+
+        try pruneRecordsWithoutCurrentCredentials()
     }
 
     func load() throws -> EDPCredentialIndex {
@@ -122,10 +125,10 @@ final class EDPCredentialStore {
         try save(index)
     }
 
-    private func itemIdentity(deviceID: String) -> [CFString: Any] {
+    private func itemIdentity(deviceID: String, serviceName: String = EDPCredentialStore.serviceName) -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: Self.serviceName,
+            kSecAttrService: serviceName,
             kSecAttrAccount: deviceID,
         ]
     }
@@ -139,9 +142,13 @@ final class EDPCredentialStore {
     private func upsertPassword(deviceID: String, password: [UInt8]) throws {
         let query = searchQuery(deviceID: deviceID)
         let secret = Data(password)
+        let access = try rootOnlyAccess()
         let updateStatus = SecItemUpdate(
             query as CFDictionary,
-            [kSecValueData: secret] as CFDictionary
+            [
+                kSecValueData: secret,
+                kSecAttrAccess: access,
+            ] as CFDictionary
         )
         if updateStatus == errSecSuccess { return }
         guard updateStatus == errSecItemNotFound else {
@@ -151,9 +158,35 @@ final class EDPCredentialStore {
         var attributes = itemIdentity(deviceID: deviceID)
         attributes[kSecUseKeychain] = keychain
         attributes[kSecValueData] = secret
+        attributes[kSecAttrAccess] = access
         let addStatus = SecItemAdd(attributes as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
             throw EDPCredentialStoreError("Keychain add failed: status=\(addStatus)")
+        }
+    }
+
+    private func rootOnlyAccess() throws -> SecAccess {
+        let ownerType = SecAccessOwnerType(kSecUseOnlyUID | kSecHonorRoot)
+        guard let access = SecAccessCreateWithOwnerAndACL(0, 0, ownerType, nil, nil) else {
+            throw EDPCredentialStoreError("failed to create root-only Keychain access policy")
+        }
+        return access
+    }
+
+    private func currentCredentialExists(deviceID: String) -> Bool {
+        var query = searchQuery(deviceID: deviceID)
+        query[kSecReturnAttributes] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    private func pruneRecordsWithoutCurrentCredentials() throws {
+        var index = try load()
+        let originalCount = index.records.count
+        index.records.removeAll { !currentCredentialExists(deviceID: $0.deviceID) }
+        if index.records.count != originalCount || index.schemaVersion != 3 {
+            index.schemaVersion = 3
+            try save(index)
         }
     }
 

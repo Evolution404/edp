@@ -293,3 +293,16 @@
 - macFUSE launchservice 实机日志反复给出 `File system extension io.macfuse.app.fsmodule.macfuse-local not enabled`；因此当前阻塞位于 macOS FSKit module enablement 状态，而非 EDP 密码、解密、NTFS 数据或 macFUSE 文件缺失。
 - PluginKit `+` 状态不能替代 FSKit enablement；`pluginkit -e use` 后 FSClient 结果不变。当前用户为管理员且无 MDM enrollment，排除普通用户权限/MDM 禁用。
 - 另有待继续解释的异常：EDP 当前 bridge 与 NTFS policy 均只传 `backend=fskit`、没有 `local`，但 macFUSE mount daemon 的失败日志却检查 `macfuse-local`。下一步需要验证 macFUSE 5.3.3 在本机重新注册后的 module selection/FSKit 状态，并在产品 mount 前增加 FSKit enablement preflight，避免即使手动重试也出现 macFUSE 系统弹窗。
+
+### 2026-08-26 — UI → Finder 真实交换区只读挂载通过
+
+- 覆盖重装 macFUSE 5.3.3 后执行官方 `macfuse install --force`，两个 FSKit appex 重新注册；用户在“文件系统扩展”中启用后，最小 FUSE 实测成功启动 `io.macfuse.app.fsmodule.macfuse`，系统日志进入 `ReallyMountVolume`，确认不是安装损坏。
+- 证明旧产品失败与进程身份有关：root 直接启动 bridge 时 macFUSE 选择 `macfuse-local`；控制台用户 UID 501 启动时选择 generic `macfuse`。产品因此固定为 root daemon 负责授权/编排，`edp-readwrite-fuse`、`ntfs-3g.probe`、`ntfs-3g` 通过 `edp-console-exec` 降权到控制台用户执行。
+- 删除不可靠的第三方 `FSClient.fetchInstalledExtensions` preflight：macOS 26 上该 API 仍只返回 Apple exfat/ftp/msdos，即使 macFUSE 已实际启用。产品仅检查 macFUSE runtime 完整性；真实 enablement 由一次受控 mount 决定，失败后继续由 `failedMounts` 锁存，不产生弹窗风暴。
+- 修正 raw-device Authorization：App 不再只申请 `system.privilege.admin`，而是针对当前 `/dev/rdiskN` 前台预授权精确的 `sys.openfile.readonly./dev/rdiskN`，external form 再交给 `authopen -extauth`；独立 `--xpc-mount-smoke` 与 `EDPXPCMountSmoke.swift` 覆盖该路径。
+- System Keychain 凭据升级为 schema v3：旧 ad-hoc daemon 默认 ACL 绑定 cdhash，更新二进制后后台读取返回 `-25308`。v3 item 使用 root-only owner policy；普通用户无交互读取实测失败，daemon 更新后 credential index/Keychain item 保持有效。
+- 修正 FSKit 用户会话边界：root daemon 无权直接 `open()` UID 501 generic FSKit mount 内的 `volume.raw`（实测 `errno=1`），因此 NTFS probe 与最终 NTFS mount 都切到同一 UID 501 上下文；root 仅观察全局 mount table。
+- 修正 bridge readiness：不再用 root `FileManager.isReadableFile(volume.raw)` 判断，而以 `getfsstat` mount table 是否出现 bridge mountpoint 为准，避免已经成功的 FSKit mount 被误判为 20 秒超时。
+- 修正只读完成判据：macFUSE FSKit 实测不会把 NTFS-3G `ro` 映射成 `MNT_RDONLY`，但 NTFS-3G 日志明确为 `Read-Only`，且底层 bridge 固定 `--device-auth-readonly`/write=`EROFS`。因此不再因缺失 `MNT_RDONLY` 主动杀掉已成功 mount，并记录 warning 说明双层 fail-closed 保证。
+- 真实实体 `/dev/disk4` 端到端 smoke 输出 `RESULT=XPC_MOUNT_SMOKE_OK`；最终状态 `authorized=true mounted=true rawAccessReady=true`，`/Volumes/EDP-NTFS` 可读取真实“交换区”文件，Finder 已打开该目录。
+- 只读负向验证：对 `/Volumes/EDP-NTFS/.edp-readonly-probe` 的 `touch` 返回非零且文件不存在；本里程碑仍未对实体 U 盘执行任何成功写入，A6 physical write 保持不做。

@@ -319,11 +319,19 @@ static int m_statfs(const char *path, struct statvfs *st) {
     return 0;
 }
 
+static void *m_init(struct fuse_conn_info *conn) {
+    (void)conn;
+    fprintf(stderr, "EDP_FUSE_READY\n");
+    fflush(stderr);
+    return NULL;
+}
+
 static struct fuse_operations ops = {
     .getattr = m_getattr, .readdir = m_readdir, .access = m_access,
     .open = m_open, .read = m_read, .write = m_write,
     .release = m_release, .flush = m_flush, .fsync = m_fsync,
     .getxattr = m_getxattr, .listxattr = m_listxattr, .statfs = m_statfs,
+    .init = m_init,
 };
 
 int main(int argc, char **argv) {

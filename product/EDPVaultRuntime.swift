@@ -139,9 +139,15 @@ private func discoverEDPDisks() throws -> [PhysicalDisk] {
     var answer: [PhysicalDisk] = []
     for media in try EDPNativeDeviceDiscovery.allWholeUSBMedia() {
         let rawPath = "/dev/r\(media.bsdName)"
-        guard FileManager.default.fileExists(atPath: rawPath),
-              let metadata = try? rawMetadataSnapshot(for: rawPath),
-              EDPMetadataProbe.recognizeReservedSectors(
+        guard FileManager.default.fileExists(atPath: rawPath) else { continue }
+        let metadata: EDPRawMetadataSnapshot
+        do {
+            metadata = try rawMetadataSnapshot(for: rawPath)
+        } catch {
+            NSLog("EDP discovery skipped %@ because raw metadata read failed: %@", media.bsdName, String(describing: error))
+            continue
+        }
+        guard EDPMetadataProbe.recognizeReservedSectors(
                   lba4: [UInt8](metadata.lba4),
                   lba7: [UInt8](metadata.lba7)
               ) != nil,
@@ -371,19 +377,13 @@ private final class MountManager {
 
         do {
             try waitUntil(seconds: 20) {
-                FileManager.default.isReadableFile(atPath: bridgeMount + "/volume.raw")
-                    || !fuse.isRunning
+                EDPNativeMountTable.isMountpoint(bridgeMount) || !fuse.isRunning
             }
-            guard fuse.isRunning,
-                  FileManager.default.isReadableFile(atPath: bridgeMount + "/volume.raw") else {
+            guard fuse.isRunning, EDPNativeMountTable.isMountpoint(bridgeMount) else {
                 throw fail("encrypted block bridge failed; see \(logPath)")
             }
 
             let decryptedVolume = bridgeMount + "/volume.raw"
-            let directMagic = try filesystemMagic(decryptedVolume)
-            guard directMagic == "NTFS" else {
-                throw fail("Finder read-only mode currently supports NTFS exchange volumes only")
-            }
             let mounted: (String, String?, Process?)
             mounted = try mountNTFSReadOnly(
                 decryptedVolume,
@@ -467,9 +467,15 @@ private final class MountManager {
         suffix: String,
         identity: (uid_t, gid_t)
     ) throws -> (String, String?, Process?) {
+        var probeEnvironment = ProcessInfo.processInfo.environment
+        probeEnvironment["DYLD_LIBRARY_PATH"] = binaryRoot
         let probe = try run(
-            binaryRoot + "/ntfs-3g.probe",
-            ["--readonly", device],
+            binaryRoot + "/edp-console-exec",
+            [
+                String(identity.0), String(identity.1), "--",
+                binaryRoot + "/ntfs-3g.probe", "--readonly", device,
+            ],
+            environment: probeEnvironment,
             accepted: Set(0...21)
         )
         guard probe.status == 0 else {
@@ -503,11 +509,12 @@ private final class MountManager {
         process.standardError = log
         try process.run()
         try waitUntil(seconds: 20) { EDPNativeMountTable.isMountpoint(mountpoint) || !process.isRunning }
-        guard process.isRunning,
-              EDPNativeMountTable.isMountpoint(mountpoint),
-              EDPNativeMountTable.isReadOnly(mountpoint) == true else {
+        guard process.isRunning, EDPNativeMountTable.isMountpoint(mountpoint) else {
             process.terminate()
             throw fail("NTFS-3G Finder read-only mount failed; see \(logPath)")
+        }
+        if EDPNativeMountTable.isReadOnly(mountpoint) != true {
+            NSLog("macFUSE FSKit did not surface MNT_RDONLY for %@; relying on NTFS-3G ro policy plus the read-only encrypted block bridge", mountpoint)
         }
         return ("NTFS (read-only)", mountpoint, process)
     }
@@ -764,7 +771,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             self.rawAuthorization = rawAuthorization
             for type in verified { failedMounts.remove("\(deviceID):\(type)") }
         }
-        reconcile()
+        try retryMount(deviceID: deviceID)
     }
 
     func grantRawAccess(_ authorization: Data) throws {
@@ -775,23 +782,52 @@ private final class EDPDaemonController: @unchecked Sendable {
             rawAuthorization = authorization
             failedMounts.removeAll()
         }
-        reconcile()
     }
 
     func retryMount(deviceID: String) throws {
         try queue.sync {
-            guard rawAuthorization != nil else {
-                throw fail("raw-device access is not authorized")
-            }
-            guard try discoverEDPDisks().contains(where: { $0.deviceID == deviceID }) else {
-                throw fail("EDP device is no longer connected")
-            }
-            guard try store.load().records.contains(where: { $0.deviceID == deviceID }) else {
-                throw fail("EDP device is not authorized")
-            }
             failedMounts = failedMounts.filter { !$0.hasPrefix("\(deviceID):") }
+            try mountDeviceLocked(deviceID: deviceID)
         }
-        reconcile()
+    }
+
+    private func mountDeviceLocked(deviceID: String) throws {
+        guard let rawAuthorization else {
+            throw fail("raw-device access is not authorized")
+        }
+        guard let disk = try discoverEDPDisks().first(where: { $0.deviceID == deviceID }) else {
+            throw fail("EDP device is no longer connected")
+        }
+        guard let record = try store.load().records.first(where: { $0.deviceID == deviceID }) else {
+            throw fail("EDP device is not authorized")
+        }
+
+        var mountedAny = manager.isMounted(deviceID: deviceID)
+        var failures = [String]()
+        for type in record.partitionTypes where !manager.contains(disk, type) {
+            let key = "\(deviceID):\(type)"
+            do {
+                var password = try store.password(for: record)
+                defer { secureZero(&password) }
+                try manager.mount(
+                    disk: disk,
+                    partitionType: type,
+                    password: password,
+                    rawAuthorization: rawAuthorization
+                )
+                failedMounts.remove(key)
+                mountedAny = true
+            } catch {
+                failedMounts.insert(key)
+                let detail = "partition \(type): \(error)"
+                failures.append(detail)
+                NSLog("EDP user-requested mount failed for %@ type %u: %@", deviceID, type, String(describing: error))
+            }
+        }
+
+        if !mountedAny && !failures.isEmpty {
+            throw fail(failures.joined(separator: "; "))
+        }
     }
 
     func revoke(deviceID: String) throws {

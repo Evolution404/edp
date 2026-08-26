@@ -1,36 +1,52 @@
 import AppKit
 import Darwin
 import Foundation
-import FSKit
 import ServiceManagement
 import Security
 import SwiftUI
 
-private func makeRawDeviceAuthorization() throws -> (AuthorizationRef, Data) {
+private func createAuthorizationRef() throws -> AuthorizationRef {
     var created: AuthorizationRef?
-    let createStatus = AuthorizationCreate(nil, nil, [], &created)
-    guard createStatus == errAuthorizationSuccess, let created else {
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(createStatus))
+    let status = AuthorizationCreate(nil, nil, [], &created)
+    guard status == errAuthorizationSuccess, let created else {
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
     }
+    return created
+}
+
+private func authorizationData(
+    for rightName: String,
+    using authorization: AuthorizationRef
+) throws -> Data {
     let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
-    let status = "system.privilege.admin".withCString { rightName in
-        var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
+    let status = rightName.withCString { name in
+        var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
         return withUnsafeMutablePointer(to: &item) { itemPointer in
             var rights = AuthorizationRights(count: 1, items: itemPointer)
-            return AuthorizationCopyRights(created, &rights, nil, flags, nil)
+            return AuthorizationCopyRights(authorization, &rights, nil, flags, nil)
         }
     }
     guard status == errAuthorizationSuccess else {
-        AuthorizationFree(created, [])
         throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
     }
+
     var external = AuthorizationExternalForm()
-    let externalStatus = AuthorizationMakeExternalForm(created, &external)
+    let externalStatus = AuthorizationMakeExternalForm(authorization, &external)
     guard externalStatus == errAuthorizationSuccess else {
-        AuthorizationFree(created, [])
         throw NSError(domain: NSOSStatusErrorDomain, code: Int(externalStatus))
     }
-    return (created, withUnsafeBytes(of: external) { Data($0) })
+    return withUnsafeBytes(of: external) { Data($0) }
+}
+
+private func makeRawDeviceAuthorization() throws -> (AuthorizationRef, Data) {
+    let authorization = try createAuthorizationRef()
+    do {
+        let data = try authorizationData(for: "system.privilege.admin", using: authorization)
+        return (authorization, data)
+    } catch {
+        AuthorizationFree(authorization, [])
+        throw error
+    }
 }
 
 @MainActor
@@ -118,18 +134,15 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func refreshFSKitState() {
-        FSClient.shared.fetchInstalledExtensions { [weak self] modules, _ in
-            Task { @MainActor in
-                self?.macFUSEFSKitReady = modules?.contains {
-                    $0.bundleIdentifier == "io.macfuse.app.fsmodule.macfuse" && $0.isEnabled
-                } ?? false
-            }
-        }
+        let appExtension = "/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
+        let framework = "/Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework"
+        macFUSEFSKitReady = FileManager.default.fileExists(atPath: appExtension)
+            && FileManager.default.fileExists(atPath: framework)
     }
 
     private func requireMacFUSEFSKit() -> Bool {
         guard macFUSEFSKitReady == true else {
-            lastError = "macFUSE 文件系统扩展尚未启用。请在系统设置 → 通用 → 登录项与扩展 → 文件系统扩展中启用 macFUSE，然后点刷新。"
+            lastError = "macFUSE 运行组件未安装完整，请重新安装 macFUSE 后再试。"
             return false
         }
         return true
@@ -163,28 +176,30 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    private func rawAuthorizationData() throws -> Data {
+    private func rawAuthorizationData(deviceID: String) throws -> Data {
+        guard let device = snapshot.devices.first(where: { $0.deviceID == deviceID }) else {
+            throw NSError(
+                domain: "com.edp.usbvault.authorization",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "EDP 设备已断开或尚未刷新"]
+            )
+        }
         if rawAuthorizationRef == nil {
-            let created = try makeRawDeviceAuthorization()
-            rawAuthorizationRef = created.0
-            return created.1
+            rawAuthorizationRef = try createAuthorizationRef()
         }
         guard let rawAuthorizationRef else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(errAuthorizationInvalidRef))
         }
-        var external = AuthorizationExternalForm()
-        let status = AuthorizationMakeExternalForm(rawAuthorizationRef, &external)
-        guard status == errAuthorizationSuccess else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-        }
-        return withUnsafeBytes(of: external) { Data($0) }
+        let rawPath = "/dev/r\(device.bsdName)"
+        let rightName = "sys.openfile.readonly.\(rawPath)"
+        return try authorizationData(for: rightName, using: rawAuthorizationRef)
     }
 
     func authorize(deviceID: String, password: String) {
         guard requireMacFUSEFSKit(), !password.isEmpty, let proxy = proxy() else { return }
         let rawAuthorization: Data
         do {
-            rawAuthorization = try rawAuthorizationData()
+            rawAuthorization = try rawAuthorizationData(deviceID: deviceID)
         } catch {
             lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
             return
@@ -204,35 +219,64 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    func grantRawAccess() {
+    func grantRawAccess(deviceID: String) {
         guard requireMacFUSEFSKit(), let proxy = proxy() else { return }
         let authorization: Data
         do {
-            authorization = try rawAuthorizationData()
+            authorization = try rawAuthorizationData(deviceID: deviceID)
         } catch {
             lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
             return
         }
         isBusy = true
-        proxy.grantRawAccess(authorization: authorization) { [weak self] errorMessage in
-            Task { @MainActor in
-                guard let self else { return }
-                self.isBusy = false
-                self.lastError = errorMessage
-                self.refresh()
+        proxy.grantRawAccess(authorization: authorization) { [weak self] grantError in
+            guard grantError == nil else {
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.isBusy = false
+                    self.lastError = grantError
+                    self.refresh()
+                }
+                return
+            }
+            proxy.retryMount(deviceID: deviceID) { [weak self] mountError in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.isBusy = false
+                    self.lastError = mountError
+                    self.refresh()
+                }
             }
         }
     }
 
     func retryMount(deviceID: String) {
         guard requireMacFUSEFSKit(), let proxy = proxy() else { return }
+        let authorization: Data
+        do {
+            authorization = try rawAuthorizationData(deviceID: deviceID)
+        } catch {
+            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
+            return
+        }
         isBusy = true
-        proxy.retryMount(deviceID: deviceID) { [weak self] errorMessage in
-            Task { @MainActor in
-                guard let self else { return }
-                self.isBusy = false
-                self.lastError = errorMessage
-                self.refresh()
+        proxy.grantRawAccess(authorization: authorization) { [weak self] grantError in
+            guard grantError == nil else {
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.isBusy = false
+                    self.lastError = grantError
+                    self.refresh()
+                }
+                return
+            }
+            proxy.retryMount(deviceID: deviceID) { [weak self] mountError in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.isBusy = false
+                    self.lastError = mountError
+                    self.refresh()
+                }
             }
         }
     }
@@ -301,7 +345,7 @@ struct EDPDeviceCard: View {
             if device.authorized {
                 HStack {
                     if !device.rawAccessReady {
-                        Button("启用磁盘访问") { model.grantRawAccess() }
+                        Button("启用磁盘访问") { model.grantRawAccess(deviceID: device.deviceID) }
                             .disabled(model.isBusy)
                     } else if !device.mounted {
                         Button("挂载交换区") { model.retryMount(deviceID: device.deviceID) }
@@ -358,10 +402,9 @@ struct ContentView: View {
 
             if model.macFUSEFSKitReady == false {
                 HStack {
-                    Label("macFUSE 文件系统扩展未启用，挂载操作已暂停", systemImage: "puzzlepiece.extension")
+                    Label("macFUSE 运行组件未安装完整，挂载操作已暂停", systemImage: "puzzlepiece.extension")
                         .foregroundStyle(.orange)
                     Spacer()
-                    Button("打开扩展设置") { model.openServiceSettings() }
                 }
             }
 
@@ -469,6 +512,68 @@ private final class EDPXPCDataResult: @unchecked Sendable {
 @main
 struct EDPUSBVaultApp: App {
     init() {
+        if let index = CommandLine.arguments.firstIndex(of: "--xpc-mount-smoke"),
+           CommandLine.arguments.count > index + 2 {
+            let bsdName = CommandLine.arguments[index + 1]
+            let deviceID = CommandLine.arguments[index + 2]
+            do {
+                let authorization = try createAuthorizationRef()
+                defer { AuthorizationFree(authorization, []) }
+                let rawPath = "/dev/r\(bsdName)"
+                let external = try authorizationData(
+                    for: "sys.openfile.readonly.\(rawPath)",
+                    using: authorization
+                )
+
+                let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+                connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+                connection.resume()
+                defer { connection.invalidate() }
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    fputs("XPC_MOUNT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
+                }) as? EDPVaultXPCProtocol else {
+                    print("RESULT=XPC_MOUNT_SMOKE_PROXY_UNAVAILABLE")
+                    exit(1)
+                }
+
+                let grantResult = EDPXPCSmokeResult()
+                let grantSemaphore = DispatchSemaphore(value: 0)
+                proxy.grantRawAccess(authorization: external) { errorMessage in
+                    grantResult.set(passed: errorMessage == nil, detail: errorMessage ?? "raw authorization accepted")
+                    grantSemaphore.signal()
+                }
+                guard grantSemaphore.wait(timeout: .now() + 15) == .success else {
+                    print("RESULT=XPC_MOUNT_SMOKE_GRANT_TIMEOUT")
+                    exit(1)
+                }
+                let grant = grantResult.snapshot()
+                guard grant.0 else {
+                    print("XPC_MOUNT_SMOKE_DETAIL=\(grant.1)")
+                    print("RESULT=XPC_MOUNT_SMOKE_GRANT_FAILED")
+                    exit(1)
+                }
+
+                let mountResult = EDPXPCSmokeResult()
+                let mountSemaphore = DispatchSemaphore(value: 0)
+                proxy.retryMount(deviceID: deviceID) { errorMessage in
+                    mountResult.set(passed: errorMessage == nil, detail: errorMessage ?? "mount completed")
+                    mountSemaphore.signal()
+                }
+                guard mountSemaphore.wait(timeout: .now() + 90) == .success else {
+                    print("RESULT=XPC_MOUNT_SMOKE_MOUNT_TIMEOUT")
+                    exit(1)
+                }
+                let mounted = mountResult.snapshot()
+                print("XPC_MOUNT_SMOKE_DETAIL=\(mounted.1)")
+                print(mounted.0 ? "RESULT=XPC_MOUNT_SMOKE_OK" : "RESULT=XPC_MOUNT_SMOKE_FAILED")
+                exit(mounted.0 ? 0 : 1)
+            } catch {
+                print("XPC_MOUNT_SMOKE_AUTH_ERROR=\(error.localizedDescription)")
+                print("RESULT=XPC_MOUNT_SMOKE_FAILED")
+                exit(1)
+            }
+        }
+
         if CommandLine.arguments.contains("--grant-raw-access-smoke") {
             do {
                 let authorization = try makeRawDeviceAuthorization()
