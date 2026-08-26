@@ -2,7 +2,35 @@ import AppKit
 import Darwin
 import Foundation
 import ServiceManagement
+import Security
 import SwiftUI
+
+private func makeRawDeviceAuthorization() throws -> (AuthorizationRef, Data) {
+    var created: AuthorizationRef?
+    let createStatus = AuthorizationCreate(nil, nil, [], &created)
+    guard createStatus == errAuthorizationSuccess, let created else {
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(createStatus))
+    }
+    let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
+    let status = "system.privilege.admin".withCString { rightName in
+        var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
+        return withUnsafeMutablePointer(to: &item) { itemPointer in
+            var rights = AuthorizationRights(count: 1, items: itemPointer)
+            return AuthorizationCopyRights(created, &rights, nil, flags, nil)
+        }
+    }
+    guard status == errAuthorizationSuccess else {
+        AuthorizationFree(created, [])
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+    }
+    var external = AuthorizationExternalForm()
+    let externalStatus = AuthorizationMakeExternalForm(created, &external)
+    guard externalStatus == errAuthorizationSuccess else {
+        AuthorizationFree(created, [])
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(externalStatus))
+    }
+    return (created, withUnsafeBytes(of: external) { Data($0) })
+}
 
 @MainActor
 final class EDPVaultViewModel: ObservableObject {
@@ -14,6 +42,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     private let serviceMode: String
     private let daemonService: SMAppService?
+    private var rawAuthorizationRef: AuthorizationRef?
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
     private var connection: NSXPCConnection?
 
@@ -112,10 +141,58 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
+    private func rawAuthorizationData() throws -> Data {
+        if rawAuthorizationRef == nil {
+            let created = try makeRawDeviceAuthorization()
+            rawAuthorizationRef = created.0
+            return created.1
+        }
+        guard let rawAuthorizationRef else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(errAuthorizationInvalidRef))
+        }
+        var external = AuthorizationExternalForm()
+        let status = AuthorizationMakeExternalForm(rawAuthorizationRef, &external)
+        guard status == errAuthorizationSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        return withUnsafeBytes(of: external) { Data($0) }
+    }
+
     func authorize(deviceID: String, password: String) {
         guard !password.isEmpty, let proxy = proxy() else { return }
+        let rawAuthorization: Data
+        do {
+            rawAuthorization = try rawAuthorizationData()
+        } catch {
+            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
+            return
+        }
         isBusy = true
-        proxy.authorize(deviceID: deviceID, password: Data(password.utf8)) { [weak self] errorMessage in
+        proxy.authorize(
+            deviceID: deviceID,
+            password: Data(password.utf8),
+            rawAuthorization: rawAuthorization
+        ) { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func grantRawAccess() {
+        guard let proxy = proxy() else { return }
+        let authorization: Data
+        do {
+            authorization = try rawAuthorizationData()
+        } catch {
+            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
+            return
+        }
+        isBusy = true
+        proxy.grantRawAccess(authorization: authorization) { [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -188,6 +265,10 @@ struct EDPDeviceCard: View {
 
             if device.authorized {
                 HStack {
+                    if !device.rawAccessReady {
+                        Button("启用磁盘访问") { model.grantRawAccess() }
+                            .disabled(model.isBusy)
+                    }
                     Button("安全弹出") { model.eject(deviceID: device.deviceID) }
                         .disabled(!device.mounted || model.isBusy)
                     Button("撤销授权", role: .destructive) { model.revoke(deviceID: device.deviceID) }
@@ -314,9 +395,154 @@ private final class EDPXPCSmokeResult: @unchecked Sendable {
     }
 }
 
+private final class EDPXPCDataResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data: Data?
+    private var errorMessage: String?
+
+    func set(data: Data) {
+        lock.lock()
+        self.data = data
+        lock.unlock()
+    }
+
+    func set(error: String) {
+        lock.lock()
+        errorMessage = error
+        lock.unlock()
+    }
+
+    func snapshot() -> (Data?, String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (data, errorMessage)
+    }
+}
+
 @main
 struct EDPUSBVaultApp: App {
     init() {
+        if CommandLine.arguments.contains("--grant-raw-access-smoke") {
+            do {
+                let authorization = try makeRawDeviceAuthorization()
+                defer { AuthorizationFree(authorization.0, []) }
+                let result = EDPXPCSmokeResult()
+                let semaphore = DispatchSemaphore(value: 0)
+                let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+                connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    result.set(passed: false, detail: error.localizedDescription)
+                    semaphore.signal()
+                }) as? EDPVaultXPCProtocol else {
+                    print("RESULT=RAW_ACCESS_XPC_PROXY_UNAVAILABLE")
+                    exit(1)
+                }
+                connection.resume()
+                proxy.grantRawAccess(authorization: authorization.1) { errorMessage in
+                    result.set(
+                        passed: errorMessage == nil,
+                        detail: errorMessage ?? "raw authorization accepted"
+                    )
+                    semaphore.signal()
+                }
+                guard semaphore.wait(timeout: .now() + 10) == .success else {
+                    connection.invalidate()
+                    print("RESULT=RAW_ACCESS_XPC_TIMEOUT")
+                    exit(1)
+                }
+                connection.invalidate()
+                let captured = result.snapshot()
+                print("RAW_ACCESS_XPC_DETAIL=\(captured.1)")
+                print(captured.0 ? "RESULT=RAW_ACCESS_XPC_OK" : "RESULT=RAW_ACCESS_XPC_FAILED")
+                exit(captured.0 ? 0 : 1)
+            } catch {
+                print("RAW_ACCESS_AUTH_ERROR=\(error.localizedDescription)")
+                print("RESULT=RAW_ACCESS_XPC_FAILED")
+                exit(1)
+            }
+        }
+
+        if CommandLine.arguments.contains("--xpc-diagnostics") {
+            let result = EDPXPCDataResult()
+            let semaphore = DispatchSemaphore(value: 0)
+            let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                result.set(error: error.localizedDescription)
+                semaphore.signal()
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_DIAGNOSTICS_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            connection.resume()
+            proxy.diagnostics { data in
+                result.set(data: data)
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 10) == .success else {
+                connection.invalidate()
+                print("RESULT=XPC_DIAGNOSTICS_TIMEOUT")
+                exit(1)
+            }
+            connection.invalidate()
+            let captured = result.snapshot()
+            if let error = captured.1 {
+                print("XPC_DIAGNOSTICS_ERROR=\(error)")
+                print("RESULT=XPC_DIAGNOSTICS_FAILED")
+                exit(1)
+            }
+            guard let data = captured.0 else {
+                print("RESULT=XPC_DIAGNOSTICS_EMPTY")
+                exit(1)
+            }
+            print(String(decoding: data, as: UTF8.self))
+            print("RESULT=PRIVILEGED_XPC_DIAGNOSTICS_OK")
+            exit(0)
+        }
+
+        if CommandLine.arguments.contains("--xpc-snapshot") {
+            let result = EDPXPCDataResult()
+            let semaphore = DispatchSemaphore(value: 0)
+            let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                result.set(error: error.localizedDescription)
+                semaphore.signal()
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_SNAPSHOT_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            connection.resume()
+            proxy.snapshot { data in
+                result.set(data: data)
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 10) == .success else {
+                connection.invalidate()
+                print("RESULT=XPC_SNAPSHOT_TIMEOUT")
+                exit(1)
+            }
+            connection.invalidate()
+            let captured = result.snapshot()
+            if let error = captured.1 {
+                print("XPC_SNAPSHOT_ERROR=\(error)")
+                print("RESULT=XPC_SNAPSHOT_FAILED")
+                exit(1)
+            }
+            guard let data = captured.0,
+                  let snapshot = try? JSONDecoder().decode(EDPXPCSnapshot.self, from: data) else {
+                print("RESULT=XPC_SNAPSHOT_DECODE_FAILED")
+                exit(1)
+            }
+            print("SNAPSHOT_SERVICE_VERSION=\(snapshot.serviceVersion)")
+            print("SNAPSHOT_DEVICE_COUNT=\(snapshot.devices.count)")
+            for device in snapshot.devices {
+                print("SNAPSHOT_DEVICE=\(device.bsdName)|\(device.deviceID)|\(device.vidPID)|\(device.sizeBytes)|authorized=\(device.authorized)|mounted=\(device.mounted)|rawAccessReady=\(device.rawAccessReady)|partitions=\(device.partitionTypes.map(String.init).joined(separator: ","))")
+            }
+            print("RESULT=PRIVILEGED_XPC_SNAPSHOT_OK")
+            exit(0)
+        }
+
         if CommandLine.arguments.contains("--xpc-smoke") {
             let result = EDPXPCSmokeResult()
             let semaphore = DispatchSemaphore(value: 0)

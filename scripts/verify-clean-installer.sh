@@ -31,6 +31,7 @@ LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.pl
 for path in \
   "bin/edp-vaultctl" \
   "bin/edp-readwrite-fuse" \
+  "bin/edp-raw-metadata" \
   "bin/libEDPReadWriteBridge.dylib" \
   "bin/diskimages2-attach" \
   "bin/ntfs-3g" \

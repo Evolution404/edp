@@ -92,6 +92,17 @@
   - EDP Crypto + NTFS-3G Read/Write E2E `32926380174`：success。
 - [ ] A6 / raw sparse backup / 真实物理 NTFS 写入：按用户要求本轮明确不执行，不计入本轮其余阶段结项。
 
+### macOS 26 实机 raw-device 权限收口
+
+- [x] 真机确认 system LaunchDaemon 即使 `euid=0`，直接 `open(/dev/rdisk5)` / `open(/dev/disk5)` 均返回 `EPERM`；把 daemon primary group 改成 `operator` 仍无效，已撤回该方案。
+- [x] 真机确认 console uid + effective gid `operator` 可以只读打开真实 `/dev/rdisk5`；产品改为 root daemon 启动 `edp-raw-metadata` 后立即降权，仅读取 LBA4/LBA7/LBA11/LBA12，因此插盘识别和密码 metadata 校验不需要管理员弹窗。
+- [x] Apple `/usr/libexec/authopen` 验证通过：同一个 `system.privilege.admin` AuthorizationExternalForm 在 whole disk unmount 后可取得 `/dev/rdisk5` 的 `O_RDONLY` 与 `O_RDWR` fd；`O_RDWR` 实验只 open/close，明确未执行 `pwrite`。
+- [x] 验证 AuthorizationRef 在 externalize 后释放，external form 仍可供 `authopen -extauth` 使用；daemon 因此只在内存保存 capability，不持久化管理员凭据。
+- [x] SwiftUI App → privileged XPC 真机授予 capability 成功：snapshot 从 `rawAccessReady=false` 变为 `rawAccessReady=true`，真实设备保持 `authorized=false / mounted=false`，未触发真实文件系统挂载。
+- [x] 真机 installer 升级发现并修复 PackageKit bundle relocation：旧 `com.edp.usbvault` 与历史 `EDP USB Vault*.localized` 路径会在 preinstall 清理，EDP App 作为固定 payload 安装到 `/Applications/EDP USB Vault.app`。
+- [x] 官方 macFUSE 5.3.3 在实机重新安装恢复后，`edp-vaultctl doctor` 返回 `RESULT=EDP_RUNTIME_READY`。
+- [ ] 真实物理 NTFS writable mount / `pwrite`：仍属于 A6，当前明确未执行。
+
 ## 变更日志
 
 ### 2026-08-26 — Tracker 初始化

@@ -103,8 +103,67 @@ private func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
     }
 }
 
+private struct EDPRawMetadataSnapshot {
+    let lba4: Data
+    let lba7: Data
+    let lba11: Data
+    let lba12: Data
+}
+
+private func runtimeBinaryRoot() -> String {
+    if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
+        return configuredRoot
+    }
+    return URL(fileURLWithPath: CommandLine.arguments[0])
+        .resolvingSymlinksInPath().deletingLastPathComponent().path
+}
+
+private func rawMetadataSnapshot(for rawPath: String) throws -> EDPRawMetadataSnapshot {
+    let uid = consoleIdentity().0
+    let result = try run(
+        runtimeBinaryRoot() + "/edp-raw-metadata",
+        [rawPath, String(uid)]
+    )
+    let sector = Int(EDPMetadataProbe.legacySectorByteLength)
+    guard result.stdout.count == sector * 4 else {
+        throw fail("raw metadata helper returned \(result.stdout.count) bytes; expected \(sector * 4)")
+    }
+    func slice(_ index: Int) -> Data {
+        let start = index * sector
+        return result.stdout.subdata(in: start..<(start + sector))
+    }
+    return EDPRawMetadataSnapshot(lba4: slice(0), lba7: slice(1), lba11: slice(2), lba12: slice(3))
+}
+
 private func discoverEDPDisks() throws -> [PhysicalDisk] {
-    try EDPNativeDeviceDiscovery.discoverEDPDisks()
+    var answer: [PhysicalDisk] = []
+    for media in try EDPNativeDeviceDiscovery.allWholeUSBMedia() {
+        let rawPath = "/dev/r\(media.bsdName)"
+        guard FileManager.default.fileExists(atPath: rawPath),
+              let metadata = try? rawMetadataSnapshot(for: rawPath),
+              EDPMetadataProbe.recognizeReservedSectors(
+                  lba4: [UInt8](metadata.lba4),
+                  lba7: [UInt8](metadata.lba7)
+              ) != nil,
+              let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+                  [UInt8](metadata.lba11),
+                  vidHex: media.vid,
+                  pidHex: media.pid,
+                  sizeBytes: media.size
+              ) else {
+            continue
+        }
+        answer.append(PhysicalDisk(
+            bsdName: media.bsdName,
+            rawPath: rawPath,
+            sizeBytes: media.size,
+            mediaName: media.mediaName,
+            vidHex: media.vid,
+            pidHex: media.pid,
+            deviceID: deviceID
+        ))
+    }
+    return answer.sorted { $0.bsdName < $1.bsdName }
 }
 
 private func makeCredentialStore() throws -> EDPCredentialStore {
@@ -251,7 +310,7 @@ private final class MountManager {
         for key in keys { unmount(key: key) }
     }
 
-    func mount(disk: PhysicalDisk, partitionType: UInt32, password: [UInt8]) throws {
+    func mount(disk: PhysicalDisk, partitionType: UInt32, password: [UInt8], rawAuthorization: Data) throws {
         let sessionKey = key(disk, partitionType)
         guard sessions[sessionKey] == nil else { return }
         let suffix = safeName(disk.deviceID) + "-\(partitionType)"
@@ -270,7 +329,7 @@ private final class MountManager {
         let fuse = Process()
         fuse.executableURL = URL(fileURLWithPath: binaryRoot + "/edp-readwrite-fuse")
         fuse.arguments = [
-            "--device", disk.rawPath, disk.vidHex, disk.pidHex,
+            "--device-auth", disk.rawPath, disk.vidHex, disk.pidHex,
             String(disk.sizeBytes), String(partitionType), "0", bridgeMount,
         ]
         fuse.standardInput = passwordPipe
@@ -284,6 +343,7 @@ private final class MountManager {
         environment["DYLD_LIBRARY_PATH"] = binaryRoot
         fuse.environment = environment
         try fuse.run()
+        passwordPipe.fileHandleForWriting.write(rawAuthorization)
         passwordPipe.fileHandleForWriting.write(Data(password))
         try passwordPipe.fileHandleForWriting.close()
 
@@ -494,26 +554,23 @@ private func selectDisk(_ argument: String?, from disks: [PhysicalDisk]) throws 
 }
 
 private func verifiedPartitionTypes(disk: PhysicalDisk, password: [UInt8]) throws -> [UInt32] {
-    let raw = try EDPFileRawDevice(
-        path: disk.rawPath,
-        declaredSizeBytes: disk.sizeBytes,
-        writable: false
-    )
-    var verified = [UInt32]()
-    for type: UInt32 in [2, 4] {
-        let request = EDPReadOnlyUnlockRequest(
-            vidHex: disk.vidHex,
-            pidHex: disk.pidHex,
-            deviceSizeBytes: disk.sizeBytes,
-            passwordBytes: password,
-            partitionType: type
-        )
-        if (try? EDPReadOnlyUnlock.unlock(raw: raw, request: request)) != nil {
-            verified.append(type)
-        }
+    let metadata = try rawMetadataSnapshot(for: disk.rawPath)
+    guard let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+        [UInt8](metadata.lba11),
+        vidHex: disk.vidHex,
+        pidHex: disk.pidHex,
+        sizeBytes: disk.sizeBytes
+    ), deviceID == disk.deviceID else {
+        throw fail("EDP device identity changed during authorization")
     }
+    let plain = try EDPVolumeMetadata.decodeLBA12(
+        [UInt8](metadata.lba12),
+        deviceID: deviceID
+    )
+    let volumes = try EDPVolumeMetadata.parseLBA12Entries(plain, password: password)
+    let verified = volumes.map(\.partitionType).filter { $0 == 2 || $0 == 4 }
     guard !verified.isEmpty else { throw fail("password did not unlock EDP partition 2 or 4") }
-    return verified
+    return Array(Set(verified)).sorted()
 }
 
 private func authorize(_ diskArgument: String?) throws {
@@ -536,6 +593,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     private let manager: MountManager
     private let queue = DispatchQueue(label: "com.edp.usbvault.controller")
     private var failureDeadline = [String: Date]()
+    private var rawAuthorization: Data?
 
     init() throws {
         store = try makeCredentialStore()
@@ -553,6 +611,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 let disks = try discoverEDPDisks()
                 manager.removeMissing(availableBSD: Set(disks.map(\.bsdName)))
                 let records = try store.load().records
+                guard let rawAuthorization else { return }
                 for disk in disks {
                     guard let record = records.first(where: { $0.deviceID == disk.deviceID }) else {
                         continue
@@ -563,7 +622,12 @@ private final class EDPDaemonController: @unchecked Sendable {
                         do {
                             var password = try store.password(for: record)
                             defer { secureZero(&password) }
-                            try manager.mount(disk: disk, partitionType: type, password: password)
+                            try manager.mount(
+                                disk: disk,
+                                partitionType: type,
+                                password: password,
+                                rawAuthorization: rawAuthorization
+                            )
                             failureDeadline.removeValue(forKey: key)
                         } catch {
                             NSLog("EDP auto-mount failed for %@ type %u: %@", disk.deviceID, type, String(describing: error))
@@ -592,6 +656,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                         sizeBytes: disk.sizeBytes,
                         authorized: record != nil,
                         mounted: manager.isMounted(deviceID: disk.deviceID),
+                        rawAccessReady: rawAuthorization != nil,
                         partitionTypes: record?.partitionTypes ?? []
                     )
                 }
@@ -606,16 +671,31 @@ private final class EDPDaemonController: @unchecked Sendable {
         }
     }
 
-    func authorize(deviceID: String, passwordData: Data) throws {
+    func authorize(deviceID: String, passwordData: Data, rawAuthorization: Data) throws {
         var password = [UInt8](passwordData)
         defer { secureZero(&password) }
+        guard rawAuthorization.count == MemoryLayout<AuthorizationExternalForm>.size else {
+            throw fail("invalid raw-device authorization payload")
+        }
         try queue.sync {
             guard let disk = try discoverEDPDisks().first(where: { $0.deviceID == deviceID }) else {
                 throw fail("EDP device is no longer connected")
             }
             let verified = try verifiedPartitionTypes(disk: disk, password: password)
             try store.put(deviceID: deviceID, password: password, partitionTypes: verified)
+            self.rawAuthorization = rawAuthorization
             for type in verified { failureDeadline.removeValue(forKey: "\(deviceID):\(type)") }
+        }
+        reconcile()
+    }
+
+    func grantRawAccess(_ authorization: Data) throws {
+        guard authorization.count == MemoryLayout<AuthorizationExternalForm>.size else {
+            throw fail("invalid raw-device authorization payload")
+        }
+        queue.sync {
+            rawAuthorization = authorization
+            failureDeadline.removeAll()
         }
         reconcile()
     }
@@ -635,11 +715,13 @@ private final class EDPDaemonController: @unchecked Sendable {
         queue.sync {
             let payload: [String: Any] = [
                 "mounts": manager.mountedSummaries(),
+                "rawAccessReady": rawAuthorization != nil,
                 "nativeMountCount": EDPNativeMountTable.entries().count,
                 "legacyDiscoveryCLI": false,
                 "legacyMountCLI": false,
                 "eventDrivenDiscovery": true,
                 "credentialStore": "System Keychain",
+                "deviceDiscoveryDiagnostics": EDPNativeDeviceDiscovery.diagnosticReport(),
             ]
             return (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         }
@@ -668,9 +750,22 @@ private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCP
         reply(controller.snapshotData())
     }
 
-    func authorize(deviceID: String, password: Data, withReply reply: @escaping (String?) -> Void) {
+    func authorize(deviceID: String, password: Data, rawAuthorization: Data, withReply reply: @escaping (String?) -> Void) {
         do {
-            try controller.authorize(deviceID: deviceID, passwordData: password)
+            try controller.authorize(
+                deviceID: deviceID,
+                passwordData: password,
+                rawAuthorization: rawAuthorization
+            )
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func grantRawAccess(authorization: Data, withReply reply: @escaping (String?) -> Void) {
+        do {
+            try controller.grantRawAccess(authorization)
             reply(nil)
         } catch {
             reply(String(describing: error))
@@ -729,7 +824,7 @@ private func doctor() -> Int32 {
     let macFUSEOK = FileManager.default.fileExists(atPath: macFUSE)
     print("MACFUSE_RUNTIME=\(macFUSEOK ? "OK" : "MISSING")")
     ok = ok && macFUSEOK
-    for tool in ["edp-readwrite-fuse", "diskimages2-attach", "ntfs-3g", "ntfs-3g.probe", "ntfslabel"] {
+    for tool in ["edp-readwrite-fuse", "edp-raw-metadata", "diskimages2-attach", "ntfs-3g", "ntfs-3g.probe", "ntfslabel"] {
         let path = productRoot + "/bin/" + tool
         let present = FileManager.default.isExecutableFile(atPath: path)
         print("TOOL_\(tool.uppercased().replacingOccurrences(of: ".", with: "_"))=\(present ? "OK" : "MISSING")")

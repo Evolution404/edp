@@ -52,6 +52,31 @@ final class EDPFileRawDevice: EDPRawWritable {
         self.writable = writable
     }
 
+    init(
+        fileDescriptor: Int32,
+        declaredSizeBytes: UInt64,
+        writable: Bool
+    ) throws {
+        guard fileDescriptor >= 0, declaredSizeBytes > 0 else {
+            throw EDPNativeCoreError.invalidInput("invalid inherited raw file descriptor")
+        }
+        let flags = Darwin.fcntl(fileDescriptor, F_GETFL)
+        guard flags >= 0 else {
+            throw EDPNativeCoreError.invalidInput("fcntl(F_GETFL) failed for inherited raw fd: errno=\(errno)")
+        }
+        let accessMode = flags & O_ACCMODE
+        if writable && accessMode == O_RDONLY {
+            throw EDPNativeCoreError.invalidInput("inherited raw fd is not writable")
+        }
+        let duplicated = Darwin.dup(fileDescriptor)
+        guard duplicated >= 0 else {
+            throw EDPNativeCoreError.invalidInput("dup failed for inherited raw fd: errno=\(errno)")
+        }
+        fd = duplicated
+        byteCount = declaredSizeBytes
+        self.writable = writable
+    }
+
     deinit {
         Darwin.close(fd)
     }

@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           xcrun swiftc -swift-version 6 -strict-concurrency=complete \
-            -framework AppKit -framework SwiftUI -framework ServiceManagement \
+            -framework AppKit -framework SwiftUI -framework ServiceManagement -framework Security \
             product/EDPXPCProtocol.swift \
             product/App/EDPUSBVaultApp.swift \
             -o "${RUNNER_TEMP}/edp-usb-vault-app"
@@ -71,6 +71,9 @@ jobs:
           grep -F 'EDPDiskImages2Publisher' product/EDPVaultRuntime.swift
           ! grep -F 'run(binaryRoot + "/diskimages2-attach"' product/EDPVaultRuntime.swift
           grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
+          cc -Wall -Wextra product/EDPRawMetadataHelper.c -o "${RUNNER_TEMP}/edp-raw-metadata"
+          grep -F 'authopen' native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c
+          echo 'RESULT=RAW_DEVICE_AUTHORIZATION_SURFACE_OK'
           echo 'RESULT=SWIFTUI_XPC_PRODUCT_SURFACE_OK'
           echo 'RESULT=DISKIMAGES2_PRIVATE_API_ISOLATED_TO_ADAPTER'
 

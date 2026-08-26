@@ -131,10 +131,10 @@ xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
 FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 /usr/bin/cc native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c \
-  -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} \
+  -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} -framework Security \
   "${SWIFT_LIB}" -Wl,-rpath,"${WORK_DIR}" -o "${FUSE_BIN}"
 
-for symbol in _edp_rw_open _edp_rw_open_device _edp_rw_size _edp_rw_read \
+for symbol in _edp_rw_open _edp_rw_open_device _edp_rw_open_device_fd _edp_rw_size _edp_rw_read \
   _edp_rw_write _edp_rw_sync _edp_rw_close; do
   /usr/bin/nm -gU "${SWIFT_LIB}" | /usr/bin/grep -F "${symbol}" >/dev/null
 done

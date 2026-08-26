@@ -11,6 +11,7 @@ struct EDPXPCDevice: Codable, Hashable, Sendable, Identifiable {
     let sizeBytes: UInt64
     let authorized: Bool
     let mounted: Bool
+    let rawAccessReady: Bool
     let partitionTypes: [UInt32]
 }
 
@@ -22,7 +23,8 @@ struct EDPXPCSnapshot: Codable, Sendable {
 
 @objc protocol EDPVaultXPCProtocol {
     func snapshot(withReply reply: @escaping (Data) -> Void)
-    func authorize(deviceID: String, password: Data, withReply reply: @escaping (String?) -> Void)
+    func authorize(deviceID: String, password: Data, rawAuthorization: Data, withReply reply: @escaping (String?) -> Void)
+    func grantRawAccess(authorization: Data, withReply reply: @escaping (String?) -> Void)
     func revoke(deviceID: String, withReply reply: @escaping (String?) -> Void)
     func eject(deviceID: String, withReply reply: @escaping (String?) -> Void)
     func diagnostics(withReply reply: @escaping (Data) -> Void)

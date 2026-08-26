@@ -28,5 +28,7 @@
   <false/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>EDP USB Vault 需要访问您插入的 EDP 加密U盘以完成识别、解锁和挂载。</string>
 </dict>
 </plist>

@@ -135,6 +135,24 @@ enum EDPNativeDeviceDiscovery {
         return answer
     }
 
+    static func diagnosticReport() -> [String] {
+        do {
+            let media = try allWholeUSBMedia()
+            if media.isEmpty { return ["no whole USB media"] }
+            return media.map { item in
+                [
+                    "bsd=\(item.bsdName)",
+                    "usb=\(item.vid):\(item.pid)",
+                    "size=\(item.size)",
+                    "name=\(item.mediaName)",
+                    "rawAccess=delegated",
+                ].joined(separator: ";")
+            }
+        } catch {
+            return ["discovery_error:\(error)"]
+        }
+    }
+
     static func discoverEDPDisks() throws -> [PhysicalDisk] {
         var answer: [PhysicalDisk] = []
         for media in try allWholeUSBMedia() {

@@ -47,6 +47,32 @@ private final class EDPReadWriteBridgeContext {
         )
         block = unlocked.block
     }
+
+    init(
+        rawFileDescriptor: Int32,
+        vidHex: String,
+        pidHex: String,
+        deviceSizeBytes: UInt64,
+        passwordBytes: [UInt8],
+        partitionType: UInt32
+    ) throws {
+        raw = try EDPFileRawDevice(
+            fileDescriptor: rawFileDescriptor,
+            declaredSizeBytes: deviceSizeBytes,
+            writable: true
+        )
+        let unlocked = try EDPReadWriteUnlock.unlock(
+            raw: raw,
+            request: EDPReadWriteUnlockRequest(
+                vidHex: vidHex,
+                pidHex: pidHex,
+                deviceSizeBytes: deviceSizeBytes,
+                passwordBytes: passwordBytes,
+                partitionType: partitionType
+            )
+        )
+        block = unlocked.block
+    }
 }
 
 private func logReadWriteBridgeError(_ message: String) {
@@ -127,6 +153,43 @@ public func edp_rw_open_device(
         return Unmanaged.passRetained(context).toOpaque()
     } catch {
         logReadWriteBridgeError("EDP_RW_OPEN_DEVICE_ERROR=\(error)\n")
+        return nil
+    }
+}
+
+@_cdecl("edp_rw_open_device_fd")
+public func edp_rw_open_device_fd(
+    _ rawFileDescriptor: Int32,
+    _ vidPointer: UnsafePointer<CChar>?,
+    _ pidPointer: UnsafePointer<CChar>?,
+    _ deviceSizeBytes: UInt64,
+    _ passwordPointer: UnsafePointer<UInt8>?,
+    _ passwordLength: UInt64,
+    _ partitionType: UInt32
+) -> UnsafeMutableRawPointer? {
+    guard rawFileDescriptor >= 0,
+          let vidPointer,
+          let pidPointer,
+          let passwordPointer,
+          passwordLength > 0,
+          passwordLength <= UInt64(Int.max) else {
+        return nil
+    }
+    let passwordBytes = Array(
+        UnsafeBufferPointer(start: passwordPointer, count: Int(passwordLength))
+    )
+    do {
+        let context = try EDPReadWriteBridgeContext(
+            rawFileDescriptor: rawFileDescriptor,
+            vidHex: String(cString: vidPointer),
+            pidHex: String(cString: pidPointer),
+            deviceSizeBytes: deviceSizeBytes,
+            passwordBytes: passwordBytes,
+            partitionType: partitionType
+        )
+        return Unmanaged.passRetained(context).toOpaque()
+    } catch {
+        logReadWriteBridgeError("EDP_RW_OPEN_DEVICE_FD_ERROR=\(error)\n")
         return nil
     }
 }

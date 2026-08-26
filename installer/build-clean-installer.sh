@@ -96,7 +96,7 @@ FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 # shellcheck disable=SC2086
 /usr/bin/cc "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c" \
-  -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} \
+  -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} -framework Security \
   "${RUNTIME_STAGE}/bin/libEDPReadWriteBridge.dylib" \
   -Wl,-rpath,@loader_path \
   -o "${RUNTIME_STAGE}/bin/edp-readwrite-fuse"
@@ -105,6 +105,10 @@ FUSE_LIBS="$(pkg-config --libs fuse)"
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/DiskImages2Attach.m" \
   -framework Foundation \
   -o "${RUNTIME_STAGE}/bin/diskimages2-attach"
+
+/usr/bin/cc -O2 -Wall -Wextra \
+  "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
+  -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
 
 for item in "${RUNTIME_STAGE}/bin/"* "${RUNTIME_STAGE}/lib/"*; do
   /usr/bin/codesign --force --sign - "${item}"
@@ -120,7 +124,7 @@ cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
 xcrun swiftc -O \
-  -framework AppKit -framework SwiftUI -framework ServiceManagement \
+  -framework AppKit -framework SwiftUI -framework ServiceManagement -framework Security \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
   -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"
@@ -223,6 +227,17 @@ OLD_CTL="/Library/Application Support/EDP USB Vault/bin/edp-vaultctl"
 if [[ -x "${OLD_CTL}" ]]; then
   "${OLD_CTL}" cleanup >/dev/null 2>&1 || true
 fi
+OLD_APP="/Applications/EDP USB Vault.app"
+if [[ -f "${OLD_APP}/Contents/Info.plist" ]]; then
+  OLD_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_APP}/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "${OLD_ID}" == "com.edp.usbvault" ]]; then
+    /bin/rm -rf "${OLD_APP}"
+  fi
+fi
+for RELOCATED_APP_DIR in /Applications/EDP\ USB\ Vault*.localized; do
+  [[ -e "${RELOCATED_APP_DIR}" ]] || continue
+  /bin/rm -rf "${RELOCATED_APP_DIR}"
+done
 exit 0
 PREINSTALL
 cat > "${SCRIPTS}/postinstall" <<'POSTINSTALL'
@@ -247,12 +262,16 @@ POSTINSTALL
 chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
 
 APP_COMPONENT="${BUILD_ROOT}/components/ZZ-EDP-USB-Vault.pkg"
+COMPONENT_PLIST="${BUILD_ROOT}/edp-component.plist"
 mkdir -p "${BUILD_ROOT}/components"
+/usr/bin/pkgbuild --analyze --root "${PAYLOAD}" "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c 'Delete :0' "${COMPONENT_PLIST}"
 /usr/bin/pkgbuild \
   --root "${PAYLOAD}" \
   --identifier com.edp.usbvault.runtime \
   --version "${VERSION}" \
   --install-location / \
+  --component-plist "${COMPONENT_PLIST}" \
   --scripts "${SCRIPTS}" \
   "${APP_COMPONENT}"
 

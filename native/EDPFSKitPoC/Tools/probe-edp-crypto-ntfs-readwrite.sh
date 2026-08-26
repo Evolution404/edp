@@ -306,7 +306,7 @@ xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
 FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 /usr/bin/cc native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c \
-  -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} \
+  -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} -framework Security \
   "${SWIFT_LIB}" -Wl,-rpath,"${WORK_DIR}" -o "${FUSE_BIN}"
 log "RESULT=EDP_NTFS3G_READWRITE_TOOLS_BUILT"
 
