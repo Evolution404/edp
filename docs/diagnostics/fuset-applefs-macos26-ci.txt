@@ -5,12 +5,12 @@ runner_os=26.5.2
 runner_build=25F84
 xcode=Xcode 26.6 Build version 17F113 
 raw_size=67108864
-backing_sha_before=f5bea6908d124f6046c26cc6cb911d21bcd571ac4b12d19b30c25f506392aef0
-backing_sha_after=unknown
-backing_meta_before=67108864:1787749201:100444
-backing_meta_after=unknown
+backing_sha_before=de19105c7fb823d9ff281889334f2e8717146bd2531636160f1c09325857486c
+backing_sha_after=de19105c7fb823d9ff281889334f2e8717146bd2531636160f1c09325857486c
+backing_meta_before=67108864:1787749395:100444
+backing_meta_after=67108864:1787749395:100444
 final_mount=/Volumes/EDP_FUSET_FINAL
-finder_enum_ok=unknown
+finder_enum_ok=true
 
 ## baseline raw diskutil
    Device Identifier:         disk8
@@ -33,7 +33,7 @@ finder_enum_ok=unknown
    Media Type:                Generic
    Protocol:                  Disk Image
    SMART Status:              Not Supported
-   Volume UUID:               36898D5C-16C8-34F2-AC48-96E5F143D8CC
+   Volume UUID:               5631BD98-7AD3-3C0D-BE3B-310137D926BC
 
    Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
    Device Block Size:         512 Bytes
@@ -56,7 +56,7 @@ finder_enum_ok=unknown
 
 
 ## hidden transport mount
-file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-2c91a8e0-014d-45dc-841d-325cb0428d7c/session.json on /Users/runner/work/_temp/edp-applefs-hidden-295d27da-688a-49a3-b96d-1d072dd636fc (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-161bb85b-fc0e-4377-b344-8d6053542c1d/session.json on /Users/runner/work/_temp/edp-applefs-hidden-4fe56e45-51e0-4e60-951a-44c0f6c02308 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 
 ## hdiutil attach
 /dev/disk8          	                               	/Volumes/EDP_FUSET_FINAL
@@ -82,7 +82,7 @@ file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-2c91a8e0-014d-
    Media Type:                Generic
    Protocol:                  Disk Image
    SMART Status:              Not Supported
-   Volume UUID:               36898D5C-16C8-34F2-AC48-96E5F143D8CC
+   Volume UUID:               5631BD98-7AD3-3C0D-BE3B-310137D926BC
 
    Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
    Device Block Size:         512 Bytes
@@ -103,7 +103,6 @@ file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-2c91a8e0-014d-
    Solid State:               Info not available
    Virtual:                   Yes
 
-FINAL_FS_TYPE=/
 
 ## final mount
 /dev/disk8 on /Volumes/EDP_FUSET_FINAL (hfs, local, nodev, nosuid, read-only, noowners, mounted by runner)
@@ -111,22 +110,23 @@ FINAL_FS_TYPE=/
 ## final POSIX listing
 /Volumes/EDP_FUSET_FINAL
 /Volumes/EDP_FUSET_FINAL/.fseventsd
-/Volumes/EDP_FUSET_FINAL/.fseventsd/0000000001860211
-/Volumes/EDP_FUSET_FINAL/.fseventsd/0000000001860212
+/Volumes/EDP_FUSET_FINAL/.fseventsd/000000000186806f
+/Volumes/EDP_FUSET_FINAL/.fseventsd/0000000001868070
 /Volumes/EDP_FUSET_FINAL/.fseventsd/fseventsd-uuid
 /Volumes/EDP_FUSET_FINAL/EDP Folder
 /Volumes/EDP_FUSET_FINAL/EDP Folder/NESTED.txt
 /Volumes/EDP_FUSET_FINAL/EDP_SENTINEL.txt
 
 ## Finder enumeration
+EDP FolderEDP_SENTINEL.txt
 
 ## read-only write attempt
 touch: /Volumes/EDP_FUSET_FINAL/SHOULD_NOT_WRITE: Read-only file system
 
 ## bridge log
-SESSION_ID=edp-fuset-2c91a8e0-014d-45dc-841d-325cb0428d7c
-SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-2c91a8e0-014d-45dc-841d-325cb0428d7c/session.json
-SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-2c91a8e0-0.sock
-MOUNTPOINT=/Users/runner/work/_temp/edp-applefs-hidden-295d27da-688a-49a3-b96d-1d072dd636fc
+SESSION_ID=edp-fuset-161bb85b-fc0e-4377-b344-8d6053542c1d
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-161bb85b-fc0e-4377-b344-8d6053542c1d/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-161bb85b-f.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-applefs-hidden-4fe56e45-51e0-4e60-951a-44c0f6c02308
 BACKING_SIZE=67108864
 mount process exited status=0
