@@ -1,0 +1,13 @@
+# FUSE-T writable RPC macOS 26 CI probe
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+
+## hidden mount
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-rw-eead6abe-770a-4dbd-a958-d32efd5f148f-k0epf13a/session.json on /Users/runner/work/_temp/rw-hidden-a1be4e54-ce81-41fb-9fe3-63637660dfbe (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+
+## hdiutil / diskutil
+
+## write RPC metadata
