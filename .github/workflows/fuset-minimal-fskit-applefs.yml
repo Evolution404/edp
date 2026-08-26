@@ -51,12 +51,14 @@ jobs:
 
           # HFS+ is used only to manufacture a deterministic Apple-readable
           # filesystem fixture. The EDP bridge never receives this type name.
+          # macOS 26 rejects -format UDRW for a size-created image unless a
+          # source folder/device is supplied; the default create format here is
+          # writable and sufficient for populate -> raw-device extraction.
           hdiutil create \
             -size 64m \
             -fs HFS+ \
             -volname "${VOLNAME}" \
             -layout NONE \
-            -format UDRW \
             "${TEMPLATE}"
 
           ATTACH_OUT="$(hdiutil attach "${TEMPLATE}")"
