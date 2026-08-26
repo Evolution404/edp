@@ -32,7 +32,7 @@ jobs:
       GOLDEN_NAME: "disk4_real_lexar"
       REAL_LBA11: "fixtures/real_disks/disk4/LBA11.bin"
       REAL_LBA12: "fixtures/real_disks/disk4/LBA12.bin"
-      VOLNAME: "EDP_EXFAT_RW"
+      VOLNAME: "EDP-EXFAT-RW"
       DIAG_PATH: "docs/diagnostics/fuset-edp-exfat-readwrite-macos26-ci.txt"
 
     steps:
