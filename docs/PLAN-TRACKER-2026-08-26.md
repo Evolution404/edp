@@ -49,7 +49,13 @@
   - `edp-raw-sparse` 的 physical source 只通过 `authopen` 取得 whole-disk `O_RDONLY` fd；没有 raw write mode。
   - backup 保持完整逻辑尺寸，以 64 KiB 默认粒度跳过全 0 block，并记录逻辑 SHA256、每个 stored extent 的 offset/length/SHA256、sector/chunk/block size 与实际占用。
   - restore 只允许新建普通文件，硬拒绝 `/dev/*` 输出；synthetic E2E 覆盖 head、LBA11/12、跨 block extent、分离中段 extent 与末尾 sector。
-- [ ] sparse backup 恢复/挂载/SHA256 验证。
+- [x] 真实 `disk5` whole-disk sparse backup 与 raw restore/SHA256 验证。
+  - source：`/dev/rdisk5`，全程 `authopen O_RDONLY`；backup 前 whole disk unmount，未执行物理写入。
+  - logical size：`124736503808`；stored extents：`17`；stored extent bytes：`13241155584`；allocated bytes：`13250199552`。
+  - source/backup/restored logical SHA256：`61e54385b087e70f5378968114a04f8af9b785b2057172830d62629231924423`。
+  - manifest SHA256：`a63f33eaa905a82684520f9bbd45e6da865ee237ffe6881f8b2019851ea0f123`；末尾仍保留 3 个独立 stored extents。
+  - backup final verify 与独立 restored sparse image verify 均返回 `RESULT=EDP_RAW_SPARSE_VERIFY_OK`；restore 返回 `RESULT=EDP_RAW_SPARSE_RESTORE_OK`。
+- [ ] restored image EDP 解密 → NTFS 只读挂载 → 文件 SHA256/关键 metadata 与真实盘比对。
 
 ### Phase B — 原生化
 
@@ -246,3 +252,12 @@
 - physical backup 唯一授权入口 `EDPRawReadAuthorization.c` 只接受严格的 `/dev/rdiskN` whole-disk path，并固定请求 `O_RDONLY`。
 - restore 明确禁止全部 `/dev/*` 目标；在真实备份恢复与挂载校验完成前，仍不进行任何物理盘写入。
 - 本地 64 MiB synthetic raw E2E 已通过 backup → verify → restore → verify，恢复前后 logical SHA256 一致，完整逻辑尺寸保留且稀疏实际占用低于逻辑尺寸 1/4；GitHub Actions run 待首次 push 后补录。
+
+### 2026-08-26 — A6 真实 raw backup/restore 里程碑
+
+- commit `28fd935` exact-head CI 全绿：Raw Sparse Backup Safety `32932022923`、Native Production Path `32932022703`、NTFS Fail-Closed Safety `32932022774`、Clean Installer `32932022780`。
+- 对真实 `disk5 / 21c4:0cd1 / 124736503808` 完成 whole-disk 顺序只读扫描；扫描前成功 unmount `/dev/disk5s1`，授权 helper 固定使用 `O_RDONLY`。
+- final sparse image 逻辑尺寸与物理盘完全一致；17 个 stored extents 合计 `13241155584` bytes，实际 APFS 占用 `13250199552` bytes，且包含物理盘尾部 extents。
+- manifest 的 source logical SHA256 为 `61e54385b087e70f5378968114a04f8af9b785b2057172830d62629231924423`；final backup 全逻辑 verify 匹配。
+- 已按 manifest 恢复到第二个独立 sparse regular file，恢复镜像 logical size、17 个 extent SHA 与全逻辑 SHA 全部匹配，`RESULT=EDP_RAW_SPARSE_RESTORE_OK`。
+- raw 层 backup/restore 门槛已通过；EDP 解密后的 NTFS 文件/metadata 比对尚未完成，因此真实物理 writable mount / `pwrite` 仍禁止。
