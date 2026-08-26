@@ -219,6 +219,7 @@ start_ntfs() {
     "${NTFS_RUNTIME}/bin/ntfs-3g" \
       -o backend=fskit \
       -o no_detach \
+      -o local \
       -o norecover \
       -o windows_names \
       -o streams_interface=openxattr \
@@ -335,6 +336,19 @@ log "STEP=NTFS_MKDIR_OK"
 diagnose_ntfs_state "AFTER_MKDIR"
 sleep 0.1
 diagnose_ntfs_state "AFTER_MKDIR_100MS"
+ROOT_CREATE_PATH="${NTFS_MOUNT}/root-create.tmp"
+NESTED_CREATE_PATH="${PROOF_DIR}/nested-create.tmp"
+set +e
+/usr/bin/touch "${ROOT_CREATE_PATH}"
+ROOT_CREATE_RC=$?
+/usr/bin/touch "${NESTED_CREATE_PATH}"
+NESTED_CREATE_RC=$?
+set -e
+log "NTFS_CREATE_PROBE root_rc=${ROOT_CREATE_RC} nested_rc=${NESTED_CREATE_RC}"
+if (( ROOT_CREATE_RC == 0 )); then /bin/rm -f "${ROOT_CREATE_PATH}"; fi
+if (( NESTED_CREATE_RC == 0 )); then /bin/rm -f "${NESTED_CREATE_PATH}"; fi
+diagnose_ntfs_state "AFTER_CREATE_PROBE"
+[[ ${ROOT_CREATE_RC} -eq 0 && ${NESTED_CREATE_RC} -eq 0 ]]
 log "STEP=NTFS_FILE_CREATE_BEGIN"
 python3 - "${PROOF_PATH}" "${TEMP_PATH}" <<'PY'
 import os

@@ -15,11 +15,14 @@
 
 ### Phase A — NTFS 读写
 
-- [ ] A1 NTFS mount 生命周期根因
-  - 当前证据：NTFS-3G 可在 macOS 26 CI 上建立 `backend=fskit` RW mount，但 mount 建立后进入实际 I/O 前异常消失。
-  - 最新失败 run：`32914814798`，commit `5d3decf`。
-  - 已确认不是 `ntfs-3g.probe`、NTFS 格式识别或“无法进入 RW mount”问题。
+- [x] A1 NTFS mount 生命周期根因
+  - 诊断 run：`32917076034`，commit `6cbcb68`。
+  - NTFS-3G PID 在 mount T0 / 100 ms / 500 ms / 1 s 全程存活；mount、`stat`、根目录 `readdir` 全部正常。
+  - `mkdir EDP-RW` 成功，100 ms 后 mount 和进程仍正常。
+  - 第一个普通文件 `create(O_CREAT)` 返回 `ENOENT`；失败时 mount 与 NTFS-3G 进程仍存活。
+  - 结论：问题不是 mount 生命周期，而是 NTFS-3G + macFUSE FSKit 的 regular-file create 路径。
 - [ ] A2 固化正确的 NTFS-3G FSKit 启动方式
+  - 当前实验：`direct decrypted image + local FSKit`，并分别验证 root create 与 nested create。
 - [ ] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
 - [ ] A4 dirty / hibernated NTFS fail-closed
 - [ ] A5 CI 与产品 NTFS mount 路径统一
@@ -59,4 +62,11 @@
 - NTFS-3G 一旦提前退出，会把 exit status 和完整 `ntfs-3g.log` 写入 CI report。
 - failure diagnostics 增加 macFUSE / FSKit unified log 与 PluginKit module 状态。
 - `bash -n`、`git diff --check` 已通过；若本机存在 `actionlint` 也已执行。
-- 状态：`A1 IN_PROGRESS`，等待本次 macOS 26 CI 给出生命周期根因证据。
+- 状态：该诊断由 run `32917076034` 完成，A1 已结项。
+
+### 2026-08-26 — A1 结项，进入 A2
+
+- run `32917076034` 明确排除了 NTFS-3G 进程提前退出和 mount 自动消失。
+- 故障点收敛到 regular-file create：目录创建/读取正常，普通文件 `O_CREAT` 返回 `ENOENT`。
+- 本机 `gromgit/fuse/ntfs-3g-mac 2026.7.7` 的标准 mount 配置使用 `local` 等 macFUSE 选项；之前 `local + DiskImages2 block device` 曾出现 hang，但尚未测试 `local + direct decrypted image`。
+- A2 第一项实验改为 `direct decrypted image + local FSKit`；另外增加 root/nested `touch` 分离测试，判断问题是否仅发生在新建目录下的 create。
