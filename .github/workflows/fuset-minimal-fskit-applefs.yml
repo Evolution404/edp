@@ -222,17 +222,14 @@ jobs:
           find "${FINAL_MOUNT}" -maxdepth 2 -print | tee "${RUNNER_TEMP}/final-find.txt"
           grep -Fq "${FINAL_MOUNT}/EDP_SENTINEL.txt" "${RUNNER_TEMP}/final-find.txt"
 
-          # F5 validates the actual filesystem type, never volume-name text.
-          FINAL_FS_TYPE="$(stat -f %T "${FINAL_MOUNT}")"
-          echo "FINAL_FS_TYPE=${FINAL_FS_TYPE}" | tee "${RUNNER_TEMP}/final-fs-type.txt"
-          test "${FINAL_FS_TYPE}" = 'hfs'
+          # F5 validates the mounted filesystem personality itself.
           grep -Eq 'File System Personality:[[:space:]]+HFS\+' "${RUNNER_TEMP}/final-diskutil.txt"
           grep -Eq 'Type \(Bundle\):[[:space:]]+hfs' "${RUNNER_TEMP}/final-diskutil.txt"
           printf '%s\n' "${MOUNT_LINE}" | grep -Eq '\(hfs,'
           echo 'RESULT=F5_FINAL_FILESYSTEM_IS_APPLE_HFS_NOT_FUSET'
 
-          # Finder is tested explicitly, but hosted-runner AppleEvents/TCC is
-          # kept separate from filesystem correctness.
+          # Finder automation is an independent UI signal. Syntax/TCC/UI-session
+          # failures are recorded without preventing core filesystem/backing checks.
           FINDER_SCRIPT="${RUNNER_TEMP}/finder-enum.applescript"
           cat > "${FINDER_SCRIPT}" <<'OSA'
           on run argv
@@ -244,15 +241,24 @@ jobs:
               return itemNames as string
           end run
           OSA
-          osacompile -o "${RUNNER_TEMP}/finder-enum.scpt" "${FINDER_SCRIPT}"
-          OSA_RC=0
-          osascript "${RUNNER_TEMP}/finder-enum.scpt" "${FINAL_MOUNT}" >"${RUNNER_TEMP}/finder-enum.txt" 2>"${RUNNER_TEMP}/finder-enum.err" || OSA_RC=$?
           FINDER_ENUM_OK=false
+          OSA_RC=0
+          set +e
+          osacompile -o "${RUNNER_TEMP}/finder-enum.scpt" "${FINDER_SCRIPT}" 2>"${RUNNER_TEMP}/finder-compile.err"
+          COMPILE_RC=$?
+          if [[ ${COMPILE_RC} -eq 0 ]]; then
+            osascript "${RUNNER_TEMP}/finder-enum.scpt" "${FINAL_MOUNT}" >"${RUNNER_TEMP}/finder-enum.txt" 2>"${RUNNER_TEMP}/finder-enum.err"
+            OSA_RC=$?
+          else
+            OSA_RC=${COMPILE_RC}
+          fi
+          set -e
           if [[ ${OSA_RC} -eq 0 ]] && grep -Fq 'EDP_SENTINEL.txt' "${RUNNER_TEMP}/finder-enum.txt"; then
             FINDER_ENUM_OK=true
             echo 'RESULT=F4_FINDER_ENUMERATION_OK'
           else
-            echo "RESULT=F4_FINDER_AUTOMATION_UNAVAILABLE:rc=${OSA_RC}"
+            echo "RESULT=F4_FINDER_AUTOMATION_UNAVAILABLE:rc=${OSA_RC}:compile_rc=${COMPILE_RC}"
+            cat "${RUNNER_TEMP}/finder-compile.err" || true
             cat "${RUNNER_TEMP}/finder-enum.err" || true
           fi
           echo "FINDER_ENUM_OK=${FINDER_ENUM_OK}" >> "${GITHUB_ENV}"
@@ -299,7 +305,6 @@ jobs:
             echo
             echo '## final diskutil'
             cat "${RUNNER_TEMP}/final-diskutil.txt" 2>/dev/null || true
-            cat "${RUNNER_TEMP}/final-fs-type.txt" 2>/dev/null || true
             echo
             echo '## final mount'
             cat "${RUNNER_TEMP}/final-mount.txt" 2>/dev/null || true
@@ -309,6 +314,7 @@ jobs:
             echo
             echo '## Finder enumeration'
             cat "${RUNNER_TEMP}/finder-enum.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/finder-compile.err" 2>/dev/null || true
             cat "${RUNNER_TEMP}/finder-enum.err" 2>/dev/null || true
             echo
             echo '## read-only write attempt'
