@@ -24,7 +24,7 @@
 - [ ] A2 固化正确的 NTFS-3G FSKit 启动方式
   - `direct decrypted image + local FSKit` 已由 run `32917383915` 否决：local module 启用 block resource，内部引出 `/dev/disk8`/Disk Arbitration NTFS probe，未稳定进入常规 mount I/O 阶段。
   - run `32917604083`（commit `fb475ce`）已确认：nonlocal mount 稳定，但 root-level `touch` 与新建目录下 `touch` 都返回 `ENOENT`；故障是整个 regular-file create 路径，不是新建目录后的局部缓存问题。
-  - 当前任务：验证 macFUSE 版本回归。官方最新仍为 5.3.3，但公开 issue #1180 报告 5.3.3 的 FSKit 路径出现 ENOENT，而降级 5.3.2 恢复正常；已建立 5.3.2/5.3.3 同一测试矩阵。
+  - 5.3.2/5.3.3 版本矩阵已完成到最小 FUSE2 create 层。run `32918481783`：两个版本都能稳定建立 nonlocal FSKit mount，`m_create(/created.txt)` 回调都实际被调用并返回成功，但调用方随即收到 `ENOSYS`（`Function not implemented`），未进入 write；因此问题已从 NTFS-3G/EDP/DiskImages2 中剥离，集中到 macFUSE FSKit ↔ libfuse2 create 后续操作序列/缺失 callback 兼容性。
 - [ ] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
 - [ ] A4 dirty / hibernated NTFS fail-closed
 - [ ] A5 CI 与产品 NTFS mount 路径统一
@@ -123,3 +123,5 @@
 - 该探针完全绕过 NTFS-3G、EDP crypto、DiskImages2，因此可以把 create 故障归因到 macFUSE FSKit/libfuse2 或 NTFS-3G 两者之一。
 - 已加入 5.3.2 / 5.3.3 CI matrix，且 artifact 名包含 macFUSE 版本，避免矩阵产物重名。
 - `bash -n`、C 编译、`git diff --check` 已通过。
+- run `32918481783` 已完成：5.3.2 与 5.3.3 都成功 mount；两边都打印 `FUSE2_CREATE path=/created.txt flags=0xa02`，证明 `create` callback 已真正执行，但 shell 端同时报 `Function not implemented`，`write` callback 未发生。
+- 结论：版本回退不能解决这个最小 create 问题；当前要追踪 `create` 返回之后 FSKit/libfuse2 请求的下一操作（优先检查 `ftruncate` / `fgetattr` / setattr 类 callback），直到最小 probe 能完成 create→write→read。
