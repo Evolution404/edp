@@ -1,0 +1,183 @@
+name: FUSE-T EDP Read-Write Regression Contract
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Extension/EDPRawIO.swift"
+      - "native/EDPFSKitPoC/Extension/EDPCrypto.swift"
+      - "native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift"
+      - "native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift"
+      - "native/EDPFSKitPoC/Extension/EDPBlockDevice.swift"
+      - "native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPReadWriteFixtureBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedReadWriteBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/ValidateEDPReadWriteMatrix.swift"
+      - "product/EDPRawReadWriteAuthorization.c"
+      - ".github/workflows/fuset-readwrite-regression-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuset-readwrite-regression-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  encrypted-block-matrix:
+    name: encrypted block R/W matrix
+    runs-on: macos-26
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify macOS 26 and Swift 6 strict build
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          xcrun swiftc -parse-as-library -swift-version 6 -warnings-as-errors \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/ValidateEDPReadWriteMatrix.swift \
+            -o "${RUNNER_TEMP}/ValidateEDPReadWriteMatrix"
+          echo 'RESULT=RW_MATRIX_SWIFT6_WARNINGS_AS_ERRORS_BUILD_OK'
+
+      - name: Exercise encrypted random, RMW, boundary, sync and reopen writes
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/ValidateEDPReadWriteMatrix" | tee "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'WRITE_CASE_PASS=head-1B' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'WRITE_CASE_PASS=cross-sm4-33B' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'WRITE_CASE_PASS=cross-4K-4097B' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'WRITE_CASE_PASS=aligned-4K' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'WRITE_CASE_PASS=aligned-64K' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'WRITE_CASE_PASS=aligned-1MiB' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'WRITE_CASE_PASS=tail-1B' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'RESULT=RW_RMW_NEIGHBORS_PRESERVED' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'RESULT=RW_BOUNDS_AND_ZERO_LENGTH_PASS' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'RESULT=RW_CIPHER_PERSISTENCE_AFTER_REOPEN' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'RESULT=RW_READONLY_BACKING_CANNOT_UPGRADE' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'RESULT=EDP_ENCRYPTED_READWRITE_MATRIX_PASS' "${RUNNER_TEMP}/rw-matrix.txt"
+
+      - name: Assert crypto write serialization contract
+        run: |
+          set -euo pipefail
+          SRC=native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+          grep -Fq 'private let ioLock = NSLock()' "${SRC}"
+          grep -Fq 'ioLock.lock()' "${SRC}"
+          grep -Fq 'plaintext.replaceSubrange' "${SRC}"
+          grep -Fq 'cipher.encryptAligned' "${SRC}"
+          echo 'RESULT=RW_SERIALIZED_CRYPTO_RMW_CONTRACT_OK'
+
+  thin-transport-contract:
+    name: thin transport writable contract
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compile filesystem-agnostic thin bridge
+        run: |
+          set -euo pipefail
+          SRC=native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift
+          xcrun swiftc -parse-as-library -swift-version 6 -warnings-as-errors "${SRC}" -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+          grep -Fq 'protocol FuseTWriteBacking: FuseTReadBacking' "${SRC}"
+          grep -Fq 'func pwrite(offset: Int64, data: Data) throws' "${SRC}"
+          grep -Fq 'func synchronize() throws' "${SRC}"
+          grep -Fq '"write_size": frame.payload.count' "${SRC}"
+          grep -Fq 'write exceeds fixed backing size' "${SRC}"
+          if grep -Eiq 'HFS\+|Apple_HFS|APFS|ExFAT|MSDOS|FAT32|NTFS|ntfs-3g|macfuse|libfuse|go-nfsv4' "${SRC}"; then
+            echo 'filesystem/provider knowledge leaked into thin transport' >&2
+            exit 1
+          fi
+          otool -L "${RUNNER_TEMP}/FuseTMinimalBridge" | tee "${RUNNER_TEMP}/thin-otool.txt"
+          ! grep -Eiq 'macfuse|libfuse|ntfs|go-nfsv4' "${RUNNER_TEMP}/thin-otool.txt"
+          echo 'RESULT=RW_THIN_TRANSPORT_FILESYSTEM_AGNOSTIC'
+
+      - name: Assert explicit RO and RW mode separation
+        run: |
+          set -euo pipefail
+          SRC=native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift
+          RW=native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPReadWriteFixtureBridge.swift
+          grep -Fq 'readOnly: Bool = true' "${SRC}"
+          grep -Fq 'readOnly: false' "${RW}"
+          grep -Fq 'PLAINTEXT_CACHE=none' "${RW}"
+          echo 'RESULT=RW_MODE_EXPLICIT_AND_RO_SAFE_MODE_RETAINED'
+
+  authorized-product-contract:
+    name: physical authorized R/W product contract
+    runs-on: macos-26
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compile narrow O_RDWR authopen helper
+        run: |
+          set -euo pipefail
+          C=product/EDPRawReadWriteAuthorization.c
+          xcrun clang -std=c17 -Wall -Wextra -Werror -c "${C}" -o "${RUNNER_TEMP}/EDPRawReadWriteAuthorization.o"
+          grep -Fq 'O_RDWR | O_CLOEXEC' "${C}"
+          grep -Fq 'static const char prefix[] = "/dev/rdisk"' "${C}"
+          grep -Fq 'authorization_length != sizeof(AuthorizationExternalForm)' "${C}"
+          ! grep -Eq 'O_TRUNC|O_CREAT' "${C}"
+          echo 'RESULT=RW_AUTHOPEN_FIXED_FLAGS_AND_WHOLE_RAW_DISK_ONLY'
+
+      - name: Build formal authorized EDP read-write bridge
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library -swift-version 6 -warnings-as-errors -D FUSET_BRIDGE_LIBRARY \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedReadWriteBridge.swift \
+            "${RUNNER_TEMP}/EDPRawReadWriteAuthorization.o" \
+            -framework Security \
+            -o "${RUNNER_TEMP}/FuseTEDPAuthorizedReadWriteBridge"
+          otool -L "${RUNNER_TEMP}/FuseTEDPAuthorizedReadWriteBridge" | tee "${RUNNER_TEMP}/authorized-otool.txt"
+          ! grep -Eiq 'macfuse|libfuse|ntfs|go-nfsv4' "${RUNNER_TEMP}/authorized-otool.txt"
+          SRC=native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedReadWriteBridge.swift
+          grep -Fq 'rawDevice.hasPrefix("/dev/rdisk")' "${SRC}"
+          grep -Fq 'maximum: Int = 4096' "${SRC}"
+          grep -Fq 'secureZero(&password)' "${SRC}"
+          grep -Fq 'BACKING_MODE=EDP_AUTHORIZED_READWRITE_RANDOM_ACCESS' "${SRC}"
+          grep -Fq 'RAW_ACCESS=AUTHOPEN|O_RDWR|O_CLOEXEC' "${SRC}"
+          grep -Fq 'PLAINTEXT_CACHE=none' "${SRC}"
+          grep -Fq 'readOnly: false' "${SRC}"
+          echo 'RESULT=RW_AUTHORIZED_PRODUCT_BRIDGE_STRICT_BUILD_OK'
+
+      - name: Reject invalid product CLI before raw authorization
+        run: |
+          set -euo pipefail
+          BIN="${RUNNER_TEMP}/FuseTEDPAuthorizedReadWriteBridge"
+          run_reject() {
+            local label="$1"; shift
+            set +e
+            "${BIN}" "$@" >"${RUNNER_TEMP}/${label}.out" 2>&1 </dev/null
+            local rc=$?
+            set -e
+            test "${rc}" -ne 0
+            cat "${RUNNER_TEMP}/${label}.out"
+          }
+          run_reject regular-file --raw-device /tmp/not-a-device --vid 21c4 --pid 0cd1 --device-size 1048576 --partition-type 2 --mountpoint /tmp/edp-rw-test
+          grep -Fq 'raw device must be /dev/rdiskN' "${RUNNER_TEMP}/regular-file.out"
+          run_reject partition-node --raw-device /dev/rdisk8s1 --vid 21c4 --pid 0cd1 --device-size 1048576 --partition-type 2 --mountpoint /tmp/edp-rw-test
+          grep -Fq 'raw device must be /dev/rdiskN' "${RUNNER_TEMP}/partition-node.out"
+          run_reject bad-type --raw-device /dev/rdisk8 --vid 21c4 --pid 0cd1 --device-size 1048576 --partition-type 3 --mountpoint /tmp/edp-rw-test
+          grep -Fq 'invalid device size or partition type' "${RUNNER_TEMP}/bad-type.out"
+          run_reject zero-size --raw-device /dev/rdisk8 --vid 21c4 --pid 0cd1 --device-size 0 --partition-type 2 --mountpoint /tmp/edp-rw-test
+          grep -Fq 'invalid device size or partition type' "${RUNNER_TEMP}/zero-size.out"
+          echo 'RESULT=RW_PRODUCT_INVALID_INPUT_FAILS_BEFORE_DEVICE_OPEN'
