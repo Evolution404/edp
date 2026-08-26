@@ -7,7 +7,7 @@
 
 ## 当前总状态
 
-**状态：Phase A 已完成；Phase B 官方 FSKit 路径已跑通，正在最小化 helper/resource 契约**
+**状态：Phase A 已完成；Phase B 最小 resource 契约已提取；Phase C 已跑通 handshake/root/statfs/ENOENT，正在补目录与单文件 read**
 
 当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
 
@@ -51,10 +51,10 @@ Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applicat
 | B1 | ✅ | 获取与 FUSE-T 内置 libfuse 3.19 匹配的最小 hello 示例 | 新增 `native/EDPFSKitPoC/Tools/FuseTHello319.c`，`FUSE_USE_VERSION=319`；使用 FUSE-T 1.2.7 自带 headers/lib 编译成功；运行时报告 `FUSE library version: 3.19.0-rc0` |
 | B2 | ✅ | 仅从 `/private/tmp` 加载 libfuse3，运行 `backend=fskit` | 不向系统安装 core；`DYLD_LIBRARY_PATH` 指向解包后的临时 `libfuse3.4.dylib`；将 helper 通过 `FUSE_NFSSRV_PATH`/`_FUSE_DAEMON_PATH` 指向 `/private/tmp/.../go-nfsv4-1.2.7` 后，FSKit mount 成功 |
 | B3 | ✅ | 捕获官方 session directory / `session.json` | `/private/tmp/fuset-session-3466332312/session.json`；字段确认：`session_id`、`socket_path`、`auth_token`、`namedattr`、`readonly`；socket 位于 `~/Library/Group Containers/group.org.fuset.fskit-srv/s/*.sock` |
-| B4 | 🟡 | 捕获 security-scoped FSPathURLResource 创建方式 | 已捕获成功行为：FskitSrvModule 对同一 `session.json` 的 `probeResource`/`loadResource` 均获得可访问的 `FSPathURLResource`；直接 `/sbin/mount` 普通 file URL 会 EACCES。尚需提取 helper 如何向 FSKit 传递 security-scoped resource |
+| B4 | ✅ | 捕获 security-scoped FSPathURLResource 创建方式 | 反汇编 `go-nfsv4` 的 `mountArgs/runMountCommand` 并实机复现：调用 `/sbin/mount -o nobrowse,rdonly -t fuset <session.json普通文件路径> <mountpoint>` 即可。**不需要私有 security-scoped API**；此前 EACCES 的根因是错误传入 `file://...` URL 而不是普通 path。FskitSrvModule 会由系统收到可访问的 `FSPathURLResource` |
 | B5 | ✅ | 确认 `go-nfsv4` 在 FSKit backend 是否启动 | **会启动**：`go-nfsv4-1.2.7 -r --backend fskit <mountpoint>`；但 `lsof` 确认无 TCP listener，仅 Unix domain sockets。因此 FSKit backend 本身不是网络卷 |
 | B6 | ✅ | 记录 probe/load/mount 完整日志 | `probeResource → session init → usable result → loadResource → session ready → rpc connected → rpc handshake accepted → volume init → activate → mount`；`hello.txt` 实际读取成功，mount 显示 `fuse-t, local, ... fskit` |
-| B7 | ⏳ | 提取不依赖 libfuse/go-nfsv4 的最小 resource 契约 | 当前核心任务：拆出 `go-nfsv4` 的 FSKit-only session/socket/resource 逻辑，替换 19 MB helper |
+| B7 | ✅ | 提取不依赖 libfuse/go-nfsv4 的最小 resource 契约 | 已实机证明直接创建 `session.json` + app-group Unix socket，再调用 `/sbin/mount -o nobrowse,rdonly -t fuset <plain path> <mountpoint>`，FskitSrvModule 可直接连接 EDP-owned listener；无需 libfuse/go-nfsv4 参与 resource/mount 阶段 |
 
 已知失败样本（分支建立前）：
 
@@ -67,7 +67,7 @@ Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applicat
 
 结论：直接传普通 file URL 不够，必须复现官方 security-scoped resource 路径。
 
-Phase B 验收：**官方参考路径已通过；最小化契约 B4/B7 未完成。**
+Phase B 验收：**通过。官方参考路径和不依赖 libfuse/go-nfsv4 的最小 resource 契约均已复现。**
 
 已确认官方参考链：
 
@@ -90,16 +90,16 @@ FuseTHello319
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| C1 | ⏳ | 捕获首个 Unix socket handshake frame | 待执行 |
-| C2 | ⏳ | 解析 framing / request_id / payload | 待执行 |
-| C3 | ⏳ | 确认 `auth_token` 校验 | 待执行 |
-| C4 | ⏳ | 实现 ping/handshake | 待执行 |
-| C5 | ⏳ | 实现 root getattr / lookup / statfs | 待执行 |
+| C1 | ✅ | 捕获首个 Unix socket handshake frame | 首帧：8-byte header `uint32_be metadata_len + uint32_be payload_len`；请求 `{"request_id":1,"method":"handshake","auth_token":"..."}` |
+| C2 | ✅ | 解析 framing / request_id / payload | `readFskitRPCFrame/writeFskitRPCFrame` 反汇编与实测一致：8-byte BE 长度头 + JSON metadata + raw payload；metadata/payload/总长均受约 16 MiB 上限约束 |
+| C3 | ✅ | 确认 `auth_token` 校验 | handshake 请求携带 `session.json` 中的 `auth_token`；响应若缺 `ok=true` 或缺匹配的 `session_id` 均被 extension 拒绝 |
+| C4 | ✅ | 实现 ping/handshake | 可接受 handshake 响应必须为 `{"request_id":N,"ok":true,"session_id":"<匹配session_id>"}`；随后收到 `ping`，`{"request_id":N,"ok":true}` 可通过 |
+| C5 | 🟡 | 实现 root getattr / lookup / statfs | `get_root_attributes` 与 `statfs` 已通过并让纯 EDP-owned listener 成功完成 FSKit mount；`lookup` 的 ENOENT `{"ok":false,"errno":2,...}` 已验证；下一步补 `volume.raw` 成功 lookup |
 | C6 | ⏳ | 实现 open / read / close | 待执行 |
-| C7 | ⏳ | 实现 directory enumeration | 待执行 |
+| C7 | 🟡 | 实现 directory enumeration | 已捕获下一请求 `open_directory`；尚需实现 handle/enumerate/close |
 | C8 | ⏳ | 实现必须的 xattr 查询 | 待执行 |
 | C9 | ⏳ | 所有 mutation 返回只读错误 | 待执行 |
-| C10 | ⏳ | 验证无 TCP listener | 待执行 |
+| C10 | ✅ | 验证无 TCP listener | 官方 `backend=fskit` 与 EDP-owned direct listener 实验均无 TCP listener；仅使用 `~/Library/Group Containers/group.org.fuset.fskit-srv/s/*.sock` Unix socket |
 
 已知二进制字段（分支建立前）：
 
@@ -117,7 +117,24 @@ fetchAttributesForNodeID
 enumerateDirectory
 ```
 
-Phase C 验收：**未完成**。
+Phase C 验收：**部分通过。已在完全不启动 `go-nfsv4`/libfuse 的情况下完成 FSKit mount；剩余目录、单文件 read/xattr/只读 mutation。**
+
+当前最小已验证调用链：
+
+```text
+EDP-owned Unix listener
++ session.json
++ /sbin/mount -o nobrowse,rdonly -t fuset <plain-session-path> <mountpoint>
+→ signed FskitSrvModule.appex
+→ handshake
+→ ping
+→ get_root_attributes
+→ statfs
+→ lookup/ENOENT
+→ macOS mount 成功显示 (fuse-t, local, ... fskit)
+```
+
+握手响应的四组对照中，仅同时包含 `ok=true` 和匹配 `session_id` 的响应被接受；这已排除偶然成功。
 
 ---
 
@@ -207,11 +224,11 @@ Phase H 验收：**未完成**。
 立即执行：
 
 ```text
-B4/B7 定位 `go-nfsv4 --backend fskit` 如何创建/传递 security-scoped resource
+C7 实现 `open_directory/enumerate_directory/close_directory`
 ↓
-C1 捕获 Unix socket 首帧与 handshake framing
+C5/C6 实现 `/volume.raw` lookup/open/read/close
 ↓
-实现最小 EDP-owned helper，目标移除 19 MB `go-nfsv4`
+D1-D7 用固定 synthetic `volume.raw` 验证随机读和完整哈希
 ```
 
 ## 失败实验登记
@@ -220,6 +237,10 @@ C1 捕获 Unix socket 首帧与 handshake framing
 |---|---|---|---|
 | 2026-08-26（分支建立前） | 普通 file URL 直接 `/sbin/mount -F -t fuset` | extension 启动成功，但 security-scoped resource access `EACCES` | 不再用普通 file URL 直接调用作为正式路径 |
 | 2026-08-26（分支建立前） | 使用最新版 libfuse `hello.c` 编译 FUSE-T 内置 headers | 示例 API 与 FUSE-T 内置 libfuse 3.19 不匹配 | 后续固定使用 3.19 对应示例/API |
+| 2026-08-26 | 直接 `/sbin/mount -t fuset file:///private/tmp/.../session.json` | `probeResource` EACCES | 根因是传了 `file://` URL；正式 direct path 必须传普通文件路径 |
+| 2026-08-26 | 普通 session path + EDP-owned app-group Unix listener | FskitSrvModule 成功连接并发出 handshake；无需 go-nfsv4/libfuse | 证明 resource/mount 层可彻底移除 19 MB helper |
+| 2026-08-26 | handshake 响应 `{request_id}` / `{request_id,ok}` / `{request_id,session_id}` | 均 rejected | 必须同时 `ok=true` + matching `session_id` |
+| 2026-08-26 | handshake + ping + root_attrs + statfs + ENOENT lookup | **无 go-nfsv4 下 FSKit mount 成功** | 下一阻塞为 `open_directory` |
 
 ---
 
@@ -229,4 +250,5 @@ C1 捕获 Unix socket 首帧与 handshake framing
 |---|---|---|
 | `2fe69cd` | 新测试分支 + 计划 + 实时 tracker | 已 push |
 | `ac8c1b1` | Phase A：固化 FUSE-T 最小签名/运行时基线 | 已 push |
-| 待提交 | Phase B：FUSE-T 3.19 官方 `backend=fskit` 参考路径跑通 | 待 push |
+| `c44ca83` | Phase B：FUSE-T 3.19 官方 `backend=fskit` 参考路径跑通 | 已 push |
+| 待提交 | Phase B/C：提取 direct mount + RPC framing/handshake/root/statfs 最小契约 | 待 push |
