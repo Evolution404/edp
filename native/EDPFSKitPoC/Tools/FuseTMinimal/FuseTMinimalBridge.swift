@@ -15,12 +15,10 @@ private enum BridgeError: Error, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .usage(let message):
-            return message
+        case .usage(let message): return message
         case .posix(let operation, let code):
             return "\(operation): \(String(cString: strerror(code))) (\(code))"
-        case .protocolError(let message):
-            return message
+        case .protocolError(let message): return message
         }
     }
 }
@@ -30,12 +28,20 @@ private struct Frame {
     var payload: Data = Data()
 }
 
-/// Minimal byte-oriented contract between the FUSE-T RPC transport and its
-/// backing store. The transport does not know whether bytes come from a plain
-/// file, a real raw device, or an on-demand decrypted EDP partition.
+/// Byte-oriented contract between the FUSE-T RPC transport and backing data.
+/// The transport remains filesystem-agnostic: it only exposes a fixed-size
+/// `volume.raw` byte range. Filesystem semantics belong to the outer provider.
 protocol FuseTReadBacking: AnyObject {
     var size: Int64 { get }
     func pread(offset: Int64, length: Int) throws -> Data
+}
+
+/// Optional mutable extension used by the product read/write transport.
+/// Implementations must perform exact in-place writes and provide a durability
+/// boundary. The logical size is fixed for the lifetime of a session.
+protocol FuseTWriteBacking: FuseTReadBacking {
+    func pwrite(offset: Int64, data: Data) throws
+    func synchronize() throws
 }
 
 final class FixedBacking: FuseTReadBacking {
@@ -45,7 +51,6 @@ final class FixedBacking: FuseTReadBacking {
     init(path: String) throws {
         fd = Darwin.open(path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else { throw BridgeError.posix("open backing", errno) }
-
         var st = stat()
         guard fstat(fd, &st) == 0 else {
             let code = errno
@@ -55,32 +60,98 @@ final class FixedBacking: FuseTReadBacking {
         size = Int64(st.st_size)
     }
 
-    deinit {
-        Darwin.close(fd)
-    }
+    deinit { Darwin.close(fd) }
 
     func pread(offset: Int64, length: Int) throws -> Data {
-        guard offset >= 0, length >= 0 else {
-            throw BridgeError.protocolError("negative read offset/length")
-        }
-        if offset >= size || length == 0 {
-            return Data()
-        }
+        try exactPread(fd: fd, size: size, offset: offset, length: length)
+    }
+}
 
-        let wanted = min(Int64(length), size - offset)
-        var data = Data(count: Int(wanted))
+final class FixedReadWriteBacking: FuseTWriteBacking {
+    let fd: Int32
+    let size: Int64
+
+    init(path: String) throws {
+        fd = Darwin.open(path, O_RDWR | O_CLOEXEC)
+        guard fd >= 0 else { throw BridgeError.posix("open writable backing", errno) }
+        var st = stat()
+        guard fstat(fd, &st) == 0 else {
+            let code = errno
+            Darwin.close(fd)
+            throw BridgeError.posix("fstat writable backing", code)
+        }
+        size = Int64(st.st_size)
+    }
+
+    deinit { Darwin.close(fd) }
+
+    func pread(offset: Int64, length: Int) throws -> Data {
+        try exactPread(fd: fd, size: size, offset: offset, length: length)
+    }
+
+    func pwrite(offset: Int64, data: Data) throws {
+        guard offset >= 0 else { throw BridgeError.protocolError("negative write offset") }
+        let (end, overflow) = offset.addingReportingOverflow(Int64(data.count))
+        guard !overflow, end <= size else {
+            throw BridgeError.protocolError("write exceeds fixed backing size")
+        }
+        var completed = 0
+        while completed < data.count {
+            let count = data.withUnsafeBytes { rawBuffer -> Int in
+                guard let base = rawBuffer.baseAddress else { return 0 }
+                return Darwin.pwrite(
+                    fd,
+                    base.advanced(by: completed),
+                    data.count - completed,
+                    off_t(offset + Int64(completed))
+                )
+            }
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw BridgeError.posix("pwrite backing", errno)
+            }
+            guard count > 0 else { throw BridgeError.protocolError("zero-progress backing write") }
+            completed += count
+        }
+    }
+
+    func synchronize() throws {
+        if fcntl(fd, F_FULLFSYNC) != 0, fsync(fd) != 0 {
+            throw BridgeError.posix("synchronize backing", errno)
+        }
+    }
+}
+
+private func exactPread(fd: Int32, size: Int64, offset: Int64, length: Int) throws -> Data {
+    guard offset >= 0, length >= 0 else {
+        throw BridgeError.protocolError("negative read offset/length")
+    }
+    if offset >= size || length == 0 { return Data() }
+    let wanted = min(Int64(length), size - offset)
+    var data = Data(count: Int(wanted))
+    var completed = 0
+    while completed < Int(wanted) {
         let count = data.withUnsafeMutableBytes { rawBuffer -> Int in
             guard let base = rawBuffer.baseAddress else { return 0 }
-            return Darwin.pread(fd, base, Int(wanted), off_t(offset))
-        }
-        guard count >= 0 else { throw BridgeError.posix("pread backing", errno) }
-        guard count == Int(wanted) else {
-            throw BridgeError.protocolError(
-                "short backing read offset=\(offset) wanted=\(wanted) got=\(count)"
+            return Darwin.pread(
+                fd,
+                base.advanced(by: completed),
+                Int(wanted) - completed,
+                off_t(offset + Int64(completed))
             )
         }
-        return data
+        if count < 0 {
+            if errno == EINTR { continue }
+            throw BridgeError.posix("pread backing", errno)
+        }
+        guard count > 0 else {
+            throw BridgeError.protocolError(
+                "short backing read offset=\(offset) wanted=\(wanted) got=\(completed)"
+            )
+        }
+        completed += count
     }
+    return data
 }
 
 final class UnixRPCServer {
@@ -88,16 +159,24 @@ final class UnixRPCServer {
     private let sessionID: String
     private let authToken: String
     private let backing: any FuseTReadBacking
+    private let readOnly: Bool
     private var listenFD: Int32 = -1
     private var clientFD: Int32 = -1
     private var nextDirectoryHandle: Int64 = 100
     private var openDirectoryHandles = Set<Int64>()
 
-    init(socketPath: String, sessionID: String, authToken: String, backing: any FuseTReadBacking) {
+    init(
+        socketPath: String,
+        sessionID: String,
+        authToken: String,
+        backing: any FuseTReadBacking,
+        readOnly: Bool = true
+    ) {
         self.socketPath = socketPath
         self.sessionID = sessionID
         self.authToken = authToken
         self.backing = backing
+        self.readOnly = readOnly
     }
 
     deinit {
@@ -110,7 +189,6 @@ final class UnixRPCServer {
         unlink(socketPath)
         listenFD = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard listenFD >= 0 else { throw BridgeError.posix("socket", errno) }
-
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let utf8 = Array(socketPath.utf8CString)
@@ -119,11 +197,8 @@ final class UnixRPCServer {
         }
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
         withUnsafeMutableBytes(of: &address.sun_path) { bytes in
-            for (index, byte) in utf8.enumerated() {
-                bytes[index] = UInt8(bitPattern: byte)
-            }
+            for (index, byte) in utf8.enumerated() { bytes[index] = UInt8(bitPattern: byte) }
         }
-
         let bindResult = withUnsafePointer(to: &address) { pointer -> Int32 in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 Darwin.bind(listenFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
@@ -138,15 +213,9 @@ final class UnixRPCServer {
         clientFD = Darwin.accept(listenFD, nil, nil)
         guard clientFD >= 0 else { throw BridgeError.posix("accept", errno) }
         print("FUSE-T RPC connected")
-
         while true {
             let frame: Frame
-            do {
-                frame = try readFrame(fd: clientFD)
-            } catch is EOFError {
-                return
-            }
-
+            do { frame = try readFrame(fd: clientFD) } catch is EOFError { return }
             let response = try handle(frame)
             try writeFrame(fd: clientFD, frame: response)
         }
@@ -157,20 +226,16 @@ final class UnixRPCServer {
               let method = frame.metadata["method"] as? String else {
             throw BridgeError.protocolError("request missing request_id/method")
         }
-
         switch method {
         case "handshake":
             guard frame.metadata["auth_token"] as? String == authToken else {
                 return errorFrame(requestID: requestID, code: EACCES, message: "authentication failed")
             }
             return okFrame(requestID: requestID, fields: ["session_id": sessionID])
-
         case "ping":
             return okFrame(requestID: requestID)
-
         case "get_root_attributes":
             return okFrame(requestID: requestID, fields: ["root_attrs": rootAttributes()])
-
         case "statfs":
             let blockSize: Int64 = 4096
             let blocks = max(Int64(1), (backing.size + blockSize - 1) / blockSize)
@@ -180,19 +245,17 @@ final class UnixRPCServer {
                     "block_size": blockSize,
                     "io_size": 1024 * 1024,
                     "blocks": blocks,
-                    "free_blocks": 0,
+                    "free_blocks": readOnly ? 0 : blocks,
                     "files": 2,
-                    "free_files": 0,
+                    "free_files": readOnly ? 0 : 1,
                 ]
             )
-
         case "lookup":
             if integer(frame.metadata["parent_id"]) == BridgeConstants.rootNodeID,
                frame.metadata["name"] as? String == BridgeConstants.fileName {
                 return okFrame(requestID: requestID, fields: ["lookup_item": fileAttributes()])
             }
             return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
-
         case "get_attributes":
             switch integer(frame.metadata["node_id"]) {
             case BridgeConstants.rootNodeID:
@@ -202,17 +265,18 @@ final class UnixRPCServer {
             default:
                 return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
             }
-
         case "open":
             guard integer(frame.metadata["node_id"]) == BridgeConstants.fileNodeID else {
                 return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
             }
             let modes = integer(frame.metadata["open_modes"]) ?? 0
-            guard modes == 0 || modes == 1 else {
+            if readOnly, modes != 0, modes != 1 {
                 return errorFrame(requestID: requestID, code: EROFS, message: "Read-only filesystem")
             }
+            if !readOnly, !(backing is any FuseTWriteBacking), modes != 0, modes != 1 {
+                return errorFrame(requestID: requestID, code: EROFS, message: "Backing is not writable")
+            }
             return okFrame(requestID: requestID, fields: ["handle_id": 200])
-
         case "read":
             guard integer(frame.metadata["node_id"]) == BridgeConstants.fileNodeID else {
                 return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
@@ -226,10 +290,42 @@ final class UnixRPCServer {
             }
             let data = try backing.pread(offset: offset, length: Int(length64))
             return Frame(metadata: ["request_id": requestID, "ok": true], payload: data)
-
+        case "write":
+            guard !readOnly, let writable = backing as? any FuseTWriteBacking else {
+                return errorFrame(requestID: requestID, code: EROFS, message: "Read-only filesystem")
+            }
+            guard integer(frame.metadata["node_id"]) == BridgeConstants.fileNodeID,
+                  let offset = integer(frame.metadata["offset"]),
+                  let length64 = integer(frame.metadata["length"]),
+                  offset >= 0,
+                  length64 >= 0,
+                  length64 == Int64(frame.payload.count),
+                  length64 <= Int64(BridgeConstants.maxFrameBytes) else {
+                return errorFrame(requestID: requestID, code: EINVAL, message: "Invalid write range")
+            }
+            let (end, overflow) = offset.addingReportingOverflow(length64)
+            guard !overflow, end <= backing.size else {
+                return errorFrame(requestID: requestID, code: ENOSPC, message: "Write exceeds fixed volume size")
+            }
+            try writable.pwrite(offset: offset, data: frame.payload)
+            // FUSE-T 1.2.7 requires `write_size`; a bare ok=true response is
+            // translated by the FSKit module into EIO even after the backend wrote.
+            return okFrame(requestID: requestID, fields: ["write_size": length64])
+        case "synchronize":
+            if !readOnly, let writable = backing as? any FuseTWriteBacking {
+                try writable.synchronize()
+            }
+            return okFrame(requestID: requestID)
+        case "set_attributes":
+            guard !readOnly, backing is any FuseTWriteBacking else {
+                return errorFrame(requestID: requestID, code: EROFS, message: "Read-only filesystem")
+            }
+            if let requestedSize = integer(frame.metadata["size"]), requestedSize != backing.size {
+                return errorFrame(requestID: requestID, code: EINVAL, message: "volume.raw has a fixed size")
+            }
+            return okFrame(requestID: requestID, fields: ["item_attrs": fileAttributes()])
         case "close":
             return okFrame(requestID: requestID)
-
         case "open_directory":
             guard integer(frame.metadata["node_id"]) == BridgeConstants.rootNodeID else {
                 return errorFrame(requestID: requestID, code: ENOTDIR, message: "Not a directory")
@@ -238,7 +334,6 @@ final class UnixRPCServer {
             nextDirectoryHandle += 1
             openDirectoryHandles.insert(handle)
             return okFrame(requestID: requestID, fields: ["handle_id": handle])
-
         case "enumerate_directory":
             guard let handle = integer(frame.metadata["handle_id"]),
                   openDirectoryHandles.contains(handle) else {
@@ -258,26 +353,21 @@ final class UnixRPCServer {
                 requestID: requestID,
                 fields: ["dir_items": [], "next_cookie": cookie, "verifier": verifier]
             )
-
         case "close_directory":
-            if let handle = integer(frame.metadata["handle_id"]) {
-                openDirectoryHandles.remove(handle)
-            }
+            if let handle = integer(frame.metadata["handle_id"]) { openDirectoryHandles.remove(handle) }
             return okFrame(requestID: requestID)
-
         case "list_xattrs":
             return okFrame(requestID: requestID, fields: ["xattr_names": []])
-
         case "get_xattr":
             return errorFrame(requestID: requestID, code: ENOATTR, message: "Attribute not found")
-
-        case "synchronize":
-            return okFrame(requestID: requestID)
-
-        case "write", "set_attributes", "set_xattr", "remove_xattr", "create_file",
-             "create_directory", "remove_file", "remove_directory", "rename", "create_symlink":
-            return errorFrame(requestID: requestID, code: EROFS, message: "Read-only filesystem")
-
+        case "set_xattr", "remove_xattr", "create_file", "create_directory", "remove_file",
+             "remove_directory", "rename", "create_symlink", "truncate":
+            let code: Int32 = readOnly ? EROFS : EPERM
+            return errorFrame(
+                requestID: requestID,
+                code: code,
+                message: readOnly ? "Read-only filesystem" : "Fixed transport namespace cannot be mutated"
+            )
         default:
             return errorFrame(requestID: requestID, code: EOPNOTSUPP, message: "Unsupported RPC method \(method)")
         }
@@ -289,7 +379,7 @@ final class UnixRPCServer {
             parentID: BridgeConstants.rootNodeID,
             name: "/",
             type: "directory",
-            mode: 0o555,
+            mode: readOnly ? 0o555 : 0o755,
             size: 0,
             links: 2
         )
@@ -301,7 +391,7 @@ final class UnixRPCServer {
             parentID: BridgeConstants.rootNodeID,
             name: BridgeConstants.fileName,
             type: "file",
-            mode: 0o444,
+            mode: readOnly ? 0o444 : 0o666,
             size: backing.size,
             links: 1
         )
@@ -353,14 +443,7 @@ private func okFrame(requestID: Int64, fields: [String: Any] = [:]) -> Frame {
 }
 
 private func errorFrame(requestID: Int64, code: Int32, message: String) -> Frame {
-    Frame(
-        metadata: [
-            "request_id": requestID,
-            "ok": false,
-            "errno": Int(code),
-            "error": message,
-        ]
-    )
+    Frame(metadata: ["request_id": requestID, "ok": false, "errno": Int(code), "error": message])
 }
 
 private func readFrame(fd: Int32) throws -> Frame {
@@ -388,7 +471,6 @@ private func writeFrame(fd: Int32, frame: Frame) throws {
           metadata.count + frame.payload.count <= BridgeConstants.maxFrameBytes else {
         throw BridgeError.protocolError("response frame exceeds 16 MiB contract")
     }
-
     var output = Data()
     appendBEUInt32(UInt32(metadata.count), to: &output)
     appendBEUInt32(UInt32(frame.payload.count), to: &output)
@@ -450,12 +532,14 @@ private struct Arguments {
     let backing: String
     let mountpoint: String
     let volumeName: String
+    let writable: Bool
 }
 
 private func parseArguments() throws -> Arguments {
     var backing: String?
     var mountpoint: String?
     var volumeName = "EDP FUSE-T Bridge"
+    var writable = false
     var index = 1
     let args = CommandLine.arguments
     while index < args.count {
@@ -472,21 +556,32 @@ private func parseArguments() throws -> Arguments {
             index += 1
             guard index < args.count else { throw BridgeError.usage("--volume-name requires a value") }
             volumeName = args[index]
+        case "--writable":
+            writable = true
         default:
             throw BridgeError.usage("unknown argument: \(args[index])")
         }
         index += 1
     }
     guard let backing, let mountpoint else {
-        throw BridgeError.usage("usage: FuseTMinimalBridge --backing <file> --mountpoint <dir> [--volume-name <name>]")
+        throw BridgeError.usage(
+            "usage: FuseTMinimalBridge --backing <file> --mountpoint <dir> [--volume-name <name>] [--writable]"
+        )
     }
-    return Arguments(backing: backing, mountpoint: mountpoint, volumeName: volumeName)
+    return Arguments(backing: backing, mountpoint: mountpoint, volumeName: volumeName, writable: writable)
 }
 
-func runFuseTBridge(backing: any FuseTReadBacking, mountpoint: String, volumeName: String) throws {
+func runFuseTBridge(
+    backing: any FuseTReadBacking,
+    mountpoint: String,
+    volumeName: String,
+    readOnly: Bool = true
+) throws {
+    if !readOnly, !(backing is any FuseTWriteBacking) {
+        throw BridgeError.protocolError("writable FUSE-T session requires FuseTWriteBacking")
+    }
     let fileManager = FileManager.default
     try fileManager.createDirectory(atPath: mountpoint, withIntermediateDirectories: true)
-
     let groupSocketDirectory = fileManager.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Group Containers/group.org.fuset.fskit-srv/s", isDirectory: true)
     try fileManager.createDirectory(at: groupSocketDirectory, withIntermediateDirectories: true)
@@ -505,24 +600,31 @@ func runFuseTBridge(backing: any FuseTReadBacking, mountpoint: String, volumeNam
         "socket_path": socketPath,
         "auth_token": authToken,
         "namedattr": false,
-        "readonly": true,
+        "readonly": readOnly,
         "volume_name": volumeName,
     ]
     let descriptorData = try JSONSerialization.data(withJSONObject: descriptor, options: [.sortedKeys])
     try descriptorData.write(to: sessionURL, options: .atomic)
     chmod(sessionURL.path, 0o600)
 
-    let server = UnixRPCServer(socketPath: socketPath, sessionID: sessionID, authToken: authToken, backing: backing)
+    let server = UnixRPCServer(
+        socketPath: socketPath,
+        sessionID: sessionID,
+        authToken: authToken,
+        backing: backing,
+        readOnly: readOnly
+    )
     try server.listen()
 
     defer {
+        if !readOnly, let writable = backing as? any FuseTWriteBacking { try? writable.synchronize() }
         try? fileManager.removeItem(at: sessionDirectory)
         unlink(socketPath)
     }
 
     let mount = Process()
     mount.executableURL = URL(fileURLWithPath: "/sbin/mount")
-    mount.arguments = ["-o", "nobrowse,rdonly", "-t", "fuset", sessionURL.path, mountpoint]
+    mount.arguments = ["-o", readOnly ? "nobrowse,rdonly" : "nobrowse", "-t", "fuset", sessionURL.path, mountpoint]
     mount.standardOutput = FileHandle.standardOutput
     mount.standardError = FileHandle.standardError
     mount.terminationHandler = { process in
@@ -535,8 +637,8 @@ func runFuseTBridge(backing: any FuseTReadBacking, mountpoint: String, volumeNam
     print("SOCKET=\(socketPath)")
     print("MOUNTPOINT=\(mountpoint)")
     print("BACKING_SIZE=\(backing.size)")
+    print("ACCESS_MODE=\(readOnly ? "read-only" : "read-write")")
     fflush(stdout)
-
     try server.serveOneConnection()
 }
 
@@ -546,8 +648,18 @@ private enum FuseTMinimalBridgeMain {
     static func main() {
         do {
             let args = try parseArguments()
-            let backing = try FixedBacking(path: args.backing)
-            try runFuseTBridge(backing: backing, mountpoint: args.mountpoint, volumeName: args.volumeName)
+            if args.writable {
+                let backing = try FixedReadWriteBacking(path: args.backing)
+                try runFuseTBridge(
+                    backing: backing,
+                    mountpoint: args.mountpoint,
+                    volumeName: args.volumeName,
+                    readOnly: false
+                )
+            } else {
+                let backing = try FixedBacking(path: args.backing)
+                try runFuseTBridge(backing: backing, mountpoint: args.mountpoint, volumeName: args.volumeName)
+            }
         } catch {
             fputs("FuseTMinimalBridge: \(error)\n", stderr)
             exit(1)
