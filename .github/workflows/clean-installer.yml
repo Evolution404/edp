@@ -58,7 +58,7 @@ jobs:
             artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg \
             | tee "${RUNNER_TEMP}/verify.txt"
           grep -F 'RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED' "${RUNNER_TEMP}/verify.txt"
-          grep -F 'RESULT=SMAPPSERVICE_DAEMON_EMBEDDED' "${RUNNER_TEMP}/verify.txt"
+          grep -Eq 'RESULT=(SMAPPSERVICE_DAEMON_EMBEDDED|LEGACY_XPC_DAEMON_PACKAGED)' "${RUNNER_TEMP}/verify.txt"
           grep -F 'RESULT=EDP_CLEAN_INSTALLER_VERIFIED' "${RUNNER_TEMP}/verify.txt"
 
       - name: Install product and register ServiceManagement daemon
@@ -87,9 +87,24 @@ jobs:
           test "$(stat -f '%u' "${APP}")" -eq 0
           "${APP}/Contents/MacOS/EDP USB Vault" --register-service \
             | tee "${RUNNER_TEMP}/service-registration.txt"
-          grep -Eq '^SMAPP_SERVICE_STATUS=(enabled|requiresApproval)$' \
-            "${RUNNER_TEMP}/service-registration.txt"
-          echo 'RESULT=SMAPPSERVICE_REGISTRATION_ACCEPTED'
+          MODE="$(awk -F= '/^EDP_SERVICE_MODE=/{print $2}' "${RUNNER_TEMP}/service-registration.txt" | tail -1)"
+          STATUS="$(awk -F= '/^EDP_SERVICE_STATUS=/{print $2}' "${RUNNER_TEMP}/service-registration.txt" | tail -1)"
+          if [[ "${MODE}" == "legacy" ]]; then
+            [[ "${STATUS}" == "enabled" ]]
+            "${APP}/Contents/MacOS/EDP USB Vault" --xpc-smoke \
+              | tee "${RUNNER_TEMP}/xpc-smoke.txt"
+            grep -F 'RESULT=PRIVILEGED_XPC_ROUNDTRIP_OK' "${RUNNER_TEMP}/xpc-smoke.txt"
+            echo 'RESULT=LEGACY_XPC_SERVICE_SMOKE_OK'
+          else
+            [[ "${MODE}" == "smappservice" ]]
+            [[ "${STATUS}" == "enabled" || "${STATUS}" == "requiresApproval" ]]
+            if [[ "${STATUS}" == "enabled" ]]; then
+              "${APP}/Contents/MacOS/EDP USB Vault" --xpc-smoke \
+                | tee "${RUNNER_TEMP}/xpc-smoke.txt"
+              grep -F 'RESULT=PRIVILEGED_XPC_ROUNDTRIP_OK' "${RUNNER_TEMP}/xpc-smoke.txt"
+            fi
+            echo 'RESULT=SMAPPSERVICE_REGISTRATION_ACCEPTED'
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

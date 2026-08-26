@@ -27,6 +27,7 @@ PAYLOAD="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Payload"
 ROOT="${PAYLOAD}/Library/Application Support/EDP USB Vault"
 APP="${PAYLOAD}/Applications/EDP USB Vault.app"
 DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 for path in \
   "bin/edp-vaultctl" \
   "bin/edp-readwrite-fuse" \
@@ -53,12 +54,27 @@ done
 /usr/bin/codesign --verify --strict "${APP}"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.usbvault.app" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${APP}/Contents/Info.plist")" == "26.0" ]]
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${DAEMON_PLIST}")" == "true" ]]
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "${DAEMON_PLIST}")" == "Contents/Library/LaunchServices/edp-usbvaultd" ]]
+SERVICE_MODE="$(/usr/libexec/PlistBuddy -c 'Print :EDPServiceMode' "${APP}/Contents/Info.plist")"
 [[ -x "${APP}/Contents/Library/LaunchServices/edp-usbvaultd" ]]
-[[ ! -e "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" ]]
+case "${SERVICE_MODE}" in
+  smappservice)
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${DAEMON_PLIST}")" == "true" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "${DAEMON_PLIST}")" == "Contents/Library/LaunchServices/edp-usbvaultd" ]]
+    [[ ! -e "${LEGACY_DAEMON_PLIST}" ]]
+    echo "RESULT=SMAPPSERVICE_DAEMON_EMBEDDED"
+    ;;
+  legacy)
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${LEGACY_DAEMON_PLIST}")" == "true" ]]
+    [[ ! -e "${DAEMON_PLIST}" ]]
+    echo "RESULT=LEGACY_XPC_DAEMON_PACKAGED"
+    ;;
+  *)
+    echo "unexpected EDPServiceMode: ${SERVICE_MODE}" >&2
+    exit 4
+    ;;
+esac
+echo "SERVICE_MODE=${SERVICE_MODE}"
 echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
-echo "RESULT=SMAPPSERVICE_DAEMON_EMBEDDED"
 
 [[ ! -e "${ROOT}/test-tools" ]]
 [[ ! -e "${ROOT}/bin/mkntfs" ]]

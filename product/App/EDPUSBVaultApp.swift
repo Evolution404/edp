@@ -12,16 +12,27 @@ final class EDPVaultViewModel: ObservableObject {
     @Published var diagnostics = ""
     @Published var isBusy = false
 
-    private let daemonService = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
+    private let serviceMode: String
+    private let daemonService: SMAppService?
+    private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
     private var connection: NSXPCConnection?
 
     init() {
+        serviceMode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
+        daemonService = serviceMode == "smappservice"
+            ? SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
+            : nil
         ensureServiceRegistration()
         refresh()
     }
 
+    private func currentServiceStatus() -> SMAppService.Status {
+        if let daemonService { return daemonService.status }
+        return SMAppService.statusForLegacyPlist(at: legacyPlistURL)
+    }
+
     private func connectIfNeeded() -> NSXPCConnection? {
-        guard daemonService.status == .enabled else { return nil }
+        guard currentServiceStatus() == .enabled else { return nil }
         if let connection { return connection }
         let newConnection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
         newConnection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
@@ -50,7 +61,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func ensureServiceRegistration() {
-        if daemonService.status == .notRegistered {
+        if let daemonService, daemonService.status == .notRegistered {
             do {
                 try daemonService.register()
             } catch {
@@ -61,7 +72,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func refreshServiceStatus() {
-        switch daemonService.status {
+        switch currentServiceStatus() {
         case .enabled: serviceStatus = "已启用"
         case .requiresApproval: serviceStatus = "需要系统批准"
         case .notRegistered: serviceStatus = "未注册"
@@ -77,10 +88,13 @@ final class EDPVaultViewModel: ObservableObject {
     func refresh() {
         refreshServiceStatus()
         guard let proxy = proxy() else {
-            if daemonService.status == .requiresApproval {
+            let status = currentServiceStatus()
+            if status == .requiresApproval {
                 lastError = "请在系统设置中批准 EDP USB Vault 后台服务"
-            } else if daemonService.status != .enabled {
-                lastError = "后台服务尚未启用"
+            } else if status != .enabled {
+                lastError = serviceMode == "smappservice"
+                    ? "后台服务尚未启用"
+                    : "后台服务尚未安装或启动"
             }
             return
         }
@@ -281,35 +295,112 @@ struct ContentView: View {
     }
 }
 
+private final class EDPXPCSmokeResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var passed = false
+    private var detail = "no reply"
+
+    func set(passed: Bool, detail: String) {
+        lock.lock()
+        self.passed = passed
+        self.detail = detail
+        lock.unlock()
+    }
+
+    func snapshot() -> (Bool, String) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (passed, detail)
+    }
+}
+
 @main
 struct EDPUSBVaultApp: App {
     init() {
+        if CommandLine.arguments.contains("--xpc-smoke") {
+            let result = EDPXPCSmokeResult()
+            let semaphore = DispatchSemaphore(value: 0)
+            let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                result.set(passed: false, detail: error.localizedDescription)
+                semaphore.signal()
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_SMOKE_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            connection.resume()
+            proxy.diagnostics { data in
+                let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                let valid = payload?["eventDrivenDiscovery"] as? Bool == true
+                    && payload?["credentialStore"] as? String == "System Keychain"
+                result.set(
+                    passed: valid,
+                    detail: valid ? "diagnostics contract OK" : "unexpected diagnostics payload"
+                )
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 10) == .success else {
+                connection.invalidate()
+                print("RESULT=XPC_SMOKE_TIMEOUT")
+                exit(1)
+            }
+            connection.invalidate()
+            let snapshot = result.snapshot()
+            print("XPC_SMOKE_DETAIL=\(snapshot.1)")
+            print(snapshot.0 ? "RESULT=PRIVILEGED_XPC_ROUNDTRIP_OK" : "RESULT=PRIVILEGED_XPC_ROUNDTRIP_FAILED")
+            exit(snapshot.0 ? 0 : 1)
+        }
+
         if CommandLine.arguments.contains("--register-service") {
-            let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
-            do {
-                if service.status == .notRegistered {
-                    try service.register()
+            let mode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
+            print("EDP_SERVICE_MODE=\(mode)")
+            if mode == "smappservice" {
+                let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
+                do {
+                    if service.status == .notRegistered {
+                        try service.register()
+                    }
+                    switch service.status {
+                    case .enabled:
+                        print("EDP_SERVICE_STATUS=enabled")
+                        exit(0)
+                    case .requiresApproval:
+                        print("EDP_SERVICE_STATUS=requiresApproval")
+                        exit(0)
+                    case .notRegistered:
+                        print("EDP_SERVICE_STATUS=notRegistered")
+                        exit(1)
+                    case .notFound:
+                        print("EDP_SERVICE_STATUS=notFound")
+                        exit(1)
+                    @unknown default:
+                        print("EDP_SERVICE_STATUS=unknown")
+                        exit(1)
+                    }
+                } catch {
+                    FileHandle.standardError.write(Data("EDP_SERVICE_ERROR=\(error)\n".utf8))
+                    exit(1)
                 }
-                switch service.status {
+            } else {
+                let legacyURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
+                switch SMAppService.statusForLegacyPlist(at: legacyURL) {
                 case .enabled:
-                    print("SMAPP_SERVICE_STATUS=enabled")
+                    print("EDP_SERVICE_STATUS=enabled")
                     exit(0)
                 case .requiresApproval:
-                    print("SMAPP_SERVICE_STATUS=requiresApproval")
+                    print("EDP_SERVICE_STATUS=requiresApproval")
                     exit(0)
                 case .notRegistered:
-                    print("SMAPP_SERVICE_STATUS=notRegistered")
+                    print("EDP_SERVICE_STATUS=notRegistered")
                     exit(1)
                 case .notFound:
-                    print("SMAPP_SERVICE_STATUS=notFound")
+                    print("EDP_SERVICE_STATUS=notFound")
                     exit(1)
                 @unknown default:
-                    print("SMAPP_SERVICE_STATUS=unknown")
+                    print("EDP_SERVICE_STATUS=unknown")
                     exit(1)
                 }
-            } catch {
-                FileHandle.standardError.write(Data("SMAPP_SERVICE_ERROR=\(error)\n".utf8))
-                exit(1)
             }
         }
     }

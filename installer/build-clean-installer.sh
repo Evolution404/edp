@@ -9,6 +9,19 @@ MACFUSE_VERSION="5.3.3"
 MACFUSE_SHA256="7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
 MACFUSE_URL="https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg"
 MACFUSE_DMG="${MACFUSE_DMG:-}"
+APP_SIGN_IDENTITY="${EDP_APP_SIGN_IDENTITY:--}"
+SERVICE_MODE="${EDP_SERVICE_MODE:-}"
+if [[ -z "${SERVICE_MODE}" ]]; then
+  if [[ "${APP_SIGN_IDENTITY}" == "-" ]]; then
+    SERVICE_MODE="legacy"
+  else
+    SERVICE_MODE="smappservice"
+  fi
+fi
+[[ "${SERVICE_MODE}" == "legacy" || "${SERVICE_MODE}" == "smappservice" ]] || {
+  echo "invalid EDP_SERVICE_MODE: ${SERVICE_MODE}" >&2
+  exit 2
+}
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/edp-clean-installer.XXXXXX")"
 MACFUSE_MOUNT="${BUILD_ROOT}/macfuse"
 
@@ -105,6 +118,7 @@ mkdir -p "${APP_STAGE}/Contents/MacOS" "${APP_STAGE}/Contents/Resources" \
 cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
 xcrun swiftc -O \
   -framework AppKit -framework SwiftUI -framework ServiceManagement \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
@@ -112,6 +126,7 @@ xcrun swiftc -O \
   -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"
 cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
+if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
 cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -144,9 +159,10 @@ cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist
 </plist>
 PLIST
 /bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
-/usr/bin/codesign --force --sign - \
+fi
+/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
-/usr/bin/codesign --force --sign - --identifier com.edp.usbvault.app "${APP_STAGE}"
+/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
 
 /usr/bin/curl --fail --location --output \
@@ -164,6 +180,34 @@ cp -R "${RUNTIME_STAGE}/." "${PRODUCT_DIR}/"
 cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP USB Vault.app"
 ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
   "${PAYLOAD}/usr/local/bin/edp-vaultctl"
+if [[ "${SERVICE_MODE}" == "legacy" ]]; then
+  mkdir -p "${PAYLOAD}/Library/LaunchDaemons"
+  cat > "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.edp.usbvault.mountd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Library/Application Support/EDP USB Vault/bin/edp-vaultctl</string>
+    <string>daemon</string>
+  </array>
+  <key>MachServices</key>
+  <dict>
+    <key>com.edp.usbvault.xpc</key><true/>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>/var/log/edp-usbvault.log</string>
+  <key>StandardErrorPath</key><string>/var/log/edp-usbvault.log</string>
+</dict>
+</plist>
+PLIST
+  /bin/chmod 0644 "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+fi
 
 SCRIPTS="${BUILD_ROOT}/scripts"
 mkdir -p "${SCRIPTS}"
@@ -192,6 +236,12 @@ APP="/Applications/EDP USB Vault.app"
 /bin/chmod 0755 "${ROOT}/bin/"*
 /bin/chmod 0644 "${ROOT}/lib/"*
 /usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
+LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+if [[ -f "${LEGACY_PLIST}" ]]; then
+  /bin/launchctl bootstrap system "${LEGACY_PLIST}"
+  /bin/launchctl enable system/com.edp.usbvault.mountd || true
+  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
+fi
 exit 0
 POSTINSTALL
 chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
