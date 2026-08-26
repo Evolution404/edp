@@ -23,7 +23,8 @@
   - 结论：问题不是 mount 生命周期，而是 NTFS-3G + macFUSE FSKit 的 regular-file create 路径。
 - [ ] A2 固化正确的 NTFS-3G FSKit 启动方式
   - `direct decrypted image + local FSKit` 已由 run `32917383915` 否决：local module 启用 block resource，内部引出 `/dev/disk8`/Disk Arbitration NTFS probe，未稳定进入常规 mount I/O 阶段。
-  - 当前实验回到已稳定建立 mount 的 `direct decrypted image + nonlocal FSKit`，保留 root create 与 nested create 分离探针，定位 `ENOENT` 的作用域。
+  - run `32917604083`（commit `fb475ce`）已确认：nonlocal mount 稳定，但 root-level `touch` 与新建目录下 `touch` 都返回 `ENOENT`；故障是整个 regular-file create 路径，不是新建目录后的局部缓存问题。
+  - 当前任务：核对 macFUSE FSKit nonlocal create 语义/必要 mount options，并做最小参数实验。
 - [ ] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
 - [ ] A4 dirty / hibernated NTFS fail-closed
 - [ ] A5 CI 与产品 NTFS mount 路径统一
@@ -79,3 +80,13 @@
 - 该路径还出现 `close_kernel_fd` / unregister fd 异常，和此前 `local + DiskImages2` hang 证据一致。
 - 结论：当前产品不采用 local FSKit；继续使用能稳定建立并保持 mount 的 nonlocal module。
 - 下一实验：nonlocal + root/nested create probe，确认普通文件 create 的失败范围。
+
+### 2026-08-26 — A2 nonlocal create 范围确认
+
+- run `32917604083`，commit `fb475ce`。
+- mount T0/100ms/500ms/1s 全部健康；`mkdir` 成功。
+- `/Volumes/EDPNTFSRW/root-create.tmp`：`touch` → `ENOENT`。
+- `/Volumes/EDPNTFSRW/EDP-RW/nested-create.tmp`：`touch` → `ENOENT`。
+- create 失败后 NTFS-3G PID、mount、`stat`、`readdir` 仍正常。
+- 结论：排除“仅新建目录 lookup/cache”问题；nonlocal FSKit 的 regular-file create 路径整体异常。
+- 下一步不再改变 EDP crypto/DiskImages2 层，集中验证 macFUSE FSKit mount options / create forwarding。
