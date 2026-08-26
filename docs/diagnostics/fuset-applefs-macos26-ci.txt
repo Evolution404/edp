@@ -4,28 +4,129 @@ generated_at_utc=<normalized>
 runner_os=26.5.2
 runner_build=25F84
 xcode=Xcode 26.6 Build version 17F113 
-raw_size=unknown
-backing_sha_before=unknown
+raw_size=67108864
+backing_sha_before=1fad2ad940e3e048a50659eae8de7e1d6e910bf1c62976aef9e0a44837c16d27
 backing_sha_after=unknown
-backing_meta_before=unknown
+backing_meta_before=67108864:1787748620:100444
 backing_meta_after=unknown
-final_mount=none
+final_mount=/Volumes/EDP_FUSET_FINAL
 finder_enum_ok=unknown
 
 ## baseline raw diskutil
+   Device Identifier:         disk8
+   Device Node:               /dev/disk8
+   Whole:                     Yes
+   Part of Whole:             disk8
+   Device / Media Name:       Disk Image
+
+   Volume Name:               EDP_FUSET_FINAL
+   Mounted:                   Yes
+   Mount Point:               /Volumes/EDP_FUSET_FINAL
+
+   Content (IOContent):       None
+   File System Personality:   HFS+
+   Type (Bundle):             hfs
+   Name (User Visible):       Mac OS Extended
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Disk Image
+   SMART Status:              Not Supported
+   Volume UUID:               511AF559-A0C6-39AB-872A-A01BF495C294
+
+   Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
+   Device Block Size:         512 Bytes
+
+   Volume Total Space:        67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
+   Volume Used Space:         1.6 MB (1605632 Bytes) (exactly 3136 512-Byte-Units) (2.4%)
+   Volume Free Space:         65.5 MB (65503232 Bytes) (exactly 127936 512-Byte-Units) (97.6%)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           Yes
+   Volume Read-Only:          Yes (read-only mount flag set)
+
+   Device Location:           External
+   Removable Media:           Removable
+   Media Removal:             Software-Activated
+
+   Solid State:               Info not available
+   Virtual:                   Yes
+
 
 ## hidden transport mount
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-1c59b1fc-30b5-4618-ac7d-847cb13fbe83/session.json on /Users/runner/work/_temp/edp-applefs-hidden-2a09f159-27f5-4f51-9c21-97c9242be8f7 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 
 ## hdiutil attach
+/dev/disk8          	                               	/Volumes/EDP_FUSET_FINAL
 
 ## final diskutil
+   Device Identifier:         disk8
+   Device Node:               /dev/disk8
+   Whole:                     Yes
+   Part of Whole:             disk8
+   Device / Media Name:       Disk Image
+
+   Volume Name:               EDP_FUSET_FINAL
+   Mounted:                   Yes
+   Mount Point:               /Volumes/EDP_FUSET_FINAL
+
+   Content (IOContent):       None
+   File System Personality:   HFS+
+   Type (Bundle):             hfs
+   Name (User Visible):       Mac OS Extended
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Disk Image
+   SMART Status:              Not Supported
+   Volume UUID:               511AF559-A0C6-39AB-872A-A01BF495C294
+
+   Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
+   Device Block Size:         512 Bytes
+
+   Volume Total Space:        67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
+   Volume Used Space:         1.6 MB (1605632 Bytes) (exactly 3136 512-Byte-Units) (2.4%)
+   Volume Free Space:         65.5 MB (65503232 Bytes) (exactly 127936 512-Byte-Units) (97.6%)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           Yes
+   Volume Read-Only:          Yes (read-only mount flag set)
+
+   Device Location:           External
+   Removable Media:           Removable
+   Media Removal:             Software-Activated
+
+   Solid State:               Info not available
+   Virtual:                   Yes
+
 
 ## final mount
+/dev/disk8 on /Volumes/EDP_FUSET_FINAL (hfs, local, nodev, nosuid, read-only, noowners, mounted by runner)
 
 ## final POSIX listing
+/Volumes/EDP_FUSET_FINAL
+/Volumes/EDP_FUSET_FINAL/.fseventsd
+/Volumes/EDP_FUSET_FINAL/.fseventsd/000000000185e14f
+/Volumes/EDP_FUSET_FINAL/.fseventsd/000000000185e150
+/Volumes/EDP_FUSET_FINAL/.fseventsd/fseventsd-uuid
+/Volumes/EDP_FUSET_FINAL/EDP Folder
+/Volumes/EDP_FUSET_FINAL/EDP Folder/NESTED.txt
+/Volumes/EDP_FUSET_FINAL/EDP_SENTINEL.txt
 
 ## Finder enumeration
+207:208: syntax error: Expected expression but found unknown token. (-2741)
 
 ## read-only write attempt
+touch: /Volumes/EDP_FUSET_FINAL/SHOULD_NOT_WRITE: Read-only file system
 
 ## bridge log
+SESSION_ID=edp-fuset-1c59b1fc-30b5-4618-ac7d-847cb13fbe83
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-1c59b1fc-30b5-4618-ac7d-847cb13fbe83/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-1c59b1fc-3.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-applefs-hidden-2a09f159-27f5-4f51-9c21-97c9242be8f7
+BACKING_SIZE=67108864
+mount process exited status=0
