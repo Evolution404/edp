@@ -8,6 +8,7 @@ TOOLS="${RUNTIME_ROOT}/test-tools"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/edp-ntfs-failclosed.XXXXXX")"
 MOUNT_POINT="/Volumes/EDPNTFSFailClosed"
 NTFS_PID=""
+NTFS_WORKER_PID=""
 
 is_mounted() {
   /sbin/mount | /usr/bin/grep -Fq " on ${MOUNT_POINT} "
@@ -17,10 +18,11 @@ stop_mount_cleanly() {
   if is_mounted; then
     /sbin/umount "${MOUNT_POINT}"
   fi
-  if [[ -n "${NTFS_PID}" ]]; then
-    wait "${NTFS_PID}" || true
-    NTFS_PID=""
+  if [[ -n "${NTFS_WORKER_PID}" ]]; then
+    wait "${NTFS_WORKER_PID}" || true
   fi
+  NTFS_PID=""
+  NTFS_WORKER_PID=""
 }
 
 cleanup() {
@@ -36,6 +38,9 @@ cleanup() {
     done
     kill -9 "${NTFS_PID}" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${NTFS_WORKER_PID}" ]]; then
+    wait "${NTFS_WORKER_PID}" >/dev/null 2>&1 || true
+  fi
   rmdir "${MOUNT_POINT}" >/dev/null 2>&1 || true
   rm -rf "${WORK}"
 }
@@ -47,17 +52,34 @@ start_mount() {
   local log_file="$3"
 
   mkdir -p "${MOUNT_POINT}"
-  "${BIN}/ntfs-3g" \
-    -o backend=fskit \
-    -o no_detach \
-    -o norecover \
-    -o noatime \
-    -o big_writes \
-    -o "uid=$(id -u)" \
-    -o "gid=$(id -g)" \
-    -o "volname=${label}" \
-    "${image}" "${MOUNT_POINT}" >"${log_file}" 2>&1 &
-  NTFS_PID=$!
+  local pid_file="${WORK}/ntfs.pid"
+  rm -f "${pid_file}"
+  (
+    set +e
+    "${BIN}/ntfs-3g" \
+      -o backend=fskit \
+      -o no_detach \
+      -o norecover \
+      -o noatime \
+      -o big_writes \
+      -o "uid=$(id -u)" \
+      -o "gid=$(id -g)" \
+      -o "volname=${label}" \
+      "${image}" "${MOUNT_POINT}" >"${log_file}" 2>&1 &
+    local child_pid=$!
+    printf '%s\n' "${child_pid}" >"${pid_file}"
+    wait "${child_pid}" >/dev/null 2>&1
+    exit 0
+  ) &
+  NTFS_WORKER_PID=$!
+
+  for _ in $(seq 1 100); do
+    [[ -s "${pid_file}" ]] && break
+    kill -0 "${NTFS_WORKER_PID}" >/dev/null 2>&1 || break
+    sleep 0.05
+  done
+  [[ -s "${pid_file}" ]] || return 1
+  NTFS_PID="$(cat "${pid_file}")"
 
   local mounted=0
   for _ in $(seq 1 100); do
@@ -97,9 +119,14 @@ cp "${CLEAN}" "${UNCLEAN}"
 start_mount "${UNCLEAN}" EDPFAILUNCLEAN "${WORK}/unclean-mount.log"
 printf 'unclean-power-loss\n' >"${MOUNT_POINT}/power-loss.txt"
 /bin/sync
+echo 'STEP=NTFS_UNCLEAN_CRASH_BEGIN'
 kill -9 "${NTFS_PID}"
-wait "${NTFS_PID}" 2>/dev/null || true
+if [[ -n "${NTFS_WORKER_PID}" ]]; then
+  wait "${NTFS_WORKER_PID}" || true
+fi
 NTFS_PID=""
+NTFS_WORKER_PID=""
+echo 'STEP=NTFS_UNCLEAN_PROCESS_KILLED'
 for _ in $(seq 1 100); do
   is_mounted || break
   sleep 0.1
@@ -107,6 +134,7 @@ done
 if is_mounted; then
   /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || true
 fi
+echo 'STEP=NTFS_UNCLEAN_MOUNT_GONE'
 
 set +e
 "${BIN}/ntfs-3g.probe" --readwrite "${UNCLEAN}" >"${WORK}/unclean-rw.log" 2>&1
