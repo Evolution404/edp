@@ -28,7 +28,11 @@
 - [x] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
   - 同一 HEAD `dfbdcc8` 连续成功 runs：`32920159540`、`32920839214`、`32920841484`。
   - 覆盖 create / 4 MiB+ write / random overwrite / renamex / delete / sync / clean unmount / ciphertext SHA 变化 / 全链重启 / remount / payload SHA 一致 / clean probe / bounded teardown。
-- [ ] A4 dirty / hibernated NTFS fail-closed
+- [x] A4 dirty / hibernated NTFS fail-closed
+  - commit `d2a5a4f`，CI run `32923181506` 成功。
+  - deterministic unclean `$LogFile` fixture：`RW probe=15`、`RO probe=0`。
+  - deterministic `hiberfil.sys` (`HIBR` header) fixture：`RW probe=14`、`RO probe=0`。
+  - 产品状态映射与禁止 `force/recover/remove_hiberfile` 静态门槛通过；最终 `RESULT=NTFS_FAIL_CLOSED_E2E_OK`。
 - [ ] A5 CI 与产品 NTFS mount 路径统一
 - [ ] A6 raw sparse backup → 恢复验证 → 真实 EDP NTFS 读写
 
@@ -159,6 +163,14 @@
 - rename debug 显示 macOS/FSKit 发出 `renamex(..., flags=0x4)`，即 `RENAME_EXCL`；NTFS-3G 只实现传统 `.rename`，macFUSE 的 `fuse_fs_renamex()` 在 `.renamex` 缺失时直接返回 `ENOSYS`，不会 fallback。
 - 已增加第二个可审计 patch `patches/ntfs-3g-2026.7.7-macfuse-fskit-renamex.patch`：支持 flags=0 / `RENAME_EXCL`，目标存在时返回 `EEXIST`，否则复用 NTFS-3G 原有 rename；`RENAME_SWAP` 明确不支持并在 init 中关闭其 capability。
 - build 脚本按固定顺序应用 CREATE mode + renamex 两个 patch，并将两者随 bundled source 一并保留。两 patch 已对固定上游 SHA 源码完成顺序 dry-run/apply 验证。
+
+### 2026-08-26 — A4 fail-closed 结项
+
+- commit `d2a5a4f` 的 `NTFS Fail-Closed Safety` run `32923181506` 成功。
+- unclean fixture 不再依赖 `ntfsfix` 的 volume dirty flag，而是通过 test-only libntfs-3g helper 构造有效 Windows-style `$LogFile` restart page；`ntfs-3g.probe --readwrite` 返回 15，readonly 返回 0。
+- hibernation fixture 通过 test-only upstream `ntfscp` 写入根目录 `hiberfil.sys`，4096-byte header 以 `HIBR` 开头；readwrite probe 返回 14，readonly 返回 0。
+- `mkntfs` / `ntfscp` / fixture helper 均只位于 build runtime 的 `test-tools`；clean installer 仍只复制生产 bin/lib/licenses/source。
+- 产品 `EDPNTFSWriteSafety` 对 14/15 的错误传播已由 Swift validator 覆盖，且 CI 明确拒绝出现 `force`、`recover`、`remove_hiberfile`。
 
 ### 2026-08-26 — A2/A3 结项
 
