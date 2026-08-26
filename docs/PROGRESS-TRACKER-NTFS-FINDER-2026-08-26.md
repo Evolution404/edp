@@ -100,8 +100,8 @@ rename(temp, existing-target)
 
 下一步：
 
-- [ ] 建最小 macFUSE FSKit rename-over-existing reproducer，先不经过 EDP/NTFS
-- [ ] generic module 测一次
+- [x] 建最小 macFUSE FSKit rename-over-existing reproducer，先不经过 EDP/NTFS
+- [x] generic module 测一次
 - [ ] local module/outer-local 测一次
 - [x] 记录普通 `rename`、`renamex_np`、swap/exclusive flag 行为
   - 2026-08-26 实机 outer-local `/Volumes/EDP-NTFS`：`renamex_np(flags=0)` 覆盖已有目标返回 `errno=102/EOPNOTSUPP`；`RENAME_EXCL` 对已有目标正确返回 `EEXIST(17)`；`RENAME_SWAP` 返回 `EOPNOTSUPP`。
@@ -112,6 +112,33 @@ rename(temp, existing-target)
 - [ ] TextEdit 实机 Cmd+S 验收
 
 禁止：先删除旧目标再 rename 的非原子 workaround。
+
+#### 2026-08-26 16:14 — generic FSKit 锁定 `RENAME_SWAP`
+
+目标：
+- 将 TextEdit/普通 POSIX 覆盖式 rename 与 EDP、NTFS-3G 解耦，确认 macFUSE FSKit 实际送到 FUSE2 userspace 的操作和 flags。
+
+改动：
+- 扩展 `ValidateFuse2Create.c`，预置 `target.txt`，增加 `.rename` / `.renamex` / init capability 日志；
+- 扩展 `probe-fuse2-create.sh`，用 libc `rename(temp, existing-target)` 做最小覆盖测试；本机 mountpoint 使用 `/private/tmp`，避免再次请求 sudo。
+
+验证：
+- generic FSKit mount：`macfuse://... (macfuse,...,fskit,mounted by zhangyuxi)`；
+- create/write/read 正常；
+- libc `rename(created.txt, target.txt)` 返回 `errno=102 / EOPNOTSUPP`；
+- 服务端不是进入传统 `.rename`，而是明确收到 `FUSE2_RENAMEX old=/created.txt new=/target.txt flags=0x2`；
+- `0x2` 即 `RENAME_SWAP`；init 中已执行 `conn->want &= ~FUSE_CAP_RENAME_SWAP`，但 FSKit 仍然发送 swap 请求。
+
+结论：
+- PASS（根因进一步收敛）。当前仓库的 NTFS-3G adapter patch 对 `RENAME_SWAP` 明确返回 `-EOPNOTSUPP`，与实机 TextEdit/普通覆盖 rename 的错误完全吻合。不能再把该问题笼统归类为“macFUSE 上游不可修”；下一判别点是安全实现 swap callback 后，FSKit 是否会自行完成 POSIX replace 所需的旧路径清理。
+
+下一步：
+- 在最小内存 FUSE2 probe 中实现真正的 `RENAME_SWAP`（交换两个已存在对象），观察 libc `rename()` 返回前 FSKit 是否追加 unlink/其他操作并最终保证 source path 消失；
+- 若最小语义成立，再研究 NTFS-3G 内部可否原子实现 exchange，而不是采用先删目标的非原子 workaround；
+- 之后再比较 outer `local` 行为。
+
+commit:
+- pending
 
 ### T2 — P1 Finder 本地卷 + Trash
 

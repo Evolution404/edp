@@ -57,8 +57,12 @@ FUSE_LIBS="$(pkg-config --libs fuse)"
   -o "${BINARY}"
 printf 'RESULT=FUSE2_CREATE_PROBE_BUILT\n'
 
-sudo /bin/mkdir -p "${MOUNT_POINT}"
-sudo /usr/sbin/chown "$(id -u):$(id -g)" "${MOUNT_POINT}"
+if [[ "${MOUNT_POINT}" == /private/tmp/* ]]; then
+  /bin/mkdir -p "${MOUNT_POINT}"
+else
+  sudo /bin/mkdir -p "${MOUNT_POINT}"
+  sudo /usr/sbin/chown "$(id -u):$(id -g)" "${MOUNT_POINT}"
+fi
 chmod 700 "${MOUNT_POINT}"
 
 "${BINARY}" "${MOUNT_POINT}" >"${SERVER_LOG}" 2>&1 &
@@ -107,9 +111,29 @@ ACTUAL="$(/bin/cat "${PROOF}")"
 [[ "${ACTUAL}" == "hello-fuse2-create" ]]
 printf 'RESULT=FUSE2_REGULAR_FILE_CREATE_WRITE_READ_OK\n'
 
-/bin/rm "${PROOF}"
-[[ ! -e "${PROOF}" ]]
-printf 'RESULT=FUSE2_REGULAR_FILE_UNLINK_OK\n'
+TARGET="${MOUNT_POINT}/target.txt"
+TARGET_BEFORE="$(/bin/cat "${TARGET}")"
+[[ "${TARGET_BEFORE}" == "old-content" ]]
+set +e
+RENAME_OUTPUT="$("${BINARY}" --rename "${PROOF}" "${TARGET}" 2>&1)"
+RENAME_RC=$?
+set -e
+printf '%s\n' "${RENAME_OUTPUT}"
+printf 'FUSE2_RENAME_OVER_EXISTING_RC=%s\n' "${RENAME_RC}"
+if (( RENAME_RC == 0 )); then
+  printf 'RESULT=FUSE2_RENAME_OVER_EXISTING_SUPPORTED\n'
+  TARGET_AFTER="$(/bin/cat "${TARGET}")"
+  [[ "${TARGET_AFTER}" == "hello-fuse2-create" ]]
+else
+  printf '%s\n' "${RENAME_OUTPUT}" | /usr/bin/grep -F 'RENAME_CLIENT_ERRNO=102' >/dev/null
+  printf 'RESULT=FUSE2_RENAME_OVER_EXISTING_EOPNOTSUPP_REPRODUCED\n'
+fi
+
+if [[ -e "${PROOF}" ]]; then
+  /bin/rm "${PROOF}"
+  [[ ! -e "${PROOF}" ]]
+  printf 'RESULT=FUSE2_REGULAR_FILE_UNLINK_OK\n'
+fi
 
 /sbin/umount "${MOUNT_POINT}"
 stop_server || true
