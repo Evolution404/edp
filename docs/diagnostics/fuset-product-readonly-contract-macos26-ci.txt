@@ -1,0 +1,16 @@
+# FUSE-T thin product read-only contract macOS 26 CI
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+
+## pinned runtime policy
+
+## authorized bridge dynamic links
+
+## invalid raw path
+
+## oversized password
+
+## read-only publisher
