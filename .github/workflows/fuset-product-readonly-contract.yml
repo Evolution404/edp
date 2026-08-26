@@ -1,0 +1,327 @@
+name: FUSE-T Thin Product Read-Only Contract
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedBridge.swift"
+      - "native/EDPFSKitPoC/Extension/EDPRawIO.swift"
+      - "native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Extension/EDPCrypto.swift"
+      - "native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift"
+      - "native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift"
+      - "native/EDPFSKitPoC/Extension/EDPBlockDevice.swift"
+      - "product/EDPRawReadAuthorization.c"
+      - "product/EDPFuseTRuntimePolicy.swift"
+      - "product/EDPBlockDevicePublisher.swift"
+      - "product/EDPNativeSystem.swift"
+      - "product/EDPVaultRuntime.swift"
+      - ".github/workflows/fuset-product-readonly-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fuset-product-readonly-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  product-contract:
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      FUSET_VERSION: "1.2.7"
+      FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
+      FUSET_PKG_URL: "https://github.com/macos-fuse-t/fuse-t/releases/download/1.2.7/fuse-t-macos-installer-1.2.7.pkg"
+      FUSET_BUNDLE_ID: "org.fuset.fskit-srv.module"
+      DIAG_PATH: "docs/diagnostics/fuset-product-readonly-contract-macos26-ci.txt"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify clean product runner
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          test "$(xcodebuild -version | awk '/Xcode/ {print int($2); exit}')" -ge 26
+          test ! -e /Library/Filesystems/macfuse.fs
+          test ! -e /Library/Application\ Support/fuse-t
+          test ! -e /usr/local/bin/go-nfsv4
+          echo 'RESULT=P0_PRODUCT_RUNNER_CLEAN'
+
+      - name: Stage exact official FUSE-T app without enabling it privately
+        run: |
+          set -euo pipefail
+          PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
+          EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
+          curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
+          test "$(shasum -a 256 "${PKG}" | awk '{print $1}')" = "${FUSET_PKG_SHA256}"
+          pkgutil --expand-full "${PKG}" "${EXPANDED}"
+          SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
+          test -n "${SOURCE_APP}"
+          codesign --verify --deep --strict --verbose=2 "${SOURCE_APP}"
+          sudo rm -rf /Applications/fuse-t.app
+          sudo ditto "${SOURCE_APP}" /Applications/fuse-t.app
+          APP=/Applications/fuse-t.app
+          EXT="${APP}/Contents/Extensions/FskitSrvModule.appex"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}" || true
+          pluginkit -a "${APP}" || true
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
+          grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+          test ! -e "${HOME}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
+          echo 'RESULT=P0_NO_PRIVATE_ENABLEMENT_WRITE'
+
+      - name: Verify pinned FUSE-T product runtime policy
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/FuseTPolicyProbe.swift" <<'SWIFT'
+          import Foundation
+
+          @main
+          enum ProbeMain {
+              static func main() {
+                  do {
+                      let status = try EDPFuseTRuntimePolicy.verifyInstalled()
+                      print("POLICY_APP=\(status.appPath)")
+                      print("POLICY_HOST_ID=\(status.hostBundleID)")
+                      print("POLICY_MODULE_ID=\(status.moduleBundleID)")
+                      print("POLICY_TEAM=\(status.teamID)")
+                      print("POLICY_REGISTERED=\(status.registeredWithPluginKit)")
+                      print("RESULT=P0_FUSET_PINNED_POLICY_ACCEPTED")
+                  } catch {
+                      fputs("policy probe: \(error)\n", stderr)
+                      exit(1)
+                  }
+              }
+          }
+          SWIFT
+          xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
+            product/EDPFuseTRuntimePolicy.swift \
+            "${RUNNER_TEMP}/FuseTPolicyProbe.swift" \
+            -o "${RUNNER_TEMP}/FuseTPolicyProbe"
+          "${RUNNER_TEMP}/FuseTPolicyProbe" | tee "${RUNNER_TEMP}/policy.txt"
+          grep -Fq 'POLICY_HOST_ID=org.fuset.fskit-srv' "${RUNNER_TEMP}/policy.txt"
+          grep -Fq 'POLICY_MODULE_ID=org.fuset.fskit-srv.module' "${RUNNER_TEMP}/policy.txt"
+          grep -Fq 'POLICY_TEAM=6DY7Z4SVDZ' "${RUNNER_TEMP}/policy.txt"
+          grep -Fq 'POLICY_REGISTERED=true' "${RUNNER_TEMP}/policy.txt"
+          grep -Fq 'RESULT=P0_FUSET_PINNED_POLICY_ACCEPTED' "${RUNNER_TEMP}/policy.txt"
+
+      - name: Compile authorized physical read-only bridge
+        run: |
+          set -euo pipefail
+          /usr/bin/cc -O2 -Wall -Wextra -c \
+            product/EDPRawReadAuthorization.c \
+            -o "${RUNNER_TEMP}/EDPRawReadAuthorization.o"
+          xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
+            -D FUSET_BRIDGE_LIBRARY -framework Security \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedBridge.swift \
+            "${RUNNER_TEMP}/EDPRawReadAuthorization.o" \
+            -o "${RUNNER_TEMP}/edp-fuset-readonly"
+          test -x "${RUNNER_TEMP}/edp-fuset-readonly"
+          otool -L "${RUNNER_TEMP}/edp-fuset-readonly" | tee "${RUNNER_TEMP}/authorized-otool.txt"
+          ! grep -Eiq 'macfuse|libfuse|fuse-t' "${RUNNER_TEMP}/authorized-otool.txt"
+          echo 'RESULT=P0_AUTHORIZED_BRIDGE_NO_FUSE_CORE_LINK'
+
+      - name: Enforce authorized bridge fail-closed source and input contracts
+        run: |
+          set -euo pipefail
+          SOURCE=native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedBridge.swift
+          AUTH_SOURCE=product/EDPRawReadAuthorization.c
+          grep -Fq 'RAW_ACCESS=AUTHOPEN|O_RDONLY|O_CLOEXEC' "${SOURCE}"
+          grep -Fq 'edpAuthOpenReadOnlyFD' "${SOURCE}"
+          grep -Fq 'O_RDONLY | O_CLOEXEC' "${AUTH_SOURCE}"
+          ! grep -Eq 'O_RDWR|O_WRONLY' "${SOURCE}"
+          ! grep -Fq -- '--sm4-key' "${SOURCE}"
+          ! grep -Fq -- '--password-file' "${SOURCE}"
+          ! grep -Fq 'enabledModules.plist' "${SOURCE}"
+          ! grep -Fq 'enabledModules.plist' product/EDPFuseTRuntimePolicy.swift
+
+          AUTH_BYTES="$(cat > "${RUNNER_TEMP}/auth-size.c" <<'C'
+          #include <Security/Authorization.h>
+          #include <stdio.h>
+          int main(void) { printf("%zu\n", sizeof(AuthorizationExternalForm)); return 0; }
+          C
+          /usr/bin/cc "${RUNNER_TEMP}/auth-size.c" -framework Security -o "${RUNNER_TEMP}/auth-size"
+          "${RUNNER_TEMP}/auth-size")"
+          test "${AUTH_BYTES}" -gt 0
+
+          set +e
+          python3 - "${AUTH_BYTES}" <<'PY' | "${RUNNER_TEMP}/edp-fuset-readonly" \
+            --raw-device /tmp/not-a-raw-disk --vid 21c4 --pid 0cd1 \
+            --device-size 124736503808 --partition-type 2 --control-fd 0 \
+            --mountpoint "${RUNNER_TEMP}/never-mounted" \
+            >"${RUNNER_TEMP}/bad-path.out" 2>"${RUNNER_TEMP}/bad-path.err"
+          import sys
+          n = int(sys.argv[1])
+          sys.stdout.buffer.write(b'\0' * n + b'x')
+          PY
+          BAD_PATH_RC=$?
+          set -e
+          test "${BAD_PATH_RC}" -ne 0
+          grep -Fq 'authopen O_RDONLY' "${RUNNER_TEMP}/bad-path.err"
+          grep -Fq 'Invalid argument' "${RUNNER_TEMP}/bad-path.err"
+
+          set +e
+          python3 - "${AUTH_BYTES}" <<'PY' | "${RUNNER_TEMP}/edp-fuset-readonly" \
+            --raw-device /tmp/not-a-raw-disk --vid 21c4 --pid 0cd1 \
+            --device-size 124736503808 --partition-type 2 --control-fd 0 \
+            --mountpoint "${RUNNER_TEMP}/never-mounted-2" \
+            >"${RUNNER_TEMP}/long-password.out" 2>"${RUNNER_TEMP}/long-password.err"
+          import sys
+          n = int(sys.argv[1])
+          sys.stdout.buffer.write(b'\0' * n + b'x' * 4097)
+          PY
+          LONG_RC=$?
+          set -e
+          test "${LONG_RC}" -ne 0
+          grep -Fq 'password payload exceeds maximum length' "${RUNNER_TEMP}/long-password.err"
+          echo 'RESULT=P0_AUTHORIZED_CONTROL_FRAMING_FAIL_CLOSED'
+
+      - name: Prove public read-only publisher contract
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/publisher.raw"
+          python3 - "${RAW}" <<'PY'
+          import hashlib, sys
+          path = sys.argv[1]
+          with open(path, 'wb') as f:
+              for i in range(16384):
+                  seed = hashlib.sha256(f'EDP-PUBLISHER:{i}'.encode()).digest()
+                  f.write((seed * 16)[:512])
+          PY
+          cat > "${RUNNER_TEMP}/PublisherProbe.swift" <<'SWIFT'
+          import Foundation
+
+          final class EDPDiskArbitrationController {
+              func eject(_ bsdName: String) throws {}
+          }
+
+          @main
+          enum PublisherProbeMain {
+              static func main() {
+                  do {
+                      guard CommandLine.arguments.count == 2 else { exit(2) }
+                      let publisher = EDPHdiutilReadOnlyPublisher(
+                          diskArbitration: EDPDiskArbitrationController()
+                      )
+                      let published = try publisher.publishReadOnlyImage(at: CommandLine.arguments[1])
+                      print("PUBLISHED_BSD=\(published.bsdName)")
+                      print("RESULT=P0_PUBLIC_READONLY_PUBLISHER_ATTACHED")
+                  } catch {
+                      fputs("publisher probe: \(error)\n", stderr)
+                      exit(1)
+                  }
+              }
+          }
+          SWIFT
+          xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
+            product/EDPBlockDevicePublisher.swift \
+            "${RUNNER_TEMP}/PublisherProbe.swift" \
+            -o "${RUNNER_TEMP}/PublisherProbe"
+          "${RUNNER_TEMP}/PublisherProbe" "${RAW}" | tee "${RUNNER_TEMP}/publisher.txt"
+          BSD="$(awk -F= '/^PUBLISHED_BSD=/ {print $2; exit}' "${RUNNER_TEMP}/publisher.txt")"
+          test -n "${BSD}"
+          diskutil info "${BSD}" | tee "${RUNNER_TEMP}/publisher-diskutil.txt"
+          grep -Eq 'Media Read-Only:[[:space:]]+Yes' "${RUNNER_TEMP}/publisher-diskutil.txt"
+          hdiutil detach "/dev/${BSD}" -force
+          grep -Fq '"attach", "-readonly", "-nomount"' product/EDPBlockDevicePublisher.swift
+          ! grep -Fq 'publishWritableImage' <(sed -n '/final class EDPHdiutilReadOnlyPublisher/,/^}/p' product/EDPBlockDevicePublisher.swift)
+          echo 'RESULT=P0_PUBLIC_READONLY_PUBLISHER_MEDIA_RO'
+
+      - name: Compile existing product runtime with new publisher and policy
+        run: |
+          set -euo pipefail
+          CORE_SOURCES=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+          )
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors -framework Security \
+            "${CORE_SOURCES[@]}" \
+            product/EDPNTFSWriteSafety.swift \
+            product/EDPNTFSMountPolicy.swift \
+            product/EDPCredentialStore.swift \
+            product/EDPNativeSystem.swift \
+            product/EDPBlockDevicePublisher.swift \
+            product/EDPFuseTRuntimePolicy.swift \
+            product/EDPXPCProtocol.swift \
+            product/EDPXPCSecurity.swift \
+            product/EDPVaultRuntime.swift \
+            -o "${RUNNER_TEMP}/edp-vaultctl"
+          test -x "${RUNNER_TEMP}/edp-vaultctl"
+          echo 'RESULT=P0_EXISTING_PRODUCT_RUNTIME_STILL_BUILDS'
+
+      - name: Collect product contract evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${DIAG_PATH}")"
+          {
+            echo '# FUSE-T thin product read-only contract macOS 26 CI'
+            echo
+            echo 'generated_at_utc=<normalized>'
+            echo "runner_os=$(sw_vers -productVersion)"
+            echo "runner_build=$(sw_vers -buildVersion)"
+            echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
+            echo
+            echo '## pinned runtime policy'
+            cat "${RUNNER_TEMP}/policy.txt" 2>/dev/null || true
+            echo
+            echo '## authorized bridge dynamic links'
+            cat "${RUNNER_TEMP}/authorized-otool.txt" 2>/dev/null || true
+            echo
+            echo '## invalid raw path'
+            cat "${RUNNER_TEMP}/bad-path.err" 2>/dev/null || true
+            echo
+            echo '## oversized password'
+            cat "${RUNNER_TEMP}/long-password.err" 2>/dev/null || true
+            echo
+            echo '## read-only publisher'
+            cat "${RUNNER_TEMP}/publisher.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/publisher-diskutil.txt" 2>/dev/null || true
+          } > "${DIAG_PATH}"
+          sed -n '1,500p' "${DIAG_PATH}"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          hdiutil info | awk '/^\/dev\/disk/ {print $1}' | while read -r disk; do
+            hdiutil detach "${disk}" -force >/dev/null 2>&1 || true
+          done
+          sudo rm -rf /Applications/fuse-t.app
+          exit 0
+
+      - name: Commit deterministic product diagnostic
+        if: always() && github.ref_name == 'test/fuset-minimal-fskit-bridge'
+        run: |
+          set -euo pipefail
+          test -f "${DIAG_PATH}"
+          git add "${DIAG_PATH}"
+          if git diff --cached --quiet -- "${DIAG_PATH}"; then
+            echo 'RESULT=P0_PRODUCT_DIAGNOSTIC_UNCHANGED'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: capture FUSE-T product contract [skip ci]'
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
