@@ -7,7 +7,7 @@
 
 ## 当前总状态
 
-**状态：Phase A/B 已完成；Phase C 单文件 lookup/open/read/close 已跑通且数据校验一致；正在固化原生最小 helper 与补目录/随机读**
+**状态：Phase A/B 已完成；原生 Swift 最小 bridge 已实机跑通；Phase D 随机读/EOF/完整哈希已通过，下一步进入 hdiutil → /dev/diskN**
 
 当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
 
@@ -95,8 +95,8 @@ FuseTHello319
 | C3 | ✅ | 确认 `auth_token` 校验 | handshake 请求携带 `session.json` 中的 `auth_token`；响应若缺 `ok=true` 或缺匹配的 `session_id` 均被 extension 拒绝 |
 | C4 | ✅ | 实现 ping/handshake | 可接受 handshake 响应必须为 `{"request_id":N,"ok":true,"session_id":"<匹配session_id>"}`；随后收到 `ping`，`{"request_id":N,"ok":true}` 可通过 |
 | C5 | ✅ | 实现 root getattr / lookup / statfs | `get_root_attributes`、`statfs`、ENOENT 均通过；`lookup("volume.raw")` 返回 `lookup_item` 后，macOS `stat` 正确显示 inode 2、regular file、0444、size 4096 |
-| C6 | ✅ | 实现 open / read / close | 请求已确认：`open {node_id:2,open_modes:1}` → 返回 `handle_id`；`read {node_id:2,offset,length}` → 响应 metadata `ok=true` + **raw frame payload**；`close {node_id:2,keeping_modes:0}` → `ok=true`。实测 `dd bs=512 count=1` 成功，SHA-256 `110009dcee21620b166f3abfecb5eff7a873be729d1c2d53822e7acc5f34eb9b` 与预期完全一致 |
-| C7 | 🟡 | 实现 directory enumeration | `open_directory → handle_id`、`close_directory → ok` 已通过；`enumerate_directory` 请求字段已抓全：`cookie/verifier/max_entries/parent_id/handle_id`。空 `dir_items=[]` 响应会让 `ls` 最终 EIO，需继续校准 EOF/cookie 语义；不阻塞已知路径 `/volume.raw` 的 direct lookup/read |
+| C6 | ✅ | 实现 open / read / close | 请求已确认：`open {node_id:2,open_modes:1}` → 返回 `handle_id`；`read {node_id:2,offset,length}` → 响应 metadata `ok=true` + **raw frame payload**；`close {node_id:2,keeping_modes:0}` → `ok=true`。先用 Python 黑盒验证，随后已固化为 `FuseTMinimalBridge.swift`，不依赖 libfuse/go-nfsv4 |
+| C7 | 🟡 | 实现 directory enumeration | `open_directory/close_directory/enumerate_directory` 已进入 Swift bridge，并为每次 open 分配独立 handle；`ls` 已能显示 `volume.raw`，但结束时仍报 `fts_read: Input/output error`，需继续校准 EOF/cookie/verifier 语义；不阻塞直接访问 `/volume.raw` |
 | C8 | ⏳ | 实现必须的 xattr 查询 | 待执行 |
 | C9 | ⏳ | 所有 mutation 返回只读错误 | 待执行 |
 | C10 | ✅ | 验证无 TCP listener | 官方 `backend=fskit` 与 EDP-owned direct listener 实验均无 TCP listener；仅使用 `~/Library/Group Containers/group.org.fuset.fskit-srv/s/*.sock` Unix socket |
@@ -144,13 +144,17 @@ EDP-owned Unix listener
 |---|---|---|---|
 | D1 | ✅ | 只暴露 `/volume.raw` | direct lookup 仅对 `parent_id=1,name=volume.raw` 返回 node 2；其他探测项返回 ENOENT |
 | D2 | ✅ | 正确报告 fixed logical size | synthetic PoC 正确报告 4096 bytes；`stat` 显示 Size=4096 |
-| D3 | 🟡 | 任意 offset/length 随机读 | offset=0 read 已通过；下一步覆盖非零 offset、跨块和尾部读 |
-| D4 | 🟡 | offset<size 不返回错误 0-byte READ | 首次 read 请求为 `offset=0,length=4096`，返回完整 4096 raw payload，`dd` 成功；需扩展边界矩阵 |
-| D5 | ⏳ | EOF 仅 offset>=size | 待执行 |
-| D6 | ⏳ | mutation 全部只读失败 | 待执行 |
-| D7 | 🟡 | fixture 全文件哈希一致 | 首 512 bytes SHA-256 已与预期一致；待验证整个 4096-byte fixture 与后续更大 fixture |
+| D3 | ✅ | 任意 offset/length 随机读 | 原生 Swift bridge + 8193-byte fixture 实测 `(0,1)`、`(1,31)`、`(4095,4097)`、`(8192,64)` 全部逐字节一致；跨 4K 与尾部短读正确 |
+| D4 | ✅ | offset<size 不返回错误 0-byte READ | `offset=8192,size=8193,length=64` 正确返回 1 byte；所有 offset<size case 均无人工 0-byte read |
+| D5 | ✅ | EOF 仅 offset>=size | `offset=8193` 与 `offset=8293` 均返回 0 bytes；边界与超 EOF 均正确 |
+| D6 | 🟡 | mutation 全部只读失败 | 外部实测覆盖写 `volume.raw`、`touch new-file`、`rm volume.raw` 均 Permission denied；Swift bridge 对已知 mutation RPC 返回 `EROFS`。仍需补齐所有 mutation 方法名的系统调用覆盖 |
+| D7 | ✅ | fixture 全文件哈希一致 | 8193-byte fixture 经 FSKit 完整读取 SHA-256 `40aad4a3dcbc0f12bfe6231e34fff39eb14338284396b090b01e7eadf3b653ef`，与 backing 完全一致 |
 
-Phase D 验收：**未完成**。
+Phase D 验收：**核心随机读/EOF/完整性通过；只读 mutation 覆盖和目录 EIO 继续收口，但不阻塞 Phase E block-image attach。**
+
+原生 PoC：`native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift`
+
+编译条件：Swift 6 `-warnings-as-errors` 通过；运行时仅依赖系统 Foundation/Darwin。实机进程树未出现 `go-nfsv4`，无 TCP listener。隐藏 mountpoint 已改用 `/private/tmp/...`，不再需要管理员授权。
 
 ---
 
@@ -224,11 +228,11 @@ Phase H 验收：**未完成**。
 立即执行：
 
 ```text
-将已验证 Python 黑盒逻辑固化为仓库内原生最小 FUSE-T RPC helper
+E1 创建小型可 attach 的 synthetic disk-image fixture
 ↓
-D3-D7 执行非零 offset / 尾部 / EOF / 全文件哈希 / mutation fail-closed
+E2-E4 用原生 Swift bridge 暴露 `/volume.raw`，让 `hdiutil attach -readonly -nomount` 直接产生 `/dev/diskN` 并校验 LBA
 ↓
-E1-E4 让 `hdiutil attach -readonly -nomount` 直接读取隐藏 `/volume.raw`
+修复 C7 目录枚举尾部 EIO，并继续 E5/F1-F5
 ```
 
 ## 失败实验登记
@@ -243,6 +247,10 @@ E1-E4 让 `hdiutil attach -readonly -nomount` 直接读取隐藏 `/volume.raw`
 | 2026-08-26 | handshake + ping + root_attrs + statfs + ENOENT lookup | **无 go-nfsv4 下 FSKit mount 成功** | 已继续突破单文件路径 |
 | 2026-08-26 | `volume.raw` lookup/getattr | `stat` 正确看到 inode 2 / regular / 0444 / 4096 bytes | 文件 metadata 契约确认 |
 | 2026-08-26 | open + read raw payload + close | `dd` 成功读 512 bytes；SHA-256 与预期完全一致 | 证明 read 数据可直接走 frame raw payload，无 Base64/JSON 膨胀 |
+| 2026-08-26 | `FuseTMinimalBridge.swift` 原生化 | Swift 6 warnings-as-errors 编译通过；仅 Foundation/Darwin | 正式移除 PoC 对 Python/libfuse/go helper 的运行依赖 |
+| 2026-08-26 | 8193-byte native bridge 边界矩阵 | 跨 4K、尾部短读、EOF/超 EOF 全部正确，完整 SHA 一致 | Phase D 核心通过 |
+| 2026-08-26 | 原生 bridge 写/创建/删除测试 | 全部 Permission denied | mount + bridge 双层只读成立 |
+| 2026-08-26 | 原生 bridge `ls` | 能列出 `volume.raw`，但结尾 `fts_read: Input/output error` | C7 保留未完成，不阻塞 direct path |
 | 2026-08-26 | hidden mountpoint 改到 `/private/tmp/edp-fuset-hidden-mnt` | 正常 mount/read，不需要管理员授权 | 后续隐藏 transport 不再创建 `/Volumes` 测试目录 |
 
 ---
@@ -255,4 +263,5 @@ E1-E4 让 `hdiutil attach -readonly -nomount` 直接读取隐藏 `/volume.raw`
 | `ac8c1b1` | Phase A：固化 FUSE-T 最小签名/运行时基线 | 已 push |
 | `c44ca83` | Phase B：FUSE-T 3.19 官方 `backend=fskit` 参考路径跑通 | 已 push |
 | `7ee9ca3` | Phase B/C：提取 direct mount + RPC framing/handshake/root/statfs 最小契约 | 已 push |
-| 待提交 | Phase C/D：`volume.raw` lookup/open/raw-payload-read 数据一致性验证 | 待 push |
+| `c8175ed` | Phase C/D：`volume.raw` lookup/open/raw-payload-read 数据一致性验证 | 已 push（rebase 后 commit id） |
+| 待提交 | 原生 Swift minimal bridge + Phase D random/EOF/full-hash 实机验证 | 待 push |
