@@ -43,10 +43,21 @@ extern long long edp_rw_write(void *handle, unsigned long long offset,
                               unsigned long long requested_length);
 extern int32_t edp_rw_sync(void *handle);
 extern void edp_rw_close(void *handle);
+extern void *edp_ro_open_device_fd(int raw_fd, const char *vid_hex,
+                                   const char *pid_hex,
+                                   unsigned long long device_size_bytes,
+                                   const unsigned char *password_bytes,
+                                   unsigned long long password_length,
+                                   uint32_t partition_type);
+extern unsigned long long edp_ro_size(void *handle);
+extern long long edp_ro_read(void *handle, unsigned long long offset, void *buffer,
+                             unsigned long long requested_length);
+extern void edp_ro_close(void *handle);
 
 static const char *volume_path = "/volume.raw";
 static void *block_handle = NULL;
 static uint64_t volume_size = 0;
+static int read_only_mode = 0;
 
 static void secure_zero(void *buffer, size_t length) {
     volatile unsigned char *bytes = (volatile unsigned char *)buffer;
@@ -191,8 +202,10 @@ static void print_usage(const char *program) {
             "  %s --device <raw-device> <vid> <pid> <device-size> "
             "<partition-type> <password-fd> <mountpoint>\n"
             "  %s --device-auth <raw-device> <vid> <pid> <device-size> "
+            "<partition-type> <control-fd> <mountpoint>\n"
+            "  %s --device-auth-readonly <raw-device> <vid> <pid> <device-size> "
             "<partition-type> <control-fd> <mountpoint>\n",
-            program, program, program);
+            program, program, program, program);
 }
 
 static int m_getattr(const char *path, struct stat *st) {
@@ -205,7 +218,7 @@ static int m_getattr(const char *path, struct stat *st) {
         return 0;
     }
     if (strcmp(path, volume_path) == 0) {
-        st->st_ino = 2; st->st_mode = S_IFREG | 0666; st->st_nlink = 1;
+        st->st_ino = 2; st->st_mode = S_IFREG | (read_only_mode ? 0444 : 0666); st->st_nlink = 1;
         st->st_size = (off_t)volume_size;
         st->st_blocks = (blkcnt_t)((volume_size + 511) / 512);
         return 0;
@@ -223,13 +236,14 @@ static int m_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 static int m_access(const char *path, int mask) {
-    (void)mask;
-    return (strcmp(path, "/") == 0 || strcmp(path, volume_path) == 0)
-        ? 0 : -ENOENT;
+    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0) return -ENOENT;
+    if (read_only_mode && (mask & W_OK)) return -EROFS;
+    return 0;
 }
 
 static int m_open(const char *path, struct fuse_file_info *fi) {
     if (strcmp(path, volume_path) != 0) return -ENOENT;
+    if (read_only_mode && (fi->flags & O_ACCMODE) != O_RDONLY) return -EROFS;
     fi->fh = 42;
     return 0;
 }
@@ -239,7 +253,9 @@ static int m_read(const char *path, char *buf, size_t size, off_t offset,
     (void)fi;
     if (strcmp(path, volume_path) != 0) return -ENOENT;
     if (offset < 0) return -EINVAL;
-    long long result = edp_rw_read(block_handle, (uint64_t)offset, buf, size);
+    long long result = read_only_mode
+        ? edp_ro_read(block_handle, (uint64_t)offset, buf, size)
+        : edp_rw_read(block_handle, (uint64_t)offset, buf, size);
     if (result < 0) return (int)result;
     if ((unsigned long long)result > (unsigned long long)INT_MAX) return -EIO;
     return (int)result;
@@ -249,6 +265,7 @@ static int m_write(const char *path, const char *buf, size_t size, off_t offset,
                    struct fuse_file_info *fi) {
     (void)fi;
     if (strcmp(path, volume_path) != 0) return -ENOENT;
+    if (read_only_mode) return -EROFS;
     if (offset < 0) return -EINVAL;
     long long result = edp_rw_write(block_handle, (uint64_t)offset, buf, size);
     if (result < 0) return (int)result;
@@ -259,6 +276,7 @@ static int m_write(const char *path, const char *buf, size_t size, off_t offset,
 static int m_flush(const char *path, struct fuse_file_info *fi) {
     (void)fi;
     if (strcmp(path, volume_path) != 0) return -ENOENT;
+    if (read_only_mode) return 0;
     return (int)edp_rw_sync(block_handle);
 }
 
@@ -310,7 +328,9 @@ static struct fuse_operations ops = {
 
 int main(int argc, char **argv) {
     const char *mountpoint = NULL;
-    if (argc == 9 && (strcmp(argv[1], "--device") == 0 || strcmp(argv[1], "--device-auth") == 0)) {
+    if (argc == 9 && (strcmp(argv[1], "--device") == 0 ||
+                      strcmp(argv[1], "--device-auth") == 0 ||
+                      strcmp(argv[1], "--device-auth-readonly") == 0)) {
         uint64_t device_size = 0;
         uint32_t partition_type = 0;
         int password_fd = -1;
@@ -333,7 +353,8 @@ int main(int argc, char **argv) {
         unsigned char *password = control;
         size_t password_length = control_length;
         int authorized_raw_fd = -1;
-        if (strcmp(argv[1], "--device-auth") == 0) {
+        if (strcmp(argv[1], "--device-auth") == 0 ||
+            strcmp(argv[1], "--device-auth-readonly") == 0) {
             if (control_length <= sizeof(AuthorizationExternalForm)) {
                 secure_zero(control, sizeof(control));
                 fprintf(stderr, "EDP_FUSE_AUTH_CONTROL_TOO_SHORT\n"); return 65;
@@ -342,18 +363,23 @@ int main(int argc, char **argv) {
             memcpy(&external_form, control, sizeof(external_form));
             password = control + sizeof(external_form);
             password_length = control_length - sizeof(external_form);
-            authorized_raw_fd = authopen_fd(
-                argv[2], O_RDWR | O_CLOEXEC, &external_form
-            );
+            read_only_mode = strcmp(argv[1], "--device-auth-readonly") == 0;
+            int raw_flags = (read_only_mode ? O_RDONLY : O_RDWR) | O_CLOEXEC;
+            authorized_raw_fd = authopen_fd(argv[2], raw_flags, &external_form);
             secure_zero(&external_form, sizeof(external_form));
             if (authorized_raw_fd < 0) {
                 secure_zero(control, sizeof(control));
-                fprintf(stderr, "EDP_FUSE_AUTHOPEN_RDWR_FAILED\n"); return 65;
+                fprintf(stderr, "EDP_FUSE_AUTHOPEN_FAILED\n"); return 65;
             }
-            block_handle = edp_rw_open_device_fd(
-                authorized_raw_fd, argv[3], argv[4], device_size, password,
-                password_length, partition_type
-            );
+            block_handle = read_only_mode
+                ? edp_ro_open_device_fd(
+                    authorized_raw_fd, argv[3], argv[4], device_size, password,
+                    password_length, partition_type
+                )
+                : edp_rw_open_device_fd(
+                    authorized_raw_fd, argv[3], argv[4], device_size, password,
+                    password_length, partition_type
+                );
             close(authorized_raw_fd);
         } else {
             block_handle = edp_rw_open_device(
@@ -376,9 +402,14 @@ int main(int argc, char **argv) {
         print_usage(argv[0]); return 64;
     }
 
-    volume_size = edp_rw_size(block_handle);
+    volume_size = read_only_mode ? edp_ro_size(block_handle) : edp_rw_size(block_handle);
     if (volume_size == 0) {
-        edp_rw_close(block_handle); block_handle = NULL;
+        if (read_only_mode) {
+            edp_ro_close(block_handle);
+        } else {
+            edp_rw_close(block_handle);
+        }
+        block_handle = NULL;
         fprintf(stderr, "EDP_FUSE_BRIDGE_INVALID_SIZE\n"); return 66;
     }
 
@@ -391,8 +422,12 @@ int main(int argc, char **argv) {
     fprintf(stderr, "EDP_FUSE_BLOCK_SIZE=%llu\n",
             (unsigned long long)volume_size);
     int rc = fuse_main(5, fuse_argv, &ops, NULL);
-    (void)edp_rw_sync(block_handle);
-    edp_rw_close(block_handle);
+    if (read_only_mode) {
+        edp_ro_close(block_handle);
+    } else {
+        (void)edp_rw_sync(block_handle);
+        edp_rw_close(block_handle);
+    }
     block_handle = NULL;
     return rc;
 }

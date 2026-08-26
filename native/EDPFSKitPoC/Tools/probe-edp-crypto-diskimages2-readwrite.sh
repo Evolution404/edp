@@ -125,6 +125,7 @@ xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
   native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
   native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
   native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift \
+  native/EDPFSKitPoC/Tools/EDPReadOnlyBlockCBridge.swift \
   native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift \
   -o "${SWIFT_LIB}"
 

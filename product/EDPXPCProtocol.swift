@@ -25,6 +25,7 @@ struct EDPXPCSnapshot: Codable, Sendable {
     func snapshot(withReply reply: @escaping (Data) -> Void)
     func authorize(deviceID: String, password: Data, rawAuthorization: Data, withReply reply: @escaping (String?) -> Void)
     func grantRawAccess(authorization: Data, withReply reply: @escaping (String?) -> Void)
+    func retryMount(deviceID: String, withReply reply: @escaping (String?) -> Void)
     func revoke(deviceID: String, withReply reply: @escaping (String?) -> Void)
     func eject(deviceID: String, withReply reply: @escaping (String?) -> Void)
     func diagnostics(withReply reply: @escaping (Data) -> Void)

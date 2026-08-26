@@ -89,6 +89,7 @@ xcrun swiftc -O -framework Security \
 xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
   -Xlinker -install_name -Xlinker @rpath/libEDPReadWriteBridge.dylib \
   "${CORE_SOURCES[@]}" \
+  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadOnlyBlockCBridge.swift" \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
   -o "${RUNTIME_STAGE}/bin/libEDPReadWriteBridge.dylib"
 
@@ -105,6 +106,10 @@ FUSE_LIBS="$(pkg-config --libs fuse)"
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/DiskImages2Attach.m" \
   -framework Foundation \
   -o "${RUNTIME_STAGE}/bin/diskimages2-attach"
+
+/usr/bin/cc -O2 -Wall -Wextra \
+  "${REPO_ROOT}/product/EDPConsoleExec.c" \
+  -o "${RUNTIME_STAGE}/bin/edp-console-exec"
 
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
@@ -132,7 +137,7 @@ cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
 xcrun swiftc -O \
-  -framework AppKit -framework SwiftUI -framework ServiceManagement -framework Security \
+  -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement -framework Security \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
   -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"

@@ -194,6 +194,19 @@ private func consoleIdentity() -> (uid_t, gid_t) {
     return (501, 20)
 }
 
+private func configureConsoleProcess(
+    _ process: Process,
+    binaryRoot: String,
+    identity: (uid_t, gid_t),
+    executable: String,
+    arguments: [String]
+) {
+    process.executableURL = URL(fileURLWithPath: binaryRoot + "/edp-console-exec")
+    process.arguments = [
+        String(identity.0), String(identity.1), "--", executable,
+    ] + arguments
+}
+
 private func safeName(_ value: String) -> String {
     let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
     let converted = value.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "-" }
@@ -315,23 +328,32 @@ private final class MountManager {
         guard sessions[sessionKey] == nil else { return }
         let suffix = safeName(disk.deviceID) + "-\(partitionType)"
         let bridgeMount = "/Volumes/.edp-block-\(suffix)"
+        let identity = consoleIdentity()
         try? FileManager.default.removeItem(atPath: bridgeMount)
         try FileManager.default.createDirectory(
             atPath: bridgeMount,
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
         )
+        guard chown(bridgeMount, identity.0, identity.1) == 0 else {
+            throw fail("cannot assign encrypted bridge mountpoint to console user: errno=\(errno)")
+        }
         if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
             try diskArbitration.unmountWhole(disk.bsdName)
         }
 
         let passwordPipe = Pipe()
         let fuse = Process()
-        fuse.executableURL = URL(fileURLWithPath: binaryRoot + "/edp-readwrite-fuse")
-        fuse.arguments = [
-            "--device-auth", disk.rawPath, disk.vidHex, disk.pidHex,
-            String(disk.sizeBytes), String(partitionType), "0", bridgeMount,
-        ]
+        configureConsoleProcess(
+            fuse,
+            binaryRoot: binaryRoot,
+            identity: identity,
+            executable: binaryRoot + "/edp-readwrite-fuse",
+            arguments: [
+                "--device-auth-readonly", disk.rawPath, disk.vidHex, disk.pidHex,
+                String(disk.sizeBytes), String(partitionType), "0", bridgeMount,
+            ]
+        )
         fuse.standardInput = passwordPipe
         let logPath = sessionRoot + "/\(suffix).bridge.log"
         try FileManager.default.createDirectory(atPath: sessionRoot, withIntermediateDirectories: true)
@@ -347,33 +369,33 @@ private final class MountManager {
         passwordPipe.fileHandleForWriting.write(Data(password))
         try passwordPipe.fileHandleForWriting.close()
 
-        var publishedDevice: EDPPublishedBlockDevice?
         do {
             try waitUntil(seconds: 20) {
-                FileManager.default.isWritableFile(atPath: bridgeMount + "/volume.raw")
+                FileManager.default.isReadableFile(atPath: bridgeMount + "/volume.raw")
                     || !fuse.isRunning
             }
             guard fuse.isRunning,
-                  FileManager.default.isWritableFile(atPath: bridgeMount + "/volume.raw") else {
+                  FileManager.default.isReadableFile(atPath: bridgeMount + "/volume.raw") else {
                 throw fail("encrypted block bridge failed; see \(logPath)")
             }
 
-            let published = try blockPublisher.publishWritableImage(at: bridgeMount + "/volume.raw")
-            publishedDevice = published
-            let exposed = published.bsdName
-            let filesystemDevice = try resolveFilesystemDevice(exposed)
-            let mounted: (String, String?, Process?)
-            switch filesystemDevice.magic {
-            case "EXFAT": mounted = try mountExFAT(filesystemDevice.bsdName)
-            case "NTFS": mounted = try mountNTFS(filesystemDevice.bsdName, suffix: suffix)
-            default: throw fail("unsupported decrypted filesystem: \(filesystemDevice.magic)")
+            let decryptedVolume = bridgeMount + "/volume.raw"
+            let directMagic = try filesystemMagic(decryptedVolume)
+            guard directMagic == "NTFS" else {
+                throw fail("Finder read-only mode currently supports NTFS exchange volumes only")
             }
+            let mounted: (String, String?, Process?)
+            mounted = try mountNTFSReadOnly(
+                decryptedVolume,
+                suffix: suffix,
+                identity: identity
+            )
             sessions[sessionKey] = MountSession(
                 physicalBSD: disk.bsdName,
                 deviceID: disk.deviceID,
                 partitionType: partitionType,
                 bridgeMount: bridgeMount,
-                exposedBSD: exposed,
+                exposedBSD: "",
                 filesystem: mounted.0,
                 userMount: mounted.1,
                 fuse: fuse,
@@ -382,7 +404,6 @@ private final class MountManager {
             persistSessions()
             NSLog("EDP mounted %@ partition %u as %@ at %@", disk.deviceID, partitionType, mounted.0, mounted.1 ?? "(unknown)")
         } catch {
-            if let publishedDevice { try? blockPublisher.unpublish(publishedDevice) }
             fuse.terminate()
             try? EDPNativeMountTable.unmountPath(bridgeMount)
             try? FileManager.default.removeItem(atPath: bridgeMount)
@@ -441,6 +462,56 @@ private final class MountManager {
         return ("NTFS", mountpoint, process)
     }
 
+    private func mountNTFSReadOnly(
+        _ device: String,
+        suffix: String,
+        identity: (uid_t, gid_t)
+    ) throws -> (String, String?, Process?) {
+        let probe = try run(
+            binaryRoot + "/ntfs-3g.probe",
+            ["--readonly", device],
+            accepted: Set(0...21)
+        )
+        guard probe.status == 0 else {
+            throw fail("NTFS read-only probe refused the volume (\(probe.status))")
+        }
+        let label = "EDP-NTFS"
+        let mountpoint = uniqueMountpoint(label)
+        try FileManager.default.createDirectory(atPath: mountpoint, withIntermediateDirectories: false)
+        guard chown(mountpoint, identity.0, identity.1) == 0 else {
+            throw fail("cannot assign NTFS mountpoint to console user: errno=\(errno)")
+        }
+        let process = Process()
+        configureConsoleProcess(
+            process,
+            binaryRoot: binaryRoot,
+            identity: identity,
+            executable: binaryRoot + "/ntfs-3g",
+            arguments: EDPNTFSMountPolicy.readOnlyCommandArguments(
+                uid: identity.0,
+                gid: identity.1,
+                volumeName: label
+            ) + [device, mountpoint]
+        )
+        var environment = ProcessInfo.processInfo.environment
+        environment["DYLD_LIBRARY_PATH"] = binaryRoot
+        process.environment = environment
+        let logPath = sessionRoot + "/\(suffix).ntfs.log"
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        let log = try FileHandle(forWritingTo: URL(fileURLWithPath: logPath))
+        process.standardOutput = log
+        process.standardError = log
+        try process.run()
+        try waitUntil(seconds: 20) { EDPNativeMountTable.isMountpoint(mountpoint) || !process.isRunning }
+        guard process.isRunning,
+              EDPNativeMountTable.isMountpoint(mountpoint),
+              EDPNativeMountTable.isReadOnly(mountpoint) == true else {
+            process.terminate()
+            throw fail("NTFS-3G Finder read-only mount failed; see \(logPath)")
+        }
+        return ("NTFS (read-only)", mountpoint, process)
+    }
+
     func removeMissing(availableBSD: Set<String>) {
         let keys = sessions.compactMap { availableBSD.contains($0.value.physicalBSD) ? nil : $0.key }
         for key in keys { unmount(key: key) }
@@ -456,7 +527,9 @@ private final class MountManager {
             try? EDPNativeMountTable.unmountPath(userMount)
         }
         session.filesystemProcess?.terminate()
-        try? blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: session.exposedBSD))
+        if !session.exposedBSD.isEmpty {
+            try? blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: session.exposedBSD))
+        }
         session.fuse.terminate()
         try? EDPNativeMountTable.unmountPath(session.bridgeMount)
         try? FileManager.default.removeItem(atPath: session.bridgeMount)
@@ -592,7 +665,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     private let store: EDPCredentialStore
     private let manager: MountManager
     private let queue = DispatchQueue(label: "com.edp.usbvault.controller")
-    private var failureDeadline = [String: Date]()
+    private var failedMounts = Set<String>()
     private var rawAuthorization: Data?
 
     init() throws {
@@ -610,6 +683,11 @@ private final class EDPDaemonController: @unchecked Sendable {
             do {
                 let disks = try discoverEDPDisks()
                 manager.removeMissing(availableBSD: Set(disks.map(\.bsdName)))
+                let connectedDeviceIDs = Set(disks.map(\.deviceID))
+                failedMounts = failedMounts.filter { key in
+                    guard let separator = key.lastIndex(of: ":") else { return false }
+                    return connectedDeviceIDs.contains(String(key[..<separator]))
+                }
                 let records = try store.load().records
                 guard let rawAuthorization else { return }
                 for disk in disks {
@@ -618,7 +696,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                     }
                     for type in record.partitionTypes where !manager.contains(disk, type) {
                         let key = "\(disk.deviceID):\(type)"
-                        if let deadline = failureDeadline[key], deadline > Date() { continue }
+                        if failedMounts.contains(key) { continue }
                         do {
                             var password = try store.password(for: record)
                             defer { secureZero(&password) }
@@ -628,10 +706,10 @@ private final class EDPDaemonController: @unchecked Sendable {
                                 password: password,
                                 rawAuthorization: rawAuthorization
                             )
-                            failureDeadline.removeValue(forKey: key)
+                            failedMounts.remove(key)
                         } catch {
-                            NSLog("EDP auto-mount failed for %@ type %u: %@", disk.deviceID, type, String(describing: error))
-                            failureDeadline[key] = Date().addingTimeInterval(30)
+                            NSLog("EDP auto-mount failed for %@ type %u; automatic retry paused until explicit user action or device reconnect: %@", disk.deviceID, type, String(describing: error))
+                            failedMounts.insert(key)
                         }
                     }
                 }
@@ -684,7 +762,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             let verified = try verifiedPartitionTypes(disk: disk, password: password)
             try store.put(deviceID: deviceID, password: password, partitionTypes: verified)
             self.rawAuthorization = rawAuthorization
-            for type in verified { failureDeadline.removeValue(forKey: "\(deviceID):\(type)") }
+            for type in verified { failedMounts.remove("\(deviceID):\(type)") }
         }
         reconcile()
     }
@@ -695,7 +773,23 @@ private final class EDPDaemonController: @unchecked Sendable {
         }
         queue.sync {
             rawAuthorization = authorization
-            failureDeadline.removeAll()
+            failedMounts.removeAll()
+        }
+        reconcile()
+    }
+
+    func retryMount(deviceID: String) throws {
+        try queue.sync {
+            guard rawAuthorization != nil else {
+                throw fail("raw-device access is not authorized")
+            }
+            guard try discoverEDPDisks().contains(where: { $0.deviceID == deviceID }) else {
+                throw fail("EDP device is no longer connected")
+            }
+            guard try store.load().records.contains(where: { $0.deviceID == deviceID }) else {
+                throw fail("EDP device is not authorized")
+            }
+            failedMounts = failedMounts.filter { !$0.hasPrefix("\(deviceID):") }
         }
         reconcile()
     }
@@ -703,6 +797,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     func revoke(deviceID: String) throws {
         try queue.sync {
             manager.eject(deviceID: deviceID)
+            failedMounts = failedMounts.filter { !$0.hasPrefix("\(deviceID):") }
             try store.remove(deviceID: deviceID)
         }
     }
@@ -715,11 +810,13 @@ private final class EDPDaemonController: @unchecked Sendable {
         queue.sync {
             let payload: [String: Any] = [
                 "mounts": manager.mountedSummaries(),
+                "failedMounts": failedMounts.sorted(),
                 "rawAccessReady": rawAuthorization != nil,
                 "nativeMountCount": EDPNativeMountTable.entries().count,
                 "legacyDiscoveryCLI": false,
                 "legacyMountCLI": false,
                 "eventDrivenDiscovery": true,
+                "automaticMountRetry": false,
                 "credentialStore": "System Keychain",
                 "deviceDiscoveryDiagnostics": EDPNativeDeviceDiscovery.diagnosticReport(),
             ]
@@ -766,6 +863,15 @@ private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCP
     func grantRawAccess(authorization: Data, withReply reply: @escaping (String?) -> Void) {
         do {
             try controller.grantRawAccess(authorization)
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func retryMount(deviceID: String, withReply reply: @escaping (String?) -> Void) {
+        do {
+            try controller.retryMount(deviceID: deviceID)
             reply(nil)
         } catch {
             reply(String(describing: error))
@@ -824,7 +930,7 @@ private func doctor() -> Int32 {
     let macFUSEOK = FileManager.default.fileExists(atPath: macFUSE)
     print("MACFUSE_RUNTIME=\(macFUSEOK ? "OK" : "MISSING")")
     ok = ok && macFUSEOK
-    for tool in ["edp-readwrite-fuse", "edp-raw-metadata", "diskimages2-attach", "ntfs-3g", "ntfs-3g.probe", "ntfslabel"] {
+    for tool in ["edp-readwrite-fuse", "edp-console-exec", "edp-raw-metadata", "diskimages2-attach", "ntfs-3g", "ntfs-3g.probe", "ntfslabel"] {
         let path = productRoot + "/bin/" + tool
         let present = FileManager.default.isExecutableFile(atPath: path)
         print("TOOL_\(tool.uppercased().replacingOccurrences(of: ".", with: "_"))=\(present ? "OK" : "MISSING")")

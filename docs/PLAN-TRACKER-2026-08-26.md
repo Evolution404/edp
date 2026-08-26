@@ -283,3 +283,13 @@
 - restored sparse image 与重新枚举为 `/dev/rdisk4` 的同一实体盘均以只读 EDP bridge 解密，NTFS-3G 固定 `ro,norecover,backend=fskit`；两边 `RO probe=0`、`RW probe=0`。
 - 全盘内容一致性直接采用已完成的 raw logical SHA256 `61e54385b087e70f5378968114a04f8af9b785b2057172830d62629231924423`，不再逐文件重复哈希；metadata + boot/tail manifest 两边 byte-for-byte 一致，SHA256 为 `42355f26cbbe40b4c0d43e46ea63f1db8febcf4de430f17fdfd37a79c22f66b2`。
 - 输出 `RESULT=REAL_EDP_RESTORED_NTFS_FILES_MATCH_OK` 与 `PHYSICAL_WRITE_GATE=OPEN_RW_PROBE_CLEAN`；至此 backup → restore/mount → 关键 metadata 恢复门通过。该里程碑执行期间 physical fd 始终为 `O_RDONLY`，尚未发生任何真实物理 `pwrite`。
+
+### 2026-08-26 — UI Finder mount：失败锁存与 macFUSE FSKit enablement 根因
+
+- 取消 daemon 的定时挂载重试：原 `failureDeadline + 30s` 改为 per-device/partition `failedMounts` 锁存。一次挂载失败后保持 fail-closed，不再由后续设备事件反复触发；仅设备拔插、重新授权或用户在 App 主动点击“挂载交换区”后允许再次尝试。
+- SwiftUI/XPC 增加显式 `retryMount(deviceID:)`；本地编译通过，静态检查输出 `RESULT=NO_TIMED_MOUNT_RETRY` 与 `RESULT=UI_RETRY_CONTROL_BUILDS_OK`。
+- Finder 只读路径补齐端到端 readonly 边界：`--device-auth-readonly` 使用 `authopen O_RDONLY`，并调用现有 `EDPReadOnlyUnlock/EDPEncryptedReadOnlyBlockDevice`；FUSE read 允许读取、write 固定 `EROFS`。安装包同时补入 `edp-console-exec` 与 read-only bridge symbols。
+- 当前 macFUSE 5.3.3 文件、Developer ID 签名与两个 FSKit appex 均完整；PluginKit 可发现 `io.macfuse.app.fsmodule.macfuse` 与 `io.macfuse.app.fsmodule.macfuse-local`，但 macOS 26 `FSClient.shared.fetchInstalledExtensions` 仅返回 Apple exfat/ftp/msdos，未返回任何 macFUSE module。
+- macFUSE launchservice 实机日志反复给出 `File system extension io.macfuse.app.fsmodule.macfuse-local not enabled`；因此当前阻塞位于 macOS FSKit module enablement 状态，而非 EDP 密码、解密、NTFS 数据或 macFUSE 文件缺失。
+- PluginKit `+` 状态不能替代 FSKit enablement；`pluginkit -e use` 后 FSClient 结果不变。当前用户为管理员且无 MDM enrollment，排除普通用户权限/MDM 禁用。
+- 另有待继续解释的异常：EDP 当前 bridge 与 NTFS policy 均只传 `backend=fskit`、没有 `local`，但 macFUSE mount daemon 的失败日志却检查 `macfuse-local`。下一步需要验证 macFUSE 5.3.3 在本机重新注册后的 module selection/FSKit 状态，并在产品 mount 前增加 FSKit enablement preflight，避免即使手动重试也出现 macFUSE 系统弹窗。

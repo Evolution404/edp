@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import FSKit
 import ServiceManagement
 import Security
 import SwiftUI
@@ -39,6 +40,7 @@ final class EDPVaultViewModel: ObservableObject {
     @Published var lastError: String?
     @Published var diagnostics = ""
     @Published var isBusy = false
+    @Published var macFUSEFSKitReady: Bool?
 
     private let serviceMode: String
     private let daemonService: SMAppService?
@@ -52,6 +54,7 @@ final class EDPVaultViewModel: ObservableObject {
             ? SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
             : nil
         ensureServiceRegistration()
+        refreshFSKitState()
         refresh()
     }
 
@@ -114,8 +117,27 @@ final class EDPVaultViewModel: ObservableObject {
         SMAppService.openSystemSettingsLoginItems()
     }
 
+    func refreshFSKitState() {
+        FSClient.shared.fetchInstalledExtensions { [weak self] modules, _ in
+            Task { @MainActor in
+                self?.macFUSEFSKitReady = modules?.contains {
+                    $0.bundleIdentifier == "io.macfuse.app.fsmodule.macfuse" && $0.isEnabled
+                } ?? false
+            }
+        }
+    }
+
+    private func requireMacFUSEFSKit() -> Bool {
+        guard macFUSEFSKitReady == true else {
+            lastError = "macFUSE 文件系统扩展尚未启用。请在系统设置 → 通用 → 登录项与扩展 → 文件系统扩展中启用 macFUSE，然后点刷新。"
+            return false
+        }
+        return true
+    }
+
     func refresh() {
         refreshServiceStatus()
+        refreshFSKitState()
         guard let proxy = proxy() else {
             let status = currentServiceStatus()
             if status == .requiresApproval {
@@ -159,7 +181,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func authorize(deviceID: String, password: String) {
-        guard !password.isEmpty, let proxy = proxy() else { return }
+        guard requireMacFUSEFSKit(), !password.isEmpty, let proxy = proxy() else { return }
         let rawAuthorization: Data
         do {
             rawAuthorization = try rawAuthorizationData()
@@ -183,7 +205,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func grantRawAccess() {
-        guard let proxy = proxy() else { return }
+        guard requireMacFUSEFSKit(), let proxy = proxy() else { return }
         let authorization: Data
         do {
             authorization = try rawAuthorizationData()
@@ -193,6 +215,19 @@ final class EDPVaultViewModel: ObservableObject {
         }
         isBusy = true
         proxy.grantRawAccess(authorization: authorization) { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func retryMount(deviceID: String) {
+        guard requireMacFUSEFSKit(), let proxy = proxy() else { return }
+        isBusy = true
+        proxy.retryMount(deviceID: deviceID) { [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -268,6 +303,9 @@ struct EDPDeviceCard: View {
                     if !device.rawAccessReady {
                         Button("启用磁盘访问") { model.grantRawAccess() }
                             .disabled(model.isBusy)
+                    } else if !device.mounted {
+                        Button("挂载交换区") { model.retryMount(deviceID: device.deviceID) }
+                            .disabled(model.isBusy)
                     }
                     Button("安全弹出") { model.eject(deviceID: device.deviceID) }
                         .disabled(!device.mounted || model.isBusy)
@@ -316,6 +354,15 @@ struct ContentView: View {
                     Button("打开系统设置") { model.openServiceSettings() }
                 }
                 Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
+            }
+
+            if model.macFUSEFSKitReady == false {
+                HStack {
+                    Label("macFUSE 文件系统扩展未启用，挂载操作已暂停", systemImage: "puzzlepiece.extension")
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("打开扩展设置") { model.openServiceSettings() }
+                }
             }
 
             if let error = model.lastError {
