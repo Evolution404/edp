@@ -42,6 +42,8 @@ jobs:
           sysctl -n hw.ncpu
           sysctl -n hw.memsize
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          test "${SPAN_BYTES}" -eq 268435456
+          test "${#SM4_KEY}" -eq 32
           echo 'RESULT=PERF_CRYPTO_RUNTIME_READY'
 
       - name: Build optimized benchmark and fixture encryptor
