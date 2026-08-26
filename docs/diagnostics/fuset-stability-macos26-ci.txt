@@ -1,0 +1,38 @@
+# FUSE-T minimal FSKit H4-H6 stability macOS 26 CI
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+large_size=67108864
+large_sha=2015b300b36ee6effd2c2ad75f6e8144976723fa097ac6aad0d165d21a938694
+
+## fixture
+PREPARED_DEVICE_ID=disk&ven_lexar&prod_usb_flash_drive
+PREPARED_PARTITION_TYPE=2
+PREPARED_PARTITION_START_SECTOR=20480
+PREPARED_PARTITION_SIZE_BYTES=118477684736
+PREPARED_PLAINTEXT_BYTES=201326592
+PREPARED_DEVICE_SIZE_BYTES=124736503808
+PREPARED_SECRET_OUTPUT=false
+RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY
+
+## H4 hidden mount / Finder / Quick Look
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-9cd17691-534c-45ee-9553-9ae50a1f7ecd/session.json on /Users/runner/work/_temp/edp-stability-normal-8ac24d53-a98e-42b7-ad9d-44e06f543925 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+/dev/disk8          	                               	/Volumes/EDP_STABILITY_FINAL
+EDP_LARGE.binEDP_PREVIEW.txtEDP_SENTINEL.txt
+Testing Quick Look thumbnails with files:
+	/Volumes/EDP_STABILITY_FINAL/EDP_PREVIEW.txt
+* /Volumes/EDP_STABILITY_FINAL/EDP_PREVIEW.txt produced one thumbnail
+Done producing thumbnails
+/Users/runner/work/_temp/h4-quicklook/EDP_PREVIEW.txt.png
+
+## H5 crash path
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-164be744-df4d-4f06-b3d9-b74ad42bc42f/session.json on /Users/runner/work/_temp/edp-stability-crash-ab650e01-e6f5-4389-a22f-2b182e36be9d (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+/dev/disk8          	                               	/Volumes/EDP_STABILITY_FINAL
+dd: /Users/runner/work/_temp/edp-stability-crash-ab650e01-e6f5-4389-a22f-2b182e36be9d/volume.raw: Connection reset by peer
+"disk8" ejected.
+
+## H6 crash cleanup / leak scans
+CLEANED_SESSION_ID=edp-fuset-164be744-df4d-4f06-b3d9-b74ad42bc42f
+RESULT=FUSET_SESSION_CRASH_CLEANUP_COMPLETE
