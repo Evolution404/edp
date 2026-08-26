@@ -58,12 +58,39 @@
 - [x] B5 移除 `/sbin/mount` / `/sbin/umount` 生产依赖
   - Native Production Path run `32923731599`（`9e44f0b`）与 `32924060719`（`f100656`）成功。
   - `product/` 已无 `ioreg`、`diskutil`、`/sbin/mount`、`/sbin/umount`、`sleep(2)` 生产调用。
-- [ ] B6 SwiftUI + XPC + ServiceManagement 替代用户可见 CLI 工作流
-  - 实现已完成到工作树：SwiftUI App、privileged Mach XPC、XPC caller code-sign/path 校验、SMAppService daemon registration、系统设置批准入口、无 Terminal 正常用户路径。
-  - 本机 Clean Installer 已验证 App 位于 `/Applications`，SMAppService plist/helper 嵌入 App，legacy `/Library/LaunchDaemons` 不再进入 payload；待本次 push 的 macOS 26 CI 注册 smoke 后结项。
+- [x] B6 SwiftUI + XPC + ServiceManagement 替代用户可见 CLI 工作流
+  - commit `ad9668a` 引入 SwiftUI App + privileged Mach XPC；`db8c2c3` 完成双服务部署和真实 XPC smoke。
+  - 正常用户路径不调用 Terminal/CLI；App 提供设备状态、密码授权、撤销、安全弹出、诊断和后台服务状态。
+  - privileged XPC 对调用方执行 code-sign identifier / executable path 校验，拒绝非 `com.edp.usbvault.app` peer。
+  - Developer ID/正式签名构建走嵌入 App 的 `SMAppService.daemon(...)`；ad-hoc CI/self-use 包自动使用 legacy LaunchDaemon fallback，但同样通过 MachService XPC，用户无需手工执行 `launchctl`。
+  - Clean Installer run `32926201447`：`EDP_SERVICE_MODE=legacy`、`EDP_SERVICE_STATUS=enabled`、`RESULT=PRIVILEGED_XPC_ROUNDTRIP_OK`、`RESULT=LEGACY_XPC_SERVICE_SMOKE_OK`。
 - [x] B7 Keychain 替代自管 `master.key`
   - commit `f100656`；临时 Keychain E2E 覆盖 write/read/index-no-secret/revoke。
   - Native Production Path `32924060719` 成功；旧 `master.key + credentials.json` 仅保留一次性迁移入口，新凭据进入 System Keychain。
+
+### Phase C — 底层非原生组件边界
+
+- [x] C1 NTFS-3G 保留并固定边界
+  - 固定 NTFS-3G `2026.7.7` 与 source SHA256 `d67b769025d32860549d35c2147e45024d172f81c540d750390ce3602c059dab`。
+  - CREATE type / `RENAME_EXCL` 两个 macOS FSKit adapter patch 随 source bundle 一并分发；test-only `mkntfs/ntfscp/fixture helper` 不进入生产 payload。
+- [x] C2 macFUSE 暂时保留，仅使用 FSKit backend
+  - 固定 macFUSE `5.3.3`；产品 NTFS policy 使用已验证的 nonlocal `backend=fskit`，不回退 legacy kernel backend。
+  - exact-head NTFS RW/remount run `32926380174` 成功。
+- [x] C3 DiskImages2 private API 隔离
+  - commits `74f7189` / `db80bbe`：上层只依赖 `EDPBlockDevicePublisher`，具体 private helper 封装在 `EDPDiskImages2Publisher` adapter。
+  - Native Production Path `32926201428`：`RESULT=DISKIMAGES2_PRIVATE_API_ISOLATED_TO_ADAPTER`。
+
+### Phase D — 最终产品形态
+
+- [x] SwiftUI App + privileged service + Finder mount engine 已形成完整产品路径。
+- [x] IOKit / Disk Arbitration / native mount table / event-driven discovery / Keychain 已接入生产 runtime。
+- [x] Clean Installer 将 App 安装到 `/Applications/EDP USB Vault.app`，生产 runtime 安装到 `/Library/Application Support/EDP USB Vault`；正常用户操作不需要 Terminal。
+- [x] exact-head `db8c2c3` 最终回归：
+  - Native Production Path `32926201428`：success。
+  - NTFS Fail-Closed Safety `32926201454`：success。
+  - Clean ExFAT + NTFS Installer `32926201447`：success，并完成实际 privileged XPC round-trip。
+  - EDP Crypto + NTFS-3G Read/Write E2E `32926380174`：success。
+- [ ] A6 / raw sparse backup / 真实物理 NTFS 写入：按用户要求本轮明确不执行，不计入本轮其余阶段结项。
 
 ## 变更日志
 
@@ -189,3 +216,11 @@
 - 三次均完成完整 teardown；主验证覆盖 NTFS create、4 MiB+ 顺序写、随机覆盖、rename、delete、sync、卸载、密文 SHA 变化、全链重启、remount、payload SHA256 一致以及最终 clean writable probe。
 - A2 结论：产品底层采用 macFUSE 5.3.3 nonlocal FSKit；NTFS-3G 2026.7.7 通过两个最小 Darwin/FSKit adapter patch 兼容 CREATE type 与 `RENAME_EXCL`。
 - A3 正式完成，进入 A4 dirty / hibernated fail-closed。
+
+### 2026-08-26 — 除 A6 外计划全部收口
+
+- `db8c2c3` 将 ad-hoc CI/self-use 与正式签名发布的 service deployment 分离：ad-hoc 使用 installer-managed legacy LaunchDaemon fallback，正式签名构建保留 `SMAppService.daemon(...)`；两者对 App 都暴露同一个 privileged MachService XPC contract。
+- Clean Installer `32926201447` 在 macOS 26 runner 实际安装 EDP component 后确认 legacy daemon 为 `enabled`，随后由 App 发起 `diagnostics` XPC 调用并得到 `RESULT=PRIVILEGED_XPC_ROUNDTRIP_OK`。
+- Native Production Path `32926201428`、NTFS Fail-Closed `32926201454`、Clean Installer `32926201447`、手动 exact-head NTFS RW/remount `32926380174` 全部 success。
+- C3 `BlockDevicePublisher` adapter 边界、SwiftUI 用户路径、Keychain、IOKit、Disk Arbitration、事件驱动 daemon 均进入最终生产结构。
+- A6 与 raw sparse backup/restore/真实物理写入保持未执行，符合用户本轮明确要求。
