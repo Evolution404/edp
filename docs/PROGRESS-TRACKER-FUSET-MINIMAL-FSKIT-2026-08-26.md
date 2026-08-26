@@ -7,7 +7,7 @@
 
 ## 当前总状态
 
-**状态：Phase A/B 已完成；原生 Swift 最小 bridge 已实机跑通；Phase D 随机读/EOF/完整哈希已通过，下一步进入 hdiutil → /dev/diskN**
+**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E E1-E4 已在 GitHub Actions macOS 26 / Xcode 26 环境端到端通过，下一步收口 E5 并进入 Phase F Apple 默认文件系统挂载。**
 
 当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
 
@@ -21,6 +21,7 @@
 - macFUSE：此前实验已清理；本分支后续必须重新做无残留确认。
 - FUSE-T core 仅允许从 `/private/tmp` 临时解包用于协议抓取，不做系统安装。
 - 当前分支已按用户要求直接位于 `/Users/zhangyuxi/Desktop/edp-usb-vault`；不再使用 worktree。原 `feat/filesystem-agnostic-native-readonly` 未提交 tracker 已保存在 `stash@{0}`。
+- GitHub Actions `macos-26` runner 的 PluginKit 注册状态与 FSKit enabled-modules 状态彼此独立。CI 为了无交互复现，在**一次性 runner** 的 `~/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist` 中追加 `org.fuset.fskit-srv.module` 并刷新 FSKit 用户态缓存；这仅是 CI 测试夹具，**不得进入产品路径或绕过真实用户在系统设置中的启用/授权流程**。
 
 ---
 
@@ -65,7 +66,7 @@ Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applicat
 → EACCES
 ```
 
-结论：直接传普通 file URL 不够，必须复现官方 security-scoped resource 路径。
+结论：`file://...` URL 形式不可用；已验证的 direct path 是把 `session.json` **普通文件路径**传给 `/sbin/mount -o nobrowse,rdonly -t fuset`。
 
 Phase B 验收：**通过。官方参考路径和不依赖 libfuse/go-nfsv4 的最小 resource 契约均已复现。**
 
@@ -162,14 +163,16 @@ Phase D 验收：**核心随机读/EOF/完整性通过；只读 mutation 覆盖�
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| E1 | ⏳ | 创建小型 synthetic raw/dmg fixture | 待执行 |
-| E2 | ⏳ | `hdiutil attach -readonly -nomount` 读取 hidden `volume.raw` | 待执行 |
-| E3 | ⏳ | 产生 `/dev/diskN` | 待执行 |
-| E4 | ⏳ | 随机 LBA 读回一致 | 待执行 |
-| E5 | ⏳ | 确认 backing store 无实际写入 | 待执行 |
-| E6 | ⏳ | 必要时对照 DiskImages2 adapter | 待执行 |
+| E1 | ✅ | 创建小型 synthetic raw/dmg fixture | GitHub Actions `macos-26` 构造 deterministic 8 MiB raw（16384 × 512 B），SHA-256 `638f4947a865d315c06c6c16913be984ff08270b8da0e22a3fedb044891ff59d`；普通 raw 直接 `hdiutil attach -readonly -nomount -imagekey diskimage-class=CRawDiskImage` 基线通过 |
+| E2 | ✅ | `hdiutil attach -readonly -nomount` 读取 hidden `volume.raw` | native Swift bridge 暴露 8 MiB `/volume.raw`；先对 LBA `0/7/4095/8192/16383` 做 raw backing ↔ hidden file 逐扇区 `cmp`，全部一致；随后 nested `hdiutil` 返回 `RC=0` |
+| E3 | ✅ | 产生 `/dev/diskN` | GitHub Actions macOS 26.5.2 / Xcode 26.6 产生 `/dev/disk8`；`diskutil info` 显示 Whole=Yes、Protocol=Disk Image、Virtual=Yes、512-byte block、8388608 bytes、**Media Read-Only=Yes** |
+| E4 | ✅ | 随机 LBA 读回一致 | 对 `/dev/rdisk8` 再读 LBA `0/7/4095/8192/16383`，逐扇区与原始 raw fixture `cmp` 全部一致；`RESULT=E4_RANDOM_LBA_MATCH` |
+| E5 | 🟡 | 确认 backing store 无实际写入 | 当前 bridge backing 以 `O_RDONLY` 打开且 `hdiutil` 使用 `-readonly`，但仍需补一轮 CI：backing chmod 0444 + attach 前后 SHA-256/size/mtime 完全不变，作为独立硬证据 |
+| E6 | ➖ | 必要时对照 DiskImages2 adapter | 公共 `hdiutil` 路径已成功产生只读 `/dev/disk8`，当前无须私有/现有 DiskImages2 adapter；仅在后续回归失败时作为对照 |
 
-Phase E 验收：**未完成**。
+Phase E 验收：**核心 E1-E4 已通过；thin FUSE-T bridge → hidden `volume.raw` → Apple DiskImages/hdiutil → read-only `/dev/diskN` 已获得 GitHub Actions 端到端证据。E5 仍需补 backing 不变式硬证据。**
+
+CI 关键证据：`docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt`。首次仅做 PluginKit 注册时 runner 报 `Module org.fuset.fskit-srv.module is disabled!`；确认 FSKit `enabledModules.plist` 是 bundle-id NSArray 后，在一次性 CI runner 中追加 FUSE-T module 并刷新 `fskit_agent/extensionkitservice/fskitd`，E2-E4 随即全绿。该 enabled-list 写入**只用于 CI 无交互夹具，不属于产品安装/授权方案**。
 
 ---
 
@@ -228,18 +231,20 @@ Phase H 验收：**未完成**。
 立即执行：
 
 ```text
-E1 创建小型可 attach 的 synthetic disk-image fixture
+E5：把 synthetic backing chmod 0444，记录 attach 前后的 SHA-256 / size / mtime，证明 DiskImages2 全链没有修改 backing
 ↓
-E2-E4 用原生 Swift bridge 暴露 `/volume.raw`，让 `hdiutil attach -readonly -nomount` 直接产生 `/dev/diskN` 并校验 LBA
+F1-F5：制作带 Apple 系统可识别文件系统的 synthetic raw fixture，经同一 native bridge → hidden volume.raw → hdiutil/Disk Arbitration 链路，只读自动挂载并验证 sentinel
 ↓
-修复 C7 目录枚举尾部 EIO，并继续 E5/F1-F5
+确认最终用户卷由 Apple 系统文件系统驱动提供、不是 fuset；EDP/backend 不传 filesystem type
+↓
+并行次优先级：修复 C7 directory enumeration 尾部 EIO，补齐 D6 mutation syscall matrix
 ```
 
 ## 失败实验登记
 
 | 时间 | 实验 | 结果 | 避免重复 |
 |---|---|---|---|
-| 2026-08-26（分支建立前） | 普通 file URL 直接 `/sbin/mount -F -t fuset` | extension 启动成功，但 security-scoped resource access `EACCES` | 不再用普通 file URL 直接调用作为正式路径 |
+| 2026-08-26（分支建立前） | 普通 file URL 直接 `/sbin/mount -F -t fuset` | extension 启动成功，但 security-scoped resource access `EACCES` | 不再用 `file://...` URL；direct path 固定传普通 session 文件路径 |
 | 2026-08-26（分支建立前） | 使用最新版 libfuse `hello.c` 编译 FUSE-T 内置 headers | 示例 API 与 FUSE-T 内置 libfuse 3.19 不匹配 | 后续固定使用 3.19 对应示例/API |
 | 2026-08-26 | 直接 `/sbin/mount -t fuset file:///private/tmp/.../session.json` | `probeResource` EACCES | 根因是传了 `file://` URL；正式 direct path 必须传普通文件路径 |
 | 2026-08-26 | 普通 session path + EDP-owned app-group Unix listener | FskitSrvModule 成功连接并发出 handshake；无需 go-nfsv4/libfuse | 证明 resource/mount 层可彻底移除 19 MB helper |
@@ -252,6 +257,8 @@ E2-E4 用原生 Swift bridge 暴露 `/volume.raw`，让 `hdiutil attach -readonl
 | 2026-08-26 | 原生 bridge 写/创建/删除测试 | 全部 Permission denied | mount + bridge 双层只读成立 |
 | 2026-08-26 | 原生 bridge `ls` | 能列出 `volume.raw`，但结尾 `fts_read: Input/output error` | C7 保留未完成，不阻塞 direct path |
 | 2026-08-26 | hidden mountpoint 改到 `/private/tmp/edp-fuset-hidden-mnt` | 正常 mount/read，不需要管理员授权 | 后续隐藏 transport 不再创建 `/Volumes` 测试目录 |
+| 2026-08-26 | Actions runner 仅 `lsregister`/PluginKit 注册官方 FUSE-T app | PluginKit 显示 `+`，但 FSKit mount 报 `Module org.fuset.fskit-srv.module is disabled!` | PluginKit enable 与 FSKit enabledModules 是两层状态；不要再把 PluginKit `+` 当作 FSKit 已启用 |
+| 2026-08-26 | Actions runner 将 FUSE-T bundle id 加入一次性 `enabledModules.plist` NSArray + 刷新 FSKit cache | native bridge mount 成功；hidden `volume.raw` → `hdiutil -readonly -nomount` → `/dev/disk8`；5 个随机/边界 LBA 与 raw backing 全一致，Media Read-Only=Yes | Phase E E2-E4 已突破；CI-only enablement 不得演变成产品授权绕过 |
 
 ---
 
@@ -264,4 +271,8 @@ E2-E4 用原生 Swift bridge 暴露 `/volume.raw`，让 `hdiutil attach -readonl
 | `c44ca83` | Phase B：FUSE-T 3.19 官方 `backend=fskit` 参考路径跑通 | 已 push |
 | `7ee9ca3` | Phase B/C：提取 direct mount + RPC framing/handshake/root/statfs 最小契约 | 已 push |
 | `c8175ed` | Phase C/D：`volume.raw` lookup/open/raw-payload-read 数据一致性验证 | 已 push（rebase 后 commit id） |
-| 待提交 | 原生 Swift minimal bridge + Phase D random/EOF/full-hash 实机验证 | 待 push |
+| `d6154c1` | 原生 Swift minimal bridge + Phase D random/EOF/full-hash 实机验证 | 已 push |
+| `48d5881` / `64da44b` / `7217a8e` | 固化 dependency-free RPC framing tests + macOS 26 FUSE-T 1.2.7 binary-contract CI，并修复诊断首次回写 | 已 push |
+| `4c7b065` / `6f08cc2` | 固化 open/read/close/EROFS 边界契约并提取官方 binary JSON tags | 已 push |
+| `ecfe418` / `f6c3644` | Phase E 初始 hdiutil CI：E1 raw baseline 通过，定位 hosted runner FSKit module disabled 边界并保存诊断 | 已 push |
+| `496c322` / `f80a0b1` | CI-only enabledModules array + cache refresh；E2-E4 thin bridge → `/dev/disk8` 端到端通过并保存诊断 | 已 push |
