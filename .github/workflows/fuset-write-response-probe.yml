@@ -1,0 +1,153 @@
+name: FUSE-T Write Response Contract Probe
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - ".github/workflows/fuset-write-response-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      FUSET_VERSION: "1.2.7"
+      FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
+      FUSET_PKG_URL: "https://github.com/macos-fuse-t/fuse-t/releases/download/1.2.7/fuse-t-macos-installer-1.2.7.pkg"
+      FUSET_BUNDLE_ID: "org.fuset.fskit-srv.module"
+      DIAG_PATH: "docs/diagnostics/fuset-write-response-macos26-ci.txt"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Stage exact FUSE-T and inspect binary response vocabulary
+        run: |
+          set -euo pipefail
+          PKG="${RUNNER_TEMP}/fuse-t.pkg"; EXPANDED="${RUNNER_TEMP}/expanded"
+          curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
+          test "$(shasum -a 256 "${PKG}" | awk '{print $1}')" = "${FUSET_PKG_SHA256}"
+          pkgutil --expand-full "${PKG}" "${EXPANDED}"
+          SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
+          test -n "${SOURCE_APP}"; codesign --verify --deep --strict "${SOURCE_APP}"
+          sudo rm -rf /Applications/fuse-t.app; sudo ditto "${SOURCE_APP}" /Applications/fuse-t.app
+          APP=/Applications/fuse-t.app; EXT="${APP}/Contents/Extensions/FskitSrvModule.appex"
+          BIN="${EXT}/Contents/MacOS/FskitSrvModule"
+          strings -a "${BIN}" | grep -Ei 'write|written|bytes|length|count|sync|payload' | sort -u | tee "${RUNNER_TEMP}/binary-write-strings.txt" || true
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}" || true; pluginkit -a "${APP}" || true; pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"; ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"; mkdir -p "${SETTINGS_DIR}"
+          python3 - "${ENABLED_PLIST}" "${FUSET_BUNDLE_ID}" <<'PY'
+          import os,plistlib,sys
+          p,b=sys.argv[1:]; a=[]
+          if os.path.exists(p):
+              try:
+                  with open(p,'rb') as f: v=plistlib.load(f)
+                  if isinstance(v,list): a=[x for x in v if isinstance(x,str)]
+              except Exception: pass
+          if b not in a:a.append(b)
+          with open(p,'wb') as f:plistlib.dump(a,f)
+          PY
+          chmod 600 "${ENABLED_PLIST}"; killall -9 fskit_agent 2>/dev/null || true; sudo killall -9 fskitd 2>/dev/null || true; sleep 2
+
+      - name: Probe write response fields
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/server.py" <<'PY'
+          import errno,json,os,socket,struct,subprocess,tempfile,uuid,sys
+          H=struct.Struct('>II'); ROOT=1; FILE=2; NAME='volume.raw'; backing,mnt,logp=sys.argv[1:4]
+          fd=os.open(backing,os.O_RDWR|os.O_CLOEXEC); size=os.fstat(fd).st_size
+          def rx(c,n):
+              b=b''
+              while len(b)<n:
+                  x=c.recv(n-len(b))
+                  if not x:raise EOFError
+                  b+=x
+              return b
+          def get(c):
+              a,b=H.unpack(rx(c,8));return json.loads(rx(c,a)),rx(c,b)
+          def put(c,m,p=b''):
+              q=json.dumps(m,separators=(',',':'),sort_keys=True).encode();c.sendall(H.pack(len(q),len(p))+q+p)
+          def ok(r,**kw):d={'request_id':r,'ok':True};d.update(kw);return d
+          def er(r,e,s):return {'request_id':r,'ok':False,'errno':e,'message':s}
+          def at(n,p,name,t,mode,sz,links):return {'node_id':n,'parent_id':p,'name':name,'type':t,'mode':mode,'uid':os.getuid(),'gid':os.getgid(),'link_count':links,'size':sz,'alloc_size':sz,'modify_time_sec':0,'modify_time_nsec':0,'change_time_sec':0,'change_time_nsec':0,'access_time_sec':0,'access_time_nsec':0,'birth_time_sec':0,'birth_time_nsec':0}
+          sid='edp-rw-'+str(uuid.uuid4());token=uuid.uuid4().hex;g=os.path.expanduser('~/Library/Group Containers/group.org.fuset.fskit-srv/s');os.makedirs(g,exist_ok=True);sp=os.path.join(g,sid[:18]+'.sock')
+          try:os.unlink(sp)
+          except:pass
+          sd=tempfile.mkdtemp(prefix=sid+'-');sj=os.path.join(sd,'session.json');json.dump({'session_id':sid,'socket_path':sp,'auth_token':token,'namedattr':False,'readonly':False,'volume_name':'EDP RW'},open(sj,'w'))
+          s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.bind(sp);s.listen(1);subprocess.Popen(['/sbin/mount','-o','nobrowse','-t','fuset',sj,mnt]);c,_=s.accept();dh=100
+          with open(logp,'a',buffering=1) as L:
+            while True:
+              try:m,p=get(c)
+              except EOFError:break
+              r=int(m.get('request_id',-1));method=m.get('method');q=dict(m);q['payload_length']=len(p);L.write('REQ='+json.dumps(q,sort_keys=True,separators=(',',':'))+'\n')
+              if method=='handshake':resp=ok(r,session_id=sid) if m.get('auth_token')==token else er(r,errno.EACCES,'auth')
+              elif method=='ping':resp=ok(r)
+              elif method=='get_root_attributes':resp=ok(r,root_attrs=at(ROOT,ROOT,'/','directory',0o755,0,2))
+              elif method=='statfs':
+                  bl=max(1,(size+4095)//4096);resp=ok(r,block_size=4096,io_size=1048576,blocks=bl,free_blocks=bl,files=2,free_files=1)
+              elif method=='lookup':resp=ok(r,lookup_item=at(FILE,ROOT,NAME,'file',0o666,size,1)) if m.get('parent_id')==ROOT and m.get('name')==NAME else er(r,errno.ENOENT,'not found')
+              elif method=='get_attributes':
+                  n=m.get('node_id');resp=ok(r,item_attrs=at(ROOT,ROOT,'/','directory',0o755,0,2)) if n==ROOT else ok(r,item_attrs=at(FILE,ROOT,NAME,'file',0o666,size,1)) if n==FILE else er(r,errno.ENOENT,'not found')
+              elif method=='open':resp=ok(r,handle_id=200)
+              elif method=='read':
+                  off=int(m['offset']);ln=int(m['length']);put(c,ok(r),os.pread(fd,min(ln,max(0,size-off)),off) if off<size else b'');continue
+              elif method=='write':
+                  off=int(m['offset']);decl=int(m.get('length',len(p)));n=os.pwrite(fd,p,off);os.fsync(fd)
+                  resp=ok(r,bytes_written=n,written=n,written_bytes=n,length=n,count=n,write_count=n,write_length=n)
+                  L.write('WRITE_RESPONSE='+json.dumps(resp,sort_keys=True,separators=(',',':'))+' declared='+str(decl)+'\n')
+              elif method=='synchronize':os.fsync(fd);resp=ok(r)
+              elif method=='close':resp=ok(r)
+              elif method=='open_directory':resp=ok(r,handle_id=dh);dh+=1
+              elif method=='enumerate_directory':
+                  ck=int(m.get('cookie',0));vr=int(m.get('verifier',1))
+                  if ck==0:
+                      x=at(FILE,ROOT,NAME,'file',0o666,size,1);x['cookie']=1;resp=ok(r,dir_items=[x],next_cookie=1,verifier=vr)
+                  else:resp=ok(r,dir_items=[],next_cookie=ck,verifier=vr)
+              elif method=='close_directory':resp=ok(r)
+              elif method=='list_xattrs':resp=ok(r,xattr_names=[])
+              elif method=='get_xattr':resp=er(r,getattr(errno,'ENOATTR',errno.ENODATA),'none')
+              elif method=='set_attributes':resp=ok(r,item_attrs=at(FILE,ROOT,NAME,'file',0o666,size,1))
+              else:resp=er(r,errno.EPERM,'fixed transport')
+              put(c,resp)
+          PY
+          RAW="${RUNNER_TEMP}/rw.raw"; dd if=/dev/zero of="${RAW}" bs=1m count=32 status=none
+          HIDDEN="${RUNNER_TEMP}/hidden"; mkdir -p "${HIDDEN}"; RPC="${RUNNER_TEMP}/rpc.log"
+          python3 "${RUNNER_TEMP}/server.py" "${RAW}" "${HIDDEN}" "${RPC}" & SERVER=$!; echo "SERVER=${SERVER}" >> "$GITHUB_ENV"; echo "HIDDEN=${HIDDEN}" >> "$GITHUB_ENV"
+          for i in $(seq 1 20);do mount|grep -Fq " on ${HIDDEN} "&&break;sleep 1;done
+          mount|grep -F " on ${HIDDEN} "|tee "${RUNNER_TEMP}/mount.txt"
+          EXPOSED="${HIDDEN}/volume.raw"; python3 - "${RUNNER_TEMP}/payload.bin" <<'PY'
+          import hashlib,sys
+          b=b''.join(hashlib.sha256(f'x{i}'.encode()).digest() for i in range(10000));open(sys.argv[1],'wb').write(b[:131071])
+          PY
+          set +e; dd if="${RUNNER_TEMP}/payload.bin" of="${EXPOSED}" bs=1 seek=12345 conv=notrunc status=none 2>"${RUNNER_TEMP}/dd.err"; RC=$?; set -e
+          echo "DIRECT_RC=${RC}"|tee "${RUNNER_TEMP}/result.txt";cat "${RUNNER_TEMP}/dd.err"|tee -a "${RUNNER_TEMP}/result.txt"||true;sleep 1;cat "${RPC}"|tee "${RUNNER_TEMP}/rpc.txt"
+          # pwrite executes before the response is parsed, so prove whether backing mutated even if caller reports EIO.
+          dd if="${RAW}" of="${RUNNER_TEMP}/actual.bin" bs=1 skip=12345 count=131071 status=none
+          if cmp -s "${RUNNER_TEMP}/payload.bin" "${RUNNER_TEMP}/actual.bin";then echo 'BACKING_MATCH_AFTER_WRITE=true'|tee -a "${RUNNER_TEMP}/result.txt";else echo 'BACKING_MATCH_AFTER_WRITE=false'|tee -a "${RUNNER_TEMP}/result.txt";fi
+          test "${RC}" -eq 0
+          cmp "${RUNNER_TEMP}/payload.bin" "${RUNNER_TEMP}/actual.bin"
+          echo 'RESULT=WRITE_RESPONSE_MULTI_FIELD_ACCEPTED'|tee -a "${RUNNER_TEMP}/result.txt"
+
+      - name: Collect evidence
+        if: always()
+        run: |
+          mkdir -p "$(dirname "${DIAG_PATH}")"
+          { echo '# FUSE-T write response probe'; echo; echo 'generated_at_utc=<normalized>'; echo "runner_os=$(sw_vers -productVersion)"; echo; echo '## binary strings'; cat "${RUNNER_TEMP}/binary-write-strings.txt" 2>/dev/null||true; echo; echo '## result'; cat "${RUNNER_TEMP}/result.txt" 2>/dev/null||true; echo; echo '## mount'; cat "${RUNNER_TEMP}/mount.txt" 2>/dev/null||true; echo; echo '## RPC'; cat "${RUNNER_TEMP}/rpc.txt" 2>/dev/null||true; } > "${DIAG_PATH}"
+          sed -n '1,500p' "${DIAG_PATH}"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e; [[ -n "${HIDDEN:-}" ]]&&umount "${HIDDEN}" >/dev/null 2>&1; [[ -n "${SERVER:-}" ]]&&kill "${SERVER}" >/dev/null 2>&1; sudo rm -rf /Applications/fuse-t.app; true
+
+      - name: Commit diagnostic
+        if: always() && github.ref_name == 'test/fuset-minimal-fskit-bridge'
+        run: |
+          set -euo pipefail; git add "${DIAG_PATH}"; git diff --cached --quiet -- "${DIAG_PATH}" && exit 0
+          git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'; git commit -m 'docs: capture FUSE-T write response [skip ci]'; git pull --rebase origin "${GITHUB_REF_NAME}"; git push origin "HEAD:${GITHUB_REF_NAME}"
