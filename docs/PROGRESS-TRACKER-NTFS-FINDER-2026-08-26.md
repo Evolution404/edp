@@ -214,6 +214,11 @@ commit:
 - 若继续做 TextEdit 全事务诊断，最小 probe 需要支持多个并存临时文件/AppleDouble，而不是改变生产路径；
 - P0 代码修复仍必须等待可证明的原子 primitive 或 upstream FSKit rename bridge 修复。
 
+补充判别 — `ENOSYS` fallback：
+- 临时让最小 FUSE2 probe 对 `RENAME_SWAP` 返回 `-ENOSYS`，测试 FSKit 是否会把“未实现 renamex”回退到传统 `.rename`。
+- libc `rename(created.txt,target.txt)` 直接返回 `errno=78 / ENOSYS`；服务端仅收到一次 `FUSE2_RENAMEX ... flags=0x2`，没有任何 `.rename` 重试。
+- 结论：`EOPNOTSUPP -> ENOSYS` 也不能绕开 macFUSE 5.3.3 FSKit 的 overwrite-rename 映射。实验代码已撤回，不保留无效开关。
+
 补充验证：
 - 将 synthetic probe 的 init 改为在 `support_swap=1` 时真实保留 `FUSE_CAP_RENAME_SWAP` 协商位，再次运行；`want_after=0x86200010` 明确包含 swap capability。
 - 结果仍是：libc `rename()` 返回 0、target 变为新内容、source 仍存在且保存旧 target 内容。说明该错误语义不是因为先前 init 清掉 `want` 导致，而是 FSKit/bridge 对 overwrite rename 的实际编码行为。
