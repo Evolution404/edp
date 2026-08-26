@@ -229,15 +229,22 @@ commit:
 
 - [ ] 构建并安装 `4f0171d` 对应 runtime
 - [ ] 安全卸载旧卷后 cold remount
-- [ ] `mount` 检查 outer source/flags
-- [ ] `statfs` 确认 `MNT_LOCAL=true`
+- [x] `mount` 检查 outer source/flags
+  - 2026-08-26 实机：`/dev/disk5 on /Volumes/EDP-NTFS (macfuse, local, ..., fskit)`。
+- [x] `statfs` 确认 `MNT_LOCAL=true`
+  - Swift/Darwin `statfs`：`MNT_LOCAL=true`，`f_mntfromname=/dev/disk5`。
 - [ ] Finder 确认不再归类为网络位置
-- [ ] `.Trashes/501` list/create 可用
+- [x] `.Trashes/501` list/create 可用
 - [ ] Finder 多选 10 个临时文件删除
+  - 底层等价 Trash 路径已验证：10 个唯一临时文件 move-to-trash 10/10 成功、root 剩余 0。
 - [ ] Finder 多选 100 个临时文件删除
-- [ ] Trash 恢复
+  - 底层等价 Trash 路径已验证：100 个唯一临时文件 move-to-trash 100/100 成功、root 剩余 0。
+- [x] Trash 恢复
+  - 10 个唯一临时文件从 `.Trashes/501` 恢复 10/10，内容路径完整；随后再次移入 Trash 并仅清理这些测试项。
 - [ ] 清空 Trash
-- [ ] 确认 inner `volume.raw` 仍是 generic FSKit
+  - 未执行 Finder 全局“清空废纸篓”，避免触碰用户已有 Trash 内容；仅删除本轮唯一前缀的测试项，最终残留 0。
+- [x] 确认 inner `volume.raw` 仍是 generic FSKit
+  - inner mount source 仍为 `macfuse://81B7...`，flags 不含 `local`；outer 才使用 `/dev/disk5 + local`。
 
 风险：inner bridge 不能随意加 `local`，已有实验记录会导致 `ntfs-3g.probe --readwrite` status 13/EIO。
 
