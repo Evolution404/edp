@@ -40,7 +40,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify clean macOS 26 runner and resolve real metadata vector
+      - name: Resolve captured EDP metadata without logging password
         run: |
           set -euo pipefail
           sw_vers
@@ -52,47 +52,47 @@ jobs:
           PASSWORD_FILE="${RUNNER_TEMP}/edp-rw-password"
           python3 - fixtures/golden/disks.json "${GOLDEN_NAME}" "${PASSWORD_FILE}" "${GITHUB_ENV}" <<'PY'
           import json, os, sys
-          src,name,pw_path,env_path=sys.argv[1:]
-          item=next(x for x in json.load(open(src))['disks'] if x['name']==name)
-          p=item['lba11_params']; pw=item['password'].encode()
-          fd=os.open(pw_path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
-          try: os.write(fd,pw)
+          source, wanted, pw_path, env_path = sys.argv[1:]
+          item = next(x for x in json.load(open(source))['disks'] if x['name'] == wanted)
+          p = item['lba11_params']; password = item['password'].encode()
+          fd = os.open(pw_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          try: os.write(fd, password)
           finally: os.close(fd)
-          with open(env_path,'a') as e:
-              e.write(f"EDP_VID={p['vid']}\nEDP_PID={p['pid']}\nEDP_DEVICE_SIZE={p['size_bytes']}\nEDP_PARTITION_TYPE=2\nPASSWORD_FILE={pw_path}\n")
+          with open(env_path, 'a') as env:
+              env.write(f"EDP_VID={p['vid']}\nEDP_PID={p['pid']}\nEDP_DEVICE_SIZE={p['size_bytes']}\nEDP_PARTITION_TYPE=2\nPASSWORD_FILE={pw_path}\n")
           print('RESULT=I5_REALMETA_VECTOR_READY_WITHOUT_SECRET_LOGGING')
           PY
           test "$(stat -f %Lp "${PASSWORD_FILE}")" = 600
           test "$(stat -f %z "${REAL_LBA11}")" -eq 512
           test "$(stat -f %z "${REAL_LBA12}")" -eq 512
 
-      - name: Build populated native ExFAT plaintext fixture
+      - name: Manufacture writable ExFAT raw filesystem through a block device
         run: |
           set -euo pipefail
-          TEMPLATE="${RUNNER_TEMP}/exfat-template.dmg"
           PLAIN="${RUNNER_TEMP}/exfat-plain.raw"
           SENTINEL='EDP-EXFAT-RW-BASELINE-v1'
-          hdiutil create -size 192m -fs ExFAT -volname "${VOLNAME}" -layout NONE "${TEMPLATE}"
-          OUT="$(hdiutil attach "${TEMPLATE}")"
-          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          truncate -s 201326592 "${PLAIN}"
+          RAW_OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${PLAIN}")"
+          RAW_DISK="$(printf '%s\n' "${RAW_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${RAW_DISK}"
+          diskutil info "${RAW_DISK}" | tee "${RUNNER_TEMP}/manufacture-block.txt"
+          grep -Eq 'Media Read-Only:[[:space:]]+No' "${RUNNER_TEMP}/manufacture-block.txt"
+          sudo /sbin/newfs_exfat -v "${VOLNAME}" "/dev/r$(basename "${RAW_DISK}")"
+          diskutil mount "${RAW_DISK}"
           MOUNT="/Volumes/${VOLNAME}"
-          test -n "${DISK}"; test -d "${MOUNT}"
+          for i in $(seq 1 15); do [[ -d "${MOUNT}" ]] && break; sleep 1; done
+          test -d "${MOUNT}"
           printf '%s\n' "${SENTINEL}" > "${MOUNT}/BASELINE.txt"
           mkdir -p "${MOUNT}/Seed Folder"
           printf '%s\n' 'seed-content' > "${MOUNT}/Seed Folder/seed.txt"
           sync
-          hdiutil detach "${DISK}"
-          RAW_OUT="$(hdiutil attach -nomount "${TEMPLATE}")"
-          RAW_DISK="$(printf '%s\n' "${RAW_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
-          test -n "${RAW_DISK}"
-          dd if="/dev/r$(basename "${RAW_DISK}")" of="${PLAIN}" bs=1048576 status=none
-          hdiutil detach "${RAW_DISK}"
+          hdiutil detach "${RAW_DISK}" -force
           test "$(stat -f %z "${PLAIN}")" -eq 201326592
           echo "PLAIN=${PLAIN}" >> "${GITHUB_ENV}"
           echo "SENTINEL=${SENTINEL}" >> "${GITHUB_ENV}"
           echo 'RESULT=I7_NATIVE_EXFAT_PLAINTEXT_FIXTURE_READY'
 
-      - name: Encrypt ExFAT into sparse EDP whole-device fixture using captured metadata
+      - name: Encrypt ExFAT into real-metadata sparse EDP container
         run: |
           set -euo pipefail
           PREPARE="${RUNNER_TEMP}/PrepareEDPFilesystemFixture"
@@ -122,7 +122,7 @@ jobs:
           du -h "${CONTAINER}" | tee "${RUNNER_TEMP}/sparse-size.txt"
           echo 'RESULT=I5_ENCRYPTED_EXFAT_EDP_FIXTURE_READY'
 
-      - name: Stage and enable exact official FUSE-T only on disposable runner
+      - name: Stage exact official FUSE-T only on disposable runner
         run: |
           set -euo pipefail
           PKG="${RUNNER_TEMP}/fuse-t.pkg"; EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
@@ -137,20 +137,20 @@ jobs:
           pluginkit -a "${EXT}" || true; pluginkit -a "${APP}" || true; pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
           SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"; ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"; mkdir -p "${SETTINGS_DIR}"
           python3 - "${ENABLED_PLIST}" "${FUSET_BUNDLE_ID}" <<'PY'
-          import os,plistlib,sys
-          p,b=sys.argv[1:];a=[]
-          if os.path.exists(p):
+          import os, plistlib, sys
+          path, bundle_id = sys.argv[1:]; enabled = []
+          if os.path.exists(path):
               try:
-                  with open(p,'rb') as f:v=plistlib.load(f)
-                  if isinstance(v,list):a=[x for x in v if isinstance(x,str)]
-              except Exception:pass
-          if b not in a:a.append(b)
-          with open(p,'wb') as f:plistlib.dump(a,f)
+                  with open(path, 'rb') as f: value = plistlib.load(f)
+                  if isinstance(value, list): enabled = [x for x in value if isinstance(x, str)]
+              except Exception: pass
+          if bundle_id not in enabled: enabled.append(bundle_id)
+          with open(path, 'wb') as f: plistlib.dump(enabled, f)
           PY
           chmod 600 "${ENABLED_PLIST}"
           killall -9 fskit_agent 2>/dev/null || true; killall -9 extensionkitservice 2>/dev/null || true; sudo killall -9 fskitd 2>/dev/null || true; sleep 3
 
-      - name: Compile formal Swift encrypted EDP read-write thin bridge
+      - name: Compile formal Swift EDP read-write thin bridge
         run: |
           set -euo pipefail
           xcrun swiftc -parse-as-library -swift-version 6 -warnings-as-errors -D FUSET_BRIDGE_LIBRARY \
@@ -169,11 +169,10 @@ jobs:
           grep -Fq 'write_size' native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift
           echo 'RESULT=I4_FORMAL_SWIFT_RW_THIN_BRIDGE_BUILT'
 
-      - name: I5-I7 encrypted EDP to native ExFAT read-write and persistence
+      - name: Native ExFAT CRUD Finder persistence over encrypted EDP transport
         run: |
           set -euo pipefail
-          HIDDEN="${RUNNER_TEMP}/edp-exfat-hidden-$(uuidgen | tr '[:upper:]' '[:lower:]')"
-          BLOG="${RUNNER_TEMP}/bridge.log"; mkdir -p "${HIDDEN}"
+          HIDDEN="${RUNNER_TEMP}/edp-exfat-hidden-$(uuidgen | tr '[:upper:]' '[:lower:]')"; BLOG="${RUNNER_TEMP}/bridge.log"; mkdir -p "${HIDDEN}"
           "${RUNNER_TEMP}/edp-fuset-rw-fixture" \
             --container "${CONTAINER}" --vid "${EDP_VID}" --pid "${EDP_PID}" \
             --device-size "${EDP_DEVICE_SIZE}" --partition-type "${EDP_PARTITION_TYPE}" \
@@ -181,21 +180,14 @@ jobs:
             --volume-name 'EDP Encrypted Writable Transport' >"${BLOG}" 2>&1 &
           BPID=$!; echo "BPID=${BPID}" >> "${GITHUB_ENV}"; echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"; echo "BLOG=${BLOG}" >> "${GITHUB_ENV}"
           for i in $(seq 1 30); do mount | grep -Fq " on ${HIDDEN} " && break; kill -0 "${BPID}"; sleep 1; done
-          cat "${BLOG}"; mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/hidden-mount.txt"
-          ! grep -q 'read-only' "${RUNNER_TEMP}/hidden-mount.txt"
-          grep -Fq 'BACKING_MODE=EDP_FILE_FIXTURE_READWRITE_RANDOM_ACCESS' "${BLOG}"
-          grep -Fq 'PLAINTEXT_CACHE=none' "${BLOG}"
-          lsof -p "${BPID}" | tee "${RUNNER_TEMP}/bridge-lsof.txt"
-          grep -Fq "${CONTAINER}" "${RUNNER_TEMP}/bridge-lsof.txt"
-          ! grep -Fq "${PLAIN}" "${RUNNER_TEMP}/bridge-lsof.txt"
+          cat "${BLOG}"; mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/hidden-mount.txt"; ! grep -q 'read-only' "${RUNNER_TEMP}/hidden-mount.txt"
+          grep -Fq 'BACKING_MODE=EDP_FILE_FIXTURE_READWRITE_RANDOM_ACCESS' "${BLOG}"; grep -Fq 'PLAINTEXT_CACHE=none' "${BLOG}"
+          lsof -p "${BPID}" | tee "${RUNNER_TEMP}/bridge-lsof.txt"; grep -Fq "${CONTAINER}" "${RUNNER_TEMP}/bridge-lsof.txt"; ! grep -Fq "${PLAIN}" "${RUNNER_TEMP}/bridge-lsof.txt"
 
           EXPOSED="${HIDDEN}/volume.raw"; test -f "${EXPOSED}"
-          OUT="$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "${EXPOSED}" 2>"${RUNNER_TEMP}/attach.err")"
-          printf '%s\n' "${OUT}" | tee "${RUNNER_TEMP}/attach.txt"
-          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"; test -n "${DISK}"
-          MOUNT="/Volumes/${VOLNAME}"
-          for i in $(seq 1 20); do [[ -d "${MOUNT}" ]] && break; sleep 1; done
-          test -d "${MOUNT}"
+          OUT="$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "${EXPOSED}" 2>"${RUNNER_TEMP}/attach.err")"; printf '%s\n' "${OUT}" | tee "${RUNNER_TEMP}/attach.txt"
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"; test -n "${DISK}"; MOUNT="/Volumes/${VOLNAME}"
+          for i in $(seq 1 20); do [[ -d "${MOUNT}" ]] && break; sleep 1; done; test -d "${MOUNT}"
           echo "OUTER_DISK=${DISK}" >> "${GITHUB_ENV}"; echo "OUTER_MOUNT=${MOUNT}" >> "${GITHUB_ENV}"
           diskutil info "${DISK}" | tee "${RUNNER_TEMP}/diskutil-first.txt"
           grep -Eiq 'File System Personality:[[:space:]]+ExFAT' "${RUNNER_TEMP}/diskutil-first.txt"
@@ -204,97 +196,53 @@ jobs:
           test "$(cat "${MOUNT}/BASELINE.txt")" = "${SENTINEL}"
 
           mkdir "${MOUNT}/Created Directory"
-          printf '%s\n' 'first-version' > "${MOUNT}/replace-target.txt"
-          printf '%s\n' 'replacement-version' > "${MOUNT}/replace-temp.txt"
-          mv -f "${MOUNT}/replace-temp.txt" "${MOUNT}/replace-target.txt"
-          test "$(cat "${MOUNT}/replace-target.txt")" = 'replacement-version'
-          printf '%s\n' 'rename-me' > "${MOUNT}/rename-source.txt"
-          mv "${MOUNT}/rename-source.txt" "${MOUNT}/Created Directory/renamed.txt"
-          printf '%s\n' 'delete-me' > "${MOUNT}/delete-me.txt"; rm "${MOUNT}/delete-me.txt"
-
+          printf '%s\n' first-version > "${MOUNT}/replace-target.txt"; printf '%s\n' replacement-version > "${MOUNT}/replace-temp.txt"; mv -f "${MOUNT}/replace-temp.txt" "${MOUNT}/replace-target.txt"
+          test "$(cat "${MOUNT}/replace-target.txt")" = replacement-version
+          printf '%s\n' rename-me > "${MOUNT}/rename-source.txt"; mv "${MOUNT}/rename-source.txt" "${MOUNT}/Created Directory/renamed.txt"
+          printf '%s\n' delete-me > "${MOUNT}/delete-me.txt"; rm "${MOUNT}/delete-me.txt"
           python3 - "${MOUNT}/large-random.bin" <<'PY'
-          import hashlib,sys
-          with open(sys.argv[1],'wb') as f:
-              for i in range(16384): f.write(hashlib.sha256(f'EDP-EXFAT-LARGE:{i}'.encode()).digest()*128)
+          import hashlib, sys
+          with open(sys.argv[1], 'wb') as f:
+              for i in range(16384): f.write(hashlib.sha256(f'EDP-EXFAT-LARGE:{i}'.encode()).digest() * 128)
           PY
-          LARGE_SHA="$(shasum -a 256 "${MOUNT}/large-random.bin" | awk '{print $1}')"
-          test "$(stat -f %z "${MOUNT}/large-random.bin")" -eq 67108864
-          set +e
-          xattr -w com.edp.usbvault.test 'rw-xattr' "${MOUNT}/replace-target.txt" 2>"${RUNNER_TEMP}/xattr.err"
-          XATTR_RC=$?
-          set -e
-          if [[ ${XATTR_RC} -eq 0 ]]; then xattr -p com.edp.usbvault.test "${MOUNT}/replace-target.txt" | grep -Fq 'rw-xattr'; echo 'XATTR_RESULT=supported' > "${RUNNER_TEMP}/xattr-result.txt"; else echo "XATTR_RESULT=provider-rejected-rc-${XATTR_RC}" > "${RUNNER_TEMP}/xattr-result.txt"; fi
+          LARGE_SHA="$(shasum -a 256 "${MOUNT}/large-random.bin" | awk '{print $1}')"; test "$(stat -f %z "${MOUNT}/large-random.bin")" -eq 67108864
+          set +e; xattr -w com.edp.usbvault.test rw-xattr "${MOUNT}/replace-target.txt" 2>"${RUNNER_TEMP}/xattr.err"; XATTR_RC=$?; set -e
+          if [[ ${XATTR_RC} -eq 0 ]]; then xattr -p com.edp.usbvault.test "${MOUNT}/replace-target.txt" | grep -Fq rw-xattr; echo XATTR_RESULT=supported > "${RUNNER_TEMP}/xattr-result.txt"; else echo "XATTR_RESULT=provider-rejected-rc-${XATTR_RC}" > "${RUNNER_TEMP}/xattr-result.txt"; fi
           sync
 
           cat > "${RUNNER_TEMP}/finder.applescript" <<'OSA'
           on run argv
-            set targetAlias to (POSIX file (item 1 of argv)) as alias
-            tell application "Finder" to return name of every item of targetAlias as string
+              set targetAlias to (POSIX file (item 1 of argv)) as alias
+              tell application "Finder" to return name of every item of targetAlias as string
           end run
           OSA
-          osacompile -o "${RUNNER_TEMP}/finder.scpt" "${RUNNER_TEMP}/finder.applescript"
-          osascript "${RUNNER_TEMP}/finder.scpt" "${MOUNT}" | tee "${RUNNER_TEMP}/finder.txt"
-          grep -Fq 'large-random.bin' "${RUNNER_TEMP}/finder.txt"
+          osacompile -o "${RUNNER_TEMP}/finder.scpt" "${RUNNER_TEMP}/finder.applescript"; osascript "${RUNNER_TEMP}/finder.scpt" "${MOUNT}" | tee "${RUNNER_TEMP}/finder.txt"; grep -Fq large-random.bin "${RUNNER_TEMP}/finder.txt"
           echo 'RESULT=I7_EXFAT_CRUD_RENAME_LARGEFILE_FINDER_OK'
 
-          hdiutil detach "${DISK}" -force
-          echo 'OUTER_DISK=' >> "${GITHUB_ENV}"
-          AFTER="$(dd if="${CONTAINER}" bs=512 skip="${PARTITION_START_SECTOR}" count=393216 status=none | shasum -a 256 | awk '{print $1}')"
-          test "${AFTER}" != "${CIPHER_SHA_BEFORE}"
-          echo "CIPHER_SHA_AFTER=${AFTER}" >> "${GITHUB_ENV}"
+          hdiutil detach "${DISK}" -force; echo 'OUTER_DISK=' >> "${GITHUB_ENV}"
+          AFTER="$(dd if="${CONTAINER}" bs=512 skip="${PARTITION_START_SECTOR}" count=393216 status=none | shasum -a 256 | awk '{print $1}')"; test "${AFTER}" != "${CIPHER_SHA_BEFORE}"; echo "CIPHER_SHA_AFTER=${AFTER}" >> "${GITHUB_ENV}"
           echo 'RESULT=I5_ENCRYPTED_BACKING_CHANGED_AFTER_FILESYSTEM_WRITES'
 
-          OUT2="$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"
-          DISK2="$(printf '%s\n' "${OUT2}" | awk '/^\/dev\/disk/ {print $1; exit}')"; test -n "${DISK2}"
-          echo "OUTER_DISK=${DISK2}" >> "${GITHUB_ENV}"
+          OUT2="$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"; DISK2="$(printf '%s\n' "${OUT2}" | awk '/^\/dev\/disk/ {print $1; exit}')"; test -n "${DISK2}"; echo "OUTER_DISK=${DISK2}" >> "${GITHUB_ENV}"
           for i in $(seq 1 20); do [[ -d "${MOUNT}" ]] && break; sleep 1; done
-          test "$(cat "${MOUNT}/replace-target.txt")" = 'replacement-version'
-          test "$(cat "${MOUNT}/Created Directory/renamed.txt")" = 'rename-me'
-          test ! -e "${MOUNT}/delete-me.txt"
-          test "$(shasum -a 256 "${MOUNT}/large-random.bin" | awk '{print $1}')" = "${LARGE_SHA}"
-          diskutil info "${DISK2}" | tee "${RUNNER_TEMP}/diskutil-remount.txt"
-          grep -Eq 'Volume Read-Only:[[:space:]]+No' "${RUNNER_TEMP}/diskutil-remount.txt"
+          test "$(cat "${MOUNT}/replace-target.txt")" = replacement-version; test "$(cat "${MOUNT}/Created Directory/renamed.txt")" = rename-me; test ! -e "${MOUNT}/delete-me.txt"; test "$(shasum -a 256 "${MOUNT}/large-random.bin" | awk '{print $1}')" = "${LARGE_SHA}"
+          diskutil info "${DISK2}" | tee "${RUNNER_TEMP}/diskutil-remount.txt"; grep -Eq 'Volume Read-Only:[[:space:]]+No' "${RUNNER_TEMP}/diskutil-remount.txt"
           echo 'RESULT=I7_EXFAT_WRITES_PERSIST_AFTER_DETACH_REMOUNT'
-          hdiutil detach "${DISK2}" -force
-          echo 'OUTER_DISK=' >> "${GITHUB_ENV}"
+          hdiutil detach "${DISK2}" -force; echo 'OUTER_DISK=' >> "${GITHUB_ENV}"
 
-      - name: Collect deterministic ExFAT read-write evidence
+      - name: Collect deterministic evidence
         if: always()
         run: |
-          set -euo pipefail
-          mkdir -p "$(dirname "${DIAG_PATH}")"
-          {
-            echo '# FUSE-T encrypted EDP ExFAT read-write macOS 26 CI'; echo
-            echo 'generated_at_utc=<normalized>'; echo "runner_os=$(sw_vers -productVersion)"; echo "runner_build=$(sw_vers -buildVersion)"; echo "xcode=$(xcodebuild -version | tr '\n' ' ')"; echo
-            echo "cipher_sha_before=${CIPHER_SHA_BEFORE:-unknown}"; echo "cipher_sha_after=${CIPHER_SHA_AFTER:-unknown}"; echo
-            echo '## hidden transport'; cat "${RUNNER_TEMP}/hidden-mount.txt" 2>/dev/null || true; echo
-            echo '## first ExFAT disk'; cat "${RUNNER_TEMP}/diskutil-first.txt" 2>/dev/null || true; echo
-            echo '## Finder'; cat "${RUNNER_TEMP}/finder.txt" 2>/dev/null || true; echo
-            echo '## xattr'; cat "${RUNNER_TEMP}/xattr-result.txt" 2>/dev/null || true; cat "${RUNNER_TEMP}/xattr.err" 2>/dev/null || true; echo
-            echo '## remount'; cat "${RUNNER_TEMP}/diskutil-remount.txt" 2>/dev/null || true; echo
-            echo '## bridge'; cat "${BLOG:-/dev/null}" 2>/dev/null || true; echo
-            echo '## lsof'; cat "${RUNNER_TEMP}/bridge-lsof.txt" 2>/dev/null || true
-          } > "${DIAG_PATH}"
+          set -euo pipefail; mkdir -p "$(dirname "${DIAG_PATH}")"
+          { echo '# FUSE-T encrypted EDP ExFAT read-write macOS 26 CI'; echo; echo 'generated_at_utc=<normalized>'; echo "runner_os=$(sw_vers -productVersion)"; echo "cipher_sha_before=${CIPHER_SHA_BEFORE:-unknown}"; echo "cipher_sha_after=${CIPHER_SHA_AFTER:-unknown}"; echo; cat "${RUNNER_TEMP}/manufacture-block.txt" 2>/dev/null || true; echo; cat "${RUNNER_TEMP}/hidden-mount.txt" 2>/dev/null || true; echo; cat "${RUNNER_TEMP}/diskutil-first.txt" 2>/dev/null || true; echo; cat "${RUNNER_TEMP}/finder.txt" 2>/dev/null || true; cat "${RUNNER_TEMP}/xattr-result.txt" 2>/dev/null || true; cat "${RUNNER_TEMP}/xattr.err" 2>/dev/null || true; echo; cat "${RUNNER_TEMP}/diskutil-remount.txt" 2>/dev/null || true; echo; cat "${BLOG:-/dev/null}" 2>/dev/null || true; } > "${DIAG_PATH}"
           sed -n '1,600p' "${DIAG_PATH}"
 
       - name: Cleanup
         if: always()
         run: |
-          set +e
-          if [[ -n "${OUTER_DISK:-}" ]]; then hdiutil detach "${OUTER_DISK}" -force >/dev/null 2>&1 || true; fi
-          if [[ -n "${HIDDEN:-}" ]]; then umount "${HIDDEN}" >/dev/null 2>&1 || true; fi
-          if [[ -n "${BPID:-}" ]]; then kill "${BPID}" >/dev/null 2>&1 || true; fi
-          rm -f "${PASSWORD_FILE:-}"
-          sudo rm -rf /Applications/fuse-t.app
-          exit 0
+          set +e; [[ -n "${OUTER_DISK:-}" ]] && hdiutil detach "${OUTER_DISK}" -force >/dev/null 2>&1 || true; [[ -n "${HIDDEN:-}" ]] && umount "${HIDDEN}" >/dev/null 2>&1 || true; [[ -n "${BPID:-}" ]] && kill "${BPID}" >/dev/null 2>&1 || true; rm -f "${PASSWORD_FILE:-}"; sudo rm -rf /Applications/fuse-t.app; true
 
-      - name: Commit deterministic ExFAT RW diagnostic
+      - name: Commit diagnostic
         if: always() && github.ref_name == 'test/fuset-minimal-fskit-bridge'
         run: |
-          set -euo pipefail
-          test -f "${DIAG_PATH}"; git add "${DIAG_PATH}"
-          if git diff --cached --quiet -- "${DIAG_PATH}"; then exit 0; fi
-          git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'docs: capture encrypted ExFAT RW E2E [skip ci]'
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          set -euo pipefail; git add "${DIAG_PATH}"; git diff --cached --quiet -- "${DIAG_PATH}" && exit 0; git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'; git commit -m 'docs: capture encrypted ExFAT RW E2E [skip ci]'; git pull --rebase origin "${GITHUB_REF_NAME}"; git push origin "HEAD:${GITHUB_REF_NAME}"
