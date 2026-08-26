@@ -148,18 +148,21 @@ attach_decrypted() {
 
 start_ntfs() {
   : >"${NTFS_LOG}"
+  log "STEP=NTFS3G_PROBE_BEGIN"
   sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
     "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
+  log "STEP=NTFS3G_PROBE_OK"
   local label
   label="$(sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
     "${NTFS_RUNTIME}/bin/ntfslabel" "/dev/${DECRYPTED_BSD}" | /usr/bin/tr -d '\r\n')"
   [[ "${label}" == "${TEST_VOLUME}" ]]
+  log "STEP=NTFSLABEL_OK"
 
+  log "STEP=NTFS3G_MOUNT_BEGIN"
   sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
     "${NTFS_RUNTIME}/bin/ntfs-3g" \
       -o backend=fskit \
       -o no_detach \
-      -o local \
       -o norecover \
       -o windows_names \
       -o streams_interface=openxattr \
