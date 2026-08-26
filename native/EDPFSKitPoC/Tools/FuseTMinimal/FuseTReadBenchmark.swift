@@ -93,6 +93,13 @@ private func runBenchmark() throws {
     guard fd >= 0 else { throw BenchError.posix("open", errno) }
     defer { Darwin.close(fd) }
 
+    guard Darwin.fcntl(fd, F_NOCACHE, 1) != -1 else {
+        throw BenchError.posix("fcntl F_NOCACHE", errno)
+    }
+    guard Darwin.fcntl(fd, F_RDAHEAD, 0) != -1 else {
+        throw BenchError.posix("fcntl F_RDAHEAD", errno)
+    }
+
     var status = stat()
     guard fstat(fd, &status) == 0 else { throw BenchError.posix("fstat", errno) }
     guard status.st_size >= 0 else { throw BenchError.invalid("negative file size") }
@@ -136,7 +143,7 @@ private func runBenchmark() throws {
     let iops = Double(args.operations) / elapsed
     print(
         String(
-            format: "BENCH pattern=%@ block_bytes=%d operations=%d span_bytes=%llu total_bytes=%llu seconds=%.6f mib_per_s=%.3f iops=%.1f checksum=%llu",
+            format: "BENCH pattern=%@ block_bytes=%d operations=%d span_bytes=%llu total_bytes=%llu nocache=1 rdahead=0 seconds=%.6f mib_per_s=%.3f iops=%.1f checksum=%llu",
             args.pattern.rawValue,
             args.blockSize,
             args.operations,
