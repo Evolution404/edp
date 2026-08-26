@@ -1,0 +1,199 @@
+# FUSE-T minimal bridge -> hdiutil macOS 26 CI probe
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+fuset_plugin_indexed=true
+bridge_mounted=false
+nested_hdiutil_attached=unknown
+nested_disk=none
+
+## bridge log
+SESSION_ID=edp-fuset-1b72d43b-3bd7-4f8b-bd4d-c742828772ca
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-1b72d43b-3bd7-4f8b-bd4d-c742828772ca/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-1b72d43b-3.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-fuset-hidden-mnt
+BACKING_SIZE=8388608
+Module org.fuset.fskit-srv.module is disabled!
+mount: exec /Library/Filesystems/fuset.fs/Contents/Resources/mount_fuset for /Users/runner/work/_temp/edp-fuset-hidden-mnt: No such file or directory
+mount: /Users/runner/work/_temp/edp-fuset-hidden-mnt failed with 72
+mount process exited status=72
+
+## pluginkit
+     com.apple.fskit.ftp((null))
+	            Path = /System/Library/ExtensionKit/Extensions/com.apple.fskit.ftp.appex
+	            UUID = 53DFF44F-3356-57B3-858A-3FB100F93DE1
+	       Timestamp = 2026-07-27 05:14:45 +0000
+	             SDK = com.apple.fskit.fsmodule
+	    Display Name = ftp
+	      Short Name = ftp
+	        Platform = macOS
+
+     com.apple.fskit.msdos((null))
+	            Path = /System/Library/ExtensionKit/Extensions/com.apple.fskit.msdos.appex
+	            UUID = DD546993-8024-5EF7-92AC-7DACA3C2A047
+	       Timestamp = 2026-07-27 05:14:47 +0000
+	             SDK = com.apple.fskit.fsmodule
+	    Display Name = msdos
+	      Short Name = msdos
+	        Platform = macOS
+
+     com.apple.fskit.exfat((null))
+	            Path = /System/Library/ExtensionKit/Extensions/com.apple.fskit.exfat.appex
+	            UUID = FEACCAC4-2C49-5781-8A5C-EC5C40B5094F
+	       Timestamp = 2026-07-27 05:14:48 +0000
+	             SDK = com.apple.fskit.fsmodule
+	    Display Name = exfat
+	      Short Name = exfat
+	        Platform = macOS
+
++    org.fuset.fskit-srv.module((null))
+	            Path = /Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex
+	            UUID = 7EBF5FCA-44AE-49B5-BFE0-AEF7BB03EA36
+	       Timestamp = 2026-08-26 12:34:35 +0000
+	             SDK = com.apple.fskit.fsmodule
+	   Parent Bundle = /Applications/fuse-t.app
+	    Display Name = fuse-t
+	      Short Name = fuse-t
+	     Parent Name = fuse-t
+	        Platform = macOS
+
+ (4 plug-ins)
+
+## nested hdiutil stderr
+
+## mount snapshot
+/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)
+devfs on /dev (devfs, local, nobrowse)
+/dev/disk3s6 on /System/Volumes/VM (apfs, local, noexec, journaled, noatime, nobrowse)
+/dev/disk3s2 on /System/Volumes/Preboot (apfs, local, journaled, nobrowse)
+/dev/disk3s4 on /System/Volumes/Update (apfs, local, journaled, nobrowse)
+/dev/disk1s2 on /System/Volumes/xarts (apfs, local, noexec, journaled, noatime, nobrowse)
+/dev/disk1s1 on /System/Volumes/iSCPreboot (apfs, local, journaled, nobrowse)
+/dev/disk1s3 on /System/Volumes/Hardware (apfs, local, journaled, nobrowse)
+/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, root data)
+/dev/disk5s1 on /System/Library/AssetsV2/com_apple_MobileAsset_UAF_Siri_Understanding/purpose_auto/c10eb90af2d4996616c3cd0f6bac0833eb4925fa.asset/.AssetData (apfs, sealed, local, read-only, journaled, nobrowse)
+/dev/disk7s1 on /System/Library/AssetsV2/com_apple_MobileAsset_PKITrustStore/purpose_auto/6dd55b0d06633a00de6f57ccb910a66a5ba2409a.asset/.AssetData (apfs, sealed, local, read-only, journaled, nobrowse)
+map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)
+
+## FSKit/FUSE-T log snapshot
+Timestamp               Ty Process[PID:TID]
+2026-08-26 12:31:14.500 Df fskitd[161:36e] [com.apple.LiveFS:default] main:lifs:v2:1
+2026-08-26 12:31:14.507 Df fskitd[161:36e] [com.apple.LiveFS:default] Done setting up mach ports
+2026-08-26 12:31:14.507 Df fskitd[161:36e] [com.apple.LiveFS:default] Done setting up mach ports
+2026-08-26 12:31:14.520 A  fskitd[161:36e] (libsystem_info.dylib) Retrieve User by ID
+2026-08-26 12:31:15.163 Df fskitd[161:36e] [com.apple.libcoreservices:] _dirhelper_update_tmpdir: old=(null), new=<private>
+2026-08-26 12:31:15.576 Df fskitd[161:36e] [com.apple.LiveFS:default] checkIfUnlocked:Device was unlocked, proceed with main flow.
+2026-08-26 12:31:15.576 A  fskitd[161:36e] (libsystem_containermanager.dylib) container_create_or_lookup_app_group_path_by_app_group_identifier
+2026-08-26 12:31:15.576 Df fskitd[161:36e] [com.apple.containermanager:xpc] Requesting app group container lookup; personaid = 4294967295, type = NOPERSONA, name = <unknown>, origin [pid = 0, personaid = 0], proximate [pid = 0, personaid = 0], identifier = <private>, euid = 0, uid = 0, platform = 1
+2026-08-26 12:31:15.659 Df fskitd[161:36e] [com.apple.containermanager:sandbox] Consumed sandbox extension; path = [<private>], handle = 1
+2026-08-26 12:31:15.659 Df fskitd[161:36e] [com.apple.containermanager:unspecified] container_create_or_lookup_app_group_path_by_app_group_identifier: success
+2026-08-26 12:31:15.713 Df fskitd[161:36e] [com.apple.FSKit:default] Loading modules from LS
+2026-08-26 12:31:15.723 Df fskitd[161:36e] [com.apple.xpc:connection] [0x10170b820] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
+2026-08-26 12:31:15.898 Df fskitd[161:36e] [com.apple.FSKit:default] Returning extension types <private>
+2026-08-26 12:31:15.898 Df fskitd[161:36e] [com.apple.FSKit:default] Adding LS record <private>
+2026-08-26 12:31:15.898 Df fskitd[161:36e] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 12:31:15.916 A  fskitd[161:36e] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:31:16.010 A  fskitd[161:36e] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:31:16.011 A  fskitd[161:36e] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:31:17.459 Df fskitd[161:36e] [com.apple.xpc:connection] [0x1017123b0] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
+2026-08-26 12:31:17.479 Df fskitd[161:36e] [com.apple.FSKit:default] New module list <private>
+2026-08-26 12:31:17.479 Df fskitd[161:36e] [com.apple.FSKit:default] Old modules (null)
+2026-08-26 12:31:17.479 Df fskitd[161:36e] [com.apple.FSKit:default] Added 3 identifiers: <private>
+2026-08-26 12:31:17.479 Df fskitd[161:36e] [com.apple.xpc:connection] [0x8af0d4000] activating connection: mach=true listener=true peer=false name=com.apple.filesystems.fskitd.livefs
+2026-08-26 12:31:17.485 Df fskitd[161:36e] [com.apple.xpc:connection] [0x8af0d4140] activating connection: mach=true listener=true peer=false name=com.apple.filesystems.fskitd
+2026-08-26 12:31:17.489 Df fskitd[161:440] [com.apple.FSKit:default] Incomming connection, entitled 1
+2026-08-26 12:31:17.490 Df fskitd[161:440] [com.apple.xpc:connection] [0x8aecb8180] activating connection: mach=false listener=false peer=true name=com.apple.filesystems.fskitd.peer[117].0x8aecb8180
+2026-08-26 12:31:17.490 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:17.490 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:17.495 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:17.495 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:17.497 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:17.497 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:17.500 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:17.500 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:17.503 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:17.503 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:17.503 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:17.503 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:17.504 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:17.504 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:19.709 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:19.709 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:19.722 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:19.722 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:19.812 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:19.812 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:19.856 Df fskitd[161:440] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:19.856 Df fskitd[161:440] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:31:36.895 Df fskitd[161:50f] [com.apple.FSKit:default] Incomming connection, entitled 1
+2026-08-26 12:31:36.895 Df fskitd[161:50f] [com.apple.xpc:connection] [0x8aecb8300] activating connection: mach=false listener=false peer=true name=com.apple.filesystems.fskitd.peer[226].0x8aecb8300
+2026-08-26 12:31:36.897 Df fskitd[161:50f] [com.apple.FSKit:default] Getting own modules
+2026-08-26 12:31:36.897 Df fskitd[161:50f] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 12:34:31.061 Df fskitd[161:e51] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:31.061 Df fskitd[161:e51] [com.apple.xpc:connection] [0x8af0d4280] activating connection: mach=true listener=false peer=false name=com.apple.fskit.fskit_agent
+2026-08-26 12:34:31.149 Df fskitd[161:2ee6] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:31.151 Df fskitd[161:2ee6] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:31.239 Df fskitd[161:2ee6] [com.apple.FSKit:default] About to grab assertion on pid 2657
+2026-08-26 12:34:31.239 Df fskitd[161:2ee6] [com.apple.runningboard:connection] Initializing connection
+2026-08-26 12:34:31.239 Df fskitd[161:2ee6] [com.apple.runningboard:process] Removing all cached process handles
+2026-08-26 12:34:31.239 Df fskitd[161:e51] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
+2026-08-26 12:34:31.239 Df fskitd[161:e51] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
+2026-08-26 12:34:31.239 Df fskitd[161:e51] [com.apple.xpc:connection] [0x8af0d43c0] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
+2026-08-26 12:34:31.245 Df fskitd[161:e51] [com.apple.runningboard:connection] Handshake succeeded
+2026-08-26 12:34:31.245 Df fskitd[161:e51] [com.apple.runningboard:connection] Identity resolved as osservice<com.apple.filesystems.fskitd>
+2026-08-26 12:34:31.246 Df fskitd[161:2ee6] [com.apple.xpc:connection] [0x8af0d4500] activating connection: mach=true listener=false peer=false name=com.apple.fskit.fskit_helper
+2026-08-26 12:34:31.263 Df fskitd[161:2ee6] [com.apple.xpc:connection] [0x8af0d4500] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-08-26 12:34:31.263 Df fskitd[161:2ee6] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:31.468 Df fskitd[161:2efd] [com.apple.FSKit:default] Got ep <private> error (null)
+2026-08-26 12:34:31.469 Df fskitd[161:2ee6] [com.apple.FSKit:default] non-ours instance connection got <private>
+2026-08-26 12:34:31.469 Df fskitd[161:2ee6] [com.apple.xpc:connection] [0x8af0d4500] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-26 12:34:31.469 Df fskitd[161:2ee6] [com.apple.FSKit:default] About to talk to the connection for <private>
+2026-08-26 12:34:31.473 Df fskitd[161:e51] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:31.474 Df fskitd[161:e51] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:31.506 Df fskitd[161:e51] [com.apple.FSKit:default] About to grab assertion on pid 2659
+2026-08-26 12:34:31.507 Df fskitd[161:e51] [com.apple.xpc:connection] [0x8af0d4640] activating connection: mach=true listener=false peer=false name=com.apple.fskit.fskit_helper
+2026-08-26 12:34:31.508 Df fskitd[161:e51] [com.apple.xpc:connection] [0x8af0d4640] invalidated because the current process cancelled the connection by calling xpc_connection_cancel()
+2026-08-26 12:34:31.508 Df fskitd[161:e51] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:31.665 Df fskitd[161:2efd] [com.apple.FSKit:default] Got ep <private> error (null)
+2026-08-26 12:34:31.665 Df fskitd[161:e51] [com.apple.FSKit:default] non-ours instance connection got <private>
+2026-08-26 12:34:31.665 Df fskitd[161:e51] [com.apple.xpc:connection] [0x8af0d4640] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-26 12:34:31.665 Df fskitd[161:e51] [com.apple.FSKit:default] About to talk to the connection for <private>
+2026-08-26 12:34:33.862 Df fskitd[161:2efd] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 12:34:34.112 Df dmd[367:865] Received xpc stream event (distributed notification matching) with name: com.apple.LaunchServices.applicationRegistered user info: {
+    CFBundleDisplayName = "fuse-t";
+    bundleIDs =     (
+        "org.fuset.fskit-srv"
+    );
+    isForcedUpdate = 1;
+    isPlaceholder = 0;
+}
+2026-08-26 12:34:34.118 Df fskitd[161:2efd] [com.apple.FSKit:default] Got LS database change
+2026-08-26 12:34:34.118 Df fskitd[161:e51] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 12:34:34.118 A  fskitd[161:e51] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:34.118 A  fskitd[161:e51] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:34.118 A  fskitd[161:e51] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:34.120 Df siriactionsd[397:1ff2] [com.apple.shortcuts:Daemon] Firing event: <distributed notification: com.apple.LaunchServices.applicationRegistered, userInfo: [AnyHashable("isForcedUpdate"): 1, AnyHashable("CFBundleDisplayName"): fuse-t, AnyHashable("isPlaceholder"): 0, AnyHashable("bundleIDs"): <__NSSingleObjectArrayI 0xaaacae5d0>(
+org.fuset.fskit-srv
+)
+]>
+2026-08-26 12:34:34.399 Df fskitd[161:e51] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 12:34:34.665 Df fskitd[161:e51] [com.apple.FSKit:default] Got LS database change
+2026-08-26 12:34:34.665 Df fskitd[161:2efd] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 12:34:34.666 A  fskitd[161:2efd] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:34.666 A  fskitd[161:2efd] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:34.666 A  fskitd[161:2efd] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:34.961 Df launchd[1:fcf] [system:] remove all extension instances: caller = pkd.395, extension = org.fuset.fskit-srv.module
+2026-08-26 12:34:34.961 Df launchd[1:fcf] [system:] total of 0 extension (org.fuset.fskit-srv.module) instances were found to remove, of which 0 were removed instantly
+2026-08-26 12:34:45.036 Df fskitd[161:2ee6] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 12:34:45.304 Df fskitd[161:2ee6] [com.apple.FSKit:default] Got LS database change
+2026-08-26 12:34:45.304 Df fskitd[161:2ee6] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 12:34:45.305 A  fskitd[161:2ee6] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:45.305 A  fskitd[161:2ee6] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:45.305 A  fskitd[161:2ee6] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 12:34:48.668 Df fskitd[161:2ee6] [com.apple.FSKit:default] Incomming connection, entitled 1
+2026-08-26 12:34:48.668 Df fskitd[161:2ee6] [com.apple.xpc:connection] [0x8aecb8600] activating connection: mach=false listener=false peer=true name=com.apple.filesystems.fskitd.peer[3005].0x8aecb8600
+2026-08-26 12:34:48.668 Df fskitd[161:2ee6] [com.apple.FSKit:default] About to get current agent for 501
+2026-08-26 12:34:48.677 Df fskitd[161:2ee6] [com.apple.xpc:connection] [0x8aecb8600] invalidated because the client process (pid 3005) either cancelled the connection or exited
+2026-08-26 12:35:10.081 Df log[3347:380e] [com.apple.log:] log run noninteractively, parent: 3335 (bash), args: 'log' 'show' '--last' '4m' '--style' 'compact' '--predicate' 'process == "fskitd" OR process == "FskitSrvModule" OR eventMessage CONTAINS[c] "org.fuset.fskit-srv.module" OR eventMessage CONTAINS[c] "fus
