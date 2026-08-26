@@ -248,6 +248,16 @@ commit:
 
 风险：inner bridge 不能随意加 `local`，已有实验记录会导致 `ntfs-3g.probe --readwrite` status 13/EIO。
 
+#### 2026-08-26 16:31 — 修正 outer-local CI 断言
+
+- `7e5ccee` 的 GitHub macOS 26.5.2 run `32947517394` 中，最小 FUSE2 rename probe step 6 成功，并与本机一致收到 `FUSE2_RENAMEX ... flags=0x2` / `EOPNOTSUPP`。
+- 后续 NTFS E2E step 8 实际已成功挂载：`/dev/disk8 on /Volumes/EDPNTFSRW (macfuse, local, ..., fskit)`，NTFS daemon 存活且 root `stat/readdir` 均成功。
+- job 失败的直接原因是脚本仍保留 56dcf39 generic-source 断言 `^macfuse://...`；outer-local 改造后 source 正确变成 `/dev/diskN`，所以“挂载成功”被旧断言误判为失败。
+- 已修改 synthetic E2E：mount policy 含 `local` 时严格要求 `/dev/diskN + macfuse + local + fskit`；不含 `local` 时才要求 `macfuse://UUID`。这不是放宽 gate，而是让 gate 与两种 FSKit module 的真实语义一致。
+
+commit:
+- pending
+
 ### T3 — P1 性能
 
 状态：**WIP，需正式回归**

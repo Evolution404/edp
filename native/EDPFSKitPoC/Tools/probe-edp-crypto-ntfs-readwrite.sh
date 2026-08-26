@@ -216,8 +216,12 @@ start_ntfs() {
   log "STEP=NTFSLABEL_OK"
 
   local ntfs_options=()
+  local expects_local=0
   while IFS= read -r option; do
-    [[ -n "${option}" ]] && ntfs_options+=("-o" "${option}")
+    if [[ -n "${option}" ]]; then
+      ntfs_options+=("-o" "${option}")
+      [[ "${option}" == "local" ]] && expects_local=1
+    fi
   done < <("${NTFS_POLICY_RENDERER}" "$(id -u)" "$(id -g)" "${TEST_VOLUME}")
   [[ ${#ntfs_options[@]} -gt 0 ]]
   log "NTFS_SHARED_POLICY=$(printf '%s ' "${ntfs_options[@]}")"
@@ -245,7 +249,13 @@ start_ntfs() {
   local mount_line
   mount_line="$(/sbin/mount | /usr/bin/grep -F " on ${NTFS_MOUNT} " || true)"
   log "NTFS_MOUNT_LINE=${mount_line}"
-  printf '%s\n' "${mount_line}" | /usr/bin/grep -Eq '^macfuse://[^ ]+ on .+\(macfuse,.*fskit'
+  if (( expects_local )); then
+    printf '%s\n' "${mount_line}" | /usr/bin/grep -Eq '^/dev/disk[0-9]+ on .+\(macfuse,.*local,.*fskit'
+    log "RESULT=NTFS_OUTER_LOCAL_BLOCK_SOURCE_CONFIRMED"
+  else
+    printf '%s\n' "${mount_line}" | /usr/bin/grep -Eq '^macfuse://[^ ]+ on .+\(macfuse,.*fskit'
+    log "RESULT=NTFS_OUTER_GENERIC_SOURCE_CONFIRMED"
+  fi
 
   diagnose_ntfs_state "MOUNT_T0"
   sleep 0.1
