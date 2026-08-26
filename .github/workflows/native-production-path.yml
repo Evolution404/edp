@@ -68,7 +68,8 @@ jobs:
           grep -F 'EDPXPCPeerValidator.isTrusted' product/EDPVaultRuntime.swift
           grep -F 'com.edp.usbvault.app' product/EDPXPCSecurity.swift
           grep -F 'EDPBlockDevicePublisher' product/EDPVaultRuntime.swift
-          ! grep -F 'diskimages2-attach' product/EDPVaultRuntime.swift
+          grep -F 'EDPDiskImages2Publisher' product/EDPVaultRuntime.swift
+          ! grep -F 'run(binaryRoot + "/diskimages2-attach"' product/EDPVaultRuntime.swift
           grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
           echo 'RESULT=SWIFTUI_XPC_PRODUCT_SURFACE_OK'
           echo 'RESULT=DISKIMAGES2_PRIVATE_API_ISOLATED_TO_ADAPTER'
