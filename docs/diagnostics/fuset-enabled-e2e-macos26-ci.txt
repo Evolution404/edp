@@ -10,7 +10,7 @@ nested_hdiutil_attached=unknown
 nested_disk=none
 backing_sha_before=638f4947a865d315c06c6c16913be984ff08270b8da0e22a3fedb044891ff59d
 backing_sha_after=unknown
-backing_meta_before=8388608:1787750381:100444
+backing_meta_before=8388608:1787755446:100444
 backing_meta_after=unknown
 
 ## enabled state
@@ -35,17 +35,6 @@ MISSING
 ]
 
 ## pluginkit after cache reset
-+    org.fuset.fskit-srv.module((null))
-	            Path = /Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex
-	            UUID = 5FB833BB-FDCC-474F-BD9B-6A5DDD2F553C
-	       Timestamp = 2026-08-26 13:19:43 +0000
-	             SDK = com.apple.fskit.fsmodule
-	   Parent Bundle = /Applications/fuse-t.app
-	    Display Name = fuse-t
-	      Short Name = fuse-t
-	     Parent Name = fuse-t
-	        Platform = macOS
-
      com.apple.fskit.ftp((null))
 	            Path = /System/Library/ExtensionKit/Extensions/com.apple.fskit.ftp.appex
 	            UUID = 53DFF44F-3356-57B3-858A-3FB100F93DE1
@@ -62,6 +51,17 @@ MISSING
 	             SDK = com.apple.fskit.fsmodule
 	    Display Name = msdos
 	      Short Name = msdos
+	        Platform = macOS
+
++    org.fuset.fskit-srv.module((null))
+	            Path = /Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex
+	            UUID = D3EB566B-FA07-4934-95EA-56E602E25583
+	       Timestamp = 2026-08-26 14:44:08 +0000
+	             SDK = com.apple.fskit.fsmodule
+	   Parent Bundle = /Applications/fuse-t.app
+	    Display Name = fuse-t
+	      Short Name = fuse-t
+	     Parent Name = fuse-t
 	        Platform = macOS
 
      com.apple.fskit.exfat((null))
@@ -83,238 +83,164 @@ MISSING
 
 ## FSKit runtime log
 Timestamp               Ty Process[PID:TID]
-2026-08-26 13:18:46.752 Df fskitd[160:360] [com.apple.LiveFS:default] main:lifs:v2:1
-2026-08-26 13:18:46.752 Df fskitd[160:360] [com.apple.LiveFS:default] Done setting up mach ports
-2026-08-26 13:18:46.752 Df fskitd[160:360] [com.apple.LiveFS:default] Done setting up mach ports
-2026-08-26 13:18:46.753 A  fskitd[160:360] (libsystem_info.dylib) Retrieve User by ID
-2026-08-26 13:18:46.821 Df fskitd[160:360] [com.apple.libcoreservices:] _dirhelper_update_tmpdir: old=(null), new=<private>
-2026-08-26 13:18:46.973 Df fskitd[160:360] [com.apple.LiveFS:default] checkIfUnlocked:Device was unlocked, proceed with main flow.
-2026-08-26 13:18:46.975 A  fskitd[160:360] (libsystem_containermanager.dylib) container_create_or_lookup_app_group_path_by_app_group_identifier
-2026-08-26 13:18:46.975 Df fskitd[160:360] [com.apple.containermanager:xpc] Requesting app group container lookup; personaid = 4294967295, type = NOPERSONA, name = <unknown>, origin [pid = 0, personaid = 0], proximate [pid = 0, personaid = 0], identifier = <private>, euid = 0, uid = 0, platform = 1
-2026-08-26 13:18:47.363 Df fskitd[160:360] [com.apple.containermanager:sandbox] Consumed sandbox extension; path = [<private>], handle = 1
-2026-08-26 13:18:47.363 Df fskitd[160:360] [com.apple.containermanager:unspecified] container_create_or_lookup_app_group_path_by_app_group_identifier: success
-2026-08-26 13:18:47.369 Df fskitd[160:360] [com.apple.FSKit:default] Loading modules from LS
-2026-08-26 13:18:47.383 Df fskitd[160:360] [com.apple.xpc:connection] [0x1052695e0] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
-2026-08-26 13:18:47.390 Df fskitd[160:360] [com.apple.FSKit:default] Returning extension types <private>
-2026-08-26 13:18:47.390 Df fskitd[160:360] [com.apple.FSKit:default] Adding LS record <private>
-2026-08-26 13:18:47.390 Df fskitd[160:360] [com.apple.FSKit:default] returning ep records <private>
-2026-08-26 13:18:47.391 A  fskitd[160:360] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:18:47.400 A  fskitd[160:360] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:18:47.401 A  fskitd[160:360] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:18:47.422 Df fskitd[160:360] [com.apple.xpc:connection] [0x105274110] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
-2026-08-26 13:18:47.448 Df fskitd[160:360] [com.apple.FSKit:default] New module list <private>
-2026-08-26 13:18:47.448 Df fskitd[160:360] [com.apple.FSKit:default] Old modules (null)
-2026-08-26 13:18:47.448 Df fskitd[160:360] [com.apple.FSKit:default] Added 3 identifiers: <private>
-2026-08-26 13:18:47.448 Df fskitd[160:360] [com.apple.xpc:connection] [0x83cc9c000] activating connection: mach=true listener=true peer=false name=com.apple.filesystems.fskitd.livefs
-2026-08-26 13:18:47.448 Df fskitd[160:360] [com.apple.xpc:connection] [0x83cc9c140] activating connection: mach=true listener=true peer=false name=com.apple.filesystems.fskitd
-2026-08-26 13:18:47.448 Df fskitd[160:3d1] [com.apple.FSKit:default] Incomming connection, entitled 1
-2026-08-26 13:18:47.449 Df fskitd[160:3d1] [com.apple.xpc:connection] [0x83ccbc180] activating connection: mach=false listener=false peer=true name=com.apple.filesystems.fskitd.peer[117].0x83ccbc180
-2026-08-26 13:18:47.449 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:47.449 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:47.454 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:47.454 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:47.457 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:47.457 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:47.460 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:47.460 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:47.463 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:47.463 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:47.463 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:47.463 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:47.464 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:47.464 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:50.971 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:50.971 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:51.018 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:51.018 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:51.082 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:51.082 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:51.091 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:51.091 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:52.693 Df fskitd[160:3d1] [com.apple.FSKit:default] Incomming connection, entitled 1
-2026-08-26 13:18:52.693 Df fskitd[160:3d1] [com.apple.xpc:connection] [0x83ccbc300] activating connection: mach=false listener=false peer=true name=com.apple.filesystems.fskitd.peer[241].0x83ccbc300
-2026-08-26 13:18:52.694 Df fskitd[160:3d1] [com.apple.FSKit:default] Getting own modules
-2026-08-26 13:18:52.694 Df fskitd[160:3d1] [com.apple.FSKit:default] Returning module array <private>
-2026-08-26 13:18:55.804 A  extensionkitservice[432:a3b] (libsystem_info.dylib) Retrieve User by ID
-2026-08-26 13:18:55.840 Df extensionkitservice[432:a3b] [com.apple.runningboard:connection] Initializing connection
-2026-08-26 13:18:55.840 Df extensionkitservice[432:a3b] [com.apple.runningboard:process] Removing all cached process handles
-2026-08-26 13:18:55.842 Df extensionkitservice[432:a48] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
-2026-08-26 13:18:55.842 Df extensionkitservice[432:a48] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
-2026-08-26 13:18:55.842 Df extensionkitservice[432:a48] [com.apple.xpc:connection] [0x10261ca00] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
-2026-08-26 13:18:55.844 Df extensionkitservice[432:a48] [com.apple.runningboard:connection] Handshake succeeded
-2026-08-26 13:18:55.844 Df extensionkitservice[432:a48] [com.apple.runningboard:connection] Identity resolved as xpcservice<com.apple.extensionkitservice([osservice<com.apple.wallpaper.agent(501)>:411])(501)>{vt hash: 0}{definition:com.apple.extensionkitservice[standard][client]}:432
-2026-08-26 13:18:55.844 Df extensionkitservice[432:a3b] [com.apple.xpc:connection] [0x10261fc70] readying connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
-2026-08-26 13:18:55.846 Df extensionkitservice[432:a3b] [com.apple.BoardServices:Bootstrap] initializing domain XPCService
-2026-08-26 13:18:55.847 Df extensionkitservice[432:a3b] [com.apple.xpc:connection] [0x10261fc70] activating connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
-2026-08-26 13:18:55.847 Df extensionkitservice[432:a49] [com.apple.BoardServices:XPCErrors] [S:1] Alloc <private>
-2026-08-26 13:18:55.848 Df extensionkitservice[432:a49] [com.apple.xpc:connection] [0x10261fee0] activating connection: mach=false listener=false peer=true name=com.apple.extensionkitservice.peer[411].0x10261fee0
-2026-08-26 13:18:55.848 Df extensionkitservice[432:a49] [com.apple.extensionkit:default] Starting XPC listener for connection request from '411'
-2026-08-26 13:18:55.849 Df extensionkitservice[432:a49] [com.apple.xpc:connection] [0x102622e00] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
-2026-08-26 13:18:55.851 A  extensionkitservice[432:a49] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:18:55.863 Df extensionkitservice[432:a49] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:18:57.669 Df extensionkitservice[432:a49] [com.apple.xpc:connection] [0x9ff080000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
-2026-08-26 13:18:57.670 Df extensionkitservice[432:a4b] [com.apple.xpc:connection] [0x9ff080140] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.agent
-2026-08-26 13:18:57.672 Df extensionkitservice[432:a49] [com.apple.xpc:connection] [0x9ff080280] activating connection: mach=false listener=false peer=false name=(anonymous)
-2026-08-26 13:18:57.673 A  extensionkitservice[432:a49] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:18:57.677 Df extensionkitservice[432:a49] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:02.052 A  extensionkitservice[509:cb6] (libsystem_info.dylib) Retrieve User by ID
-2026-08-26 13:19:02.187 A  extensionkitservice[509:cb6] (libsystem_info.dylib) Resolve user group list
-2026-08-26 13:19:02.188 A  extensionkitservice[509:cb6] (libsystem_info.dylib) Membership API: translate identifier
-2026-08-26 13:19:02.201 A  extensionkitservice[509:cc1] (libsystem_info.dylib) Retrieve User by ID
-2026-08-26 13:19:02.294 Df extensionkitservice[509:cc1] [com.apple.runningboard:connection] Initializing connection
-2026-08-26 13:19:02.295 Df extensionkitservice[509:cc1] [com.apple.runningboard:process] Removing all cached process handles
-2026-08-26 13:19:02.295 Df extensionkitservice[509:cc8] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
-2026-08-26 13:19:02.295 Df extensionkitservice[509:cc8] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
-2026-08-26 13:19:02.295 Df extensionkitservice[509:cc8] [com.apple.xpc:connection] [0x1030d0a00] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
-2026-08-26 13:19:02.297 Df extensionkitservice[509:cc8] [com.apple.runningboard:connection] Handshake succeeded
-2026-08-26 13:19:02.297 Df extensionkitservice[509:cc8] [com.apple.runningboard:connection] Identity resolved as xpcservice<com.apple.extensionkitservice([osservice<com.apple.chronod(501)>:429])(501)>{vt hash: 0}{definition:com.apple.extensionkitservice[standard][client]}:509
-2026-08-26 13:19:02.297 Df extensionkitservice[509:cc1] [com.apple.xpc:connection] [0x1030d3b70] readying connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
-2026-08-26 13:19:02.299 Df extensionkitservice[509:cc1] [com.apple.BoardServices:Bootstrap] initializing domain XPCService
-2026-08-26 13:19:02.299 Df extensionkitservice[509:cc1] [com.apple.xpc:connection] [0x1030d3b70] activating connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
-2026-08-26 13:19:02.300 Df extensionkitservice[509:cc9] [com.apple.BoardServices:XPCErrors] [S:1] Alloc <private>
-2026-08-26 13:19:02.300 Df extensionkitservice[509:cc9] [com.apple.xpc:connection] [0x1030d3de0] activating connection: mach=false listener=false peer=true name=com.apple.extensionkitservice.peer[429].0x1030d3de0
-2026-08-26 13:19:02.300 Df extensionkitservice[509:cc9] [com.apple.extensionkit:default] Starting XPC listener for connection request from '429'
-2026-08-26 13:19:02.301 Df extensionkitservice[509:ccb] [com.apple.xpc:connection] [0x1030da6c0] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
-2026-08-26 13:19:02.302 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:02.309 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:05.385 Df extensionkitservice[509:ccb] [com.apple.xpc:connection] [0xc9307c000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
-2026-08-26 13:19:05.385 Df extensionkitservice[509:cca] [com.apple.xpc:connection] [0xc9307c140] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.agent
-2026-08-26 13:19:05.387 Df extensionkitservice[509:ccb] [com.apple.xpc:connection] [0xc9307c280] activating connection: mach=false listener=false peer=false name=(anonymous)
-2026-08-26 13:19:05.389 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:05.393 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:06.668 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:06.670 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:07.333 Df extensionkitservice[509:cca] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
-2026-08-26 13:19:08.758 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:08.761 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:08.785 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:08.787 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:12.399 Df extensionkitservice[432:a49] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
-2026-08-26 13:19:15.475 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:15.478 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:15.699 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:15.701 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:15.970 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:15.972 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.170 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.171 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.229 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.229 Df extensionkitservice[509:cc8] [com.apple.launchservices:default] First-party plugin 8fc (com.apple.news.NewsAudioExtension) is malformed. Skipping during incompleteness check.
-2026-08-26 13:19:16.231 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.231 Df extensionkitservice[509:cc8] [com.apple.launchservices:default] First-party plugin 8fc (com.apple.news.NewsAudioExtension) is malformed. Skipping during incompleteness check.
-2026-08-26 13:19:16.584 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.586 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.601 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.605 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.655 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.657 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.727 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.729 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.778 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.780 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.792 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.794 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.882 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.885 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.950 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.954 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.979 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:16.980 Df extensionkitservice[509:cc8] [com.apple.launchservices:default] First-party plugin 8fc (com.apple.news.NewsAudioExtension) is malformed. Skipping during incompleteness check.
-2026-08-26 13:19:16.981 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:16.982 Df extensionkitservice[509:cc8] [com.apple.launchservices:default] First-party plugin 8fc (com.apple.news.NewsAudioExtension) is malformed. Skipping during incompleteness check.
-2026-08-26 13:19:20.586 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:20.588 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.382 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.385 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.404 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.409 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.430 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.432 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.451 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.454 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.473 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.476 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.855 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.857 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.904 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.906 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.929 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.932 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:21.951 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:21.955 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:22.631 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:22.634 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:22.719 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:22.723 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:22.743 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:22.746 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.157 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.159 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.341 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.345 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.430 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.432 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.461 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.464 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.665 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.667 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.691 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.694 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.722 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.724 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:23.802 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:23.804 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.062 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.064 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.080 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.083 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.238 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.243 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.270 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.273 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.344 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.346 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.362 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.364 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.575 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.577 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.594 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.596 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:24.616 A  extensionkitservice[509:11c1] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:24.618 Df extensionkitservice[509:11c1] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:25.928 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:25.930 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:26.162 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:26.164 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:26.178 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:26.180 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:26.193 A  extensionkitservice[509:cc8] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:26.195 Df extensionkitservice[509:cc8] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:26.207 A  extensionkitservice[509:ccb] (CoreServicesInternal) CFURLResolveBookmarkData
-2026-08-26 13:19:26.209 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:36.670 A  extensionkitservice[979:177e] (libsystem_info.dylib) Retrieve User by ID
-2026-08-26 13:19:36.693 Df extensionkitservice[979:177e] [com.apple.runningboard:connection] Initializing connection
-2026-08-26 13:19:36.695 Df extensionkitservice[979:177e] [com.apple.runningboard:process] Removing all cached process handles
-2026-08-26 13:19:36.697 Df extensionkitservice[979:1783] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
-2026-08-26 13:19:36.697 Df extensionkitservice[979:1783] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
-2026-08-26 13:19:36.698 Df extensionkitservice[979:1783] [com.apple.xpc:connection] [0x100cb8a00] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
-2026-08-26 13:19:36.719 Df extensionkitservice[979:1783] [com.apple.runningboard:connection] Handshake succeeded
-2026-08-26 13:19:36.719 Df extensionkitservice[979:1783] [com.apple.runningboard:connection] Identity resolved as xpcservice<com.apple.extensionkitservice([osservice<com.apple.linkd(501)>:377])(501)>{vt hash: 0}{definition:com.apple.extensionkitservice[standard][client]}:979
-2026-08-26 13:19:36.722 Df extensionkitservice[979:177e] [com.apple.xpc:connection] [0x100cbbc90] readying connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
-2026-08-26 13:19:36.725 Df extensionkitservice[979:177e] [com.apple.BoardServices:Bootstrap] initializing domain XPCService
-2026-08-26 13:19:36.726 Df extensionkitservice[979:177e] [com.apple.xpc:connection] [0x100cbbc90] activating connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
-2026-08-26 13:19:36.726 Df extensionkitservice[979:1784] [com.apple.BoardServices:XPCErrors] [S:1] Alloc <private>
-2026-08-26 13:19:36.726 Df extensionkitservice[979:1784] [com.apple.xpc:connection] [0x100cbbf00] activating connection: mach=false listener=false peer=true name=com.apple.extensionkitservice.peer[377].0x100cbbf00
-2026-08-26 13:19:36.727 Df extensionkitservice[979:1784] [com.apple.extensionkit:default] Starting XPC listener for connection request from '377'
-2026-08-26 13:19:36.728 Df extensionkitservice[979:1784] [com.apple.xpc:connection] [0x100cc0520] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
-2026-08-26 13:19:36.810 Df extensionkitservice[979:1784] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:36.828 Df extensionkitservice[979:1784] [com.apple.xpc:connection] [0x90f080000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
-2026-08-26 13:19:36.828 Df extensionkitservice[979:178e] [com.apple.xpc:connection] [0x90f080140] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.agent
-2026-08-26 13:19:36.830 Df extensionkitservice[979:1784] [com.apple.xpc:connection] [0x90f080280] activating connection: mach=false listener=false peer=false name=(anonymous)
-2026-08-26 13:19:36.885 Df extensionkitservice[979:1784] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:36.973 Df extensionkitservice[979:1784] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:37.134 Df extensionkitservice[509:ccb] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
-2026-08-26 13:19:43.134 Df extensionkitservice[979:1784] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
-2026-08-26 13:19:43.135 Df extensionkitservice[509:17be] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
-2026-08-26 13:19:43.370 Df launchd[1:14ae] [system:] remove all extension instances: caller = pkd.378, extension = org.fuset.fskit-srv.module
-2026-08-26 13:19:43.370 Df launchd[1:14ae] [system:] total of 0 extension (org.fuset.fskit-srv.module) instances were found to remove, of which 0 were removed instantly
+2026-08-26 14:40:56.059 Df fskitd[164:37a] [com.apple.LiveFS:default] main:lifs:v2:1
+2026-08-26 14:40:56.073 Df fskitd[164:37a] [com.apple.LiveFS:default] Done setting up mach ports
+2026-08-26 14:40:56.073 Df fskitd[164:37a] [com.apple.LiveFS:default] Done setting up mach ports
+2026-08-26 14:40:56.079 A  fskitd[164:37a] (libsystem_info.dylib) Retrieve User by ID
+2026-08-26 14:40:56.120 Df fskitd[164:37a] [com.apple.libcoreservices:] _dirhelper_update_tmpdir: old=(null), new=<private>
+2026-08-26 14:40:56.574 Df fskitd[164:37a] [com.apple.LiveFS:default] checkIfUnlocked:Device was unlocked, proceed with main flow.
+2026-08-26 14:40:56.574 A  fskitd[164:37a] (libsystem_containermanager.dylib) container_create_or_lookup_app_group_path_by_app_group_identifier
+2026-08-26 14:40:56.574 Df fskitd[164:37a] [com.apple.containermanager:xpc] Requesting app group container lookup; personaid = 4294967295, type = NOPERSONA, name = <unknown>, origin [pid = 0, personaid = 0], proximate [pid = 0, personaid = 0], identifier = <private>, euid = 0, uid = 0, platform = 1
+2026-08-26 14:40:56.803 Df fskitd[164:37a] [com.apple.containermanager:sandbox] Consumed sandbox extension; path = [<private>], handle = 1
+2026-08-26 14:40:56.803 Df fskitd[164:37a] [com.apple.containermanager:unspecified] container_create_or_lookup_app_group_path_by_app_group_identifier: success
+2026-08-26 14:40:56.810 Df fskitd[164:37a] [com.apple.FSKit:default] Loading modules from LS
+2026-08-26 14:40:56.820 Df fskitd[164:37a] [com.apple.xpc:connection] [0x104a0ee80] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
+2026-08-26 14:40:56.861 Df fskitd[164:37a] [com.apple.FSKit:default] Returning extension types <private>
+2026-08-26 14:40:56.861 Df fskitd[164:37a] [com.apple.FSKit:default] Adding LS record <private>
+2026-08-26 14:40:56.861 Df fskitd[164:37a] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 14:40:56.862 A  fskitd[164:37a] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:40:56.869 A  fskitd[164:37a] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:40:56.869 A  fskitd[164:37a] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:40:56.881 Df fskitd[164:37a] [com.apple.xpc:connection] [0x104a13af0] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
+2026-08-26 14:40:56.884 Df fskitd[164:37a] [com.apple.FSKit:default] New module list <private>
+2026-08-26 14:40:56.884 Df fskitd[164:37a] [com.apple.FSKit:default] Old modules (null)
+2026-08-26 14:40:56.884 Df fskitd[164:37a] [com.apple.FSKit:default] Added 3 identifiers: <private>
+2026-08-26 14:40:56.884 Df fskitd[164:37a] [com.apple.xpc:connection] [0x889080000] activating connection: mach=true listener=true peer=false name=com.apple.filesystems.fskitd.livefs
+2026-08-26 14:40:56.885 Df fskitd[164:37a] [com.apple.xpc:connection] [0x889080140] activating connection: mach=true listener=true peer=false name=com.apple.filesystems.fskitd
+2026-08-26 14:40:56.885 Df fskitd[164:3f4] [com.apple.FSKit:default] Incomming connection, entitled 1
+2026-08-26 14:40:56.885 Df fskitd[164:3f4] [com.apple.xpc:connection] [0x8890a0180] activating connection: mach=false listener=false peer=true name=com.apple.filesystems.fskitd.peer[117].0x8890a0180
+2026-08-26 14:40:56.886 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:40:56.886 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:40:56.888 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:40:56.888 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:40:56.892 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:40:56.892 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:40:56.898 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:40:56.898 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:40:56.902 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:40:56.902 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:40:56.902 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:40:56.902 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:40:56.903 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:40:56.903 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:41:00.790 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:41:00.790 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:41:00.838 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:41:00.838 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:41:00.877 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:41:00.877 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:41:00.916 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:41:00.916 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:41:02.073 Df fskitd[164:430] [com.apple.FSKit:default] Incomming connection, entitled 1
+2026-08-26 14:41:02.073 Df fskitd[164:430] [com.apple.xpc:connection] [0x8890a0300] activating connection: mach=false listener=false peer=true name=com.apple.filesystems.fskitd.peer[257].0x8890a0300
+2026-08-26 14:41:02.073 Df fskitd[164:430] [com.apple.FSKit:default] Getting own modules
+2026-08-26 14:41:02.073 Df fskitd[164:430] [com.apple.FSKit:default] Returning module array <private>
+2026-08-26 14:41:05.199 A  extensionkitservice[417:977] (libsystem_info.dylib) Retrieve User by ID
+2026-08-26 14:41:05.225 Df extensionkitservice[417:977] [com.apple.runningboard:connection] Initializing connection
+2026-08-26 14:41:05.227 Df extensionkitservice[417:977] [com.apple.runningboard:process] Removing all cached process handles
+2026-08-26 14:41:05.228 Df extensionkitservice[417:97c] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
+2026-08-26 14:41:05.228 Df extensionkitservice[417:97c] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
+2026-08-26 14:41:05.228 Df extensionkitservice[417:97c] [com.apple.xpc:connection] [0x1012dcd00] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
+2026-08-26 14:41:05.230 Df extensionkitservice[417:97c] [com.apple.runningboard:connection] Handshake succeeded
+2026-08-26 14:41:05.230 Df extensionkitservice[417:97c] [com.apple.runningboard:connection] Identity resolved as xpcservice<com.apple.extensionkitservice([osservice<com.apple.wallpaper.agent(501)>:392])(501)>{vt hash: 0}{definition:com.apple.extensionkitservice[standard][client]}:417
+2026-08-26 14:41:05.230 Df extensionkitservice[417:977] [com.apple.xpc:connection] [0x1012dfef0] readying connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
+2026-08-26 14:41:05.233 Df extensionkitservice[417:977] [com.apple.BoardServices:Bootstrap] initializing domain XPCService
+2026-08-26 14:41:05.233 Df extensionkitservice[417:977] [com.apple.xpc:connection] [0x1012dfef0] activating connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
+2026-08-26 14:41:05.234 Df extensionkitservice[417:97c] [com.apple.BoardServices:XPCErrors] [S:1] Alloc <private>
+2026-08-26 14:41:05.234 Df extensionkitservice[417:97c] [com.apple.xpc:connection] [0x1012e0030] activating connection: mach=false listener=false peer=true name=com.apple.extensionkitservice.peer[392].0x1012e0030
+2026-08-26 14:41:05.234 Df extensionkitservice[417:97c] [com.apple.extensionkit:default] Starting XPC listener for connection request from '392'
+2026-08-26 14:41:05.235 Df extensionkitservice[417:97c] [com.apple.xpc:connection] [0x1012e28b0] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
+2026-08-26 14:41:05.236 A  extensionkitservice[417:97c] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:05.254 Df extensionkitservice[417:97c] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:05.315 Df extensionkitservice[417:97d] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:41:06.397 Df extensionkitservice[417:97c] [com.apple.xpc:connection] [0x708c7c000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
+2026-08-26 14:41:06.397 Df extensionkitservice[417:980] [com.apple.xpc:connection] [0x708c7c140] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.agent
+2026-08-26 14:41:06.401 Df extensionkitservice[417:97c] [com.apple.xpc:connection] [0x708c7c280] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-26 14:41:06.404 A  extensionkitservice[417:97c] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:06.411 Df extensionkitservice[417:97c] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:09.168 A  extensionkitservice[448:b23] (libsystem_info.dylib) Retrieve User by ID
+2026-08-26 14:41:09.232 Df extensionkitservice[448:b23] [com.apple.runningboard:connection] Initializing connection
+2026-08-26 14:41:09.232 Df extensionkitservice[448:b23] [com.apple.runningboard:process] Removing all cached process handles
+2026-08-26 14:41:09.233 Df extensionkitservice[448:b27] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
+2026-08-26 14:41:09.233 Df extensionkitservice[448:b27] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
+2026-08-26 14:41:09.233 Df extensionkitservice[448:b27] [com.apple.xpc:connection] [0x104668d00] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
+2026-08-26 14:41:09.235 Df extensionkitservice[448:b27] [com.apple.runningboard:connection] Handshake succeeded
+2026-08-26 14:41:09.235 Df extensionkitservice[448:b27] [com.apple.runningboard:connection] Identity resolved as xpcservice<com.apple.extensionkitservice([osservice<com.apple.chronod(501)>:411])(501)>{vt hash: 0}{definition:com.apple.extensionkitservice[standard][client]}:448
+2026-08-26 14:41:09.235 Df extensionkitservice[448:b23] [com.apple.xpc:connection] [0x10466bef0] readying connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
+2026-08-26 14:41:09.236 Df extensionkitservice[448:b23] [com.apple.BoardServices:Bootstrap] initializing domain XPCService
+2026-08-26 14:41:09.237 Df extensionkitservice[448:b23] [com.apple.xpc:connection] [0x10466bef0] activating connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
+2026-08-26 14:41:09.237 Df extensionkitservice[448:b28] [com.apple.BoardServices:XPCErrors] [S:1] Alloc <private>
+2026-08-26 14:41:09.237 Df extensionkitservice[448:b28] [com.apple.xpc:connection] [0x10466c030] activating connection: mach=false listener=false peer=true name=com.apple.extensionkitservice.peer[411].0x10466c030
+2026-08-26 14:41:09.237 Df extensionkitservice[448:b28] [com.apple.extensionkit:default] Starting XPC listener for connection request from '411'
+2026-08-26 14:41:09.238 Df extensionkitservice[448:b28] [com.apple.xpc:connection] [0x104672430] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
+2026-08-26 14:41:09.239 A  extensionkitservice[448:b2a] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:09.246 Df extensionkitservice[448:b2a] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:12.676 Df extensionkitservice[448:b2a] [com.apple.xpc:connection] [0x88cc7c000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
+2026-08-26 14:41:12.676 Df extensionkitservice[448:b29] [com.apple.xpc:connection] [0x88cc7c140] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.agent
+2026-08-26 14:41:12.678 Df extensionkitservice[448:b2a] [com.apple.xpc:connection] [0x88cc7c280] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-26 14:41:12.679 A  extensionkitservice[448:b2a] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:12.681 Df extensionkitservice[448:b2a] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:13.619 A  extensionkitservice[448:b2a] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:13.621 Df extensionkitservice[448:b2a] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:15.603 A  extensionkitservice[448:b2b] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:15.607 Df extensionkitservice[448:b2b] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:15.680 Df extensionkitservice[448:b29] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:41:20.866 A  extensionkitservice[448:b2b] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:20.870 Df extensionkitservice[448:b2b] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:25.948 Df extensionkitservice[417:97c] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:41:26.452 A  extensionkitservice[448:b29] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:26.454 Df extensionkitservice[448:b29] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:27.233 A  extensionkitservice[448:b29] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:27.237 Df extensionkitservice[448:b29] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:32.816 A  extensionkitservice[448:b27] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:32.819 Df extensionkitservice[448:b27] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:33.710 A  extensionkitservice[448:b29] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:33.712 Df extensionkitservice[448:b29] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:36.062 A  extensionkitservice[448:b29] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:36.064 Df extensionkitservice[448:b29] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:36.391 A  extensionkitservice[448:b29] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:41:36.394 Df extensionkitservice[448:b29] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:50.617 A  extensionkitservice[957:1714] (libsystem_info.dylib) Retrieve User by ID
+2026-08-26 14:41:50.624 Df extensionkitservice[957:1714] [com.apple.runningboard:connection] Initializing connection
+2026-08-26 14:41:50.625 Df extensionkitservice[957:1714] [com.apple.runningboard:process] Removing all cached process handles
+2026-08-26 14:41:50.626 Df extensionkitservice[957:1718] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
+2026-08-26 14:41:50.626 Df extensionkitservice[957:1718] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
+2026-08-26 14:41:50.626 Df extensionkitservice[957:1718] [com.apple.xpc:connection] [0x1016c2a90] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
+2026-08-26 14:41:50.646 Df extensionkitservice[957:1718] [com.apple.runningboard:connection] Handshake succeeded
+2026-08-26 14:41:50.646 Df extensionkitservice[957:1718] [com.apple.runningboard:connection] Identity resolved as xpcservice<com.apple.extensionkitservice([osservice<com.apple.linkd(501)>:380])(501)>{vt hash: 0}{definition:com.apple.extensionkitservice[standard][client]}:957
+2026-08-26 14:41:50.646 Df extensionkitservice[957:1714] [com.apple.xpc:connection] [0x1016c6df0] readying connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
+2026-08-26 14:41:50.648 Df extensionkitservice[957:1714] [com.apple.BoardServices:Bootstrap] initializing domain XPCService
+2026-08-26 14:41:50.648 Df extensionkitservice[957:1714] [com.apple.xpc:connection] [0x1016c6df0] activating connection: mach=false listener=true peer=false name=com.apple.extensionkitservice
+2026-08-26 14:41:50.649 Df extensionkitservice[957:1719] [com.apple.xpc:connection] [0x1016c7880] activating connection: mach=true listener=false peer=false name=com.apple.lsd.mapdb
+2026-08-26 14:41:50.659 Df extensionkitservice[957:1719] [com.apple.BoardServices:XPCErrors] [S:1] Alloc <private>
+2026-08-26 14:41:50.663 Df extensionkitservice[957:1719] [com.apple.xpc:connection] [0x1016c8e90] activating connection: mach=false listener=false peer=true name=com.apple.extensionkitservice.peer[380].0x1016c8e90
+2026-08-26 14:41:50.663 Df extensionkitservice[957:1719] [com.apple.extensionkit:default] Starting XPC listener for connection request from '380'
+2026-08-26 14:41:50.969 Df extensionkitservice[957:1718] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:50.996 Df extensionkitservice[957:1718] [com.apple.xpc:connection] [0xc22c80000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
+2026-08-26 14:41:50.996 Df extensionkitservice[957:1719] [com.apple.xpc:connection] [0xc22c80140] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.agent
+2026-08-26 14:41:50.998 Df extensionkitservice[957:1718] [com.apple.xpc:connection] [0xc22c80280] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-26 14:41:51.081 Df extensionkitservice[957:1719] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:51.213 Df extensionkitservice[957:1718] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:41:51.409 Df extensionkitservice[448:174c] [com.apple.extensionkit:launch] Configuring RBSLaunchContext for extension: `<private>`
+2026-08-26 14:43:51.697 Df fskitd[164:430] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:43:51.962 Df fskitd[164:430] [com.apple.FSKit:default] Got LS database change
+2026-08-26 14:43:51.963 Df fskitd[164:430] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 14:43:51.964 A  fskitd[164:430] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:43:51.965 A  fskitd[164:430] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:43:51.965 A  fskitd[164:430] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:44:02.752 Df fskitd[164:2ff8] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:44:03.020 Df fskitd[164:2cd3] [com.apple.FSKit:default] Got LS database change
+2026-08-26 14:44:03.020 Df fskitd[164:2cd3] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 14:44:03.021 A  fskitd[164:2cd3] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:44:03.022 A  fskitd[164:2cd3] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:44:03.023 A  fskitd[164:2cd3] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:44:07.764 Df fskitd[164:2ff8] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:44:07.929 Df extensionkitservice[957:1718] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:44:07.939 Df extensionkitservice[448:174c] [com.apple.launchservices:db] NotifyToken::RegisterDispatch(user.uid.501.com.apple.LaunchServices.database) fired for session key <private>
+2026-08-26 14:44:07.982 Df launchd[1:1ff] [system:] remove all extension instances: caller = pkd.464, extension = org.fuset.fskit-srv.module
+2026-08-26 14:44:07.983 Df launchd[1:1ff] [system:] total of 0 extension (org.fuset.fskit-srv.module) instances were found to remove, of which 0 were removed instantly
+2026-08-26 14:44:08.026 Df fskitd[164:2cd3] [com.apple.FSKit:default] Got LS database change
+2026-08-26 14:44:08.026 Df fskitd[164:2cd3] [com.apple.FSKit:default] returning ep records <private>
+2026-08-26 14:44:08.027 A  fskitd[164:2cd3] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:44:08.027 A  fskitd[164:2cd3] (CoreServicesInternal) CFURLResolveBookmarkData
+2026-08-26 14:44:08.028 A  fskitd[164:2cd3] (CoreServicesInternal) CFURLResolveBookmarkData
