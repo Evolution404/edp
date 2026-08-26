@@ -148,18 +148,19 @@ attach_decrypted() {
 
 start_ntfs() {
   : >"${NTFS_LOG}"
+  local source="${BRIDGE_MOUNT}/volume.raw"
   log "STEP=NTFS3G_PROBE_BEGIN"
-  sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
-    "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
+  DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+    "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "${source}"
   log "STEP=NTFS3G_PROBE_OK"
   local label
-  label="$(sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
-    "${NTFS_RUNTIME}/bin/ntfslabel" "/dev/${DECRYPTED_BSD}" | /usr/bin/tr -d '\r\n')"
+  label="$(DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+    "${NTFS_RUNTIME}/bin/ntfslabel" "${source}" | /usr/bin/tr -d '\r\n')"
   [[ "${label}" == "${TEST_VOLUME}" ]]
   log "STEP=NTFSLABEL_OK"
 
   log "STEP=NTFS3G_MOUNT_BEGIN"
-  sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+  DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
     "${NTFS_RUNTIME}/bin/ntfs-3g" \
       -o backend=fskit \
       -o no_detach \
@@ -168,11 +169,10 @@ start_ntfs() {
       -o streams_interface=openxattr \
       -o noatime \
       -o big_writes \
-      -o allow_other \
       -o "uid=$(id -u)" \
       -o "gid=$(id -g)" \
       -o "volname=${TEST_VOLUME}" \
-      "/dev/${DECRYPTED_BSD}" "${NTFS_MOUNT}" \
+      "${source}" "${NTFS_MOUNT}" \
       >"${NTFS_LOG}" 2>&1 &
   NTFS_PID=$!
 
@@ -257,10 +257,8 @@ log "CIPHER_SHA256_BEFORE=${CIPHER_SHA_BEFORE}"
 
 start_bridge
 log "RESULT=EDP_CRYPTO_READWRITE_FUSE_READY"
-attach_decrypted
-log "RESULT=DISKIMAGES2_WRITABLE_NTFS_DEVICE_READY"
 start_ntfs
-log "RESULT=BUNDLED_NTFS3G_FSKIT_MOUNTED_READWRITE"
+log "RESULT=BUNDLED_NTFS3G_IMAGE_FSKIT_MOUNTED_READWRITE"
 
 PROOF_DIR="${NTFS_MOUNT}/EDP-RW"
 PROOF_PATH="${PROOF_DIR}/proof.bin"
@@ -290,9 +288,8 @@ log "EXPECTED_NTFS_PAYLOAD_SHA256=${EXPECTED_SHA}"
 log "RESULT=BUNDLED_NTFS3G_FILE_CREATE_RANDOMWRITE_RENAME_DELETE_OK"
 
 unmount_ntfs
-sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
-  "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
-eject_decrypted
+DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+  "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "${BRIDGE_MOUNT}/volume.raw"
 unmount_bridge
 CIPHER_SHA_AFTER="$(/usr/bin/shasum -a 256 "${CIPHER_IMAGE}" | /usr/bin/awk '{print $1}')"
 log "CIPHER_SHA256_AFTER=${CIPHER_SHA_AFTER}"
@@ -300,7 +297,6 @@ log "CIPHER_SHA256_AFTER=${CIPHER_SHA_AFTER}"
 log "RESULT=EDP_ENCRYPTED_NTFS_WRITE_CHANGED_CIPHERTEXT"
 
 start_bridge
-attach_decrypted
 start_ntfs
 ACTUAL_SHA="$(/usr/bin/shasum -a 256 "${PROOF_PATH}" | /usr/bin/awk '{print $1}')"
 log "ACTUAL_NTFS_PAYLOAD_SHA256=${ACTUAL_SHA}"
@@ -309,9 +305,8 @@ log "ACTUAL_NTFS_PAYLOAD_SHA256=${ACTUAL_SHA}"
 log "RESULT=EDP_NTFS3G_WRITE_SURVIVES_FULL_REMOUNT"
 
 unmount_ntfs
-sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
-  "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
-eject_decrypted
+DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+  "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "${BRIDGE_MOUNT}/volume.raw"
 unmount_bridge
 
 cleanup
@@ -320,4 +315,4 @@ if is_mounted "${NTFS_MOUNT}" || is_mounted "${BRIDGE_MOUNT}"; then
   exit 1
 fi
 trap - EXIT INT TERM
-log "RESULT=EDP_CRYPTO_DISKIMAGES2_NTFS3G_READWRITE_E2E_OK"
+log "RESULT=EDP_CRYPTO_NTFS3G_IMAGE_READWRITE_E2E_OK"
