@@ -1,10 +1,12 @@
 import Darwin
 import Foundation
 
-private let maxFrameBytes = 16 * 1024 * 1024
-private let rootNodeID: Int64 = 1
-private let fileNodeID: Int64 = 2
-private let fileName = "volume.raw"
+private enum BridgeConstants {
+    static let maxFrameBytes = 16 * 1024 * 1024
+    static let rootNodeID: Int64 = 1
+    static let fileNodeID: Int64 = 2
+    static let fileName = "volume.raw"
+}
 
 private enum BridgeError: Error, CustomStringConvertible {
     case usage(String)
@@ -185,24 +187,24 @@ final class UnixRPCServer {
             )
 
         case "lookup":
-            if integer(frame.metadata["parent_id"]) == rootNodeID,
-               frame.metadata["name"] as? String == fileName {
+            if integer(frame.metadata["parent_id"]) == BridgeConstants.rootNodeID,
+               frame.metadata["name"] as? String == BridgeConstants.fileName {
                 return okFrame(requestID: requestID, fields: ["lookup_item": fileAttributes()])
             }
             return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
 
         case "get_attributes":
             switch integer(frame.metadata["node_id"]) {
-            case rootNodeID:
+            case BridgeConstants.rootNodeID:
                 return okFrame(requestID: requestID, fields: ["item_attrs": rootAttributes()])
-            case fileNodeID:
+            case BridgeConstants.fileNodeID:
                 return okFrame(requestID: requestID, fields: ["item_attrs": fileAttributes()])
             default:
                 return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
             }
 
         case "open":
-            guard integer(frame.metadata["node_id"]) == fileNodeID else {
+            guard integer(frame.metadata["node_id"]) == BridgeConstants.fileNodeID else {
                 return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
             }
             let modes = integer(frame.metadata["open_modes"]) ?? 0
@@ -212,14 +214,14 @@ final class UnixRPCServer {
             return okFrame(requestID: requestID, fields: ["handle_id": 200])
 
         case "read":
-            guard integer(frame.metadata["node_id"]) == fileNodeID else {
+            guard integer(frame.metadata["node_id"]) == BridgeConstants.fileNodeID else {
                 return errorFrame(requestID: requestID, code: ENOENT, message: "No such file or directory")
             }
             guard let offset = integer(frame.metadata["offset"]),
                   let length64 = integer(frame.metadata["length"]),
                   offset >= 0,
                   length64 >= 0,
-                  length64 <= Int64(maxFrameBytes) else {
+                  length64 <= Int64(BridgeConstants.maxFrameBytes) else {
                 return errorFrame(requestID: requestID, code: EINVAL, message: "Invalid read range")
             }
             let data = try backing.pread(offset: offset, length: Int(length64))
@@ -229,7 +231,7 @@ final class UnixRPCServer {
             return okFrame(requestID: requestID)
 
         case "open_directory":
-            guard integer(frame.metadata["node_id"]) == rootNodeID else {
+            guard integer(frame.metadata["node_id"]) == BridgeConstants.rootNodeID else {
                 return errorFrame(requestID: requestID, code: ENOTDIR, message: "Not a directory")
             }
             let handle = nextDirectoryHandle
@@ -282,11 +284,27 @@ final class UnixRPCServer {
     }
 
     private func rootAttributes() -> [String: Any] {
-        attributes(nodeID: rootNodeID, parentID: rootNodeID, name: "/", type: "directory", mode: 0o555, size: 0, links: 2)
+        attributes(
+            nodeID: BridgeConstants.rootNodeID,
+            parentID: BridgeConstants.rootNodeID,
+            name: "/",
+            type: "directory",
+            mode: 0o555,
+            size: 0,
+            links: 2
+        )
     }
 
     private func fileAttributes() -> [String: Any] {
-        attributes(nodeID: fileNodeID, parentID: rootNodeID, name: fileName, type: "file", mode: 0o444, size: backing.size, links: 1)
+        attributes(
+            nodeID: BridgeConstants.fileNodeID,
+            parentID: BridgeConstants.rootNodeID,
+            name: BridgeConstants.fileName,
+            type: "file",
+            mode: 0o444,
+            size: backing.size,
+            links: 1
+        )
     }
 
     private func attributes(
@@ -349,9 +367,9 @@ private func readFrame(fd: Int32) throws -> Frame {
     let header = try readExact(fd: fd, count: 8)
     let metadataLength = Int(readBEUInt32(header, offset: 0))
     let payloadLength = Int(readBEUInt32(header, offset: 4))
-    guard metadataLength <= maxFrameBytes,
-          payloadLength <= maxFrameBytes,
-          metadataLength + payloadLength <= maxFrameBytes else {
+    guard metadataLength <= BridgeConstants.maxFrameBytes,
+          payloadLength <= BridgeConstants.maxFrameBytes,
+          metadataLength + payloadLength <= BridgeConstants.maxFrameBytes else {
         throw BridgeError.protocolError("frame exceeds 16 MiB contract")
     }
     let metadataData = try readExact(fd: fd, count: metadataLength)
@@ -365,9 +383,9 @@ private func readFrame(fd: Int32) throws -> Frame {
 
 private func writeFrame(fd: Int32, frame: Frame) throws {
     let metadata = try JSONSerialization.data(withJSONObject: frame.metadata, options: [.sortedKeys])
-    guard metadata.count <= maxFrameBytes,
-          frame.payload.count <= maxFrameBytes,
-          metadata.count + frame.payload.count <= maxFrameBytes else {
+    guard metadata.count <= BridgeConstants.maxFrameBytes,
+          frame.payload.count <= BridgeConstants.maxFrameBytes,
+          metadata.count + frame.payload.count <= BridgeConstants.maxFrameBytes else {
         throw BridgeError.protocolError("response frame exceeds 16 MiB contract")
     }
 
@@ -523,12 +541,17 @@ func runFuseTBridge(backing: any FuseTReadBacking, mountpoint: String, volumeNam
 }
 
 #if !FUSET_BRIDGE_LIBRARY
-do {
-    let args = try parseArguments()
-    let backing = try FixedBacking(path: args.backing)
-    try runFuseTBridge(backing: backing, mountpoint: args.mountpoint, volumeName: args.volumeName)
-} catch {
-    fputs("FuseTMinimalBridge: \(error)\n", stderr)
-    exit(1)
+@main
+private enum FuseTMinimalBridgeMain {
+    static func main() {
+        do {
+            let args = try parseArguments()
+            let backing = try FixedBacking(path: args.backing)
+            try runFuseTBridge(backing: backing, mountpoint: args.mountpoint, volumeName: args.volumeName)
+        } catch {
+            fputs("FuseTMinimalBridge: \(error)\n", stderr)
+            exit(1)
+        }
+    }
 }
 #endif
