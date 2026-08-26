@@ -142,10 +142,16 @@ echo 'RESULT=NTFS_UNCLEAN_FIXTURE_FAILS_CLOSED'
 # hiberfil.sys with a 4096-byte header beginning with HIBR, then cleanly unmount.
 cp "${CLEAN}" "${HIBERNATED}"
 start_mount "${HIBERNATED}" EDPFAILHIBER "${WORK}/hiber-mount.log"
-/usr/bin/dd if=/dev/zero of="${MOUNT_POINT}/hiberfil.sys" bs=4096 count=1 status=none
-printf 'HIBR' | /usr/bin/dd of="${MOUNT_POINT}/hiberfil.sys" bs=1 count=4 conv=notrunc status=none
-/bin/sync
+echo 'STEP=NTFS_HIBERNATION_FILE_WRITE_BEGIN'
+python3 - "${MOUNT_POINT}/hiberfil.sys" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, "wb") as handle:
+    handle.write(b"HIBR" + bytes(4092))
+PY
+echo 'STEP=NTFS_HIBERNATION_FILE_WRITE_OK'
 stop_mount_cleanly
+echo 'STEP=NTFS_HIBERNATION_FIXTURE_UNMOUNTED'
 
 set +e
 "${BIN}/ntfs-3g.probe" --readwrite "${HIBERNATED}" >"${WORK}/hiber-rw.log" 2>&1
