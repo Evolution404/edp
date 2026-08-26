@@ -7,21 +7,18 @@
 
 ## 当前总状态
 
-**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。物理 `/dev/rdiskN` 的 G4/G5/G6 最终实机验收仍保留为待办，不用 hosted CI 冒充物理 U 盘证明。**
+**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过；H3 已捕获可用性能/资源基线。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为实机待办，不用 hosted CI 冒充物理 U 盘证明。**
 
-当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
+当前实验目标：只依赖 FUSE-T 1.2.7 官方签名约 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G；hidden `volume.raw` 仅作 transport，最终用户卷交给 Apple DiskImages + Apple 文件系统驱动。
 
-当前系统实验状态（建立 tracker 时）：
+当前重要边界：
 
-- `/Applications/fuse-t.app`：已安装，仅 FSKit app bundle，约 1.7 MB。
-- `org.fuset.fskit-srv.module`：已在系统设置中启用。
-- `/Library/Application Support/fuse-t`：未安装。
-- `/usr/local/bin/go-nfsv4`：未安装。
-- `/usr/local/lib/libfuse3.dylib`：未安装。
-- macFUSE：此前实验已清理；本分支后续必须重新做无残留确认。
-- FUSE-T core 仅允许从 `/private/tmp` 临时解包用于协议抓取，不做系统安装。
-- 当前分支已按用户要求直接位于 `/Users/zhangyuxi/Desktop/edp-usb-vault`；不再使用 worktree。原 `feat/filesystem-agnostic-native-readonly` 未提交 tracker 已保存在 `stash@{0}`。
-- GitHub Actions `macos-26` runner 的 PluginKit 注册状态与 FSKit enabled-modules 状态彼此独立。CI 为了无交互复现，在**一次性 runner** 的 `~/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist` 中追加 `org.fuset.fskit-srv.module` 并刷新 FSKit 用户态缓存；这仅是 CI 测试夹具，**不得进入产品路径或绕过真实用户在系统设置中的启用/授权流程**。
+- `/Applications/fuse-t.app`：实验仅使用官方签名 FSKit app bundle。
+- `org.fuset.fskit-srv.module`：Developer ID Team `6DY7Z4SVDZ`。
+- `/Library/Application Support/fuse-t`、`go-nfsv4`、全局 `libfuse3`：最终 runtime 不安装。
+- macFUSE runtime/KEXT：本实验路径不依赖。
+- CI-only `enabledModules.plist` 注入仅在一次性 Actions runner 模拟用户启用官方 extension，**不得进入产品授权绕过路径**。
+- 当前分支直接在主工作目录使用，不使用 worktree。
 
 ---
 
@@ -29,19 +26,19 @@
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| A0 | ✅ | 建立干净实验基线 | 最初以 worktree 从 `6c44c1d` 建分支；随后按用户要求删除 worktree，并在桌面实际 checkout 直接切到 `test/fuset-minimal-fskit-bridge` |
+| A0 | ✅ | 建立干净实验基线 | 从 `6c44c1d` 建实验分支，后按要求直接 checkout 到当前工作目录 |
 | A1 | ✅ | 创建测试分支 | `test/fuset-minimal-fskit-bridge` |
 | A2 | ✅ | 编写实验计划 | `docs/PLAN-2026-08-26-fuset-minimal-fskit-bridge.md` |
 | A3 | ✅ | 创建实时 tracker | 本文件 |
-| A4 | ✅ | 固化 FUSE-T 1.2.7 host/appex SHA-256、体积、版本 | host 1.7 MB、appex 400 KB；二者 `CFBundleShortVersionString=0.1.3`；host executable SHA-256 `fc64ae9c17efc70540db07f256ecd75af1ff174a9fb83611bb6ffdb1cba8f2c5`；appex executable SHA-256 `199ba1246d36db18ebf45c60abd3d68ca4b4ad9d8080d55aa8e856f574772086` |
-| A5 | ✅ | 固化 codesign / Team / hardened runtime | host `org.fuset.fskit-srv`，appex `org.fuset.fskit-srv.module`；`Developer ID Application: alex fishman (6DY7Z4SVDZ)`；Team `6DY7Z4SVDZ`；Runtime 26.4.0；Gatekeeper `accepted / Notarized Developer ID` |
-| A6 | ✅ | 固化 host/appex provisioning profile | appex profile `Mac Team Direct Provisioning Profile: org.fuset.fskit-srv.module`，Team `6DY7Z4SVDZ`，expires 2044-03-25 |
-| A7 | ✅ | 确认 `ProvisionsAllDevices=true` + FSKit entitlement | profile `ProvisionsAllDevices=true`；entitlement `com.apple.developer.fskit.fsmodule=true` |
-| A8 | ✅ | 确认无 FUSE-T core / go-nfsv4 / global libfuse3 | `/Library/Application Support/fuse-t`、`/usr/local/bin/go-nfsv4`、`/usr/local/lib/libfuse3.dylib` 均不存在 |
-| A9 | ✅ | 确认无 macFUSE runtime/helper/KEXT | `/Library/Filesystems/macfuse.fs`、launch daemon、privileged helper 均不存在；`kmutil showloaded` 无 macFUSE/FUSE-T KEXT |
-| A10 | ✅ | 确认 PlugInKit 第三方实验模块状态 | 仅 `org.fuset.fskit-srv.module` 作为当前第三方实验 FSKit module；前序探测遗留 `FskitSrvModule` 进程和 `/private/tmp/fuset-edp*` 已清理 |
+| A4 | ✅ | 固化 FUSE-T 1.2.7 host/appex 指纹 | host 约 1.7 MB、appex 约 400 KB；host executable SHA-256 `fc64ae9c17efc70540db07f256ecd75af1ff174a9fb83611bb6ffdb1cba8f2c5`；appex `199ba1246d36db18ebf45c60abd3d68ca4b4ad9d8080d55aa8e856f574772086` |
+| A5 | ✅ | codesign / Team / hardened runtime | `Developer ID Application: alex fishman (6DY7Z4SVDZ)`；Team `6DY7Z4SVDZ`；Gatekeeper accepted / notarized |
+| A6 | ✅ | provisioning profile | appex profile Team `6DY7Z4SVDZ`，expires 2044-03-25 |
+| A7 | ✅ | FSKit entitlement | `ProvisionsAllDevices=true`；`com.apple.developer.fskit.fsmodule=true` |
+| A8 | ✅ | 无 FUSE-T core/helper/global libfuse | `/Library/Application Support/fuse-t`、`/usr/local/bin/go-nfsv4`、`/usr/local/lib/libfuse3.dylib` 均不存在 |
+| A9 | ✅ | 无 macFUSE runtime/KEXT | filesystem runtime/helper/KEXT 均不在实验运行时 |
+| A10 | ✅ | 第三方 FSKit module 基线 | 当前实验仅使用官方 `org.fuset.fskit-srv.module` |
 
-Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applications/fuse-t.app`，不安装 FUSE-T core，不存在 macFUSE runtime/KEXT。
+Phase A 验收：**通过**。
 
 ---
 
@@ -49,41 +46,15 @@ Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applicat
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| B1 | ✅ | 获取与 FUSE-T 内置 libfuse 3.19 匹配的最小 hello 示例 | 新增 `native/EDPFSKitPoC/Tools/FuseTHello319.c`，`FUSE_USE_VERSION=319`；使用 FUSE-T 1.2.7 自带 headers/lib 编译成功；运行时报告 `FUSE library version: 3.19.0-rc0` |
-| B2 | ✅ | 仅从 `/private/tmp` 加载 libfuse3，运行 `backend=fskit` | 不向系统安装 core；`DYLD_LIBRARY_PATH` 指向解包后的临时 `libfuse3.4.dylib`；将 helper 通过 `FUSE_NFSSRV_PATH`/`_FUSE_DAEMON_PATH` 指向 `/private/tmp/.../go-nfsv4-1.2.7` 后，FSKit mount 成功 |
-| B3 | ✅ | 捕获官方 session directory / `session.json` | `/private/tmp/fuset-session-3466332312/session.json`；字段确认：`session_id`、`socket_path`、`auth_token`、`namedattr`、`readonly`；socket 位于 `~/Library/Group Containers/group.org.fuset.fskit-srv/s/*.sock` |
-| B4 | ✅ | 捕获 security-scoped FSPathURLResource 创建方式 | 反汇编 `go-nfsv4` 的 `mountArgs/runMountCommand` 并实机复现：调用 `/sbin/mount -o nobrowse,rdonly -t fuset <session.json普通文件路径> <mountpoint>` 即可。**不需要私有 security-scoped API**；此前 EACCES 的根因是错误传入 `file://...` URL 而不是普通 path。FskitSrvModule 会由系统收到可访问的 `FSPathURLResource` |
-| B5 | ✅ | 确认 `go-nfsv4` 在 FSKit backend 是否启动 | **会启动**：`go-nfsv4-1.2.7 -r --backend fskit <mountpoint>`；但 `lsof` 确认无 TCP listener，仅 Unix domain sockets。因此 FSKit backend 本身不是网络卷 |
-| B6 | ✅ | 记录 probe/load/mount 完整日志 | `probeResource → session init → usable result → loadResource → session ready → rpc connected → rpc handshake accepted → volume init → activate → mount`；`hello.txt` 实际读取成功，mount 显示 `fuse-t, local, ... fskit` |
-| B7 | ✅ | 提取不依赖 libfuse/go-nfsv4 的最小 resource 契约 | 已实机证明直接创建 `session.json` + app-group Unix socket，再调用 `/sbin/mount -o nobrowse,rdonly -t fuset <plain path> <mountpoint>`，FskitSrvModule 可直接连接 EDP-owned listener；无需 libfuse/go-nfsv4 参与 resource/mount 阶段 |
+| B1 | ✅ | 匹配 FUSE-T 内置 libfuse 3.19 的最小 hello | `FuseTHello319.c` 编译/运行通过 |
+| B2 | ✅ | 临时参考 backend=fskit 路径 | 只从临时目录加载 libfuse/go helper，不安装 core；确认官方调用链 |
+| B3 | ✅ | 捕获 `session.json` | 字段：`session_id`、`socket_path`、`auth_token`、`namedattr`、`readonly`、`volume_name` |
+| B4 | ✅ | 确认 resource 创建方式 | `/sbin/mount -o nobrowse,rdonly -t fuset <普通 session.json 路径> <mountpoint>`；`file://` URL 会导致 EACCES |
+| B5 | ✅ | 确认官方 helper 行为 | 官方 backend 会启动 `go-nfsv4 --backend fskit`，但无 TCP listener，仅 Unix socket |
+| B6 | ✅ | probe/load/mount 日志 | `probeResource → session → loadResource → rpc → activate → mount` 完整复现 |
+| B7 | ✅ | 移除 libfuse/go helper 的最小契约 | EDP-owned listener + `session.json` + signed FSKit appex 可直接 mount |
 
-已知失败样本（分支建立前）：
-
-```text
-/sbin/mount -F -t fuset file:///private/tmp/.../session.json ...
-→ FskitSrvModule 成功启动
-→ probeResource failed to access security-scoped resource
-→ EACCES
-```
-
-结论：`file://...` URL 形式不可用；已验证的 direct path 是把 `session.json` **普通文件路径**传给 `/sbin/mount -o nobrowse,rdonly -t fuset`。
-
-Phase B 验收：**通过。官方参考路径和不依赖 libfuse/go-nfsv4 的最小 resource 契约均已复现。**
-
-已确认官方参考链：
-
-```text
-FuseTHello319
-→ temporary libfuse3.4.dylib
-→ go-nfsv4-1.2.7 --backend fskit
-→ session.json + Unix domain socket
-→ security-scoped FSPathURLResource
-→ signed FskitSrvModule.appex
-→ Apple FSKit
-→ /Volumes/EDP-FUSET-Hello
-```
-
-实际读回：`EDP FUSE-T FSKit bridge smoke`。
+Phase B 验收：**通过**。最终路径不再需要 libfuse/go-nfsv4。
 
 ---
 
@@ -91,51 +62,18 @@ FuseTHello319
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| C1 | ✅ | 捕获首个 Unix socket handshake frame | 首帧：8-byte header `uint32_be metadata_len + uint32_be payload_len`；请求 `{"request_id":1,"method":"handshake","auth_token":"..."}` |
-| C2 | ✅ | 解析 framing / request_id / payload | `readFskitRPCFrame/writeFskitRPCFrame` 反汇编与实测一致：8-byte BE 长度头 + JSON metadata + raw payload；metadata/payload/总长均受约 16 MiB 上限约束 |
-| C3 | ✅ | 确认 `auth_token` 校验 | handshake 请求携带 `session.json` 中的 `auth_token`；响应若缺 `ok=true` 或缺匹配的 `session_id` 均被 extension 拒绝 |
-| C4 | ✅ | 实现 ping/handshake | 可接受 handshake 响应必须为 `{"request_id":N,"ok":true,"session_id":"<匹配session_id>"}`；随后收到 `ping`，`{"request_id":N,"ok":true}` 可通过 |
-| C5 | ✅ | 实现 root getattr / lookup / statfs | `get_root_attributes`、`statfs`、ENOENT 均通过；`lookup("volume.raw")` 返回 `lookup_item` 后，macOS `stat` 正确显示 inode 2、regular file、0444、size 4096 |
-| C6 | ✅ | 实现 open / read / close | 请求已确认：`open {node_id:2,open_modes:1}` → 返回 `handle_id`；`read {node_id:2,offset,length}` → 响应 metadata `ok=true` + **raw frame payload**；`close {node_id:2,keeping_modes:0}` → `ok=true`。先用 Python 黑盒验证，随后已固化为 `FuseTMinimalBridge.swift`，不依赖 libfuse/go-nfsv4 |
-| C7 | 🟡 | 实现 directory enumeration | `open_directory/close_directory/enumerate_directory` 已进入 Swift bridge，并为每次 open 分配独立 handle；`ls` 已能显示 `volume.raw`，但结束时仍报 `fts_read: Input/output error`，需继续校准 EOF/cookie/verifier 语义；不阻塞直接访问 `/volume.raw` |
-| C8 | ⏳ | 实现必须的 xattr 查询 | 待执行 |
-| C9 | ⏳ | 所有 mutation 返回只读错误 | 待执行 |
-| C10 | ✅ | 验证无 TCP listener | 官方 `backend=fskit` 与 EDP-owned direct listener 实验均无 TCP listener；仅使用 `~/Library/Group Containers/group.org.fuset.fskit-srv/s/*.sock` Unix socket |
+| C1 | ✅ | handshake framing | 8-byte BE `metadata_len + payload_len` |
+| C2 | ✅ | request/payload framing | JSON metadata + raw payload；约 16 MiB frame 上限 |
+| C3 | ✅ | auth token | handshake 必须携带匹配 token |
+| C4 | ✅ | handshake/ping | 响应必须同时 `ok=true` + matching `session_id` |
+| C5 | ✅ | root getattr / lookup / statfs | root/node metadata、ENOENT、statfs 已通过 |
+| C6 | ✅ | open/read/close | read 使用 raw frame payload，不做 Base64/JSON 数据膨胀 |
+| C7 | 🟡 | directory enumeration | `ls` 能显示 `volume.raw`，但结束仍有 `fts_read: Input/output error`；不阻塞 direct raw transport |
+| C8 | ⏳ | 必须 xattr 查询 | 待收口 |
+| C9 | ⏳ | mutation RPC 全矩阵 fail-closed | 已知 mutation 返回 EROFS，完整方法矩阵待补 |
+| C10 | ✅ | 无 TCP listener | direct backend 仅 app-group Unix socket |
 
-已知二进制字段（分支建立前）：
-
-```text
-session_id
-socket_path
-auth_token
-namedattr
-readonly
-volume_name
-request_id
-ping
-readFileWithNodeID
-fetchAttributesForNodeID
-enumerateDirectory
-```
-
-Phase C 验收：**核心只读单文件路径已通过。已在完全不启动 `go-nfsv4`/libfuse 的情况下完成 FSKit mount + `/volume.raw` lookup/open/read/close；剩余目录枚举、xattr、mutation fail-closed。**
-
-当前最小已验证调用链：
-
-```text
-EDP-owned Unix listener
-+ session.json
-+ /sbin/mount -o nobrowse,rdonly -t fuset <plain-session-path> <mountpoint>
-→ signed FskitSrvModule.appex
-→ handshake
-→ ping
-→ get_root_attributes
-→ statfs
-→ lookup/ENOENT
-→ macOS mount 成功显示 (fuse-t, local, ... fskit)
-```
-
-握手响应的四组对照中，仅同时包含 `ok=true` 和匹配 `session_id` 的响应被接受；这已排除偶然成功。
+Phase C 验收：**核心只读单文件路径通过**；C7-C9 属于后续协议收口。
 
 ---
 
@@ -143,19 +81,15 @@ EDP-owned Unix listener
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| D1 | ✅ | 只暴露 `/volume.raw` | direct lookup 仅对 `parent_id=1,name=volume.raw` 返回 node 2；其他探测项返回 ENOENT |
-| D2 | ✅ | 正确报告 fixed logical size | synthetic PoC 正确报告 4096 bytes；`stat` 显示 Size=4096 |
-| D3 | ✅ | 任意 offset/length 随机读 | 原生 Swift bridge + 8193-byte fixture 实测 `(0,1)`、`(1,31)`、`(4095,4097)`、`(8192,64)` 全部逐字节一致；跨 4K 与尾部短读正确 |
-| D4 | ✅ | offset<size 不返回错误 0-byte READ | `offset=8192,size=8193,length=64` 正确返回 1 byte；所有 offset<size case 均无人工 0-byte read |
-| D5 | ✅ | EOF 仅 offset>=size | `offset=8193` 与 `offset=8293` 均返回 0 bytes；边界与超 EOF 均正确 |
-| D6 | 🟡 | mutation 全部只读失败 | 外部实测覆盖写 `volume.raw`、`touch new-file`、`rm volume.raw` 均 Permission denied；Swift bridge 对已知 mutation RPC 返回 `EROFS`。仍需补齐所有 mutation 方法名的系统调用覆盖 |
-| D7 | ✅ | fixture 全文件哈希一致 | 8193-byte fixture 经 FSKit 完整读取 SHA-256 `40aad4a3dcbc0f12bfe6231e34fff39eb14338284396b090b01e7eadf3b653ef`，与 backing 完全一致 |
+| D1 | ✅ | 只暴露 `/volume.raw` | node 2，仅目标名称可 lookup |
+| D2 | ✅ | fixed logical size | `stat` size 正确 |
+| D3 | ✅ | 任意 offset/length random read | 非对齐、跨 4K、尾部随机读逐字节一致 |
+| D4 | ✅ | offset<size 不错误返回 0 byte | 尾部短读正确 |
+| D5 | ✅ | EOF 仅 offset>=size | 边界/超 EOF 正确 |
+| D6 | 🟡 | mutation 全部只读失败 | overwrite/touch/rm 外部测试均失败；完整 syscall matrix 待补 |
+| D7 | ✅ | full hash | 8193-byte fixture virtual SHA 与 backing 一致 |
 
-Phase D 验收：**核心随机读/EOF/完整性通过；只读 mutation 覆盖和目录 EIO 继续收口，但不阻塞后续 block-image / Apple 文件系统链路。**
-
-原生 PoC：`native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift`
-
-编译条件：Swift 6 `-warnings-as-errors` 通过；运行时仅依赖系统 Foundation/Darwin。实机进程树未出现 `go-nfsv4`，无 TCP listener。隐藏 mountpoint 已改用 `/private/tmp/...`，不再需要管理员授权。
+Phase D 验收：**核心通过**。
 
 ---
 
@@ -163,16 +97,14 @@ Phase D 验收：**核心随机读/EOF/完整性通过；只读 mutation 覆盖�
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| E1 | ✅ | 创建小型 synthetic raw/dmg fixture | GitHub Actions `macos-26` 构造 deterministic 8 MiB raw（16384 × 512 B），SHA-256 `638f4947a865d315c06c6c16913be984ff08270b8da0e22a3fedb044891ff59d`；普通 raw 直接 `hdiutil attach -readonly -nomount -imagekey diskimage-class=CRawDiskImage` 基线通过 |
-| E2 | ✅ | `hdiutil attach -readonly -nomount` 读取 hidden `volume.raw` | native Swift bridge 暴露 8 MiB `/volume.raw`；先对 LBA `0/7/4095/8192/16383` 做 raw backing ↔ hidden file 逐扇区 `cmp`，全部一致；随后 nested `hdiutil` 返回 `RC=0` |
-| E3 | ✅ | 产生 `/dev/diskN` | GitHub Actions macOS 26.5.2 / Xcode 26.6 产生 `/dev/disk8`；`diskutil info` 显示 Whole=Yes、Protocol=Disk Image、Virtual=Yes、512-byte block、8388608 bytes、**Media Read-Only=Yes** |
-| E4 | ✅ | 随机 LBA 读回一致 | 对 `/dev/rdisk8` 再读 LBA `0/7/4095/8192/16383`，逐扇区与原始 raw fixture `cmp` 全部一致；`RESULT=E4_RANDOM_LBA_MATCH` |
-| E5 | ✅ | 确认 backing store 无实际写入 | `a62c23e` 触发的 macOS 26 CI 将 backing 设为 `0444`；attach 前后 SHA-256 均为 `638f4947a865d315c06c6c16913be984ff08270b8da0e22a3fedb044891ff59d`，`size:mtime:mode` 前后均为 `8388608:1787748310:100444`；输出 `RESULT=E5_BACKING_SHA_SIZE_MTIME_MODE_UNCHANGED` |
-| E6 | ➖ | 必要时对照 DiskImages2 adapter | 公共 `hdiutil` 路径已成功产生只读 `/dev/disk8`，当前无须私有/现有 DiskImages2 adapter；仅在后续回归失败时作为对照 |
+| E1 | ✅ | deterministic raw fixture | 8 MiB raw，SHA-256 `638f4947a865d315c06c6c16913be984ff08270b8da0e22a3fedb044891ff59d` |
+| E2 | ✅ | hidden `volume.raw` → hdiutil | `hdiutil attach -readonly -nomount -imagekey diskimage-class=CRawDiskImage` 成功 |
+| E3 | ✅ | `/dev/diskN` | hosted macOS 26 产生 `/dev/disk8`，Media Read-Only=Yes |
+| E4 | ✅ | random LBA 一致 | LBA `0/7/4095/8192/16383` 与 backing 一致 |
+| E5 | ✅ | backing 无写入 | 0444 backing SHA/size/mtime/mode 前后完全一致 |
+| E6 | ➖ | 私有 DiskImages2 对照 | 公共 hdiutil 已满足需求，暂不需要私有 adapter |
 
-Phase E 验收：**通过。thin FUSE-T bridge → hidden `volume.raw` → Apple DiskImages/hdiutil → read-only `/dev/diskN` 已获得 GitHub Actions 端到端证据，且 backing SHA/size/mtime/mode 不变。**
-
-CI 关键证据：`docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt`。首次仅做 PluginKit 注册时 runner 报 `Module org.fuset.fskit-srv.module is disabled!`；确认 FSKit `enabledModules.plist` 是 bundle-id NSArray 后，在一次性 CI runner 中追加 FUSE-T module 并刷新 `fskit_agent/extensionkitservice/fskitd`，E2-E5 随即全绿。该 enabled-list 写入**只用于 CI 无交互夹具，不属于产品安装/授权方案**。
+Phase E 验收：**通过**。
 
 ---
 
@@ -180,15 +112,13 @@ CI 关键证据：`docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt`。首次�
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| F1 | ✅ | Disk Arbitration 自动识别 fixture | 64 MiB HFS+ raw fixture 经 hidden FUSE-T `volume.raw` 后，`hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage` 在**不传 filesystem type**的情况下自动产生 `/dev/disk8` 并挂载 `/Volumes/EDP_FUSET_FINAL`；sentinel 与嵌套文件均实际读回 |
-| F2 | ✅ | EDP/backend 不传 filesystem type | `FuseTMinimalBridge.swift` 通过 CI 静态断言，不含 HFS+/APFS/exFAT/FAT/NTFS 类型知识；运行时 `hdiutil` 仅收到 raw image class，无 filesystem type hint；输出 `RESULT=F2_NO_FILESYSTEM_TYPE_HINT_AT_RUNTIME` |
-| F3 | ✅ | 最终 mount 为 `MNT_RDONLY` | `diskutil info`：Media Read-Only=Yes、Volume Read-Only=Yes；mount line：`/dev/disk8 ... (hfs, ... read-only, ...)`；`touch SHOULD_NOT_WRITE` 返回 `Read-only file system` |
-| F4 | ✅ | Finder 可浏览 | GitHub Actions hosted macOS 26 的 Finder AppleScript 实际枚举到 `EDP Folder` 与 `EDP_SENTINEL.txt`；不再只是 POSIX `find` 旁证 |
-| F5 | ✅ | Finder 最终卷不是 `fuset` 文件系统 | 最终 `diskutil` 明确显示 `File System Personality: HFS+`、`Type (Bundle): hfs`，mount line 为 `(hfs, ... read-only, ...)`；hidden transport 才是 `fuse-t ... fskit`，两层身份已明确分离 |
+| F1 | ✅ | Disk Arbitration 自动识别 | 不传 filesystem type，自动识别并挂载 HFS+ fixture |
+| F2 | ✅ | backend 无文件系统类型知识 | runtime 只传 raw image class |
+| F3 | ✅ | 最终卷只读 | Media/Volume Read-Only=Yes；写入返回 Read-only file system |
+| F4 | ✅ | Finder 可浏览 | Finder AppleScript 实际枚举 `EDP Folder`、`EDP_SENTINEL.txt` |
+| F5 | ✅ | 最终卷不是 fuset | final `File System Personality: HFS+`、`Type (Bundle): hfs`；hidden transport 才是 `fuse-t ... fskit` |
 
-Phase F 验收：**通过。F1-F5 均由 GitHub Actions macOS 26 / Xcode 26 端到端验证；最终用户卷为 Apple HFS+，FUSE-T 仅承担隐藏单文件 raw transport。**
-
-CI 关键证据：`docs/diagnostics/fuset-applefs-macos26-ci.txt`。
+Phase F 验收：**通过**。关键证据：`docs/diagnostics/fuset-applefs-macos26-ci.txt`。
 
 ---
 
@@ -196,19 +126,19 @@ CI 关键证据：`docs/diagnostics/fuset-applefs-macos26-ci.txt`。
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| G1 | ✅ | 离线 EDP 加密 fixture 接入 | `.github/workflows/fuset-minimal-fskit-edp-sm4.yml` 在 macOS 26 构造 64 MiB Apple FS raw oracle，经现有 `EDPCrypto` 离线 SM4 加密后由 FUSE-T bridge 解密；`EDPEncryptedPartitionReader` 未复制/重写 crypto |
-| G2 | ✅ | `read(offset,length)` → SM4 random-access reader | `FuseTEDPSM4Bridge` 复用 `EDPFileRawDevice → EDPEncryptedPartitionReader`；多组非对齐、跨 4K/64K、尾部随机窗口与 plaintext oracle 逐字节一致，完整 virtual plaintext SHA 也一致 |
-| G3 | ✅ | 不生成完整 plaintext cache | bridge 输出 `PLAINTEXT_CACHE=none`；`lsof` 只看到 encrypted backing，不打开 plaintext oracle；encrypted backing SHA 与 `size:mtime:mode` 前后不变。最新 exact-head 回归 run `32973525009` 全绿 |
-| G4a | ✅ | 真实捕获 metadata + 正式 unlock 的 hosted read-only 路径 | run `32975531345` 使用真实捕获的 LBA11/LBA12、VID/PID/device size，经正式 `EDPReadOnlyUnlock` 完成 device ID、LBA12、password/file-key、type-2 descriptor 解析；whole-device sparse backing 仅 `O_RDONLY|O_CLOEXEC` 打开，password-file 被消费后删除，未记录密码/derived key |
-| G5a | ✅ | 真实捕获 metadata unlock → Apple FS → Finder（hosted） | 正式 unlock 暴露 logical partition size `118477684736`，hidden `volume.raw` → `/dev/disk8`；系统自动识别 HFS+，Media/Volume Read-Only=Yes；Finder 实际枚举 `EDP Folder`、`EDP_SENTINEL.txt` |
-| G6a | ✅ | hosted whole-device backing 无写入 | 124736503808-byte sparse EDP container 模式 `0444`；前后 `size:mtime:mode` 均为 `124736503808:1787751667:100444`，LBA11/LBA12、encrypted data head/tail 四组 SHA-256 前后完全一致 |
-| G4 | 🟡 | 真实 EDP 仅 `O_RDONLY|O_CLOEXEC` | **代码路径与真实捕获 metadata 已证明**；仍需 macOS 26 实机把物理 `/dev/rdiskN` 交给相同 `EDPFileRawDevice(...declaredSizeBytes..., writable:false)` 路径，确认物理介质 descriptor/权限行为 |
-| G5 | 🟡 | 真实 EDP → Apple 默认 FS → Finder | 真实 metadata/password/key/partition 链已在 hosted CI 通过，但 payload 为测试 Apple FS；物理 EDP 的真实 NTFS volume 在 macOS 26 Finder 中仍需最终实机验收，不虚假标记为完成 |
-| G6 | 🟡 | 测试后确认无介质写入 | hosted real-metadata whole-device backing 不变已证明；仍需物理 USB 实机前后只读证据/介质采样，确认真实介质无写入 |
+| G1 | ✅ | 离线 EDP 加密 fixture | 64 MiB Apple FS raw 经现有 `EDPCrypto` SM4 加密后由 bridge 解密 |
+| G2 | ✅ | read → existing random-access reader | `EDPFileRawDevice → EDPEncryptedPartitionReader`，随机窗口与完整 SHA 一致 |
+| G3 | ✅ | 无完整 plaintext cache | `PLAINTEXT_CACHE=none`；bridge 只打开 cipher；cipher backing 不变；run `32973525009` 全绿 |
+| G4a | ✅ | 真实捕获 metadata + 正式 hosted unlock | run `32975531345`：真实 LBA11/LBA12 + VID/PID/device size，经 `EDPReadOnlyUnlock` 正式解析；raw access `O_RDONLY|O_CLOEXEC` |
+| G5a | ✅ | real-metadata hosted → Apple FS → Finder | logical partition `118477684736` bytes；`/dev/disk8` HFS+；Finder 枚举成功 |
+| G6a | ✅ | hosted whole-device backing 无写入 | 124736503808-byte sparse container，LBA11/LBA12/data head/tail hash 与 size/mtime/mode 前后不变 |
+| G4 | 🟡 | 物理 EDP 仅 O_RDONLY | 仍需真实 `/dev/rdiskN` descriptor/权限最终确认 |
+| G5 | 🟡 | 物理 EDP → Apple FS → Finder | hosted payload 为测试 Apple FS；真实物理 EDP NTFS Finder 验收待实机 |
+| G6 | 🟡 | 物理介质零写入证明 | hosted 已证明；真实 USB 前后介质采样仍待实机 |
 
-Phase G 验收：**G1-G3 与 G4a/G5a/G6a 已通过；真实物理介质 G4/G5/G6 仍待 macOS 26 实机最终验收。**
+Phase G 验收：**G1-G3、G4a-G6a 通过；物理 G4-G6 保留。**
 
-关键 hosted 证据：`docs/diagnostics/fuset-edp-sm4-macos26-ci.txt`、`docs/diagnostics/fuset-edp-unlock-realmeta-macos26-ci.txt`。后者使用真实捕获 metadata，whole-device sparse fixture 逻辑大小 124736503808 bytes、实际 APFS 占用约 74 MiB；正式 unlock 得到 type-2 start sector 20480、partition size 118477684736，且不记录密码或 derived file key。
+关键证据：`docs/diagnostics/fuset-edp-sm4-macos26-ci.txt`、`docs/diagnostics/fuset-edp-unlock-realmeta-macos26-ci.txt`。
 
 ---
 
@@ -216,63 +146,58 @@ Phase G 验收：**G1-G3 与 G4a/G5a/G6a 已通过；真实物理介质 G4/G5/G6
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| H1 | ⏳ | 4 KiB / 64 KiB / 1 MiB random read benchmark | 待执行 |
-| H2 | ⏳ | 256 MiB sequential benchmark | 待执行 |
-| H3 | ⏳ | CPU / memory / context switch | 待执行 |
-| H4 | ⏳ | Finder / Quick Look / 大文件 | 待执行 |
-| H5 | ⏳ | sleep/wake / 拔盘 / backend crash | 待执行 |
-| H6 | ⏳ | 清理 socket/session/mount 泄漏 | 待执行 |
-| H7 | ⏳ | FUSE-T binary redistribution 许可结论 | 待执行 |
-| H8 | ⏳ | 商业 bundling / 自动下载许可结论 | 待执行 |
-| H9 | ⏳ | 与 macFUSE Minimal Runtime 对比 | 待执行 |
-| H10 | ⏳ | 最终架构决策 | 待执行 |
+| H1 | ✅ | 4 KiB / 64 KiB / 1 MiB random read benchmark | macOS 26.5.2 / Xcode 26.6、real-metadata product unlock、`F_NOCACHE=1`、read-ahead=0；3 次中位数：4 KiB **7.533 MiB/s / 1928.4 IOPS**，64 KiB **37.234 MiB/s / 595.7 IOPS**，1 MiB **52.357 MiB/s / 52.4 IOPS**；run `32976967634` 全绿 |
+| H2 | ✅ | 256 MiB sequential benchmark | 同一 no-cache 条件，1 MiB block × 256：**45.597 MiB/s**，5.614 s |
+| H3 | ✅ | CPU / memory / context switch baseline | client `/usr/bin/time -l`：5.63 s real、max RSS 7,159,808 bytes、258 voluntary / 24 involuntary context switches；bridge CPU `0:28.09 → 0:32.76`（约 4.67 CPU-s），峰值 RSS **163,808 KiB ≈ 160 MiB**。该内存值偏高，列为后续优化目标而非阻塞正确性 |
+| H4 | ✅ | Finder / Quick Look / 大文件 | run `32978050642`：192 MiB real-metadata EDP fixture；64 MiB `EDP_LARGE.bin` size/hash 完整验证，Finder 实际枚举；`qlmanage` 对 `EDP_PREVIEW.txt` 成功生成 `EDP_PREVIEW.txt.png` thumbnail |
+| H5a | ✅ | backend crash fail-closed | full Apple FS attach 后对 bridge `SIGKILL`；未缓存 read 在 10 s 上限内立即返回 `Connection reset by peer`，无静默错误数据；`/dev/disk8` 可 `hdiutil detach -force` eject |
+| H5b | 🟡 | sleep/wake / 真实拔盘 | hosted runner 无法真实模拟睡眠唤醒和物理 USB 拔插；保留 macOS 26 实机验收 |
+| H6 | ✅ | graceful/crash cleanup 无泄漏 | graceful unmount 后 bridge 自然退出并由 `defer` 删除 session/socket；crash 路径由 `FuseTSessionCleanup.swift` 严格校验 EDP temp/session + app-group socket 后清理；最终全局 `edp-fuset-*` session/socket 扫描为 0 |
+| H7 | ⏳ | FUSE-T binary redistribution 许可结论 | 下一步查 authoritative license |
+| H8 | ⏳ | 商业 bundling / 自动下载许可结论 | 下一步查 authoritative license / 商业条款 |
+| H9 | ⏳ | 与 macFUSE Minimal Runtime 对比 | 待形成体积、依赖、安装授权、Finder 语义、性能对比 |
+| H10 | ⏳ | 最终架构决策 | 待 H7-H9 收口后决策 |
 
-已知许可风险：FUSE-T binary distribution 当前声明非商业使用免费；商业使用或与商业软件捆绑需商业许可。该项在正式产品决策前必须重新核对 authoritative license。
+Phase H hosted 技术验收：**H1-H4、H5a、H6 通过；H5b 需物理实机；H7-H10 待许可与最终决策。**
 
-Phase H 验收：**未完成**。
+性能关键证据：`docs/diagnostics/fuset-performance-macos26-ci.txt`。第 3 轮曾因 VFS cache 出现 1–10 GiB/s 虚高值，因此不采纳；`7ffb293` 后显式 `F_NOCACHE=1` + `F_RDAHEAD=0`，第 4 轮数据稳定，作为正式 hosted baseline。
+
+稳定性关键证据：`docs/diagnostics/fuset-stability-macos26-ci.txt`。crash read 明确返回 `Connection reset by peer`，final disk `"disk8" ejected.`，recovery 输出 `RESULT=FUSET_SESSION_CRASH_CLEANUP_COMPLETE`。
 
 ---
 
 ## 当前下一步
 
-立即执行：
-
 ```text
-H1-H3：在 macOS 26 Actions 上以 real-metadata product-unlock bridge 做 4 KiB / 64 KiB / 1 MiB random、sequential、CPU/memory 基线
+H7-H8：核对 FUSE-T 1.2.7 authoritative license、binary redistribution、商业 bundling / 自动下载边界
 ↓
-物理 G4-G6：一旦 macOS 26 实机可用，直接用真实 /dev/rdiskN + 本地密码完成 Finder/无写入最终验收，不重复 metadata/FSKit 基础研究
+H9：与 macFUSE Minimal Runtime 做架构/体积/授权/性能/维护复杂度对照
 ↓
-H4-H6：Finder/Quick Look/大文件、backend crash/teardown、socket/session/mount 泄漏
+H10：形成最终推荐架构与产品分发策略
 ↓
-并行次优先级：修复 C7 directory enumeration 尾部 EIO，补齐 D6 mutation syscall matrix；随后 H7-H10 许可与最终架构决策
+物理 G4-G6 + H5b：macOS 26 实机可用时，仅做真实 /dev/rdiskN、真实 NTFS Finder、介质零写入、sleep/wake/拔盘最终验收；不重复 hosted 已完成研究
+↓
+次优先级：C7 directory EOF/EIO、C8 xattr、C9/D6 mutation matrix、H3 RSS 优化
 ```
 
 ## 失败实验登记
 
 | 时间 | 实验 | 结果 | 避免重复 |
 |---|---|---|---|
-| 2026-08-26（分支建立前） | 普通 file URL 直接 `/sbin/mount -F -t fuset` | extension 启动成功，但 security-scoped resource access `EACCES` | 不再用 `file://...` URL；direct path 固定传普通 session 文件路径 |
-| 2026-08-26（分支建立前） | 使用最新版 libfuse `hello.c` 编译 FUSE-T 内置 headers | 示例 API 与 FUSE-T 内置 libfuse 3.19 不匹配 | 后续固定使用 3.19 对应示例/API |
-| 2026-08-26 | 直接 `/sbin/mount -t fuset file:///private/tmp/.../session.json` | `probeResource` EACCES | 根因是传了 `file://` URL；正式 direct path 必须传普通文件路径 |
-| 2026-08-26 | 普通 session path + EDP-owned app-group Unix listener | FskitSrvModule 成功连接并发出 handshake；无需 go-nfsv4/libfuse | 证明 resource/mount 层可彻底移除 19 MB helper |
-| 2026-08-26 | handshake 响应 `{request_id}` / `{request_id,ok}` / `{request_id,session_id}` | 均 rejected | 必须同时 `ok=true` + matching `session_id` |
-| 2026-08-26 | handshake + ping + root_attrs + statfs + ENOENT lookup | **无 go-nfsv4 下 FSKit mount 成功** | 已继续突破单文件路径 |
-| 2026-08-26 | `volume.raw` lookup/getattr | `stat` 正确看到 inode 2 / regular / 0444 / 4096 bytes | 文件 metadata 契约确认 |
-| 2026-08-26 | open + read raw payload + close | `dd` 成功读 512 bytes；SHA-256 与预期完全一致 | 证明 read 数据可直接走 frame raw payload，无 Base64/JSON 膨胀 |
-| 2026-08-26 | `FuseTMinimalBridge.swift` 原生化 | Swift 6 warnings-as-errors 编译通过；仅 Foundation/Darwin | 正式移除 PoC 对 Python/libfuse/go helper 的运行依赖 |
-| 2026-08-26 | 8193-byte native bridge 边界矩阵 | 跨 4K、尾部短读、EOF/超 EOF 全部正确，完整 SHA 一致 | Phase D 核心通过 |
-| 2026-08-26 | 原生 bridge 写/创建/删除测试 | 全部 Permission denied | mount + bridge 双层只读成立 |
-| 2026-08-26 | 原生 bridge `ls` | 能列出 `volume.raw`，但结尾 `fts_read: Input/output error` | C7 保留未完成，不阻塞 direct path |
-| 2026-08-26 | hidden mountpoint 改到 `/private/tmp/edp-fuset-hidden-mnt` | 正常 mount/read，不需要管理员授权 | 后续隐藏 transport 不再创建 `/Volumes` 测试目录 |
-| 2026-08-26 | Actions runner 仅 `lsregister`/PluginKit 注册官方 FUSE-T app | PluginKit 显示 `+`，但 FSKit mount 报 `Module org.fuset.fskit-srv.module is disabled!` | PluginKit enable 与 FSKit enabledModules 是两层状态；不要再把 PluginKit `+` 当作 FSKit 已启用 |
-| 2026-08-26 | Actions runner 将 FUSE-T bundle id 加入一次性 `enabledModules.plist` NSArray + 刷新 FSKit cache | native bridge mount 成功；hidden `volume.raw` → `hdiutil -readonly -nomount` → `/dev/disk8`；5 个随机/边界 LBA 与 raw backing 全一致，Media Read-Only=Yes | Phase E E2-E4 已突破；CI-only enablement 不得演变成产品授权绕过 |
-| 2026-08-26 | Phase E backing 设为 0444 后重复 attach | SHA-256、size、mtime、mode 前后完全一致 | E5 已关闭，Phase E 正式通过 |
-| 2026-08-26 | Phase F 首轮 `hdiutil create ... -format UDRW` | macOS 26 报 `-format requires -srcfolder or -srcdevice` | fixture 制作参数问题，不是 bridge/DiskImages 架构失败；已移除该参数 |
-| 2026-08-26 | Phase F 第二轮 Apple filesystem E2E | F1/F2/F3 均实际通过；后续 Finder AppleScript 因脚本语法失败导致 job 红 | 将 Finder UI 自动化与核心磁盘链路分离；先编译 AppleScript 再执行 |
-| 2026-08-26 | Phase F 第三轮 F5 负匹配 | 最终 mount 实际为 `(hfs, ... read-only)`，但卷名 `EDP_FUSET_FINAL` 包含 `FUSET`，`grep -i fuset` 误报 | 禁止对整条 mount line 做模糊负匹配；改用 `diskutil Type (Bundle)`/mount 精确判定 |
-| 2026-08-26 | Phase F 第四轮 `stat -f %T` 类型断言 | macOS 上 `%T` 不是预期 filesystem type，测试断言本身错误 | 删除多余 `stat` 判据，最终以 `diskutil File System Personality/Type (Bundle)` + mount line 双证据收口 |
-| 2026-08-26 | generic backing refactor 后 Swift executable 入口 | 单文件 standalone 与多文件 `@main` 构建模式一度冲突 | `2d1f0e4` 将全局初始化收口并兼容 `FUSET_BRIDGE_LIBRARY`；contract/hdiutil/Phase F/SM4 exact-head 全绿 |
-| 2026-08-26 | real captured metadata + sparse whole-device + product unlock 首轮 CI | **G4a/G5a/G6a 首轮全绿**，无架构修补 | 证明正式 unlock 与 FUSE-T/DiskImages/Finder 可以组合；仍严格区分 hosted fixture 与物理 `/dev/rdiskN` 最终验收 |
+| 2026-08-26（前序） | `file://.../session.json` 作为 mount resource | extension 启动但 EACCES | direct path 固定传普通 session 文件路径 |
+| 2026-08-26 | 最新 libfuse hello 对 FUSE-T 3.19 headers | API 不匹配 | 固定使用 3.19 对应 API |
+| 2026-08-26 | handshake 缺 `ok` 或 matching session id | rejected | 两者必须同时存在 |
+| 2026-08-26 | 原生 bridge `ls` | 能列 `volume.raw`，尾部 EIO | C7 保留，不阻塞 direct path |
+| 2026-08-26 | Actions 只做 PluginKit enable | FSKit 报 module disabled | PluginKit 与 FSKit `enabledModules.plist` 是两层状态 |
+| 2026-08-26 | Phase F `hdiutil create ... -format UDRW` | macOS 26 参数错误 | fixture 不再传该 format |
+| 2026-08-26 | Finder AppleScript 首版 | 脚本语法导致 job 红 | 先 osacompile 后执行 |
+| 2026-08-26 | F5 整行 `grep -i fuset` | 卷名含 FUSET 导致误报 | 用 diskutil/mount 精确类型 |
+| 2026-08-26 | `stat -f %T` 判 filesystem type | macOS 语义不符合预期 | 删除该判据 |
+| 2026-08-26 | generic backing 后 Swift standalone/library entrypoint | 两种构建模式冲突 | `2d1f0e4` 收口全局初始化/conditional entrypoint |
+| 2026-08-26 | H benchmark 首轮 | `$GITHUB_ENV` 在同 step 不立即进入 shell env | 同 step 显式解析值；后续 step 使用 env |
+| 2026-08-26 | H benchmark 第二轮 | benchmark helper `@main` 单文件构建冲突 | helper 改普通 standalone top-level entrypoint |
+| 2026-08-26 | H benchmark 第三轮 | 64 KiB/1 MiB 后续 trial 命中 VFS cache，出现 GiB/s 假数据 | 不采纳；增加 `F_NOCACHE=1` + `F_RDAHEAD=0` 后重测 |
+| 2026-08-26 | H4-H6 stability 首轮 | **全绿，无架构修补** | 64 MiB Finder/Quick Look、graceful cleanup、SIGKILL fail-closed、force detach、crash cleanup 均一次通过 |
 
 ---
 
@@ -280,25 +205,29 @@ H4-H6：Finder/Quick Look/大文件、backend crash/teardown、socket/session/mo
 
 | Commit | 内容 | 远端状态 |
 |---|---|---|
-| `2fe69cd` | 新测试分支 + 计划 + 实时 tracker | 已 push |
-| `ac8c1b1` | Phase A：固化 FUSE-T 最小签名/运行时基线 | 已 push |
-| `c44ca83` | Phase B：FUSE-T 3.19 官方 `backend=fskit` 参考路径跑通 | 已 push |
-| `7ee9ca3` | Phase B/C：提取 direct mount + RPC framing/handshake/root/statfs 最小契约 | 已 push |
-| `c8175ed` | Phase C/D：`volume.raw` lookup/open/raw-payload-read 数据一致性验证 | 已 push（rebase 后 commit id） |
-| `d6154c1` | 原生 Swift minimal bridge + Phase D random/EOF/full-hash 实机验证 | 已 push |
-| `48d5881` / `64da44b` / `7217a8e` | 固化 dependency-free RPC framing tests + macOS 26 FUSE-T 1.2.7 binary-contract CI，并修复诊断首次回写 | 已 push |
-| `4c7b065` / `6f08cc2` | 固化 open/read/close/EROFS 边界契约并提取官方 binary JSON tags | 已 push |
-| `ecfe418` / `f6c3644` | Phase E 初始 hdiutil CI：E1 raw baseline 通过，定位 hosted runner FSKit module disabled 边界并保存诊断 | 已 push |
-| `496c322` / `f80a0b1` | CI-only enabledModules array + cache refresh；E2-E4 thin bridge → `/dev/disk8` 端到端通过并保存诊断 | 已 push |
-| `a62c23e` / `c99fd59` | E5：backing 0444 + SHA/size/mtime/mode 前后不变；保存 Actions 证据 | 已 push |
-| `35a58cd` / `13b8dc0` | Phase F 初始 Apple filesystem E2E；定位 macOS 26 fixture create 参数问题 | 已 push |
-| `ddeef7c` / `a27cb7d` | 修复 HFS+ raw fixture；F1/F2/F3 首次端到端通过并保存诊断 | 已 push |
-| `5232630` / `f0a9210` | 分离 Finder probe；复现 F1/F2/F3，并定位 F5 卷名误匹配测试 bug | 已 push |
-| `86a28ac` | F5 改为精确 filesystem-type 验证；后续运行确认最终 HFS+/hfs 与 Finder 枚举 | 已 push / 已验证 |
-| `ae74e0e` | 将 FUSE-T RPC transport backing 抽象为 `FuseTReadBacking` | 已 push |
-| `60e9e2d` | 接入现有 `EDPEncryptedPartitionReader` 的 SM4 random-access backing | 已 push |
-| `4bb13a0` / `2d1f0e4` | 修复 standalone/library Swift build-mode 回归；exact-head contract/enabled/hdiutil/AppleFS 全绿 | 已 push |
-| `5ec6df5` | 新增真实 metadata sparse whole-device Apple FS fixture builder | 已 push |
-| `7ef069c` | 新增不接受 file key 的 product-style `FuseTEDPUnlockBridge`，强制走 `EDPReadOnlyUnlock` | 已 push |
-| `6894b0a` | 新增 G4a-G6a real-metadata macOS 26 E2E workflow | 已 push / run `32975531345` 全绿 |
-| `765cee5` | Actions 回写 `fuset-edp-unlock-realmeta-macos26-ci.txt` 诊断证据 | 已 push |
+| `2fe69cd` | 新测试分支 + 计划 + tracker | 已 push |
+| `ac8c1b1` | Phase A 签名/运行时基线 | 已 push |
+| `c44ca83` | Phase B FUSE-T 3.19 backend=fskit 参考路径 | 已 push |
+| `7ee9ca3` | direct mount + RPC 契约 | 已 push |
+| `c8175ed` | volume.raw lookup/open/read | 已 push |
+| `d6154c1` | 原生 Swift bridge + random/EOF/full hash | 已 push |
+| `48d5881` / `64da44b` / `7217a8e` | RPC/binary contract CI | 已 push |
+| `4c7b065` / `6f08cc2` | open/read/close/EROFS contract | 已 push |
+| `ecfe418` / `f6c3644` | Phase E 初始 hdiutil CI / module-disabled 诊断 | 已 push |
+| `496c322` / `f80a0b1` | CI-only enabledModules；E2-E4 `/dev/disk8` | 已 push |
+| `a62c23e` / `c99fd59` | E5 backing 不变式 | 已 push |
+| `35a58cd` / `13b8dc0` | Phase F 初始 Apple FS E2E | 已 push |
+| `ddeef7c` / `a27cb7d` | 修复 HFS+ fixture；F1-F3 | 已 push |
+| `5232630` / `f0a9210` / `86a28ac` | Finder/F5 精确判定 | 已 push |
+| `ae74e0e` | `FuseTReadBacking` 抽象 | 已 push |
+| `60e9e2d` | existing SM4 random-access adapter | 已 push |
+| `4bb13a0` / `2d1f0e4` | standalone/library build-mode 修复 | 已 push |
+| `5ec6df5` | real-metadata sparse EDP fixture builder | 已 push |
+| `7ef069c` | product-style `FuseTEDPUnlockBridge` | 已 push |
+| `6894b0a` / `765cee5` | G4a-G6a workflow + diagnostic；run `32975531345` | 已 push / 全绿 |
+| `5909543` | Swift pread benchmark helper | 已 push |
+| `bd6f2b7` | H1-H3 performance workflow | 已 push |
+| `b49a980` / `c4fb2f6` | benchmark env/entrypoint 修复 | 已 push |
+| `7ffb293` / `c383c85` | no-cache benchmark + 正式 H1-H3 diagnostic；run `32976967634` | 已 push / 全绿 |
+| `9bf266d` | validated `FuseTSessionCleanup.swift` crash cleanup helper | 已 push；contract 回归全绿 |
+| `500830b` / `45f4610` | H4-H6 stability workflow + diagnostic；run `32978050642` | 已 push / 全绿 |
