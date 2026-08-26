@@ -65,6 +65,7 @@ xcrun swiftc -O -framework Security \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/product/EDPNTFSWriteSafety.swift" \
   "${REPO_ROOT}/product/EDPNTFSMountPolicy.swift" \
+  "${REPO_ROOT}/product/EDPNativeSystem.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 

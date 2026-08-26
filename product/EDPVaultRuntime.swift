@@ -104,168 +104,8 @@ private func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
     }
 }
 
-private struct PhysicalDisk {
-    let bsdName: String
-    let rawPath: String
-    let sizeBytes: UInt64
-    let mediaName: String
-    let vidHex: String
-    let pidHex: String
-    let deviceID: String
-}
-
-private func integerValue(_ value: Any?) -> UInt64? {
-    if let number = value as? NSNumber { return number.uint64Value }
-    if let data = value as? Data {
-        var answer: UInt64 = 0
-        for (index, byte) in data.prefix(8).enumerated() {
-            answer |= UInt64(byte) << UInt64(index * 8)
-        }
-        return answer
-    }
-    if let text = value as? String {
-        let cleaned = text.lowercased().hasPrefix("0x") ? String(text.dropFirst(2)) : text
-        return UInt64(cleaned, radix: 16) ?? UInt64(text)
-    }
-    return nil
-}
-
-private func children(_ node: [String: Any]) -> [[String: Any]] {
-    node["IORegistryEntryChildren"] as? [[String: Any]] ?? []
-}
-
-private func descendant(_ node: [String: Any], containsBSD bsd: String) -> Bool {
-    for key in ["BSD Name", "BSDName", "IOBSDName"] {
-        if node[key] as? String == bsd { return true }
-    }
-    return children(node).contains { descendant($0, containsBSD: bsd) }
-}
-
-private func usbIdentity(
-    roots: [[String: Any]],
-    bsd: String,
-    deviceTreePath: String
-) -> (String, String)? {
-    func byDescendant(
-        _ node: [String: Any],
-        inheritedVID: UInt64?,
-        inheritedPID: UInt64?
-    ) -> (UInt64, UInt64)? {
-        let vid = integerValue(node["idVendor"]) ?? inheritedVID
-        let pid = integerValue(node["idProduct"]) ?? inheritedPID
-        if let vid, let pid, descendant(node, containsBSD: bsd) { return (vid, pid) }
-        for child in children(node) {
-            if let answer = byDescendant(child, inheritedVID: vid, inheritedPID: pid) {
-                return answer
-            }
-        }
-        return nil
-    }
-
-    let location = deviceTreePath.split(separator: "@").last.map(String.init)?.lowercased()
-    func byLocation(_ node: [String: Any]) -> (UInt64, UInt64)? {
-        if let location,
-           (node["IORegistryEntryLocation"] as? String)?.lowercased() == location,
-           let vid = integerValue(node["idVendor"]),
-           let pid = integerValue(node["idProduct"]) {
-            return (vid, pid)
-        }
-        for child in children(node) {
-            if let answer = byLocation(child) { return answer }
-        }
-        return nil
-    }
-
-    for root in roots {
-        if let answer = byDescendant(root, inheritedVID: nil, inheritedPID: nil) {
-            return (String(format: "%04x", answer.0), String(format: "%04x", answer.1))
-        }
-    }
-    for root in roots {
-        if let answer = byLocation(root) {
-            return (String(format: "%04x", answer.0), String(format: "%04x", answer.1))
-        }
-    }
-    return nil
-}
-
 private func discoverEDPDisks() throws -> [PhysicalDisk] {
-    let diskList = try plist(run("/usr/sbin/diskutil", ["list", "-plist"]).stdout)
-    let usbValue = try PropertyListSerialization.propertyList(
-        from: run("/usr/sbin/ioreg", ["-p", "IOUSB", "-l", "-w0", "-a"]).stdout,
-        options: [],
-        format: nil
-    )
-    let usbRoots = usbValue as? [[String: Any]]
-        ?? (usbValue as? [String: Any]).map { [$0] }
-        ?? []
-    let entries = diskList["AllDisksAndPartitions"] as? [[String: Any]] ?? []
-    var answer = [PhysicalDisk]()
-
-    for entry in entries {
-        guard let bsd = entry["DeviceIdentifier"] as? String,
-              bsd.range(of: #"^disk[0-9]+$"#, options: .regularExpression) != nil else {
-            continue
-        }
-        let info = try plist(run("/usr/sbin/diskutil", ["info", "-plist", "/dev/\(bsd)"]).stdout)
-        guard (info["Whole"] as? Bool) == true || (info["WholeDisk"] as? Bool) == true,
-              (info["Internal"] as? Bool) != true,
-              (info["VirtualOrPhysical"] as? String) != "Virtual",
-              let size = integerValue(info["DiskSize"] ?? info["TotalSize"] ?? info["Size"]),
-              size > 0 else {
-            continue
-        }
-        let rawPath = "/dev/r\(bsd)"
-        guard FileManager.default.fileExists(atPath: rawPath) else { continue }
-        let raw: EDPFileRawDevice
-        do {
-            raw = try EDPFileRawDevice(path: rawPath, declaredSizeBytes: size)
-        } catch {
-            continue
-        }
-        guard let lba4 = try? raw.readExact(
-            at: EDPMetadataProbe.lba4ByteOffset,
-            length: Int(EDPMetadataProbe.legacySectorByteLength)
-        ),
-        let lba7 = try? raw.readExact(
-            at: EDPMetadataProbe.lba7ByteOffset,
-            length: Int(EDPMetadataProbe.legacySectorByteLength)
-        ),
-        EDPMetadataProbe.recognizeReservedSectors(
-            lba4: [UInt8](lba4),
-            lba7: [UInt8](lba7)
-        ) != nil else {
-            continue
-        }
-        let treePath = info["DeviceTreePath"] as? String ?? ""
-        guard let (vid, pid) = usbIdentity(
-            roots: usbRoots,
-            bsd: bsd,
-            deviceTreePath: treePath
-        ),
-        let lba11 = try? raw.readExact(
-            at: EDPVolumeMetadata.lba11ByteOffset,
-            length: Int(EDPMetadataProbe.legacySectorByteLength)
-        ),
-        let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-            [UInt8](lba11),
-            vidHex: vid,
-            pidHex: pid,
-            sizeBytes: size
-        ) else {
-            continue
-        }
-        answer.append(PhysicalDisk(
-            bsdName: bsd,
-            rawPath: rawPath,
-            sizeBytes: size,
-            mediaName: info["MediaName"] as? String ?? "EDP USB",
-            vidHex: vid,
-            pidHex: pid,
-            deviceID: deviceID
-        ))
-    }
-    return answer
+    try EDPNativeDeviceDiscovery.discoverEDPDisks()
 }
 
 private struct StoredCredential: Codable {
@@ -426,10 +266,12 @@ private final class MountSession {
 private final class MountManager {
     private var sessions = [String: MountSession]()
     private let binaryRoot: String
+    private let diskArbitration: EDPDiskArbitrationController
 
-    init() {
+    init() throws {
         binaryRoot = URL(fileURLWithPath: CommandLine.arguments[0])
             .resolvingSymlinksInPath().deletingLastPathComponent().path
+        diskArbitration = try EDPDiskArbitrationController()
     }
 
     func recoverPersistedSessions() {
@@ -440,14 +282,14 @@ private final class MountManager {
         }
         for item in items {
             if let mountpoint = item["mountpoint"], !mountpoint.isEmpty {
-                _ = try? run("/sbin/umount", [mountpoint], accepted: [0, 1])
+                try? EDPNativeMountTable.unmountPath(mountpoint)
                 try? FileManager.default.removeItem(atPath: mountpoint)
             }
             if let exposed = item["exposedBSD"], !exposed.isEmpty {
-                _ = try? run("/usr/sbin/diskutil", ["eject", exposed], accepted: [0, 1])
+                try? diskArbitration.eject(exposed)
             }
             if let bridge = item["bridgeMount"], !bridge.isEmpty {
-                _ = try? run("/sbin/umount", [bridge], accepted: [0, 1])
+                try? EDPNativeMountTable.unmountPath(bridge)
                 try? FileManager.default.removeItem(atPath: bridge)
             }
         }
@@ -477,7 +319,9 @@ private final class MountManager {
             withIntermediateDirectories: false,
             attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
         )
-        _ = try run("/usr/sbin/diskutil", ["unmountDisk", disk.bsdName], accepted: [0, 1])
+        if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
+            try diskArbitration.unmountWhole(disk.bsdName)
+        }
 
         let passwordPipe = Pipe()
         let fuse = Process()
@@ -543,25 +387,18 @@ private final class MountManager {
             persistSessions()
             NSLog("EDP mounted %@ partition %u as %@ at %@", disk.deviceID, partitionType, mounted.0, mounted.1 ?? "(unknown)")
         } catch {
-            if let attachedBSD {
-                _ = try? run("/usr/sbin/diskutil", ["eject", attachedBSD], accepted: [0, 1])
-            }
+            if let attachedBSD { try? diskArbitration.eject(attachedBSD) }
             fuse.terminate()
-            _ = try? run("/sbin/umount", [bridgeMount], accepted: [0, 1])
+            try? EDPNativeMountTable.unmountPath(bridgeMount)
             try? FileManager.default.removeItem(atPath: bridgeMount)
             throw error
         }
     }
 
     private func mountExFAT(_ bsd: String) throws -> (String, String?, Process?) {
-        _ = try run("/usr/sbin/diskutil", ["mount", bsd])
-        let info = try plist(run("/usr/sbin/diskutil", ["info", "-plist", bsd]).stdout)
-        let readOnlyKeys = ["ReadOnly", "ReadOnlyMedia", "ReadOnlyVolume", "VolumeReadOnly"]
-        guard !readOnlyKeys.contains(where: { (info[$0] as? Bool) == true }) else {
+        let mountpoint = try diskArbitration.mount(bsd)
+        guard EDPNativeMountTable.isReadOnly(mountpoint) == false else {
             throw fail("native ExFAT mounted read-only")
-        }
-        guard let mountpoint = info["MountPoint"] as? String, !mountpoint.isEmpty else {
-            throw fail("native ExFAT did not publish a mount point")
         }
         return ("ExFAT", mountpoint, nil)
     }
@@ -601,8 +438,8 @@ private final class MountManager {
         process.standardOutput = log
         process.standardError = log
         try process.run()
-        try waitUntil(seconds: 20) { isMountpoint(mountpoint) || !process.isRunning }
-        guard process.isRunning, isMountpoint(mountpoint) else {
+        try waitUntil(seconds: 20) { EDPNativeMountTable.isMountpoint(mountpoint) || !process.isRunning }
+        guard process.isRunning, EDPNativeMountTable.isMountpoint(mountpoint) else {
             process.terminate()
             throw fail("NTFS-3G FSKit mount failed; see \(logPath)")
         }
@@ -621,12 +458,12 @@ private final class MountManager {
     private func unmount(key: String) {
         guard let session = sessions.removeValue(forKey: key) else { return }
         if let userMount = session.userMount {
-            _ = try? run("/sbin/umount", [userMount], accepted: [0, 1])
+            try? EDPNativeMountTable.unmountPath(userMount)
         }
         session.filesystemProcess?.terminate()
-        _ = try? run("/usr/sbin/diskutil", ["eject", session.exposedBSD], accepted: [0, 1])
+        try? diskArbitration.eject(session.exposedBSD)
         session.fuse.terminate()
-        _ = try? run("/sbin/umount", [session.bridgeMount], accepted: [0, 1])
+        try? EDPNativeMountTable.unmountPath(session.bridgeMount)
         try? FileManager.default.removeItem(atPath: session.bridgeMount)
         persistSessions()
     }
@@ -672,19 +509,13 @@ private func resolveFilesystemDevice(_ rootBSD: String) throws -> (bsdName: Stri
     let rootMagic = try filesystemMagic("/dev/r\(rootBSD)")
     if rootMagic != "UNKNOWN" { return (rootBSD, rootMagic) }
 
-    let tree = try plist(run("/usr/sbin/diskutil", ["list", "-plist", rootBSD]).stdout)
-    let disks = tree["AllDisksAndPartitions"] as? [[String: Any]] ?? []
-    for disk in disks {
-        let partitions = disk["Partitions"] as? [[String: Any]] ?? []
-        for partition in partitions {
-            guard let bsd = partition["DeviceIdentifier"] as? String,
-                  FileManager.default.fileExists(atPath: "/dev/r\(bsd)"),
-                  let magic = try? filesystemMagic("/dev/r\(bsd)"),
-                  magic != "UNKNOWN" else {
-                continue
-            }
-            return (bsd, magic)
+    for bsd in try EDPNativeDeviceDiscovery.descendantBSDNames(of: rootBSD) {
+        guard FileManager.default.fileExists(atPath: "/dev/r\(bsd)"),
+              let magic = try? filesystemMagic("/dev/r\(bsd)"),
+              magic != "UNKNOWN" else {
+            continue
         }
+        return (bsd, magic)
     }
     return (rootBSD, "UNKNOWN")
 }
@@ -697,11 +528,6 @@ private func uniqueMountpoint(_ name: String) -> String {
         if !FileManager.default.fileExists(atPath: candidate) { return candidate }
     }
     return base + "-\(UUID().uuidString.prefix(8))"
-}
-
-private func isMountpoint(_ path: String) -> Bool {
-    guard let output = try? run("/sbin/mount").stdoutText else { return false }
-    return output.split(separator: "\n").contains { $0.contains(" on \(path) ") }
 }
 
 private func waitUntil(seconds: TimeInterval, condition: () -> Bool) throws {
@@ -766,15 +592,18 @@ private func authorize(_ diskArgument: String?) throws {
     _ = try? run("/bin/launchctl", ["kickstart", "-k", "system/\(launchdLabel)"])
 }
 
-private func daemon() throws -> Never {
-    try requireRoot()
-    let store = try CredentialStore()
-    let manager = MountManager()
-    manager.recoverPersistedSessions()
-    Darwin.signal(SIGTERM, runtimeSignalHandler)
-    Darwin.signal(SIGINT, runtimeSignalHandler)
-    var failureDeadline = [String: Date]()
-    while true {
+private final class EDPDaemonController: @unchecked Sendable {
+    private let store: CredentialStore
+    private let manager: MountManager
+    private var failureDeadline = [String: Date]()
+
+    init() throws {
+        store = try CredentialStore()
+        manager = try MountManager()
+        manager.recoverPersistedSessions()
+    }
+
+    func reconcile() {
         autoreleasepool {
             do {
                 let disks = try discoverEDPDisks()
@@ -799,11 +628,21 @@ private func daemon() throws -> Never {
                     }
                 }
             } catch {
-                NSLog("EDP discovery loop failed: %@", String(describing: error))
+                NSLog("EDP event reconciliation failed: %@", String(describing: error))
             }
         }
-        sleep(2)
     }
+}
+
+private func daemon() throws -> Never {
+    try requireRoot()
+    let controller = try EDPDaemonController()
+    let monitor = try EDPDiskEventMonitor()
+    Darwin.signal(SIGTERM, runtimeSignalHandler)
+    Darwin.signal(SIGINT, runtimeSignalHandler)
+    monitor.start { controller.reconcile() }
+    DispatchSemaphore(value: 0).wait()
+    fatalError("EDP daemon event loop unexpectedly returned")
 }
 
 private func runtimeSignalHandler(_ signalNumber: Int32) {
@@ -884,7 +723,7 @@ private enum EDPVaultMain {
                 try CredentialStore().remove(deviceID: CommandLine.arguments[2])
             case "cleanup":
                 try requireRoot()
-                MountManager().recoverPersistedSessions()
+                try MountManager().recoverPersistedSessions()
             case "daemon": try daemon()
             default: usage()
             }

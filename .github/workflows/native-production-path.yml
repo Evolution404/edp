@@ -1,0 +1,76 @@
+name: Native Production Path
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "product/**"
+      - "installer/build-clean-installer.sh"
+      - "native/EDPFSKitPoC/Extension/**"
+      - "native/EDPFSKitPoC/Tools/ValidateNativeProductionPath.swift"
+      - ".github/workflows/native-production-path.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  native-production-path:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify production source has no legacy discovery or mount CLI
+        run: |
+          set -euo pipefail
+          ! grep -R -F '/usr/sbin/ioreg' product
+          ! grep -R -F '/usr/sbin/diskutil' product
+          ! grep -R -F '/sbin/mount' product
+          ! grep -R -F '/sbin/umount' product
+          ! grep -R -F 'sleep(2)' product
+          echo 'RESULT=PRODUCTION_LEGACY_DISCOVERY_MOUNT_CLI_ABSENT'
+
+      - name: Strict Swift 6 production runtime build
+        run: |
+          set -euo pipefail
+          CORE=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+          )
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete -framework Security \
+            "${CORE[@]}" \
+            product/EDPNTFSWriteSafety.swift \
+            product/EDPNTFSMountPolicy.swift \
+            product/EDPNativeSystem.swift \
+            product/EDPVaultRuntime.swift \
+            -o "${RUNNER_TEMP}/edp-vaultctl"
+          echo 'RESULT=NATIVE_PRODUCTION_STRICT_SWIFT6_BUILD_OK'
+
+      - name: Validate IOKit Disk Arbitration and native mount table APIs
+        run: |
+          set -euo pipefail
+          CORE=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+          )
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            "${CORE[@]}" \
+            product/EDPNativeSystem.swift \
+            native/EDPFSKitPoC/Tools/ValidateNativeProductionPath.swift \
+            -o "${RUNNER_TEMP}/validate-native-production"
+          "${RUNNER_TEMP}/validate-native-production" | tee "${RUNNER_TEMP}/native-production.txt"
+          grep -F 'RESULT=NATIVE_MOUNT_TABLE_API_OK' "${RUNNER_TEMP}/native-production.txt"
+          grep -F 'RESULT=NATIVE_IOKIT_DISCOVERY_API_OK' "${RUNNER_TEMP}/native-production.txt"
+          grep -F 'RESULT=NATIVE_DISK_ARBITRATION_API_OK' "${RUNNER_TEMP}/native-production.txt"
+          grep -F 'RESULT=NATIVE_PRODUCTION_PATH_API_OK' "${RUNNER_TEMP}/native-production.txt"
