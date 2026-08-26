@@ -2,22 +2,41 @@
 
 generated_at_utc=<normalized>
 runner_os=26.5.2
-runner_build=25F84
-xcode=Xcode 26.6 Build version 17F113 
-
 cipher_sha_before=unknown
 cipher_sha_after=unknown
 
-## hidden transport
+   Device Identifier:         disk8
+   Device Node:               /dev/disk8
+   Whole:                     Yes
+   Part of Whole:             disk8
+   Device / Media Name:       Disk Image
 
-## first ExFAT disk
+   Volume Name:               Not applicable (no file system)
+   Mounted:                   Not applicable (no file system)
+   File System:               None
 
-## Finder
+   Content (IOContent):       None
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Disk Image
+   SMART Status:              Not Supported
 
-## xattr
+   Disk Size:                 201.3 MB (201326592 Bytes) (exactly 393216 512-Byte-Units)
+   Device Block Size:         512 Bytes
 
-## remount
+   Media OS Use Only:         No
+   Media Read-Only:           No
+   Volume Read-Only:          Not applicable (no file system)
 
-## bridge
+   Device Location:           External
+   Removable Media:           Removable
+   Media Removal:             Software-Activated
 
-## lsof
+   Solid State:               Info not available
+   Virtual:                   Yes
+
+
+
+
+
+
