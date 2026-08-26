@@ -31,9 +31,17 @@ env:
 
 jobs:
   ntfs3g-readwrite:
-    name: encrypted backing -> bundled NTFS-3G read/write/remount
+    name: macFUSE ${{ matrix.macfuse.version }} -> bundled NTFS-3G read/write/remount
     runs-on: macos-26
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        macfuse:
+          - version: "5.3.2"
+            sha256: "9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936"
+          - version: "5.3.3"
+            sha256: "7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
 
     steps:
       - uses: actions/checkout@v6
@@ -48,14 +56,27 @@ jobs:
           test -d /System/Library/PrivateFrameworks/DiskImages2.framework
           echo 'RESULT=DISKIMAGES2_PRESENT'
 
-      - name: Install official macFUSE
+      - name: Install official macFUSE ${{ matrix.macfuse.version }}
         run: |
           set -euo pipefail
-          brew install --cask macfuse
-          brew list --cask --versions macfuse
+          VERSION='${{ matrix.macfuse.version }}'
+          SHA256='${{ matrix.macfuse.sha256 }}'
+          DMG="${RUNNER_TEMP}/macfuse-${VERSION}.dmg"
+          MOUNT="${RUNNER_TEMP}/macfuse-${VERSION}-mount"
+          mkdir -p "${MOUNT}"
+          curl --fail --location --retry 3 \
+            --output "${DMG}" \
+            "https://github.com/macfuse/macfuse/releases/download/macfuse-${VERSION}/macfuse-${VERSION}.dmg"
+          printf '%s  %s\n' "${SHA256}" "${DMG}" | shasum -a 256 -c -
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "${MOUNT}" "${DMG}"
+          PACKAGE="$(find "${MOUNT}" -maxdepth 2 -name 'Install macFUSE*.pkg' -print -quit)"
+          test -n "${PACKAGE}"
+          sudo /usr/sbin/installer -pkg "${PACKAGE}" -target /
+          hdiutil detach -quiet "${MOUNT}"
           pkg-config --exists fuse
           pkg-config --modversion fuse
           test -d /Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex
+          echo "MACFUSE_VERSION=${VERSION}"
           echo 'RESULT=OFFICIAL_MACFUSE_INSTALLED'
 
       - name: Enable macFUSE FSKit modules on ephemeral runner

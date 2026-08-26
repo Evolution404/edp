@@ -24,7 +24,7 @@
 - [ ] A2 固化正确的 NTFS-3G FSKit 启动方式
   - `direct decrypted image + local FSKit` 已由 run `32917383915` 否决：local module 启用 block resource，内部引出 `/dev/disk8`/Disk Arbitration NTFS probe，未稳定进入常规 mount I/O 阶段。
   - run `32917604083`（commit `fb475ce`）已确认：nonlocal mount 稳定，但 root-level `touch` 与新建目录下 `touch` 都返回 `ENOENT`；故障是整个 regular-file create 路径，不是新建目录后的局部缓存问题。
-  - 当前任务：核对 macFUSE FSKit nonlocal create 语义/必要 mount options，并做最小参数实验。
+  - 当前任务：验证 macFUSE 版本回归。官方最新仍为 5.3.3，但公开 issue #1180 报告 5.3.3 的 FSKit 路径出现 ENOENT，而降级 5.3.2 恢复正常；已建立 5.3.2/5.3.3 同一测试矩阵。
 - [ ] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
 - [ ] A4 dirty / hibernated NTFS fail-closed
 - [ ] A5 CI 与产品 NTFS mount 路径统一
@@ -90,3 +90,11 @@
 - create 失败后 NTFS-3G PID、mount、`stat`、`readdir` 仍正常。
 - 结论：排除“仅新建目录 lookup/cache”问题；nonlocal FSKit 的 regular-file create 路径整体异常。
 - 下一步不再改变 EDP crypto/DiskImages2 层，集中验证 macFUSE FSKit mount options / create forwarding。
+
+### 2026-08-26 — A2 增加 macFUSE 版本对照
+
+- macFUSE 官方 release 页当前 latest 为 5.3.3。
+- 官方 issue #1180 报告 5.3.3 相比 5.3.2 存在 FSKit ENOENT 回归；降级 5.3.2 后恢复。
+- 已独立下载官方 `macfuse-5.3.2.dmg` 并计算 SHA256：`9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936`。
+- CI 改为 5.3.2 / 5.3.3 matrix；两边使用同一 NTFS-3G、同一 synthetic fixture、同一 EDP crypto bridge 和同一 create probe。
+- 判定规则：如果 5.3.2 create 成功而 5.3.3 失败，则优先把产品 macFUSE pin 回退到 5.3.2，并完整跑 ExFAT/NTFS/installer 回归；若两者都失败，再进入 mount option / FUSE protocol tracing。
