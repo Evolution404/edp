@@ -61,6 +61,34 @@ private func expectThrow(_ label: String, _ body: () throws -> Void) throws {
     }
 }
 
+private struct ConcurrentWriteCase: Sendable {
+    let offset: Int
+    let length: Int
+    let seed: UInt64
+}
+
+private final class SendableBlockBox: @unchecked Sendable {
+    let block: EDPEncryptedReadWriteBlockDevice
+    init(_ block: EDPEncryptedReadWriteBlockDevice) { self.block = block }
+}
+
+private final class ConcurrentErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String] = []
+
+    func append(_ error: Error) {
+        lock.lock()
+        messages.append(String(describing: error))
+        lock.unlock()
+    }
+
+    func snapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return messages
+    }
+}
+
 @main
 private enum ValidateEDPReadWriteMatrixMain {
     static func main() {
@@ -133,6 +161,46 @@ private enum ValidateEDPReadWriteMatrixMain {
                 }
                 print("WRITE_CASE_PASS=\(item.name):offset=\(item.offset):length=\(item.length)")
             }
+
+            // Exercise the shared crypto RMW lock under concurrent callers. All
+            // ranges are intentionally disjoint but unaligned to SM4 boundaries,
+            // so corruption would expose an unsafe read-modify-encrypt-write path.
+            let concurrentCases = (0..<8).map { index in
+                ConcurrentWriteCase(
+                    offset: 1_310_725 + index * 24_576,
+                    length: 16_385 + (index % 3) * 17,
+                    seed: 0xC000_0000 + UInt64(index)
+                )
+            }
+            let group = DispatchGroup()
+            let queue = DispatchQueue(label: "edp.crypto.rw.matrix", attributes: .concurrent)
+            let blockBox = SendableBlockBox(active)
+            let errorBox = ConcurrentErrorBox()
+            for item in concurrentCases {
+                group.enter()
+                queue.async {
+                    defer { group.leave() }
+                    do {
+                        let payload = deterministicBytes(count: item.length, seed: item.seed)
+                        try blockBox.block.write(at: UInt64(item.offset), data: payload)
+                    } catch {
+                        errorBox.append(error)
+                    }
+                }
+            }
+            try require(group.wait(timeout: .now() + 10) == .success, "concurrent writes timed out")
+            let concurrentErrors = errorBox.snapshot()
+            try require(concurrentErrors.isEmpty, "concurrent writes failed: \(concurrentErrors)")
+            for item in concurrentCases {
+                let payload = deterministicBytes(count: item.length, seed: item.seed)
+                expected.replaceSubrange(item.offset..<(item.offset + item.length), with: payload)
+                try require(
+                    try active.read(at: UInt64(item.offset), length: item.length) == payload,
+                    "concurrent write readback mismatch offset=\(item.offset)"
+                )
+            }
+            try require(try active.read(at: 0, length: size) == expected, "full plaintext mismatch after concurrent writes")
+            print("RESULT=RW_CONCURRENT_UNALIGNED_WRITES_SERIALIZED_PASS")
 
             let cipherBeforeZeroWrite = try Data(contentsOf: temp)
             try active.write(at: 123, data: Data())
