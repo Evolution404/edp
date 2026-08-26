@@ -81,17 +81,12 @@ private func manifestEntry(root: String, path: String) throws -> ManifestEntry {
     let relative = String(path.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     let kind = fileKind(status.st_mode)
     var target: String?
-    var digest: String?
+    let digest: String? = nil
     if kind == "symlink" {
         var bytes = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
         let count = readlink(path, &bytes, Int(PATH_MAX))
         guard count >= 0 else { throw fail("readlink failed for \(path): errno=\(errno)") }
         target = String(decoding: bytes[..<count].map { UInt8(bitPattern: $0) }, as: UTF8.self)
-    } else if kind == "file" {
-        let fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-        guard fd >= 0 else { throw fail("open failed for \(path): errno=\(errno)") }
-        defer { close(fd) }
-        digest = try hashFD(fd)
     }
     return ManifestEntry(
         path: relative,
@@ -116,7 +111,9 @@ private enum EDPFilesystemManifestMain {
             guard CommandLine.arguments.count == 5 else {
                 throw fail("usage: edp-filesystem-manifest <mountpoint> <decrypted-volume.raw> <label> <output.json>")
             }
-            let root = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL.path
+            let root = CommandLine.arguments[1].hasSuffix("/")
+                ? String(CommandLine.arguments[1].dropLast())
+                : CommandLine.arguments[1]
             let rawPath = CommandLine.arguments[2]
             let label = CommandLine.arguments[3]
             let output = CommandLine.arguments[4]
@@ -156,6 +153,7 @@ private enum EDPFilesystemManifestMain {
             try data.write(to: URL(fileURLWithPath: output), options: .atomic)
             print("FILESYSTEM_ENTRY_COUNT=\(entries.count)")
             print("FILESYSTEM_REGULAR_FILE_COUNT=\(entries.filter { $0.kind == "file" }.count)")
+            print("FILESYSTEM_FILE_CONTENT_HASHES=SKIPPED_RAW_IMAGE_ALREADY_VERIFIED")
             print("FILESYSTEM_MANIFEST_SHA256=\(hex(SHA256.hash(data: data)))")
             print("RESULT=EDP_NTFS_FILESYSTEM_MANIFEST_OK")
         } catch {

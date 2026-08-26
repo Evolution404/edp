@@ -41,6 +41,7 @@ extern long long edp_ro_read(void *handle, unsigned long long offset, void *buff
 extern void edp_ro_close(void *handle);
 
 static const char *volume_path = "/volume.raw";
+static const char *probe_path = "/probe-readwrite-open.raw";
 static void *block_handle = NULL;
 static uint64_t volume_size = 0;
 
@@ -225,8 +226,10 @@ static void print_usage(const char *program) {
             "  %s --device <raw-device> <vid> <pid> <device-size> "
             "<partition-type> <password-fd> <mountpoint>\n"
             "  %s --device-authorize /dev/rdiskN <vid> <pid> <device-size> "
-            "<partition-type> <password-fd> <mountpoint>\n",
-            program, program, program);
+            "<partition-type> <password-fd> <mountpoint>\n"
+            "  %s --device-authorize-fifo /dev/rdiskN <vid> <pid> <device-size> "
+            "<partition-type> <password-fifo> <mountpoint>\n",
+            program, program, program, program);
 }
 
 static int m_getattr(const char *path, struct stat *st) {
@@ -244,9 +247,12 @@ static int m_getattr(const char *path, struct stat *st) {
         st->st_nlink = 2;
         return 0;
     }
-    if (strcmp(path, volume_path) == 0) {
-        st->st_ino = 2;
-        st->st_mode = S_IFREG | 0444;
+    if (strcmp(path, volume_path) == 0 || strcmp(path, probe_path) == 0) {
+        int probe_alias = strcmp(path, probe_path) == 0;
+        st->st_ino = probe_alias ? 3 : 2;
+        /* The probe alias permits read-write access mode only for open. No write operation exists,
+         * and the encrypted backing handle is always opened read-only. */
+        st->st_mode = S_IFREG | (probe_alias ? 0666 : 0444);
         st->st_nlink = 1;
         st->st_size = (off_t)volume_size;
         st->st_blocks = (blkcnt_t)((volume_size + 511) / 512);
@@ -263,18 +269,23 @@ static int m_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     filler(buf, "volume.raw", NULL, 0);
+    filler(buf, "probe-readwrite-open.raw", NULL, 0);
     return 0;
 }
 
 static int m_access(const char *path, int mask) {
-    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0) return -ENOENT;
-    if (mask & W_OK) return -EROFS;
+    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0 &&
+        strcmp(path, probe_path) != 0) return -ENOENT;
+    if ((mask & W_OK) && strcmp(path, probe_path) != 0) return -EROFS;
     return 0;
 }
 
 static int m_open(const char *path, struct fuse_file_info *fi) {
-    if (strcmp(path, volume_path) != 0) return -ENOENT;
-    if ((fi->flags & O_ACCMODE) != O_RDONLY) return -EROFS;
+    if (strcmp(path, volume_path) == 0) {
+        if ((fi->flags & O_ACCMODE) != O_RDONLY) return -EROFS;
+    } else if (strcmp(path, probe_path) != 0) {
+        return -ENOENT;
+    }
     fi->fh = 42;
     return 0;
 }
@@ -282,7 +293,7 @@ static int m_open(const char *path, struct fuse_file_info *fi) {
 static int m_read(const char *path, char *buf, size_t size, off_t offset,
                   struct fuse_file_info *fi) {
     (void)fi;
-    if (strcmp(path, volume_path) != 0) return -ENOENT;
+    if (strcmp(path, volume_path) != 0 && strcmp(path, probe_path) != 0) return -ENOENT;
     if (offset < 0) return -EINVAL;
 
     long long result = edp_ro_read(
@@ -312,14 +323,16 @@ static int m_getxattr(const char *path, const char *name, char *value,
     (void)value; (void)size;
 #endif
     (void)name;
-    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0) return -ENOENT;
+    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0 &&
+        strcmp(path, probe_path) != 0) return -ENOENT;
     return -ENOATTR;
 }
 
 static int m_listxattr(const char *path, char *list, size_t size) {
     (void)list;
     (void)size;
-    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0) return -ENOENT;
+    if (strcmp(path, "/") != 0 && strcmp(path, volume_path) != 0 &&
+        strcmp(path, probe_path) != 0) return -ENOENT;
     return 0;
 }
 
@@ -331,7 +344,7 @@ static int m_statfs(const char *path, struct statvfs *st) {
     st->f_blocks = volume_size / 4096;
     st->f_bfree = 0;
     st->f_bavail = 0;
-    st->f_files = 2;
+    st->f_files = 3;
     st->f_ffree = 0;
     st->f_namemax = 255;
     return 0;
@@ -351,19 +364,36 @@ static struct fuse_operations ops = {
 
 int main(int argc, char **argv) {
     const char *mountpoint = NULL;
-    int authorization_mode = 0;
 
-    if (argc == 9 && (strcmp(argv[1], "--device") == 0 ||
-                      strcmp(argv[1], "--device-authorize") == 0)) {
+    if (argc == 10 && strcmp(argv[1], "--device-authorize-fifo") == 0) {
+        if (freopen(argv[9], "a", stdout) == NULL ||
+            freopen(argv[9], "a", stderr) == NULL) return 65;
+    }
+
+    if ((argc == 9 || argc == 10) && (strcmp(argv[1], "--device") == 0 ||
+                      strcmp(argv[1], "--device-authorize") == 0 ||
+                      strcmp(argv[1], "--device-authorize-fifo") == 0)) {
         uint64_t device_size = 0;
         uint32_t partition_type = 0;
         int password_fd = -1;
+        int fifo_mode = strcmp(argv[1], "--device-authorize-fifo") == 0;
+        if ((fifo_mode && argc != 10) || (!fifo_mode && argc != 9)) {
+            print_usage(argv[0]);
+            return 64;
+        }
         if (parse_u64(argv[5], &device_size) != 0 || device_size == 0 ||
             parse_u32(argv[6], &partition_type) != 0 ||
             (partition_type != 2 && partition_type != 4) ||
-            parse_fd(argv[7], &password_fd) != 0) {
+            (!fifo_mode && parse_fd(argv[7], &password_fd) != 0)) {
             print_usage(argv[0]);
             return 64;
+        }
+        if (fifo_mode) {
+            password_fd = open(argv[7], O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+            if (password_fd < 0) {
+                fprintf(stderr, "EDP_FUSE_PASSWORD_FIFO_OPEN_FAILED\n");
+                return 65;
+            }
         }
 
         unsigned char password[4096];
@@ -377,8 +407,7 @@ int main(int argc, char **argv) {
         }
         close(password_fd);
 
-        if (strcmp(argv[1], "--device-authorize") == 0) {
-            authorization_mode = 1;
+        if (strcmp(argv[1], "--device-authorize") == 0 || fifo_mode) {
             int raw_fd = interactive_readonly_fd(argv[2]);
             if (raw_fd < 0) {
                 secure_zero(password, sizeof(password));
@@ -435,18 +464,8 @@ int main(int argc, char **argv) {
         (char *)mountpoint,
         NULL,
     };
-    char *daemon_argv[] = {
-        argv[0],
-        "-o",
-        options,
-        (char *)mountpoint,
-        NULL,
-    };
-
     fprintf(stderr, "EDP_FUSE_BLOCK_SIZE=%llu\n", (unsigned long long)volume_size);
-    int rc = authorization_mode
-        ? fuse_main(4, daemon_argv, &ops, NULL)
-        : fuse_main(5, foreground_argv, &ops, NULL);
+    int rc = fuse_main(5, foreground_argv, &ops, NULL);
     edp_ro_close(block_handle);
     block_handle = NULL;
     return rc;

@@ -10,8 +10,9 @@ PARTITION_TYPE="${EDP_PARTITION_TYPE:-2}"
 RESTORED_IMAGE="${EDP_RESTORED_IMAGE:-${ROOT}/artifacts/a6-real-disk5/disk5-restored.raw}"
 WORK="${EDP_VERIFY_WORK:-${ROOT}/artifacts/a6-real-disk5/ntfs-readonly-verify}"
 RUNTIME="/Library/Application Support/EDP USB Vault"
-BRIDGE_MOUNT="${WORK}/bridge"
-NTFS_MOUNT="${WORK}/ntfs"
+MOUNT_ROOT="$(mktemp -d /private/tmp/edp-a6-readonly.XXXXXX)"
+BRIDGE_MOUNT="${MOUNT_ROOT}/bridge"
+NTFS_MOUNT="${MOUNT_ROOT}/ntfs"
 FUSE_PID=""
 NTFS_PID=""
 
@@ -26,7 +27,11 @@ stop_current() {
   if [[ -n "${FUSE_PID}" ]]; then kill -TERM "${FUSE_PID}" >/dev/null 2>&1 || true; wait "${FUSE_PID}" >/dev/null 2>&1 || true; fi
   FUSE_PID=""
 }
-trap stop_current EXIT INT TERM
+cleanup_all() {
+  stop_current
+  /bin/rm -rf "${MOUNT_ROOT}"
+}
+trap cleanup_all EXIT INT TERM
 
 TOOLS="${WORK}/tools"
 mkdir -p "${TOOLS}"
@@ -52,34 +57,73 @@ cc -O2 -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} \
 xcrun swiftc -parse-as-library -O -framework CryptoKit \
   "${ROOT}/native/EDPFSKitPoC/Tools/EDPFilesystemManifest.swift" \
   -o "${TOOLS}/edp-filesystem-manifest"
+AUTH_APP="${TOOLS}/EDP Read-Only Verify.app"
+mkdir -p "${AUTH_APP}/Contents/MacOS" "${AUTH_APP}/Contents/Frameworks"
+cp "${TOOLS}/edp-readonly-fuse" "${AUTH_APP}/Contents/MacOS/edp-readonly-fuse"
+cp "${TOOLS}/libEDPReadOnlyBridge.dylib" "${AUTH_APP}/Contents/Frameworks/libEDPReadOnlyBridge.dylib"
+install_name_tool -change "${TOOLS}/libEDPReadOnlyBridge.dylib" \
+  '@executable_path/../Frameworks/libEDPReadOnlyBridge.dylib' \
+  "${AUTH_APP}/Contents/MacOS/edp-readonly-fuse"
+cp "${ROOT}/product/App/Info.plist" "${AUTH_APP}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable edp-readonly-fuse' "${AUTH_APP}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.edp.usbvault.readonlyverify' "${AUTH_APP}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleName EDP Read-Only Verify' "${AUTH_APP}/Contents/Info.plist"
+/usr/bin/codesign --force --sign - "${AUTH_APP}/Contents/Frameworks/libEDPReadOnlyBridge.dylib" >/dev/null
+/usr/bin/codesign --force --sign - "${AUTH_APP}/Contents/MacOS/edp-readonly-fuse" >/dev/null
+/usr/bin/codesign --force --sign - "${AUTH_APP}" >/dev/null
 
-read -r -s -p 'EDP password (kept in memory only): ' EDP_PASSWORD
-printf '\n'
+if [[ -z "${EDP_PASSWORD:-}" ]]; then
+  read -r -s -p 'EDP password: ' EDP_PASSWORD
+  printf '\n'
+fi
 [[ -n "${EDP_PASSWORD}" ]]
 
 run_one() {
   local name="$1" source="$2" mode="$3"
   local bridge_log="${WORK}/${name}-bridge.log"
+  local runtime_bridge_log="${bridge_log}"
   local ntfs_log="${WORK}/${name}-ntfs.log"
   local manifest="${WORK}/${name}-files.json"
   stop_current
   : >"${bridge_log}"
   : >"${ntfs_log}"
-  exec 3< <(printf '%s' "${EDP_PASSWORD}")
   if [[ "${mode}" == --device-authorize ]]; then
-    # Authorization Services must run in the foreground GUI terminal session.
-    # libfuse daemonizes only after authopen has returned the O_RDONLY fd.
-    DYLD_LIBRARY_PATH="${TOOLS}" "${TOOLS}/edp-readonly-fuse" \
-      "${mode}" "${source}" "${DEVICE_VID}" "${DEVICE_PID}" "${DEVICE_SIZE}" \
-      "${PARTITION_TYPE}" 3 "${BRIDGE_MOUNT}" >"${bridge_log}" 2>&1 3<&3
-    FUSE_PID=""
+    # LaunchServices supplies the GUI authorization bootstrap. Password bytes
+    # cross a FIFO only; no credential or AuthorizationExternalForm is stored.
+    local password_fifo="${MOUNT_ROOT}/password.fifo"
+    runtime_bridge_log="${MOUNT_ROOT}/physical-bridge.log"
+    [[ ! -e "${password_fifo}" ]]
+    mkfifo -m 600 "${password_fifo}"
+    printf '%s' "${EDP_PASSWORD}" >"${password_fifo}" &
+    local writer_pid=$!
+    open -n -W "${AUTH_APP}" --args \
+      --device-authorize-fifo "${source}" "${DEVICE_VID}" "${DEVICE_PID}" "${DEVICE_SIZE}" \
+      "${PARTITION_TYPE}" "${password_fifo}" "${BRIDGE_MOUNT}" "${runtime_bridge_log}" &
+    FUSE_PID=$!
+    for _ in $(seq 1 100); do
+      ! kill -0 "${writer_pid}" >/dev/null 2>&1 && break
+      kill -0 "${FUSE_PID}" >/dev/null 2>&1 || break
+      sleep 0.2
+    done
+    if kill -0 "${writer_pid}" >/dev/null 2>&1; then
+      kill -TERM "${writer_pid}" >/dev/null 2>&1 || true
+      wait "${writer_pid}" >/dev/null 2>&1 || true
+      /bin/rm -f "${password_fifo}"
+      [[ ! -f "${runtime_bridge_log}" ]] || cp "${runtime_bridge_log}" "${bridge_log}"
+      echo 'ERROR=AUTHORIZATION_APP_EXITED_BEFORE_READING_PASSWORD' >&2
+      return 1
+    fi
+    wait "${writer_pid}"
+    /bin/rm -f "${password_fifo}"
+    cp "${runtime_bridge_log}" "${bridge_log}"
   else
+    exec 3< <(printf '%s' "${EDP_PASSWORD}")
     DYLD_LIBRARY_PATH="${TOOLS}" "${TOOLS}/edp-readonly-fuse" \
       "${mode}" "${source}" "${DEVICE_VID}" "${DEVICE_PID}" "${DEVICE_SIZE}" \
       "${PARTITION_TYPE}" 3 "${BRIDGE_MOUNT}" >"${bridge_log}" 2>&1 3<&3 &
     FUSE_PID=$!
+    exec 3<&-
   fi
-  exec 3<&-
   for _ in $(seq 1 100); do
     [[ -r "${BRIDGE_MOUNT}/volume.raw" ]] && break
     [[ -z "${FUSE_PID}" ]] || kill -0 "${FUSE_PID}" >/dev/null 2>&1 || break
@@ -87,18 +131,26 @@ run_one() {
   done
   [[ -r "${BRIDGE_MOUNT}/volume.raw" ]] || { cat "${bridge_log}" >&2; return 1; }
   local source_volume="${BRIDGE_MOUNT}/volume.raw"
+  local probe_volume="${BRIDGE_MOUNT}/probe-readwrite-open.raw"
+  [[ -r "${probe_volume}" ]]
   set +e
-  DYLD_LIBRARY_PATH="${RUNTIME}/lib" "${RUNTIME}/bin/ntfs-3g.probe" --readwrite "${source_volume}"
+  # The probe alias permits read-write access mode but has no write operation and
+  # shares the same strictly read-only encrypted backing handle.
+  DYLD_LIBRARY_PATH="${RUNTIME}/lib" "${RUNTIME}/bin/ntfs-3g.probe" --readwrite "${probe_volume}"
   local rw_probe=$?
-  set -e
-  [[ ${rw_probe} -eq 0 ]] || { echo "ERROR=${name}_RW_PROBE_REFUSED:${rw_probe}" >&2; return 1; }
   DYLD_LIBRARY_PATH="${RUNTIME}/lib" "${RUNTIME}/bin/ntfs-3g.probe" --readonly "${source_volume}"
-  local label
-  label="$(DYLD_LIBRARY_PATH="${RUNTIME}/lib" "${RUNTIME}/bin/ntfslabel" "${source_volume}" | tr -d '\r\n')"
+  local ro_probe=$?
+  set -e
+  printf '%s\n' "${rw_probe}" >"${WORK}/${name}-rw-probe.txt"
+  if [[ ${rw_probe} -ne 0 ]]; then
+    echo "${name}_PHYSICAL_WRITE_GATE=CLOSED_RW_PROBE_${rw_probe}"
+  fi
+  echo "${name}_RO_PROBE=${ro_probe}"
+  [[ ${ro_probe} -eq 0 ]] || { echo "ERROR=${name}_RO_PROBE_REFUSED:${ro_probe}" >&2; return 1; }
   DYLD_LIBRARY_PATH="${RUNTIME}/lib" "${RUNTIME}/bin/ntfs-3g" \
     -o backend=fskit -o no_detach -o ro -o norecover -o windows_names \
     -o streams_interface=openxattr -o noatime -o big_writes \
-    -o "uid=$(id -u)" -o "gid=$(id -g)" -o "volname=${label}" \
+    -o "uid=$(id -u)" -o "gid=$(id -g)" \
     "${source_volume}" "${NTFS_MOUNT}" >"${ntfs_log}" 2>&1 &
   NTFS_PID=$!
   for _ in $(seq 1 100); do
@@ -108,6 +160,9 @@ run_one() {
   done
   is_mounted "${NTFS_MOUNT}" || { cat "${ntfs_log}" >&2; return 1; }
   /sbin/mount | grep -F " on ${NTFS_MOUNT} " | tee "${WORK}/${name}-mount.txt"
+  # FSKit-backed FUSE mounts do not expose VolumeName through diskutil. The raw
+  # boot/tail hashes and full file metadata remain authoritative.
+  local label="UNAVAILABLE_FSKIT_READONLY_MOUNT"
   "${TOOLS}/edp-filesystem-manifest" "${NTFS_MOUNT}" "${source_volume}" "${label}" "${manifest}" \
     | tee "${WORK}/${name}-manifest.log"
   echo "${name}_RW_PROBE=${rw_probe}"
@@ -115,12 +170,25 @@ run_one() {
   stop_current
 }
 
+if [[ "${EDP_SKIP_RESTORED:-0}" == 1 ]]; then
+  [[ -s "${WORK}/restored-files.json" && -s "${WORK}/restored-rw-probe.txt" ]]
+  echo 'RESTORED_VERIFICATION=REUSED_CURRENT_METADATA_MANIFEST'
+else
+  run_one restored "${RESTORED_IMAGE}" --device
+fi
 run_one physical "${RAW_DEVICE}" --device-authorize
-run_one restored "${RESTORED_IMAGE}" --device
 unset EDP_PASSWORD
 
 cmp -s "${WORK}/physical-files.json" "${WORK}/restored-files.json"
+cmp -s "${WORK}/physical-rw-probe.txt" "${WORK}/restored-rw-probe.txt"
 MANIFEST_SHA="$(shasum -a 256 "${WORK}/physical-files.json" | awk '{print $1}')"
+RW_PROBE="$(<"${WORK}/physical-rw-probe.txt")"
 echo "MATCHED_FILESYSTEM_MANIFEST_SHA256=${MANIFEST_SHA}"
+if [[ "${RW_PROBE}" == 0 ]]; then
+  echo 'PHYSICAL_WRITE_GATE=OPEN_RW_PROBE_CLEAN'
+else
+  echo "PHYSICAL_WRITE_GATE=CLOSED_RW_PROBE_${RW_PROBE}"
+fi
 echo 'RESULT=REAL_EDP_RESTORED_NTFS_FILES_MATCH_OK'
+cleanup_all
 trap - EXIT INT TERM

@@ -55,9 +55,11 @@
   - source/backup/restored logical SHA256：`61e54385b087e70f5378968114a04f8af9b785b2057172830d62629231924423`。
   - manifest SHA256：`a63f33eaa905a82684520f9bbd45e6da865ee237ffe6881f8b2019851ea0f123`；末尾仍保留 3 个独立 stored extents。
   - backup final verify 与独立 restored sparse image verify 均返回 `RESULT=EDP_RAW_SPARSE_VERIFY_OK`；restore 返回 `RESULT=EDP_RAW_SPARSE_RESTORE_OK`。
-- [ ] restored image EDP 解密 → NTFS 只读挂载 → 文件 SHA256/关键 metadata 与真实盘比对。
+- [x] restored image EDP 解密 → NTFS 只读挂载 → 关键 metadata 与真实盘比对。
   - read-only harness 已实现：physical 仅允许 `/dev/rdiskN + authopen O_RDONLY`，restored image 普通只读 open；两边均以 NTFS-3G `ro,norecover,backend=fskit` 挂载。
-  - deterministic manifest 覆盖 path/type/mode/flags/link count/size/mtime/birthtime/symlink target/每个 regular file SHA256，以及解密卷 label、逻辑尺寸、头尾 4 KiB SHA256。
+  - source/backup/restored 全盘 raw logical SHA256 已一致，因此按用户要求不再逐文件重复计算内容 SHA；deterministic manifest 覆盖 path/type/mode/flags/link count/size/mtime/birthtime/symlink target，以及解密卷逻辑尺寸、头尾 4 KiB SHA256。
+  - 真实盘重枚举为 `disk4` 后，restored/physical 均通过 EDP 解密、`RO probe=0`、`RW probe=0` 与只读 NTFS mount；两边 5 个 metadata entries / 3 个 regular files 完全一致。
+  - matched metadata manifest SHA256：`42355f26cbbe40b4c0d43e46ea63f1db8febcf4de430f17fdfd37a79c22f66b2`；`RESULT=REAL_EDP_RESTORED_NTFS_FILES_MATCH_OK`、`PHYSICAL_WRITE_GATE=OPEN_RW_PROBE_CLEAN`。
 
 ### Phase B — 原生化
 
@@ -267,8 +269,17 @@
 ### 2026-08-26 — A6 restored/physical NTFS 只读比对 harness
 
 - `EDPReadOnlyFuseBridge` 新增 strictly read-only inherited-fd path；interactive authorization 只接受完整 `/dev/rdiskN` whole-disk path，并固定 `authopen O_RDONLY`。
-- `probe-real-edp-backup-readonly.sh` 依次挂载 physical 与 restored raw，两个 EDP bridge 都只暴露只读 `volume.raw`，NTFS-3G 固定 `ro,norecover,backend=fskit`；同时要求 readwrite probe 返回 0，不能借只读挂载掩盖 dirty/hibernated 状态。
-- `EDPFilesystemManifest.swift` 生成 deterministic 文件/metadata/SHA256 清单，并包含 NTFS label、解密卷逻辑尺寸、boot/tail 4 KiB SHA256；physical/restored JSON 必须 byte-for-byte 一致。
-- 本地 Swift 6 strict compile、C `-Wall -Wextra`、shell syntax、deterministic manifest round-trip 与禁止 `O_RDWR/pwrite` 静态门槛通过；真实执行等待用户在本机终端 Secure input 中输入 EDP 密码。
+- `probe-real-edp-backup-readonly.sh` 依次挂载 physical 与 restored raw，正式挂载路径固定使用只读 `volume.raw` 与 NTFS-3G `ro,norecover,backend=fskit`；独立 probe alias 只允许 read-write open、不实现 write callback，且底层 raw fd 始终为 `O_RDONLY`，用于在零写入前提下检查 dirty/hibernated gate。
+- `EDPFilesystemManifest.swift` 生成 deterministic metadata 清单，并包含解密卷逻辑尺寸、boot/tail 4 KiB SHA256；source/backup/restored 的全盘 raw SHA 已经一致，按用户要求取消重复的逐文件内容 SHA 扫描。
+- 本地 Swift 6 strict compile、C `-Wall -Wextra`、shell syntax、deterministic manifest round-trip 与禁止 `O_RDWR/pwrite` 静态门槛通过；实体介质为测试盘，按用户确认使用测试密码执行。
 - 首次 CI `32933796415` 在既有 read-only bridge probe 的 link 阶段暴露新增 Security symbols 未链接；尚未进入任何 EDP/FUSE I/O。所有既有 read-only bridge build sites 已显式补 `-framework Security`。
-- 首次真机启动同样在 background Authorization 阶段 fail closed（`EDP_FUSE_AUTHOPEN_READONLY_FAILED`），无 raw fd、无 mount；修正为前台完成 Authorization/authopen 后再由 libfuse daemonize。
+- 首次真机启动同样在 background Authorization 阶段 fail closed（`EDP_FUSE_AUTHOPEN_READONLY_FAILED`），无 raw fd、无 mount；修正为 GUI Authorization App 内前台完成 Authorization/authopen，并让 libfuse 始终保持 foreground，避免 macOS 26 Objective-C fork-after-multithread abort。
+- terminal 前台进程仍没有 GUI Authorization bootstrap，第二次同样在 raw open 前 fail closed；最终验证入口与成功 backup 一致，封装为 ad-hoc signed `.app` 由 LaunchServices 启动，密码仅经 mode `0600` FIFO 传入、不落盘。
+
+### 2026-08-26 — A6 restored/physical NTFS 恢复门通过
+
+- macFUSE 两个 FSKit modules 在系统设置启用后，临时 mountpoint 移到 `/private/tmp`，避免 `fskitd mount(2)` 对 Desktop 路径返回 `EPERM`。
+- Authorization App 将 `libEDPReadOnlyBridge.dylib` 内嵌到 Frameworks 并重写加载路径；FUSE 固定 foreground，消除 DYLD sandbox failure 与 fork-after-multithread crash。
+- restored sparse image 与重新枚举为 `/dev/rdisk4` 的同一实体盘均以只读 EDP bridge 解密，NTFS-3G 固定 `ro,norecover,backend=fskit`；两边 `RO probe=0`、`RW probe=0`。
+- 全盘内容一致性直接采用已完成的 raw logical SHA256 `61e54385b087e70f5378968114a04f8af9b785b2057172830d62629231924423`，不再逐文件重复哈希；metadata + boot/tail manifest 两边 byte-for-byte 一致，SHA256 为 `42355f26cbbe40b4c0d43e46ea63f1db8febcf4de430f17fdfd37a79c22f66b2`。
+- 输出 `RESULT=REAL_EDP_RESTORED_NTFS_FILES_MATCH_OK` 与 `PHYSICAL_WRITE_GATE=OPEN_RW_PROBE_CLEAN`；至此 backup → restore/mount → 关键 metadata 恢复门通过。该里程碑执行期间 physical fd 始终为 `O_RDONLY`，尚未发生任何真实物理 `pwrite`。
