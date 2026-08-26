@@ -523,17 +523,12 @@ func runFuseTBridge(backing: any FuseTReadBacking, mountpoint: String, volumeNam
 }
 
 #if !FUSET_BRIDGE_LIBRARY
-@main
-private enum FuseTMinimalBridgeMain {
-    static func main() {
-        do {
-            let args = try parseArguments()
-            let backing = try FixedBacking(path: args.backing)
-            try runFuseTBridge(backing: backing, mountpoint: args.mountpoint, volumeName: args.volumeName)
-        } catch {
-            fputs("FuseTMinimalBridge: \(error)\n", stderr)
-            exit(1)
-        }
-    }
+do {
+    let args = try parseArguments()
+    let backing = try FixedBacking(path: args.backing)
+    try runFuseTBridge(backing: backing, mountpoint: args.mountpoint, volumeName: args.volumeName)
+} catch {
+    fputs("FuseTMinimalBridge: \(error)\n", stderr)
+    exit(1)
 }
 #endif
