@@ -191,7 +191,7 @@ private final class MountManager {
         }
         diskArbitration = try EDPDiskArbitrationController()
         blockPublisher = EDPDiskImages2Publisher(
-            helperPath: binaryRoot + "/diskimages2-attach",
+            binaryRoot: binaryRoot,
             diskArbitration: diskArbitration
         )
     }

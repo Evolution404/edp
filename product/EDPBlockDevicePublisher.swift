@@ -21,8 +21,8 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
     private let helperPath: String
     private let diskArbitration: EDPDiskArbitrationController
 
-    init(helperPath: String, diskArbitration: EDPDiskArbitrationController) {
-        self.helperPath = helperPath
+    init(binaryRoot: String, diskArbitration: EDPDiskArbitrationController) {
+        helperPath = binaryRoot + "/diskimages2-attach"
         self.diskArbitration = diskArbitration
     }
 
