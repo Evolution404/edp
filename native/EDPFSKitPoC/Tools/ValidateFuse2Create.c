@@ -16,6 +16,7 @@ static size_t file_size = 0;
 static int target_exists = 1;
 static unsigned char target_data[8192] = "old-content\n";
 static size_t target_size = sizeof("old-content\n") - 1;
+static int support_rename_swap = 0;
 
 #ifndef RENAME_SWAP
 #define RENAME_SWAP 0x00000002
@@ -221,8 +222,23 @@ static int m_rename(const char *old_path, const char *new_path) {
 
 #ifdef __APPLE__
 static int m_renamex(const char *old_path, const char *new_path, unsigned int flags) {
-    fprintf(stderr, "FUSE2_RENAMEX old=%s new=%s flags=0x%x\n", old_path, new_path, flags);
-    if (flags & RENAME_SWAP) return -EOPNOTSUPP;
+    fprintf(stderr, "FUSE2_RENAMEX old=%s new=%s flags=0x%x support_swap=%d\n",
+            old_path, new_path, flags, support_rename_swap);
+    if (flags & RENAME_SWAP) {
+        const char *old_name = NULL;
+        const char *new_name = NULL;
+        if (!support_rename_swap) return -EOPNOTSUPP;
+        if (split_file_path(old_path, &old_name) != 0 || split_file_path(new_path, &new_name) != 0) return -ENOENT;
+        if (!file_exists || !target_exists || strcmp(old_name, file_name) != 0 || strcmp(new_name, "target.txt") != 0) return -ENOENT;
+        unsigned char tmp[sizeof(file_data)];
+        memcpy(tmp, file_data, sizeof(file_data));
+        memcpy(file_data, target_data, sizeof(file_data));
+        memcpy(target_data, tmp, sizeof(file_data));
+        size_t tmp_size = file_size;
+        file_size = target_size;
+        target_size = tmp_size;
+        return 0;
+    }
     if (flags & ~RENAME_EXCL) return -EINVAL;
     if ((flags & RENAME_EXCL) && target_exists) return -EEXIST;
     return replace_target(old_path, new_path);
@@ -290,6 +306,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s <mountpoint> | --rename <old> <new>\n", argv[0]);
         return 64;
     }
+    const char *swap_env = getenv("EDP_FUSE2_SUPPORT_RENAME_SWAP");
+    support_rename_swap = swap_env && strcmp(swap_env, "1") == 0;
     char *fuse_argv[] = {
         argv[0],
         "-f",

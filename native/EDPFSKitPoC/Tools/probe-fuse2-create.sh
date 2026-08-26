@@ -124,6 +124,15 @@ if (( RENAME_RC == 0 )); then
   printf 'RESULT=FUSE2_RENAME_OVER_EXISTING_SUPPORTED\n'
   TARGET_AFTER="$(/bin/cat "${TARGET}")"
   [[ "${TARGET_AFTER}" == "hello-fuse2-create" ]]
+  if [[ -e "${PROOF}" ]]; then
+    PROOF_AFTER="$(/bin/cat "${PROOF}")"
+    printf 'FUSE2_RENAME_SOURCE_REMAINS=1\n'
+    printf 'FUSE2_RENAME_SOURCE_CONTENT=%s\n' "${PROOF_AFTER}"
+    printf 'RESULT=FUSE2_RENAME_SWAP_LEFT_SOURCE_PATH\n'
+  else
+    printf 'FUSE2_RENAME_SOURCE_REMAINS=0\n'
+    printf 'RESULT=FUSE2_RENAME_SWAP_SOURCE_REMOVED\n'
+  fi
 else
   printf '%s\n' "${RENAME_OUTPUT}" | /usr/bin/grep -F 'RENAME_CLIENT_ERRNO=102' >/dev/null
   printf 'RESULT=FUSE2_RENAME_OVER_EXISTING_EOPNOTSUPP_REPRODUCED\n'

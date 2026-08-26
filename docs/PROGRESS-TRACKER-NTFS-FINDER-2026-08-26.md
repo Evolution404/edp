@@ -138,6 +138,32 @@ rename(temp, existing-target)
 - 之后再比较 outer `local` 行为。
 
 commit:
+- `3c8390f test: isolate FSKit rename swap semantics`
+
+#### 2026-08-26 16:16 — 字面 `RENAME_SWAP` 不能直接作为修复
+
+目标：
+- 验证只要 userspace 真正实现 `RENAME_SWAP`，macFUSE FSKit 是否会在 libc `rename(temp, existing-target)` 返回前自动补做 source cleanup，从而恢复 POSIX replace 语义。
+
+改动：
+- 最小内存 FUSE2 probe 增加可选 `EDP_FUSE2_SUPPORT_RENAME_SWAP=1`；收到 `flags=0x2` 时真正交换 temp/target 两个对象的数据；
+- probe 在 rename 返回后立即检查 target 内容和 source path 是否仍存在。
+
+验证：
+- 不启用 swap 支持时，仍稳定复现 `errno=102/EOPNOTSUPP`；
+- 启用字面 swap 时，libc `rename()` 返回 0，target 内容变成新内容；
+- 但 source path **仍存在**，且内容变成旧 target 的 `old-content`；服务端没有在 syscall 返回前收到额外 unlink；
+- 因此最终状态是“交换”，不是 POSIX `rename()` 要求的“source 消失 + target 原子替换”。
+
+结论：
+- PASS（否决直接实现 swap）。不能把当前 patch 从 `EOPNOTSUPP` 简单改成字面 `RENAME_SWAP`，否则 TextEdit 可能表面保存成功但会留下临时旧文件，语义错误。
+- 结合 `7040dc6` 已记录的源码审阅：NTFS-3G 2026.7.7 现有 existing-target rename 本身也有 `FIXME: Rename should be atomic.`，所以也不能简单把 FSKit 的 `0x2` 映射到现有 `ntfs_fuse_rename()` 后宣称满足产品原子性。
+
+下一步：
+- 查 macFUSE 5.3.3 FSKit rename bridge/upstream issue，确认为何普通 POSIX rename 被编码为 `RENAME_SWAP`；
+- 同时审阅 libntfs-3g 更底层目录项 API，寻找可在单事务/可恢复语义内完成 replace/exchange 的 primitive；若没有，则需要明确记录上游阻塞而不是引入非原子 workaround。
+
+commit:
 - pending
 
 ### T2 — P1 Finder 本地卷 + Trash
