@@ -2,71 +2,16 @@
 
 generated_at_utc=<normalized>
 runner_os=26.5.2
-runner_build=25F84
-xcode=Xcode 26.6 Build version 17F113 
-raw_size=67108864
-backing_sha_before=7584b022bb0cc2d4a99af42edd58d0c877d80c14ab7ca5b32540875b9603660e
-backing_sha_after=unknown
-backing_meta_before=67108864:1787755414:100444
-backing_meta_after=unknown
-final_mount=none
-finder_enum_ok=unknown
 
-## baseline raw diskutil
-   Device Identifier:         disk8
-   Device Node:               /dev/disk8
-   Whole:                     Yes
-   Part of Whole:             disk8
-   Device / Media Name:       Disk Image
-
-   Volume Name:               EDP_FUSET_FINAL
-   Mounted:                   Yes
-   Mount Point:               /Volumes/EDP_FUSET_FINAL
-
-   Content (IOContent):       None
-   File System Personality:   HFS+
-   Type (Bundle):             hfs
-   Name (User Visible):       Mac OS Extended
-   Owners:                    Disabled
-
-   OS Can Be Installed:       No
-   Media Type:                Generic
-   Protocol:                  Disk Image
-   SMART Status:              Not Supported
-   Volume UUID:               2288B700-AFFD-33EB-BDEE-82797D72A2B8
-
-   Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
-   Device Block Size:         512 Bytes
-
-   Volume Total Space:        67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
-   Volume Used Space:         1.6 MB (1605632 Bytes) (exactly 3136 512-Byte-Units) (2.4%)
-   Volume Free Space:         65.5 MB (65503232 Bytes) (exactly 127936 512-Byte-Units) (97.6%)
-   Allocation Block Size:     4096 Bytes
-
-   Media OS Use Only:         No
-   Media Read-Only:           Yes
-   Volume Read-Only:          Yes (read-only mount flag set)
-
-   Device Location:           External
-   Removable Media:           Removable
-   Media Removal:             Software-Activated
-
-   Solid State:               Info not available
-   Virtual:                   Yes
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-77641ef7-5324-49b7-ab25-f532284af8a0/session.json on /Users/runner/work/_temp/hidden-f1a43341-214c-436f-9dee-0444a3d423f0 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 
 
-## hidden transport mount
 
-## hdiutil attach
 
-## final diskutil
-
-## final mount
-
-## final POSIX listing
-
-## Finder enumeration
-
-## read-only write attempt
-
-## bridge log
+SESSION_ID=edp-fuset-77641ef7-5324-49b7-ab25-f532284af8a0
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-77641ef7-5324-49b7-ab25-f532284af8a0/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-77641ef7-5.sock
+MOUNTPOINT=/Users/runner/work/_temp/hidden-f1a43341-214c-436f-9dee-0444a3d423f0
+BACKING_SIZE=67108864
+ACCESS_MODE=read-only
+mount process exited status=0
