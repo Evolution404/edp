@@ -95,7 +95,8 @@ jobs:
           "${RUNNER_TEMP}/FuseTMinimalBridge" --backing "${RAW}" --mountpoint "${HIDDEN}" --volume-name 'EDP Hidden Raw Transport' >"${BLOG}" 2>&1 &
           BPID=$!; echo "BPID=${BPID}" >> "${GITHUB_ENV}"; echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"; echo "BLOG=${BLOG}" >> "${GITHUB_ENV}"
           for i in $(seq 1 25); do mount | grep -Fq " on ${HIDDEN} " && break; kill -0 "${BPID}"; sleep 1; done
-          mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/hidden-mount.txt"; grep -q 'read-only' "${RUNNER_TEMP}/hidden-mount.txt"
+          mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/hidden-mount.txt"
+          grep -Fq 'ACCESS_MODE=read-only' "${BLOG}"
           EXPOSED="${HIDDEN}/volume.raw"
           OUT="$(hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"; printf '%s\n' "${OUT}" | tee "${RUNNER_TEMP}/attach.txt"
           DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"; MOUNT="/Volumes/${VOLNAME}"; test -n "${DISK}"
