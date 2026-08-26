@@ -222,18 +222,17 @@ jobs:
           find "${FINAL_MOUNT}" -maxdepth 2 -print | tee "${RUNNER_TEMP}/final-find.txt"
           grep -Fq "${FINAL_MOUNT}/EDP_SENTINEL.txt" "${RUNNER_TEMP}/final-find.txt"
 
-          # F5 is independent of GUI automation and is a mandatory core check.
-          if printf '%s\n' "${MOUNT_LINE}" | grep -Eiq 'fuse-t|fuset'; then
-            echo 'final user-visible filesystem unexpectedly mounted as FUSE-T' >&2
-            exit 1
-          fi
+          # F5 validates the actual filesystem type, never volume-name text.
+          FINAL_FS_TYPE="$(stat -f %T "${FINAL_MOUNT}")"
+          echo "FINAL_FS_TYPE=${FINAL_FS_TYPE}" | tee "${RUNNER_TEMP}/final-fs-type.txt"
+          test "${FINAL_FS_TYPE}" = 'hfs'
           grep -Eq 'File System Personality:[[:space:]]+HFS\+' "${RUNNER_TEMP}/final-diskutil.txt"
           grep -Eq 'Type \(Bundle\):[[:space:]]+hfs' "${RUNNER_TEMP}/final-diskutil.txt"
+          printf '%s\n' "${MOUNT_LINE}" | grep -Eq '\(hfs,'
           echo 'RESULT=F5_FINAL_FILESYSTEM_IS_APPLE_HFS_NOT_FUSET'
 
           # Finder is tested explicitly, but hosted-runner AppleEvents/TCC is
-          # kept separate from filesystem correctness. A syntax error is still
-          # treated as a test bug and recorded distinctly.
+          # kept separate from filesystem correctness.
           FINDER_SCRIPT="${RUNNER_TEMP}/finder-enum.applescript"
           cat > "${FINDER_SCRIPT}" <<'OSA'
           on run argv
@@ -300,6 +299,7 @@ jobs:
             echo
             echo '## final diskutil'
             cat "${RUNNER_TEMP}/final-diskutil.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/final-fs-type.txt" 2>/dev/null || true
             echo
             echo '## final mount'
             cat "${RUNNER_TEMP}/final-mount.txt" 2>/dev/null || true
