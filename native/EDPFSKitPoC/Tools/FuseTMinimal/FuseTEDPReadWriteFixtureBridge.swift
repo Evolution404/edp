@@ -141,6 +141,7 @@ private enum FuseTEDPReadWriteFixtureBridgeMain {
             }
             let backing = try EDPFixtureReadWriteBacking(arguments: arguments, password: password)
             print("BACKING_MODE=EDP_FILE_FIXTURE_READWRITE_RANDOM_ACCESS")
+            print("RAW_ACCESS=FILE|O_RDWR|O_CLOEXEC")
             print("CONTAINER_WRITABLE=true")
             print("PLAINTEXT_CACHE=none")
             print("DEVICE_ID=\(backing.unlocked.deviceID)")
