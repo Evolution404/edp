@@ -10,8 +10,8 @@ private enum MatrixError: Error, CustomStringConvertible {
     }
 }
 
-private func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
-    guard condition() else { throw MatrixError.failed(message) }
+private func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
+    guard try condition() else { throw MatrixError.failed(message) }
 }
 
 private func deterministicBytes(count: Int, seed: UInt64) -> Data {
