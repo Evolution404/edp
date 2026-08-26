@@ -106,3 +106,12 @@
 - `libfuse.dylib` 也明确依赖该绝对路径；问题只是 NTFS-3G 链接时缺少 framework search path。
 - `build-ntfs3g-runtime.sh` 增加 `-F/Library/Filesystems/macfuse.fs/Contents/Frameworks`，使 5.3.2/5.3.3 都能使用官方 MFMount framework 完成链接。
 - 下一次 matrix 才是有效的版本行为对照。
+
+### 2026-08-26 — macFUSE 5.3.2 / 5.3.3 第二轮对照
+
+- run `32918126839`，commit `5989bba`。
+- 5.3.3：NTFS-3G runtime 构建成功，nonlocal FSKit mount 稳定，root/nested regular-file create 均继续返回 `ENOENT`；与前两轮完全一致。
+- 5.3.2：NTFS-3G runtime 已成功构建，但在启动最外层 `edp-readwrite-fuse` bridge 时发生 `SIGSEGV`，日志停在 `EDP_FUSE_BLOCK_SIZE=134217728`，尚未进入 NTFS-3G mount/create。
+- 因此当前不能把 5.3.2 判定为“create 正常”或“create 也失败”；它在更早的 libfuse/FSKit bridge 阶段即不兼容。
+- 暂不修改产品 pin（仍为 5.3.3）。
+- A2 下一判别实验：用最小 libfuse2 filesystem 在 macFUSE 5.3.3 nonlocal FSKit 下直接测试 regular-file create；若最小 create 也失败，则根因在 macFUSE FSKit/libfuse2 compatibility；若最小 create 成功，则继续 instrument NTFS-3G `create` callback / request sequence。
