@@ -134,4 +134,6 @@
 - 最小探针当前同样缺 `.fgetattr`，因此下一实验只增加 `fgetattr -> getattr` wrapper；若 create/write/read 立即通过，即可确认根因并为 NTFS-3G 提供最小兼容补丁。
 - run `32918481783` 已完成：5.3.2 与 5.3.3 都成功 mount；两边都打印 `FUSE2_CREATE path=/created.txt flags=0xa02`，证明 `create` callback 已真正执行，但 shell 端同时报 `Function not implemented`，`write` callback 未发生。
 - 结论：版本回退不能解决这个最小 create 问题；当前要追踪 `create` 返回之后 FSKit/libfuse2 请求的下一操作（优先检查 `ftruncate` / `fgetattr` / setattr 类 callback），直到最小 probe 能完成 create→write→read。
-- 已在最小 probe 中实现并注册 `fgetattr -> getattr` 与 `ftruncate -> truncate` wrapper，并增加 `FUSE2_FGETATTR` / `FUSE2_FTRUNCATE` / `FUSE2_TRUNCATE` 日志；静态编译、`bash -n`、`git diff --check` 均通过。下一轮 CI 直接验证 post-create `ENOSYS` 是否消失。
+- 已在最小 probe 中实现并注册 `fgetattr -> getattr` 与 `ftruncate -> truncate` wrapper，并增加 `FUSE2_FGETATTR` / `FUSE2_FTRUNCATE` / `FUSE2_TRUNCATE` 日志；静态编译、`bash -n`、`git diff --check` 均通过。
+- run `32918751432`：`FUSE2_CREATE` 与 `FUSE2_FGETATTR` 均被实际调用，但随后调用方仍收到 `ENOSYS`，且 `ftruncate/write` 尚未发生，说明缺口继续位于 create 后 Apple 属性阶段。
+- 已继续为最小 probe 增加 macOS 专有 `setattr_x` / `fsetattr_x` / `getxtimes` callback，并逐项打印调用日志；本地静态编译通过。下一轮 CI 用一轮结果确认 FSKit 是否强制依赖这些 Apple 扩展。

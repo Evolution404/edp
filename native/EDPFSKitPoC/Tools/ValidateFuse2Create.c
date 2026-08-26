@@ -130,6 +130,34 @@ static int m_fgetattr(const char *path, struct stat *st, struct fuse_file_info *
     return m_getattr(path, st);
 }
 
+#ifdef __APPLE__
+static int m_setattr_x(const char *path, struct setattr_x *attr) {
+    fprintf(stderr, "FUSE2_SETATTR_X path=%s valid=0x%x size=%lld\n",
+            path, (unsigned int)attr->valid, (long long)attr->size);
+    if (SETATTR_WANTS_SIZE(attr)) return m_truncate(path, attr->size);
+    return 0;
+}
+
+static int m_fsetattr_x(const char *path, struct setattr_x *attr,
+                        struct fuse_file_info *fi) {
+    (void)fi;
+    fprintf(stderr, "FUSE2_FSETATTR_X path=%s valid=0x%x size=%lld\n",
+            path, (unsigned int)attr->valid, (long long)attr->size);
+    return m_setattr_x(path, attr);
+}
+
+static int m_getxtimes(const char *path, struct timespec *bkuptime,
+                       struct timespec *crtime) {
+    struct stat st;
+    int rc = m_getattr(path, &st);
+    if (rc != 0) return rc;
+    *bkuptime = st.st_mtimespec;
+    *crtime = st.st_birthtimespec;
+    fprintf(stderr, "FUSE2_GETXTIMES path=%s\n", path);
+    return 0;
+}
+#endif
+
 static int m_unlink(const char *path) {
     const char *name = NULL;
     if (split_file_path(path, &name) != 0 || !file_exists || strcmp(name, file_name) != 0) {
@@ -163,6 +191,11 @@ static struct fuse_operations ops = {
     .truncate = m_truncate,
     .ftruncate = m_ftruncate,
     .fgetattr = m_fgetattr,
+#ifdef __APPLE__
+    .setattr_x = m_setattr_x,
+    .fsetattr_x = m_fsetattr_x,
+    .getxtimes = m_getxtimes,
+#endif
     .unlink = m_unlink,
     .flush = m_flush,
     .release = m_release,
