@@ -134,6 +134,13 @@ jobs:
             /usr/sbin/diskutil list
             echo '=== relevant processes ==='
             /bin/ps -axo pid,ppid,state,etime,command | /usr/bin/grep -E 'ntfs-3g|edp-readwrite-fuse|macfuse|fskit|DiskImages2|umount' || true
+            echo '=== macFUSE / FSKit unified log ==='
+            /usr/bin/log show --last 5m --style compact \
+              --predicate '(process == "fskitd") OR (process == "fskit_agent") OR (process CONTAINS[c] "macfuse") OR (eventMessage CONTAINS[c] "macfuse") OR (eventMessage CONTAINS[c] "ntfs")' \
+              2>&1 | /usr/bin/tail -n 500 || true
+            echo '=== PluginKit macFUSE modules ==='
+            /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse || true
+            /usr/bin/pluginkit -mAvvv -i io.macfuse.app.fsmodule.macfuse-local || true
           } >"${OUT}" 2>&1
           cat "${OUT}"
 

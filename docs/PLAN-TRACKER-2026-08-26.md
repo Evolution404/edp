@@ -49,4 +49,14 @@
 ### 2026-08-26 — Tracker 初始化
 
 - 建立计划追踪文件。
-- 下一步：执行 A1，对 `probe-edp-crypto-ntfs-readwrite.sh` 增加 NTFS PID、exit status、mount 存活窗口、根目录 I/O 和 macFUSE/FSKit 日志诊断，定位 mount 消失根因。
+- 计划与 tracker 首次推送：commit `57ce3ba`。
+
+### 2026-08-26 — A1 生命周期诊断已实现
+
+- `probe-edp-crypto-ntfs-readwrite.sh` 已增加 NTFS-3G PID / process state / exit status 捕获。
+- mount 建立后按 T0 / 100 ms / 500 ms / 1 s 四个时间点验证 mount、`stat`、根目录 `readdir`。
+- 实际 I/O 被拆成 `BEFORE_MKDIR`、`AFTER_MKDIR`、`AFTER_MKDIR_100MS`、文件 create/random-write/delete 等阶段，便于确认首个致命操作。
+- NTFS-3G 一旦提前退出，会把 exit status 和完整 `ntfs-3g.log` 写入 CI report。
+- failure diagnostics 增加 macFUSE / FSKit unified log 与 PluginKit module 状态。
+- `bash -n`、`git diff --check` 已通过；若本机存在 `actionlint` 也已执行。
+- 状态：`A1 IN_PROGRESS`，等待本次 macOS 26 CI 给出生命周期根因证据。

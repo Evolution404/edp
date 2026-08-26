@@ -19,6 +19,7 @@ KEY_HEX="0123456789abcdeffedcba9876543210"
 TEST_VOLUME="EDPRWTEST"
 FUSE_PID=""
 NTFS_PID=""
+NTFS_EXIT_STATUS=""
 DECRYPTED_BSD=""
 CLEANUP_DONE=0
 
@@ -69,6 +70,56 @@ stop_process() {
   fi
 }
 
+ntfs_process_state() {
+  if [[ -z "${NTFS_PID}" ]]; then
+    printf 'none'
+    return 0
+  fi
+  local state
+  state="$(/bin/ps -o state= -p "${NTFS_PID}" 2>/dev/null | /usr/bin/tr -d '[:space:]' || true)"
+  printf '%s' "${state:-exited}"
+}
+
+record_ntfs_exit_if_dead() {
+  [[ -n "${NTFS_PID}" ]] || return 0
+  local state
+  state="$(ntfs_process_state)"
+  if [[ "${state}" != "exited" && "${state}" != Z* ]]; then
+    return 0
+  fi
+  if [[ -z "${NTFS_EXIT_STATUS}" ]]; then
+    set +e
+    wait "${NTFS_PID}"
+    NTFS_EXIT_STATUS=$?
+    set -e
+    log "NTFS_PID_EXIT_STATUS=${NTFS_EXIT_STATUS}"
+    log "NTFS_LOG_BEGIN"
+    while IFS= read -r line; do
+      log "NTFS_LOG=${line}"
+    done <"${NTFS_LOG}"
+    log "NTFS_LOG_END"
+  fi
+  return 1
+}
+
+diagnose_ntfs_state() {
+  local label="$1"
+  local state mounted stat_rc readdir_rc
+  state="$(ntfs_process_state)"
+  if is_mounted "${NTFS_MOUNT}"; then mounted=YES; else mounted=NO; fi
+  set +e
+  /usr/bin/stat -f '%d:%i:%HT' "${NTFS_MOUNT}" >/dev/null 2>&1
+  stat_rc=$?
+  /bin/ls -la "${NTFS_MOUNT}" >/dev/null 2>&1
+  readdir_rc=$?
+  set -e
+  log "NTFS_STATE label=${label} pid=${NTFS_PID:-none} process_state=${state} mounted=${mounted} stat_rc=${stat_rc} readdir_rc=${readdir_rc}"
+  if ! record_ntfs_exit_if_dead; then
+    return 1
+  fi
+  [[ "${mounted}" == YES && ${stat_rc} -eq 0 && ${readdir_rc} -eq 0 ]]
+}
+
 unmount_ntfs() {
   if is_mounted "${NTFS_MOUNT}"; then
     run_bounded 5 /sbin/umount "${NTFS_MOUNT}" >/dev/null 2>&1 || \
@@ -91,6 +142,10 @@ cleanup() {
   if (( CLEANUP_DONE )); then return 0; fi
   CLEANUP_DONE=1
 
+  if [[ -n "${NTFS_PID}" ]]; then
+    diagnose_ntfs_state "CLEANUP_ENTRY" || true
+    record_ntfs_exit_if_dead || true
+  fi
   unmount_ntfs
   if [[ -n "${DECRYPTED_BSD}" ]]; then
     run_bounded 5 /usr/sbin/diskutil eject "${DECRYPTED_BSD}" >/dev/null 2>&1 || \
@@ -175,6 +230,8 @@ start_ntfs() {
       "${source}" "${NTFS_MOUNT}" \
       >"${NTFS_LOG}" 2>&1 &
   NTFS_PID=$!
+  NTFS_EXIT_STATUS=""
+  log "NTFS_PID=${NTFS_PID}"
 
   for _ in $(seq 1 100); do
     is_mounted "${NTFS_MOUNT}" && break
@@ -189,6 +246,14 @@ start_ntfs() {
   mount_line="$(/sbin/mount | /usr/bin/grep -F " on ${NTFS_MOUNT} " || true)"
   log "NTFS_MOUNT_LINE=${mount_line}"
   printf '%s\n' "${mount_line}" | /usr/bin/grep -Eq '^macfuse://[^ ]+ on .+\(macfuse,.*fskit'
+
+  diagnose_ntfs_state "MOUNT_T0"
+  sleep 0.1
+  diagnose_ntfs_state "MOUNT_T100MS"
+  sleep 0.4
+  diagnose_ntfs_state "MOUNT_T500MS"
+  sleep 0.5
+  diagnose_ntfs_state "MOUNT_T1S"
 }
 
 eject_decrypted() {
@@ -263,7 +328,14 @@ log "RESULT=BUNDLED_NTFS3G_IMAGE_FSKIT_MOUNTED_READWRITE"
 PROOF_DIR="${NTFS_MOUNT}/EDP-RW"
 PROOF_PATH="${PROOF_DIR}/proof.bin"
 TEMP_PATH="${NTFS_MOUNT}/delete-me.tmp"
+log "STEP=NTFS_ROOT_IO_BEGIN"
+diagnose_ntfs_state "BEFORE_MKDIR"
 /bin/mkdir "${PROOF_DIR}"
+log "STEP=NTFS_MKDIR_OK"
+diagnose_ntfs_state "AFTER_MKDIR"
+sleep 0.1
+diagnose_ntfs_state "AFTER_MKDIR_100MS"
+log "STEP=NTFS_FILE_CREATE_BEGIN"
 python3 - "${PROOF_PATH}" "${TEMP_PATH}" <<'PY'
 import os
 import sys
@@ -280,6 +352,8 @@ with open(temp, "wb") as handle:
     handle.write(b"must disappear before remount")
 os.unlink(temp)
 PY
+log "STEP=NTFS_FILE_CREATE_RANDOMWRITE_DELETE_OK"
+diagnose_ntfs_state "AFTER_FILE_IO"
 /bin/mv "${PROOF_PATH}" "${PROOF_DIR}/proof-renamed.bin"
 PROOF_PATH="${PROOF_DIR}/proof-renamed.bin"
 /bin/sync
