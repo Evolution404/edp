@@ -305,4 +305,13 @@
 - 修正 bridge readiness：不再用 root `FileManager.isReadableFile(volume.raw)` 判断，而以 `getfsstat` mount table 是否出现 bridge mountpoint 为准，避免已经成功的 FSKit mount 被误判为 20 秒超时。
 - 修正只读完成判据：macFUSE FSKit 实测不会把 NTFS-3G `ro` 映射成 `MNT_RDONLY`，但 NTFS-3G 日志明确为 `Read-Only`，且底层 bridge 固定 `--device-auth-readonly`/write=`EROFS`。因此不再因缺失 `MNT_RDONLY` 主动杀掉已成功 mount，并记录 warning 说明双层 fail-closed 保证。
 - 真实实体 `/dev/disk4` 端到端 smoke 输出 `RESULT=XPC_MOUNT_SMOKE_OK`；最终状态 `authorized=true mounted=true rawAccessReady=true`，`/Volumes/EDP-NTFS` 可读取真实“交换区”文件，Finder 已打开该目录。
-- 只读负向验证：对 `/Volumes/EDP-NTFS/.edp-readonly-probe` 的 `touch` 返回非零且文件不存在；本里程碑仍未对实体 U 盘执行任何成功写入，A6 physical write 保持不做。
+- 只读负向验证：对 `/Volumes/EDP-NTFS/.edp-readonly-probe` 的 `touch` 返回非零且文件不存在；该只读里程碑当时未对实体 U 盘执行成功写入。
+
+### 2026-08-26 — Finder NTFS 读写路径实机打通
+
+- 用户随后明确要求将 Finder 交换区切换为 NTFS 可读写，因此解除此前 physical write 暂停约束；产品 raw-device Authorization 从精确 `sys.openfile.readonly./dev/rdiskN` 切到精确 `sys.openfile.readwrite./dev/rdiskN`。
+- `MountManager` 从 `--device-auth-readonly` 切换到已有 `--device-auth` / `edp_rw_open_device_fd` 路径；底层 raw fd 由 `authopen -extauth -o O_RDWR` 打开，写入仍经 EDP sector translation + SM4 对称变换进入实体设备。
+- Finder NTFS 层在 UID 501 同一 FSKit 用户会话中先执行 `ntfs-3g.probe --readwrite`；只有 status=0 才继续，dirty/hibernated/invalid NTFS 等继续使用 `EDPNTFSWriteSafety` fail-closed 拒绝。
+- 最终 NTFS-3G mount 去掉 `ro`，使用 production `backend=fskit,norecover,windows_names,streams_interface=openxattr,noatime,big_writes` 读写策略；若 mount table 明确返回 `MNT_RDONLY` 则视为失败。
+- 实体 `/dev/disk4` 完整 XPC smoke 输出 `RESULT=XPC_MOUNT_SMOKE_OK`，daemon 日志确认 `EDP mounted ... partition 2 as NTFS (read/write) at /Volumes/EDP-NTFS`；partition type 4 被 write probe 以 `not a valid NTFS volume` 正确拒绝，不影响 type 2 成功。
+- 实盘最小写验证通过：在 `/Volumes/EDP-NTFS` 创建 44-byte 临时 probe，立即读回内容一致、执行 `sync`、SHA256=`804aeb48591837af764647e84053b41b7bbdde80cf8f58125ccf22a95f2e5152`，随后删除并再次 `sync`，确认 probe 文件不存在；未修改任何既有用户文件。

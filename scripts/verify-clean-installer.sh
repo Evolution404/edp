@@ -84,6 +84,17 @@ echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
 [[ ! -e "${ROOT}/bin/ntfscp" ]]
 echo "RESULT=PRODUCTION_NTFS_RUNTIME_CONTAINS_NO_FIXTURE_TOOLS"
 
+/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F 'sys.openfile.readwrite.' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
+  | /usr/bin/grep -F 'NTFS (read/write)' >/dev/null
+if /usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
+  | /usr/bin/grep -F -- '--device-auth-readonly' >/dev/null; then
+  echo "production daemon unexpectedly references read-only encrypted bridge mode" >&2
+  exit 5
+fi
+echo "RESULT=PRODUCTION_NTFS_READWRITE_PATH_ENFORCED"
+
 /usr/bin/otool -L "${ROOT}/bin/edp-readwrite-fuse" \
   | /usr/bin/grep -F '@rpath/libEDPReadWriteBridge.dylib' >/dev/null
 /usr/bin/otool -L "${ROOT}/bin/ntfs-3g" \

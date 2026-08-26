@@ -356,7 +356,7 @@ private final class MountManager {
             identity: identity,
             executable: binaryRoot + "/edp-readwrite-fuse",
             arguments: [
-                "--device-auth-readonly", disk.rawPath, disk.vidHex, disk.pidHex,
+                "--device-auth", disk.rawPath, disk.vidHex, disk.pidHex,
                 String(disk.sizeBytes), String(partitionType), "0", bridgeMount,
             ]
         )
@@ -385,7 +385,7 @@ private final class MountManager {
 
             let decryptedVolume = bridgeMount + "/volume.raw"
             let mounted: (String, String?, Process?)
-            mounted = try mountNTFSReadOnly(
+            mounted = try mountNTFSReadWrite(
                 decryptedVolume,
                 suffix: suffix,
                 identity: identity
@@ -462,7 +462,7 @@ private final class MountManager {
         return ("NTFS", mountpoint, process)
     }
 
-    private func mountNTFSReadOnly(
+    private func mountNTFSReadWrite(
         _ device: String,
         suffix: String,
         identity: (uid_t, gid_t)
@@ -473,13 +473,14 @@ private final class MountManager {
             binaryRoot + "/edp-console-exec",
             [
                 String(identity.0), String(identity.1), "--",
-                binaryRoot + "/ntfs-3g.probe", "--readonly", device,
+                binaryRoot + "/ntfs-3g.probe", "--readwrite", device,
             ],
             environment: probeEnvironment,
             accepted: Set(0...21)
         )
         guard probe.status == 0 else {
-            throw fail("NTFS read-only probe refused the volume (\(probe.status))")
+            throw fail(EDPNTFSWriteSafety.refusalMessage(for: probe.status)
+                ?? "NTFS read/write probe refused the volume (\(probe.status))")
         }
         let label = "EDP-NTFS"
         let mountpoint = uniqueMountpoint(label)
@@ -493,7 +494,7 @@ private final class MountManager {
             binaryRoot: binaryRoot,
             identity: identity,
             executable: binaryRoot + "/ntfs-3g",
-            arguments: EDPNTFSMountPolicy.readOnlyCommandArguments(
+            arguments: EDPNTFSMountPolicy.commandArguments(
                 uid: identity.0,
                 gid: identity.1,
                 volumeName: label
@@ -511,12 +512,13 @@ private final class MountManager {
         try waitUntil(seconds: 20) { EDPNativeMountTable.isMountpoint(mountpoint) || !process.isRunning }
         guard process.isRunning, EDPNativeMountTable.isMountpoint(mountpoint) else {
             process.terminate()
-            throw fail("NTFS-3G Finder read-only mount failed; see \(logPath)")
+            throw fail("NTFS-3G Finder read/write mount failed; see \(logPath)")
         }
-        if EDPNativeMountTable.isReadOnly(mountpoint) != true {
-            NSLog("macFUSE FSKit did not surface MNT_RDONLY for %@; relying on NTFS-3G ro policy plus the read-only encrypted block bridge", mountpoint)
+        if EDPNativeMountTable.isReadOnly(mountpoint) == true {
+            process.terminate()
+            throw fail("NTFS-3G unexpectedly mounted read-only")
         }
-        return ("NTFS (read-only)", mountpoint, process)
+        return ("NTFS (read/write)", mountpoint, process)
     }
 
     func removeMissing(availableBSD: Set<String>) {

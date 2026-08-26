@@ -191,7 +191,7 @@ final class EDPVaultViewModel: ObservableObject {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(errAuthorizationInvalidRef))
         }
         let rawPath = "/dev/r\(device.bsdName)"
-        let rightName = "sys.openfile.readonly.\(rawPath)"
+        let rightName = "sys.openfile.readwrite.\(rawPath)"
         return try authorizationData(for: rightName, using: rawAuthorizationRef)
     }
 
@@ -521,7 +521,7 @@ struct EDPUSBVaultApp: App {
                 defer { AuthorizationFree(authorization, []) }
                 let rawPath = "/dev/r\(bsdName)"
                 let external = try authorizationData(
-                    for: "sys.openfile.readonly.\(rawPath)",
+                    for: "sys.openfile.readwrite.\(rawPath)",
                     using: authorization
                 )
 

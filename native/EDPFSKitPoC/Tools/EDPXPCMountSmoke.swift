@@ -26,7 +26,7 @@ private func makeRawAuthorization(rawPath: String) throws -> (AuthorizationRef, 
     }
 
     do {
-        let rightName = "sys.openfile.readonly.\(rawPath)"
+        let rightName = "sys.openfile.readwrite.\(rawPath)"
         let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
         let rightStatus = rightName.withCString { name in
             var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
