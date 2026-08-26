@@ -1,0 +1,23 @@
+# FUSE-T encrypted EDP ExFAT read-write macOS 26 CI
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+
+cipher_sha_before=unknown
+cipher_sha_after=unknown
+
+## hidden transport
+
+## first ExFAT disk
+
+## Finder
+
+## xattr
+
+## remount
+
+## bridge
+
+## lsof
