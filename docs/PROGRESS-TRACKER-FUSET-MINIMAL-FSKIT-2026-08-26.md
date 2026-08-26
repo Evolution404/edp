@@ -7,7 +7,7 @@
 
 ## 当前总状态
 
-**状态：Phase A 准备中**
+**状态：Phase A 已完成，进入 Phase B**
 
 当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
 
@@ -32,15 +32,15 @@
 | A1 | ✅ | 创建测试分支 | `test/fuset-minimal-fskit-bridge` |
 | A2 | ✅ | 编写实验计划 | `docs/PLAN-2026-08-26-fuset-minimal-fskit-bridge.md` |
 | A3 | ✅ | 创建实时 tracker | 本文件 |
-| A4 | ⏳ | 固化 FUSE-T 1.2.7 host/appex SHA-256、体积、版本 | 待执行 |
-| A5 | ⏳ | 固化 codesign / Team / hardened runtime | 待执行 |
-| A6 | ⏳ | 固化 host/appex provisioning profile | 待执行 |
-| A7 | ⏳ | 确认 `ProvisionsAllDevices=true` + FSKit entitlement | 待执行 |
-| A8 | ⏳ | 确认无 FUSE-T core / go-nfsv4 / global libfuse3 | 待执行 |
-| A9 | ⏳ | 确认无 macFUSE runtime/helper/KEXT | 待执行 |
-| A10 | ⏳ | 确认 PlugInKit 第三方实验模块状态 | 待执行 |
+| A4 | ✅ | 固化 FUSE-T 1.2.7 host/appex SHA-256、体积、版本 | host 1.7 MB、appex 400 KB；二者 `CFBundleShortVersionString=0.1.3`；host executable SHA-256 `fc64ae9c17efc70540db07f256ecd75af1ff174a9fb83611bb6ffdb1cba8f2c5`；appex executable SHA-256 `199ba1246d36db18ebf45c60abd3d68ca4b4ad9d8080d55aa8e856f574772086` |
+| A5 | ✅ | 固化 codesign / Team / hardened runtime | host `org.fuset.fskit-srv`，appex `org.fuset.fskit-srv.module`；`Developer ID Application: alex fishman (6DY7Z4SVDZ)`；Team `6DY7Z4SVDZ`；Runtime 26.4.0；Gatekeeper `accepted / Notarized Developer ID` |
+| A6 | ✅ | 固化 host/appex provisioning profile | appex profile `Mac Team Direct Provisioning Profile: org.fuset.fskit-srv.module`，Team `6DY7Z4SVDZ`，expires 2044-03-25 |
+| A7 | ✅ | 确认 `ProvisionsAllDevices=true` + FSKit entitlement | profile `ProvisionsAllDevices=true`；entitlement `com.apple.developer.fskit.fsmodule=true` |
+| A8 | ✅ | 确认无 FUSE-T core / go-nfsv4 / global libfuse3 | `/Library/Application Support/fuse-t`、`/usr/local/bin/go-nfsv4`、`/usr/local/lib/libfuse3.dylib` 均不存在 |
+| A9 | ✅ | 确认无 macFUSE runtime/helper/KEXT | `/Library/Filesystems/macfuse.fs`、launch daemon、privileged helper 均不存在；`kmutil showloaded` 无 macFUSE/FUSE-T KEXT |
+| A10 | ✅ | 确认 PlugInKit 第三方实验模块状态 | 仅 `org.fuset.fskit-srv.module` 作为当前第三方实验 FSKit module；前序探测遗留 `FskitSrvModule` 进程和 `/private/tmp/fuset-edp*` 已清理 |
 
-Phase A 验收：**未完成**。
+Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applications/fuse-t.app`，不安装 FUSE-T core，不存在 macFUSE runtime/KEXT。
 
 ---
 
@@ -192,11 +192,11 @@ Phase H 验收：**未完成**。
 立即执行：
 
 ```text
-A4-A10 固化干净运行时/签名基线
+B1 获取与 FUSE-T 内置 libfuse 3.19 匹配的最小示例
 ↓
-commit + push
+B2 仅从 `/private/tmp` 临时加载 libfuse3，运行 `backend=fskit`
 ↓
-B1-B3：libfuse 3.19 backend=fskit 官方 smoke
+B3 捕获官方 session/resource 创建路径
 ```
 
 ## 失败实验登记
@@ -212,4 +212,5 @@ B1-B3：libfuse 3.19 backend=fskit 官方 smoke
 
 | Commit | 内容 | 远端状态 |
 |---|---|---|
-| 待提交 | 新测试分支 + 计划 + 实时 tracker | 待 push |
+| `2fe69cd` | 新测试分支 + 计划 + 实时 tracker | 已 push |
+| 待提交 | Phase A：固化 FUSE-T 最小签名/运行时基线 | 待 push |
