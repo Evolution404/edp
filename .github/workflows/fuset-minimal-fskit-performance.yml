@@ -1,0 +1,371 @@
+name: FUSE-T Minimal FSKit Performance
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTReadBenchmark.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPUnlockBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/PrepareEDPFilesystemFixture.swift"
+      - "native/EDPFSKitPoC/Extension/EDPRawIO.swift"
+      - "native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Extension/EDPCrypto.swift"
+      - "native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift"
+      - "native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift"
+      - "native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
+      - "native/EDPFSKitPoC/Extension/EDPBlockDevice.swift"
+      - "fixtures/golden/disks.json"
+      - "fixtures/real_disks/disk4/LBA11.bin"
+      - "fixtures/real_disks/disk4/LBA12.bin"
+      - ".github/workflows/fuset-minimal-fskit-performance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fuset-minimal-fskit-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      FUSET_VERSION: "1.2.7"
+      FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
+      FUSET_PKG_URL: "https://github.com/macos-fuse-t/fuse-t/releases/download/1.2.7/fuse-t-macos-installer-1.2.7.pkg"
+      FUSET_BUNDLE_ID: "org.fuset.fskit-srv.module"
+      GOLDEN_NAME: "disk4_real_lexar"
+      REAL_LBA11: "fixtures/real_disks/disk4/LBA11.bin"
+      REAL_LBA12: "fixtures/real_disks/disk4/LBA12.bin"
+      BENCH_SPAN: "268435456"
+      DIAG_PATH: "docs/diagnostics/fuset-performance-macos26-ci.txt"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify clean macOS 26 runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          test "$(xcodebuild -version | awk '/Xcode/ {print int($2); exit}')" -ge 26
+          test ! -e /Library/Filesystems/macfuse.fs
+          test ! -e /Library/Application\ Support/fuse-t
+          test ! -e /usr/local/bin/go-nfsv4
+          echo 'RESULT=H_RUNTIME_CLEAN'
+
+      - name: Prepare real-metadata sparse EDP benchmark fixture
+        run: |
+          set -euo pipefail
+          PASSWORD_FILE="${RUNNER_TEMP}/edp-bench-password"
+          python3 - fixtures/golden/disks.json "${GOLDEN_NAME}" "${PASSWORD_FILE}" "${GITHUB_ENV}" <<'PY'
+          import json, os, sys
+          source, wanted, password_path, env_path = sys.argv[1:]
+          with open(source, 'r', encoding='utf-8') as f:
+              item = next(d for d in json.load(f)['disks'] if d['name'] == wanted)
+          params = item['lba11_params']
+          fd = os.open(password_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          try:
+              os.write(fd, item['password'].encode('utf-8'))
+          finally:
+              os.close(fd)
+          with open(env_path, 'a', encoding='utf-8') as env:
+              env.write(f"EDP_VID={params['vid']}\n")
+              env.write(f"EDP_PID={params['pid']}\n")
+              env.write(f"EDP_DEVICE_SIZE={params['size_bytes']}\n")
+              env.write("EDP_PARTITION_TYPE=2\n")
+              env.write(f"PASSWORD_FILE={password_path}\n")
+          print('RESULT=H_REALMETA_VECTOR_READY')
+          PY
+
+          PLAIN="${RUNNER_TEMP}/bench-seed.raw"
+          CONTAINER="${RUNNER_TEMP}/bench-edp-whole-device.raw"
+          dd if=/dev/zero of="${PLAIN}" bs=1048576 count=1 status=none
+          PREPARE_BIN="${RUNNER_TEMP}/PrepareEDPFilesystemFixture"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/PrepareEDPFilesystemFixture.swift \
+            -o "${PREPARE_BIN}"
+          "${PREPARE_BIN}" \
+            --lba11 "${REAL_LBA11}" \
+            --lba12 "${REAL_LBA12}" \
+            --vid "${EDP_VID}" \
+            --pid "${EDP_PID}" \
+            --device-size "${EDP_DEVICE_SIZE}" \
+            --partition-type "${EDP_PARTITION_TYPE}" \
+            --plaintext "${PLAIN}" \
+            --output "${CONTAINER}" \
+            --password-file "${PASSWORD_FILE}" \
+            | tee "${RUNNER_TEMP}/bench-prepare.log"
+          grep -Fq 'RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY' "${RUNNER_TEMP}/bench-prepare.log"
+          chmod 0444 "${CONTAINER}"
+          du -h "${CONTAINER}" | tee "${RUNNER_TEMP}/bench-sparse-size.txt"
+          echo "CONTAINER=${CONTAINER}" >> "${GITHUB_ENV}"
+          echo 'RESULT=H_REALMETA_SPARSE_FIXTURE_READY'
+
+      - name: Stage and enable only official signed FUSE-T FSKit app
+        run: |
+          set -euo pipefail
+          PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
+          EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
+          curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
+          test "$(shasum -a 256 "${PKG}" | awk '{print $1}')" = "${FUSET_PKG_SHA256}"
+          pkgutil --expand-full "${PKG}" "${EXPANDED}"
+          SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
+          test -n "${SOURCE_APP}"
+          codesign --verify --deep --strict --verbose=2 "${SOURCE_APP}"
+          sudo rm -rf /Applications/fuse-t.app
+          sudo ditto "${SOURCE_APP}" /Applications/fuse-t.app
+          APP=/Applications/fuse-t.app
+          EXT="${APP}/Contents/Extensions/FskitSrvModule.appex"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}" || true
+          pluginkit -a "${APP}" || true
+          pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/bench-pluginkit.txt" || true
+          grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/bench-pluginkit.txt"
+
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${ENABLED_PLIST}" "${FUSET_BUNDLE_ID}" <<'PY'
+          import os, plistlib, sys
+          path, bundle_id = sys.argv[1:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, 'rb') as f:
+                      value = plistlib.load(f)
+                  if isinstance(value, list):
+                      enabled = [x for x in value if isinstance(x, str)]
+              except Exception:
+                  pass
+          if bundle_id not in enabled:
+              enabled.append(bundle_id)
+          with open(path, 'wb') as f:
+              plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          PY
+          chmod 600 "${ENABLED_PLIST}"
+          killall -9 fskit_agent 2>/dev/null || true
+          killall -9 extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+
+      - name: Compile optimized product bridge and benchmark client
+        run: |
+          set -euo pipefail
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors -D FUSET_BRIDGE_LIBRARY \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift \
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPUnlockBridge.swift \
+            -o "${RUNNER_TEMP}/FuseTEDPUnlockBridge"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTReadBenchmark.swift \
+            -o "${RUNNER_TEMP}/FuseTReadBenchmark"
+          test -x "${RUNNER_TEMP}/FuseTEDPUnlockBridge"
+          test -x "${RUNNER_TEMP}/FuseTReadBenchmark"
+          echo 'RESULT=H_BENCH_BINARIES_READY'
+
+      - name: Mount product EDP unlock transport
+        run: |
+          set -euo pipefail
+          HIDDEN="${RUNNER_TEMP}/edp-bench-hidden-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          LOG="${RUNNER_TEMP}/edp-bench-bridge.log"
+          mkdir -p "${HIDDEN}"
+          echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"
+          echo "BRIDGE_LOG=${LOG}" >> "${GITHUB_ENV}"
+          "${RUNNER_TEMP}/FuseTEDPUnlockBridge" \
+            --backing "${CONTAINER}" \
+            --vid "${EDP_VID}" \
+            --pid "${EDP_PID}" \
+            --device-size "${EDP_DEVICE_SIZE}" \
+            --partition-type "${EDP_PARTITION_TYPE}" \
+            --password-file "${PASSWORD_FILE}" \
+            --mountpoint "${HIDDEN}" \
+            --volume-name 'EDP Performance Hidden Raw Transport' \
+            >"${LOG}" 2>&1 &
+          BRIDGE_PID=$!
+          echo "BRIDGE_PID=${BRIDGE_PID}" >> "${GITHUB_ENV}"
+          for attempt in $(seq 1 30); do
+            if mount | grep -Fq " on ${HIDDEN} "; then break; fi
+            kill -0 "${BRIDGE_PID}" 2>/dev/null
+            sleep 1
+          done
+          mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/bench-hidden-mount.txt"
+          test ! -e "${PASSWORD_FILE}"
+          EXPOSED="${HIDDEN}/volume.raw"
+          test -f "${EXPOSED}"
+          test "$(stat -f %z "${EXPOSED}")" -ge "${BENCH_SPAN}"
+          echo "EXPOSED=${EXPOSED}" >> "${GITHUB_ENV}"
+          grep -Fq 'BACKING_MODE=EDP_UNLOCK_RANDOM_ACCESS' "${LOG}"
+          grep -Fq 'RAW_ACCESS=O_RDONLY|O_CLOEXEC' "${LOG}"
+          grep -Fq 'PLAINTEXT_CACHE=none' "${LOG}"
+          echo 'RESULT=H_PRODUCT_TRANSPORT_READY'
+
+      - name: H1 random read benchmark matrix
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/h1-random-raw.txt"
+          SUMMARY="${RUNNER_TEMP}/h1-random-summary.txt"
+          : > "${RAW}"
+          for spec in '4096 8192' '65536 2048' '1048576 256'; do
+            set -- ${spec}
+            block="$1"
+            operations="$2"
+            for trial in 1 2 3; do
+              "${RUNNER_TEMP}/FuseTReadBenchmark" \
+                --path "${EXPOSED}" \
+                --pattern random \
+                --block-size "${block}" \
+                --operations "${operations}" \
+                --span-bytes "${BENCH_SPAN}" | tee -a "${RAW}"
+            done
+          done
+          python3 - "${RAW}" "${SUMMARY}" <<'PY'
+          import re, statistics, sys
+          source, output = sys.argv[1:]
+          rows = {}
+          rx = re.compile(r'block_bytes=(\d+).*mib_per_s=([0-9.]+).*iops=([0-9.]+)')
+          with open(source, 'r', encoding='utf-8') as f:
+              for line in f:
+                  m = rx.search(line)
+                  if not m:
+                      continue
+                  block = int(m.group(1))
+                  rows.setdefault(block, []).append((float(m.group(2)), float(m.group(3))))
+          with open(output, 'w', encoding='utf-8') as out:
+              for block in sorted(rows):
+                  throughput = statistics.median(x[0] for x in rows[block])
+                  iops = statistics.median(x[1] for x in rows[block])
+                  out.write(f'H1 block_bytes={block} median_mib_per_s={throughput:.3f} median_iops={iops:.1f}\n')
+          PY
+          cat "${SUMMARY}"
+          test "$(wc -l < "${SUMMARY}" | tr -d ' ')" -eq 3
+          echo 'RESULT=H1_RANDOM_READ_MATRIX_CAPTURED'
+
+      - name: H2-H3 sequential throughput and resource baseline
+        run: |
+          set -euo pipefail
+          SEQ_OUT="${RUNNER_TEMP}/h2-sequential.txt"
+          TIME_OUT="${RUNNER_TEMP}/h3-client-time.txt"
+          RSS_OUT="${RUNNER_TEMP}/h3-bridge-rss.txt"
+          : > "${RSS_OUT}"
+          BRIDGE_CPU_BEFORE="$(ps -o time= -p "${BRIDGE_PID}" | xargs)"
+          echo "bridge_cpu_before=${BRIDGE_CPU_BEFORE}" > "${RUNNER_TEMP}/h3-bridge-summary.txt"
+
+          (
+            while kill -0 "${BRIDGE_PID}" 2>/dev/null; do
+              ps -o rss=,%cpu= -p "${BRIDGE_PID}" >> "${RSS_OUT}" 2>/dev/null || true
+              sleep 0.2
+            done
+          ) &
+          SAMPLER_PID=$!
+          set +e
+          /usr/bin/time -l "${RUNNER_TEMP}/FuseTReadBenchmark" \
+            --path "${EXPOSED}" \
+            --pattern sequential \
+            --block-size 1048576 \
+            --operations 256 \
+            --span-bytes "${BENCH_SPAN}" \
+            >"${SEQ_OUT}" 2>"${TIME_OUT}"
+          BENCH_RC=$?
+          set -e
+          kill "${SAMPLER_PID}" 2>/dev/null || true
+          wait "${SAMPLER_PID}" 2>/dev/null || true
+          test "${BENCH_RC}" -eq 0
+
+          cat "${SEQ_OUT}"
+          cat "${TIME_OUT}"
+          grep -Fq 'pattern=sequential' "${SEQ_OUT}"
+          BRIDGE_CPU_AFTER="$(ps -o time= -p "${BRIDGE_PID}" | xargs)"
+          BRIDGE_RSS_MAX_KB="$(awk 'BEGIN{m=0} {if ($1+0>m) m=$1+0} END{print m}' "${RSS_OUT}")"
+          {
+            echo "bridge_cpu_after=${BRIDGE_CPU_AFTER}"
+            echo "bridge_rss_max_kb=${BRIDGE_RSS_MAX_KB}"
+          } >> "${RUNNER_TEMP}/h3-bridge-summary.txt"
+          cat "${RUNNER_TEMP}/h3-bridge-summary.txt"
+          test "${BRIDGE_RSS_MAX_KB}" -gt 0
+          echo 'RESULT=H2_SEQUENTIAL_256M_CAPTURED'
+          echo 'RESULT=H3_PROCESS_RESOURCE_SAMPLES_CAPTURED'
+
+      - name: Collect H1-H3 benchmark evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${DIAG_PATH}")"
+          {
+            echo '# FUSE-T minimal FSKit EDP read performance macOS 26 CI'
+            echo
+            echo 'generated_at_utc=<normalized>'
+            echo "runner_os=$(sw_vers -productVersion)"
+            echo "runner_build=$(sw_vers -buildVersion)"
+            echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
+            echo "bench_span=${BENCH_SPAN}"
+            echo
+            echo '## fixture'
+            cat "${RUNNER_TEMP}/bench-prepare.log" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/bench-sparse-size.txt" 2>/dev/null || true
+            echo
+            echo '## hidden transport'
+            cat "${RUNNER_TEMP}/bench-hidden-mount.txt" 2>/dev/null || true
+            cat "${BRIDGE_LOG:-/dev/null}" 2>/dev/null || true
+            echo
+            echo '## H1 raw trials'
+            cat "${RUNNER_TEMP}/h1-random-raw.txt" 2>/dev/null || true
+            echo
+            echo '## H1 medians'
+            cat "${RUNNER_TEMP}/h1-random-summary.txt" 2>/dev/null || true
+            echo
+            echo '## H2 sequential'
+            cat "${RUNNER_TEMP}/h2-sequential.txt" 2>/dev/null || true
+            echo
+            echo '## H3 client time -l'
+            cat "${RUNNER_TEMP}/h3-client-time.txt" 2>/dev/null || true
+            echo
+            echo '## H3 bridge summary'
+            cat "${RUNNER_TEMP}/h3-bridge-summary.txt" 2>/dev/null || true
+            echo
+            echo '## H3 bridge RSS samples'
+            cat "${RUNNER_TEMP}/h3-bridge-rss.txt" 2>/dev/null || true
+          } > "${DIAG_PATH}"
+          sed -n '1,500p' "${DIAG_PATH}"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          if [[ -n "${HIDDEN:-}" ]]; then /sbin/umount "${HIDDEN}"; fi
+          if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null; fi
+          rm -f "${PASSWORD_FILE:-}"
+          sudo rm -rf /Applications/fuse-t.app
+          exit 0
+
+      - name: Commit deterministic H1-H3 diagnostic
+        if: always() && github.ref_name == 'test/fuset-minimal-fskit-bridge'
+        run: |
+          set -euo pipefail
+          test -f "${DIAG_PATH}"
+          git add "${DIAG_PATH}"
+          if git diff --cached --quiet -- "${DIAG_PATH}"; then
+            echo 'RESULT=H_DIAGNOSTIC_UNCHANGED'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: capture FUSE-T performance baseline [skip ci]'
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
