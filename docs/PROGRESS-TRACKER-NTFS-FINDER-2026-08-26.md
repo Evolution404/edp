@@ -103,9 +103,11 @@ rename(temp, existing-target)
 - [ ] 建最小 macFUSE FSKit rename-over-existing reproducer，先不经过 EDP/NTFS
 - [ ] generic module 测一次
 - [ ] local module/outer-local 测一次
-- [ ] 记录普通 `rename`、`renamex_np`、swap/exclusive flag 行为
+- [x] 记录普通 `rename`、`renamex_np`、swap/exclusive flag 行为
+  - 2026-08-26 实机 outer-local `/Volumes/EDP-NTFS`：`renamex_np(flags=0)` 覆盖已有目标返回 `errno=102/EOPNOTSUPP`；`RENAME_EXCL` 对已有目标正确返回 `EEXIST(17)`；`RENAME_SWAP` 返回 `EOPNOTSUPP`。
+  - 当前 `ntfs-3g` patch 对 flags=0 最终调用上游 `ntfs_fuse_rename()`；上游 2026.7.7 的 existing-destination 路径本身以 hard-link/unlink 临时名实现，并明确带有 `FIXME: Rename should be atomic.`，因此不能把该路径直接包装成“安全原子替换”。
 - [ ] 查 macFUSE 5.3.3/Tahoe FSKit upstream issue/release notes
-- [ ] 判断能否在 NTFS-3G/FUSE 用户态做安全兼容
+- [ ] 判断能否在 NTFS-3G/FUSE 用户态做安全兼容；要求是真正 crash-safe/atomic，不接受先删目标再 rename
 - [ ] 增加 atomic replace regression test
 - [ ] TextEdit 实机 Cmd+S 验收
 
@@ -155,6 +157,25 @@ WIP inner sequential read ≈ 55.8 MB/s
 WIP outer write + fsync ≈ 37.8 MB/s
 500 × 4 KiB ≈ 6 s
 ```
+
+### 2026-08-26 — P0 rename syscall 边界确认
+
+目标：
+- 把 TextEdit 保存失败从“可能的 FSKit 特殊行为”收敛到确切 callback/NTFS adapter 语义。
+
+验证：
+- 当前真实卷保持 inner generic FSKit + outer `local`；只创建并清理 `.edp-rename-probe-*` 临时文件。
+- `renamex_np(temp,target,0)`：`errno=102/EOPNOTSUPP`。
+- `renamex_np(temp,target,RENAME_EXCL)`：`errno=17/EEXIST`，符合排他重命名语义。
+- `renamex_np(a,b,RENAME_SWAP)`：`errno=102/EOPNOTSUPP`。
+- 审阅固定 NTFS-3G 2026.7.7 源码：existing-target rename 走 `ntfs_fuse_rename_existing_dest()` / `ntfs_fuse_safe_rename()`，内部是 link → unlink → link → unlink，并由上游注释明确标记 rename 尚非 atomic。
+
+结论：
+- PARTIAL。P0 不是 EDP crypto/块层问题，也不只是 TextEdit 的 swap flag；普通 replace (`flags=0`) 也会落到 NTFS-3G 当前不满足产品原子性要求的 existing-target rename 路径。
+- 下一步只接受两类方向：找到 macFUSE/FSKit 可转发的真正原子 primitive，或在 NTFS-3G/libntfs 层实现可证明的 NTFS 原子目录项替换；不采用 delete-then-rename workaround。
+
+commit:
+- pending
 
 ## 回归任务
 
