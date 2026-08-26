@@ -44,7 +44,7 @@ SOURCE_DIR="$(find "${BUILD_ROOT}" -maxdepth 1 -type d -name 'ntfs-3g-*' -print 
   cd "${SOURCE_DIR}"
   export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
   export CPPFLAGS="-I/usr/local/include"
-  export LDFLAGS="-L/usr/local/lib"
+  export LDFLAGS="-L/usr/local/lib -F/Library/Filesystems/macfuse.fs/Contents/Frameworks"
   ./configure \
     --prefix="${INSTALL_PREFIX}" \
     --with-fuse=external \

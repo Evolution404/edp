@@ -98,3 +98,11 @@
 - 已独立下载官方 `macfuse-5.3.2.dmg` 并计算 SHA256：`9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936`。
 - CI 改为 5.3.2 / 5.3.3 matrix；两边使用同一 NTFS-3G、同一 synthetic fixture、同一 EDP crypto bridge 和同一 create probe。
 - 判定规则：如果 5.3.2 create 成功而 5.3.3 失败，则优先把产品 macFUSE pin 回退到 5.3.2，并完整跑 ExFAT/NTFS/installer 回归；若两者都失败，再进入 mount option / FUSE protocol tracing。
+
+### 2026-08-26 — 5.3.2 matrix 首轮环境修正
+
+- run `32917900639` 第一轮不能用于比较 create：5.3.2 官方安装成功，但 NTFS-3G build 在 link 阶段报 `ld: framework 'MFMount' not found`，因此根本未进入 E2E；5.3.3 仍复现 create `ENOENT`。
+- 已检查官方 5.3.2 package：`MFMount.framework` 实际位于 `/Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework`。
+- `libfuse.dylib` 也明确依赖该绝对路径；问题只是 NTFS-3G 链接时缺少 framework search path。
+- `build-ntfs3g-runtime.sh` 增加 `-F/Library/Filesystems/macfuse.fs/Contents/Frameworks`，使 5.3.2/5.3.3 都能使用官方 MFMount framework 完成链接。
+- 下一次 matrix 才是有效的版本行为对照。
