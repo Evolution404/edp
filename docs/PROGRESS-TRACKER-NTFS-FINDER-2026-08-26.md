@@ -219,6 +219,10 @@ commit:
 - libc `rename(created.txt,target.txt)` 直接返回 `errno=78 / ENOSYS`；服务端仅收到一次 `FUSE2_RENAMEX ... flags=0x2`，没有任何 `.rename` 重试。
 - 结论：`EOPNOTSUPP -> ENOSYS` 也不能绕开 macFUSE 5.3.3 FSKit 的 overwrite-rename 映射。实验代码已撤回，不保留无效开关。
 
+补充源码边界：
+- 审阅 macFUSE 5.3.3 tag 及其 Framework / Library-2 / Library-3 / Mount submodules；公开源码中可见 libfuse 的 rename dispatch，但没有 `FSModuleVolume` / `renameItem(...overItem:)` 的 FSKit module bridge 实现。
+- 因此 EDP 无法以可维护的源码 fork 方式直接修 macFUSE FSKit 的 overwrite→swap 映射；在现有可控层（libfuse/NTFS adapter）又无法区分被 FSKit 折叠成同一 `flags=0x2` 的普通 overwrite 与真实 swap。
+
 补充验证：
 - 将 synthetic probe 的 init 改为在 `support_swap=1` 时真实保留 `FUSE_CAP_RENAME_SWAP` 协商位，再次运行；`want_after=0x86200010` 明确包含 swap capability。
 - 结果仍是：libc `rename()` 返回 0、target 变为新内容、source 仍存在且保存旧 target 内容。说明该错误语义不是因为先前 init 清掉 `want` 导致，而是 FSKit/bridge 对 overwrite rename 的实际编码行为。
@@ -260,8 +264,12 @@ commit:
 - job 失败的直接原因是脚本仍保留 56dcf39 generic-source 断言 `^macfuse://...`；outer-local 改造后 source 正确变成 `/dev/diskN`，所以“挂载成功”被旧断言误判为失败。
 - 已修改 synthetic E2E：mount policy 含 `local` 时严格要求 `/dev/diskN + macfuse + local + fskit`；不含 `local` 时才要求 `macfuse://UUID`。这不是放宽 gate，而是让 gate 与两种 FSKit module 的真实语义一致。
 
+验证收口：
+- exact source head `720b33a` 自动触发 GitHub Actions run `32948247142`；macOS 26.5.2 上 `EDP Crypto + NTFS-3G Read/Write E2E` **completed/success**。
+- 该 run 覆盖 inner generic FSKit、outer local `/dev/diskN`、NTFS create/random-write/rename/delete、ciphertext change 与 full remount persistence；说明 outer-local policy 没有破坏既有加密 NTFS RW E2E。
+
 commit:
-- pending
+- `720b33a test: assert outer local FSKit source`
 
 ### T3 — P1 性能
 
@@ -273,7 +281,8 @@ commit:
   - `NATIVE_SM4_GOLDEN=OK`。
 - [x] 跑现有 native crypto fast checks
   - encrypted writer boundaries / ciphertext persistence / 1024 real-key random reads / reader+writer results 全部 OK。
-- [ ] 跑 DiskImages2/NTFS readwrite E2E
+- [x] 跑 DiskImages2/NTFS readwrite E2E
+  - GitHub Actions run `32948247142`（source head `720b33a`）completed/success；outer local + full remount persistence 通过。
 - [x] 实盘 256 MiB inner sequential read
   - 当前 WIP runtime：268435456 bytes / 4.886164 s = `54,937,873 bytes/s` ≈ **54.94 MB/s**，与历史 WIP ≈55.8 MB/s 一致。
 - [ ] 实盘 256 MiB outer sequential read
@@ -283,7 +292,8 @@ commit:
 - [x] 1000×4 KiB small files
   - 唯一临时目录，1000 个 4096-byte 文件 create/write/close 后全局 sync：**17.782656 s，56.24 files/s**；确认 1000/1000 创建成功后完整清理。
 - [ ] 记录 CPU 占用和平均请求尺寸
-- [ ] 比较 baseline `56dcf39` 与 WIP `4f0171d`
+- [x] 比较 baseline `56dcf39` 与 WIP `4f0171d`
+  - inner sequential read：约 5.8 → 54.94 MB/s，约 **9.5×**；outer write + fsync 稳定复现约 38 MB/s。
 
 当前 tracker 中已有实验参考值，但下一个 AI 应重新复核：
 
