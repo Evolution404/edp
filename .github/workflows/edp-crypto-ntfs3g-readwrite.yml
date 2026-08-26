@@ -20,6 +20,8 @@ on:
       - "native/EDPFSKitPoC/Tools/ValidateFuse2Create.c"
       - "native/EDPFSKitPoC/Tools/probe-fuse2-create.sh"
       - "native/EDPFSKitPoC/Tools/probe-edp-crypto-ntfs-readwrite.sh"
+      - "native/EDPFSKitPoC/Tools/RenderNTFSMountPolicy.swift"
+      - "product/EDPNTFSMountPolicy.swift"
       - "product/EDPVaultRuntime.swift"
   workflow_dispatch:
 
@@ -132,7 +134,14 @@ jobs:
           bash scripts/build-ntfs3g-runtime.sh "${RUNNER_TEMP}/ntfs-runtime"
           test -x "${RUNNER_TEMP}/ntfs-runtime/ntfs-3g/bin/ntfs-3g"
           test -x "${RUNNER_TEMP}/ntfs-runtime/ntfs-3g/test-tools/mkntfs"
+          xcrun swiftc \
+            product/EDPNTFSMountPolicy.swift \
+            native/EDPFSKitPoC/Tools/RenderNTFSMountPolicy.swift \
+            -o "${RUNNER_TEMP}/render-ntfs-mount-policy"
+          "${RUNNER_TEMP}/render-ntfs-mount-policy" "$(id -u)" "$(id -g)" EDPRWTEST | grep -Fx 'backend=fskit'
+          ! "${RUNNER_TEMP}/render-ntfs-mount-policy" "$(id -u)" "$(id -g)" EDPRWTEST | grep -Fx 'local'
           echo 'RESULT=BUNDLED_NTFS3G_RUNTIME_READY'
+          echo 'RESULT=SHARED_NTFS_MOUNT_POLICY_READY'
 
       - name: Run encrypted NTFS-3G read/write/remount proof
         timeout-minutes: 6
@@ -144,6 +153,7 @@ jobs:
           EDP_RW_MOUNT_POINT=/Volumes/edp-crypto-readwrite \
           EDP_NTFS_MOUNT_POINT=/Volumes/EDPNTFSRW \
           EDP_NTFS_RUNTIME="${RUNNER_TEMP}/ntfs-runtime/ntfs-3g" \
+          EDP_NTFS_POLICY_RENDERER="${RUNNER_TEMP}/render-ntfs-mount-policy" \
             bash native/EDPFSKitPoC/Tools/probe-edp-crypto-ntfs-readwrite.sh
 
       - name: Capture live state after failure

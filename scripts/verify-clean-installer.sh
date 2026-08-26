@@ -47,6 +47,11 @@ for item in "${ROOT}/bin/"* "${ROOT}/lib/"*; do
   /usr/bin/codesign --verify --strict "${item}"
 done
 
+[[ ! -e "${ROOT}/test-tools" ]]
+[[ ! -e "${ROOT}/bin/mkntfs" ]]
+[[ ! -e "${ROOT}/bin/ntfscp" ]]
+echo "RESULT=PRODUCTION_NTFS_RUNTIME_CONTAINS_NO_FIXTURE_TOOLS"
+
 /usr/bin/otool -L "${ROOT}/bin/edp-readwrite-fuse" \
   | /usr/bin/grep -F '@rpath/libEDPReadWriteBridge.dylib' >/dev/null
 /usr/bin/otool -L "${ROOT}/bin/ntfs-3g" \

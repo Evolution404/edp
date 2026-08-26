@@ -587,21 +587,11 @@ private final class MountManager {
         let identity = consoleIdentity()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binaryRoot + "/ntfs-3g")
-        process.arguments = [
-            "-o", "backend=fskit",
-            "-o", "no_detach",
-            "-o", "local",
-            "-o", "norecover",
-            "-o", "windows_names",
-            "-o", "streams_interface=openxattr",
-            "-o", "noatime",
-            "-o", "big_writes",
-            "-o", "allow_other",
-            "-o", "uid=\(identity.0)",
-            "-o", "gid=\(identity.1)",
-            "-o", "volname=\(safeName(label))",
-            device, mountpoint,
-        ]
+        process.arguments = EDPNTFSMountPolicy.commandArguments(
+            uid: identity.0,
+            gid: identity.1,
+            volumeName: safeName(label)
+        ) + [device, mountpoint]
         var environment = ProcessInfo.processInfo.environment
         environment["DYLD_LIBRARY_PATH"] = binaryRoot
         process.environment = environment

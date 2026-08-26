@@ -5,6 +5,7 @@ WORK_DIR="${RUNNER_TEMP:-/tmp}/edp-crypto-ntfs3g-readwrite"
 BRIDGE_MOUNT="${EDP_RW_MOUNT_POINT:-/Volumes/edp-crypto-readwrite}"
 NTFS_MOUNT="${EDP_NTFS_MOUNT_POINT:-/Volumes/EDPNTFSRW}"
 NTFS_RUNTIME="${EDP_NTFS_RUNTIME:?EDP_NTFS_RUNTIME must point to the built ntfs-3g runtime directory}"
+NTFS_POLICY_RENDERER="${EDP_NTFS_POLICY_RENDERER:?EDP_NTFS_POLICY_RENDERER must point to the shared policy renderer}"
 PLAIN_IMAGE="${WORK_DIR}/plain-ntfs.img"
 CIPHER_IMAGE="${WORK_DIR}/cipher-ntfs.img"
 ATTACH_BIN="${WORK_DIR}/diskimages2-attach"
@@ -214,20 +215,18 @@ start_ntfs() {
   [[ "${label}" == "${TEST_VOLUME}" ]]
   log "STEP=NTFSLABEL_OK"
 
+  local ntfs_options=()
+  while IFS= read -r option; do
+    [[ -n "${option}" ]] && ntfs_options+=("-o" "${option}")
+  done < <("${NTFS_POLICY_RENDERER}" "$(id -u)" "$(id -g)" "${TEST_VOLUME}")
+  [[ ${#ntfs_options[@]} -gt 0 ]]
+  log "NTFS_SHARED_POLICY=$(printf '%s ' "${ntfs_options[@]}")"
+
   log "STEP=NTFS3G_MOUNT_BEGIN"
   DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
     "${NTFS_RUNTIME}/bin/ntfs-3g" \
-      -o backend=fskit \
-      -o no_detach \
+      "${ntfs_options[@]}" \
       -o debug \
-      -o norecover \
-      -o windows_names \
-      -o streams_interface=openxattr \
-      -o noatime \
-      -o big_writes \
-      -o "uid=$(id -u)" \
-      -o "gid=$(id -g)" \
-      -o "volname=${TEST_VOLUME}" \
       "${source}" "${NTFS_MOUNT}" \
       >"${NTFS_LOG}" 2>&1 &
   NTFS_PID=$!
@@ -273,7 +272,8 @@ for tool in \
   "${NTFS_RUNTIME}/bin/ntfs-3g" \
   "${NTFS_RUNTIME}/bin/ntfs-3g.probe" \
   "${NTFS_RUNTIME}/bin/ntfslabel" \
-  "${NTFS_RUNTIME}/test-tools/mkntfs"; do
+  "${NTFS_RUNTIME}/test-tools/mkntfs" \
+  "${NTFS_POLICY_RENDERER}"; do
   [[ -x "${tool}" ]] || { log "FAIL=MISSING_NTFS_TOOL:${tool}"; exit 69; }
 done
 for mountpoint in "${BRIDGE_MOUNT}" "${NTFS_MOUNT}"; do
