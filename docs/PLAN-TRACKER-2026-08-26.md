@@ -123,5 +123,15 @@
 - 该探针完全绕过 NTFS-3G、EDP crypto、DiskImages2，因此可以把 create 故障归因到 macFUSE FSKit/libfuse2 或 NTFS-3G 两者之一。
 - 已加入 5.3.2 / 5.3.3 CI matrix，且 artifact 名包含 macFUSE 版本，避免矩阵产物重名。
 - `bash -n`、C 编译、`git diff --check` 已通过。
+
+### 2026-08-26 — libfuse2 CREATE 后续操作锁定
+
+- run `32918481783`：5.3.2 与 5.3.3 的最小 libfuse2 FS 都成功建立 nonlocal FSKit mount。
+- 两个版本中 `FUSE2_CREATE path=/created.txt` 回调都实际被调用并返回成功，但调用方紧接着得到 `ENOSYS`（`Function not implemented`）。
+- 这证明 regular-file create 并非没有被转发到 userspace；失败发生在 CREATE 成功后的后续 FUSE 2.6 操作。
+- libfuse2 API 文档指出：当 filesystem 实现 `create()` 时，创建后会调用 `fgetattr()`。
+- 检查 NTFS-3G 2026.7.7 `src/ntfs-3g.c`：`ntfs_3g_ops` 有 `.create = ntfs_fuse_create_file`，但没有 `.fgetattr`。
+- 最小探针当前同样缺 `.fgetattr`，因此下一实验只增加 `fgetattr -> getattr` wrapper；若 create/write/read 立即通过，即可确认根因并为 NTFS-3G 提供最小兼容补丁。
 - run `32918481783` 已完成：5.3.2 与 5.3.3 都成功 mount；两边都打印 `FUSE2_CREATE path=/created.txt flags=0xa02`，证明 `create` callback 已真正执行，但 shell 端同时报 `Function not implemented`，`write` callback 未发生。
 - 结论：版本回退不能解决这个最小 create 问题；当前要追踪 `create` 返回之后 FSKit/libfuse2 请求的下一操作（优先检查 `ftruncate` / `fgetattr` / setattr 类 callback），直到最小 probe 能完成 create→write→read。
+- 已在最小 probe 中实现并注册 `fgetattr -> getattr` 与 `ftruncate -> truncate` wrapper，并增加 `FUSE2_FGETATTR` / `FUSE2_FTRUNCATE` / `FUSE2_TRUNCATE` 日志；静态编译、`bash -n`、`git diff --check` 均通过。下一轮 CI 直接验证 post-create `ENOSYS` 是否消失。

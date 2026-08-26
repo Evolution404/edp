@@ -114,7 +114,20 @@ static int m_truncate(const char *path, off_t size) {
     if (size < 0 || (size_t)size > sizeof(file_data)) return -EFBIG;
     if ((size_t)size > file_size) memset(file_data + file_size, 0, (size_t)size - file_size);
     file_size = (size_t)size;
+    fprintf(stderr, "FUSE2_TRUNCATE path=%s size=%lld\n", path, (long long)size);
     return 0;
+}
+
+static int m_ftruncate(const char *path, off_t size, struct fuse_file_info *fi) {
+    (void)fi;
+    fprintf(stderr, "FUSE2_FTRUNCATE path=%s size=%lld\n", path, (long long)size);
+    return m_truncate(path, size);
+}
+
+static int m_fgetattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
+    (void)fi;
+    fprintf(stderr, "FUSE2_FGETATTR path=%s\n", path);
+    return m_getattr(path, st);
 }
 
 static int m_unlink(const char *path) {
@@ -148,6 +161,8 @@ static struct fuse_operations ops = {
     .read = m_read,
     .write = m_write,
     .truncate = m_truncate,
+    .ftruncate = m_ftruncate,
+    .fgetattr = m_fgetattr,
     .unlink = m_unlink,
     .flush = m_flush,
     .release = m_release,
