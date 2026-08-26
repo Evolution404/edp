@@ -67,6 +67,9 @@ xcrun swiftc -O -framework Security \
   "${REPO_ROOT}/product/EDPNTFSMountPolicy.swift" \
   "${REPO_ROOT}/product/EDPCredentialStore.swift" \
   "${REPO_ROOT}/product/EDPNativeSystem.swift" \
+  "${REPO_ROOT}/product/EDPBlockDevicePublisher.swift" \
+  "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
+  "${REPO_ROOT}/product/EDPXPCSecurity.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 
@@ -94,6 +97,58 @@ for item in "${RUNTIME_STAGE}/bin/"* "${RUNTIME_STAGE}/lib/"*; do
   /usr/bin/codesign --force --sign - "${item}"
 done
 
+echo "Building SwiftUI app..."
+APP_STAGE="${BUILD_ROOT}/EDP USB Vault.app"
+mkdir -p "${APP_STAGE}/Contents/MacOS" "${APP_STAGE}/Contents/Resources" \
+  "${APP_STAGE}/Contents/Library/LaunchDaemons" \
+  "${APP_STAGE}/Contents/Library/LaunchServices"
+cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_STAGE}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
+xcrun swiftc -O \
+  -framework AppKit -framework SwiftUI -framework ServiceManagement \
+  "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
+  "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
+  -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"
+cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
+  "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
+cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.edp.usbvault.mountd</string>
+  <key>BundleProgram</key>
+  <string>Contents/Library/LaunchServices/edp-usbvaultd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>edp-usbvaultd</string>
+    <string>daemon</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>EDP_RUNTIME_BIN_ROOT</key>
+    <string>/Library/Application Support/EDP USB Vault/bin</string>
+  </dict>
+  <key>MachServices</key>
+  <dict>
+    <key>com.edp.usbvault.xpc</key><true/>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>/var/log/edp-usbvault.log</string>
+  <key>StandardErrorPath</key><string>/var/log/edp-usbvault.log</string>
+</dict>
+</plist>
+PLIST
+/bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+/usr/bin/codesign --force --sign - \
+  "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
+/usr/bin/codesign --force --sign - --identifier com.edp.usbvault.app "${APP_STAGE}"
+/usr/bin/codesign --verify --strict "${APP_STAGE}"
+
 /usr/bin/curl --fail --location --output \
   "${RUNTIME_STAGE}/licenses/macfuse/LICENSE.txt" \
   "https://raw.githubusercontent.com/macfuse/macfuse/macfuse-5.3.3/LICENSE.txt"
@@ -104,40 +159,22 @@ printf '%s  %s\n' \
 
 PAYLOAD="${BUILD_ROOT}/payload"
 PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
-mkdir -p "${PRODUCT_DIR}" "${PAYLOAD}/Library/LaunchDaemons" \
-  "${PAYLOAD}/usr/local/bin"
+mkdir -p "${PRODUCT_DIR}" "${PAYLOAD}/usr/local/bin" "${PAYLOAD}/Applications"
 cp -R "${RUNTIME_STAGE}/." "${PRODUCT_DIR}/"
+cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP USB Vault.app"
 ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
   "${PAYLOAD}/usr/local/bin/edp-vaultctl"
-
-cat > "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.edp.usbvault.mountd</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Library/Application Support/EDP USB Vault/bin/edp-vaultctl</string>
-    <string>daemon</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Interactive</string>
-  <key>StandardOutPath</key><string>/var/log/edp-usbvault.log</string>
-  <key>StandardErrorPath</key><string>/var/log/edp-usbvault.log</string>
-</dict>
-</plist>
-PLIST
-chmod 0644 "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 
 SCRIPTS="${BUILD_ROOT}/scripts"
 mkdir -p "${SCRIPTS}"
 cat > "${SCRIPTS}/preinstall" <<'PREINSTALL'
 #!/bin/bash
 set -e
-/bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
+LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+if [[ -f "${LEGACY_PLIST}" ]]; then
+  /bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
+  /bin/rm -f "${LEGACY_PLIST}"
+fi
 OLD_CTL="/Library/Application Support/EDP USB Vault/bin/edp-vaultctl"
 if [[ -x "${OLD_CTL}" ]]; then
   "${OLD_CTL}" cleanup >/dev/null 2>&1 || true
@@ -148,16 +185,13 @@ cat > "${SCRIPTS}/postinstall" <<'POSTINSTALL'
 #!/bin/bash
 set -e
 ROOT="/Library/Application Support/EDP USB Vault"
-PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
-/usr/bin/chown -R root:wheel "${ROOT}"
-/bin/chmod -R go-w "${ROOT}"
+APP="/Applications/EDP USB Vault.app"
+/usr/bin/chown -R root:wheel "${ROOT}" "${APP}"
+/bin/chmod -R go-w "${ROOT}" "${APP}"
 /bin/chmod 0755 "${ROOT}" "${ROOT}/bin" "${ROOT}/lib"
 /bin/chmod 0755 "${ROOT}/bin/"*
 /bin/chmod 0644 "${ROOT}/lib/"*
-/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" >/dev/null 2>&1 || true
-/bin/launchctl bootstrap system "${PLIST}"
-/bin/launchctl enable system/com.edp.usbvault.mountd || true
-/bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
+/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
 exit 0
 POSTINSTALL
 chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"

@@ -25,6 +25,8 @@ done
 
 PAYLOAD="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Payload"
 ROOT="${PAYLOAD}/Library/Application Support/EDP USB Vault"
+APP="${PAYLOAD}/Applications/EDP USB Vault.app"
+DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 for path in \
   "bin/edp-vaultctl" \
   "bin/edp-readwrite-fuse" \
@@ -46,6 +48,17 @@ done
 for item in "${ROOT}/bin/"* "${ROOT}/lib/"*; do
   /usr/bin/codesign --verify --strict "${item}"
 done
+
+[[ -x "${APP}/Contents/MacOS/EDP USB Vault" ]]
+/usr/bin/codesign --verify --strict "${APP}"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.usbvault.app" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${APP}/Contents/Info.plist")" == "26.0" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${DAEMON_PLIST}")" == "true" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "${DAEMON_PLIST}")" == "Contents/Library/LaunchServices/edp-usbvaultd" ]]
+[[ -x "${APP}/Contents/Library/LaunchServices/edp-usbvaultd" ]]
+[[ ! -e "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" ]]
+echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
+echo "RESULT=SMAPPSERVICE_DAEMON_EMBEDDED"
 
 [[ ! -e "${ROOT}/test-tools" ]]
 [[ ! -e "${ROOT}/bin/mkntfs" ]]

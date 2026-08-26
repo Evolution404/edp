@@ -57,7 +57,25 @@ jobs:
           ./scripts/verify-clean-installer.sh \
             artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg \
             | tee "${RUNNER_TEMP}/verify.txt"
+          grep -F 'RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED' "${RUNNER_TEMP}/verify.txt"
+          grep -F 'RESULT=SMAPPSERVICE_DAEMON_EMBEDDED' "${RUNNER_TEMP}/verify.txt"
           grep -F 'RESULT=EDP_CLEAN_INSTALLER_VERIFIED' "${RUNNER_TEMP}/verify.txt"
+
+      - name: Install product and register ServiceManagement daemon
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          sudo /usr/sbin/installer \
+            -pkg artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg \
+            -target /
+          APP='/Applications/EDP USB Vault.app'
+          test -x "${APP}/Contents/MacOS/EDP USB Vault"
+          test "$(stat -f '%u' "${APP}")" -eq 0
+          "${APP}/Contents/MacOS/EDP USB Vault" --register-service \
+            | tee "${RUNNER_TEMP}/service-registration.txt"
+          grep -Eq '^SMAPP_SERVICE_STATUS=(enabled|requiresApproval)$' \
+            "${RUNNER_TEMP}/service-registration.txt"
+          echo 'RESULT=SMAPPSERVICE_REGISTRATION_ACCEPTED'
 
       - uses: actions/upload-artifact@v4
         with:

@@ -33,8 +33,11 @@
   - deterministic unclean `$LogFile` fixture：`RW probe=15`、`RO probe=0`。
   - deterministic `hiberfil.sys` (`HIBR` header) fixture：`RW probe=14`、`RO probe=0`。
   - 产品状态映射与禁止 `force/recover/remove_hiberfile` 静态门槛通过；最终 `RESULT=NTFS_FAIL_CLOSED_E2E_OK`。
-- [ ] A5 CI 与产品 NTFS mount 路径统一
-- [ ] A6 raw sparse backup → 恢复验证 → 真实 EDP NTFS 读写
+- [x] A5 CI 与产品 NTFS mount 路径统一
+  - shared policy：`product/EDPNTFSMountPolicy.swift`；产品 runtime 与 NTFS E2E 均从同一 Swift policy 生成参数。
+  - 产品已移除错误的 `local` FSKit 参数，固定为已验证的 nonlocal `backend=fskit` 路径。
+  - commit `f100656` 上 NTFS RW E2E `32924060750`、Fail-Closed `32924060775`、Clean Installer `32924060769` 全部成功。
+- [ ] A6 raw sparse backup → 恢复验证 → 真实 EDP NTFS 读写（按用户要求本轮不执行）
 
 ### Raw sparse backup 证据
 
@@ -47,13 +50,20 @@
 
 ### Phase B — 原生化
 
-- [ ] B1 IOKit / IOUSBHost 替代 `ioreg`
-- [ ] B2 Disk Arbitration + IOKit 替代 `diskutil list/info`
-- [ ] B3 插拔事件驱动替代 2 秒轮询
-- [ ] B4 Disk Arbitration 替代 `diskutil mount/unmount/eject`
-- [ ] B5 移除 `/sbin/mount` / `/sbin/umount` 生产依赖
+- [x] B1 IOKit / IOUSBHost 替代 `ioreg`
+  - commit `9e44f0b`；真实 Lexar EDP 只读发现结果：`disk5 / 21c4:0cd1 / 124736503808 / USB Flash Drive`，与历史证据一致。
+- [x] B2 Disk Arbitration + IOKit 替代 `diskutil list/info`
+- [x] B3 插拔事件驱动替代 2 秒轮询
+- [x] B4 Disk Arbitration 替代 `diskutil mount/unmount/eject`
+- [x] B5 移除 `/sbin/mount` / `/sbin/umount` 生产依赖
+  - Native Production Path run `32923731599`（`9e44f0b`）与 `32924060719`（`f100656`）成功。
+  - `product/` 已无 `ioreg`、`diskutil`、`/sbin/mount`、`/sbin/umount`、`sleep(2)` 生产调用。
 - [ ] B6 SwiftUI + XPC + ServiceManagement 替代用户可见 CLI 工作流
-- [ ] B7 Keychain 替代自管 `master.key`
+  - 实现已完成到工作树：SwiftUI App、privileged Mach XPC、XPC caller code-sign/path 校验、SMAppService daemon registration、系统设置批准入口、无 Terminal 正常用户路径。
+  - 本机 Clean Installer 已验证 App 位于 `/Applications`，SMAppService plist/helper 嵌入 App，legacy `/Library/LaunchDaemons` 不再进入 payload；待本次 push 的 macOS 26 CI 注册 smoke 后结项。
+- [x] B7 Keychain 替代自管 `master.key`
+  - commit `f100656`；临时 Keychain E2E 覆盖 write/read/index-no-secret/revoke。
+  - Native Production Path `32924060719` 成功；旧 `master.key + credentials.json` 仅保留一次性迁移入口，新凭据进入 System Keychain。
 
 ## 变更日志
 

@@ -28,6 +28,7 @@ jobs:
           ! grep -R -F '/usr/sbin/diskutil' product
           ! grep -R -F '/sbin/mount' product
           ! grep -R -F '/sbin/umount' product
+          ! grep -R -F '/bin/launchctl' product
           ! grep -R -F 'sleep(2)' product
           echo 'RESULT=PRODUCTION_LEGACY_DISCOVERY_MOUNT_CLI_ABSENT'
 
@@ -49,9 +50,28 @@ jobs:
             product/EDPNTFSMountPolicy.swift \
             product/EDPCredentialStore.swift \
             product/EDPNativeSystem.swift \
+            product/EDPBlockDevicePublisher.swift \
+            product/EDPXPCProtocol.swift \
+            product/EDPXPCSecurity.swift \
             product/EDPVaultRuntime.swift \
             -o "${RUNNER_TEMP}/edp-vaultctl"
           echo 'RESULT=NATIVE_PRODUCTION_STRICT_SWIFT6_BUILD_OK'
+
+      - name: Validate SwiftUI XPC product surface and private adapter boundary
+        run: |
+          set -euo pipefail
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            -framework AppKit -framework SwiftUI -framework ServiceManagement \
+            product/EDPXPCProtocol.swift \
+            product/App/EDPUSBVaultApp.swift \
+            -o "${RUNNER_TEMP}/edp-usb-vault-app"
+          grep -F 'EDPXPCPeerValidator.isTrusted' product/EDPVaultRuntime.swift
+          grep -F 'com.edp.usbvault.app' product/EDPXPCSecurity.swift
+          grep -F 'EDPBlockDevicePublisher' product/EDPVaultRuntime.swift
+          ! grep -F 'diskimages2-attach' product/EDPVaultRuntime.swift
+          grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
+          echo 'RESULT=SWIFTUI_XPC_PRODUCT_SURFACE_OK'
+          echo 'RESULT=DISKIMAGES2_PRIVATE_API_ISOLATED_TO_ADAPTER'
 
       - name: Validate IOKit Disk Arbitration and native mount table APIs
         run: |

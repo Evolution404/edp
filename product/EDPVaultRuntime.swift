@@ -8,7 +8,6 @@ private let sessionRoot = dataRoot + "/sessions"
 private let credentialIndexPath = dataRoot + "/credential-index.json"
 private let legacyCredentialPath = dataRoot + "/credentials.json"
 private let legacyMasterKeyPath = dataRoot + "/master.key"
-private let launchdLabel = "com.edp.usbvault.mountd"
 
 private enum RuntimeError: Error, CustomStringConvertible {
     case message(String)
@@ -181,11 +180,20 @@ private final class MountManager {
     private var sessions = [String: MountSession]()
     private let binaryRoot: String
     private let diskArbitration: EDPDiskArbitrationController
+    private let blockPublisher: EDPBlockDevicePublisher
 
     init() throws {
-        binaryRoot = URL(fileURLWithPath: CommandLine.arguments[0])
-            .resolvingSymlinksInPath().deletingLastPathComponent().path
+        if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
+            binaryRoot = configuredRoot
+        } else {
+            binaryRoot = URL(fileURLWithPath: CommandLine.arguments[0])
+                .resolvingSymlinksInPath().deletingLastPathComponent().path
+        }
         diskArbitration = try EDPDiskArbitrationController()
+        blockPublisher = EDPDiskImages2Publisher(
+            helperPath: binaryRoot + "/diskimages2-attach",
+            diskArbitration: diskArbitration
+        )
     }
 
     func recoverPersistedSessions() {
@@ -200,7 +208,7 @@ private final class MountManager {
                 try? FileManager.default.removeItem(atPath: mountpoint)
             }
             if let exposed = item["exposedBSD"], !exposed.isEmpty {
-                try? diskArbitration.eject(exposed)
+                try? blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: exposed))
             }
             if let bridge = item["bridgeMount"], !bridge.isEmpty {
                 try? EDPNativeMountTable.unmountPath(bridge)
@@ -220,6 +228,27 @@ private final class MountManager {
 
     func mountedPhysicalDisks() -> Set<String> {
         Set(sessions.values.map(\.physicalBSD))
+    }
+
+    func isMounted(deviceID: String) -> Bool {
+        sessions.values.contains { $0.deviceID == deviceID }
+    }
+
+    func mountedSummaries() -> [[String: String]] {
+        sessions.values.map {
+            [
+                "deviceID": $0.deviceID,
+                "physicalBSD": $0.physicalBSD,
+                "partitionType": String($0.partitionType),
+                "filesystem": $0.filesystem,
+                "mountpoint": $0.userMount ?? "",
+            ]
+        }
+    }
+
+    func eject(deviceID: String) {
+        let keys = sessions.compactMap { $0.value.deviceID == deviceID ? $0.key : nil }
+        for key in keys { unmount(key: key) }
     }
 
     func mount(disk: PhysicalDisk, partitionType: UInt32, password: [UInt8]) throws {
@@ -258,7 +287,7 @@ private final class MountManager {
         passwordPipe.fileHandleForWriting.write(Data(password))
         try passwordPipe.fileHandleForWriting.close()
 
-        var attachedBSD: String?
+        var publishedDevice: EDPPublishedBlockDevice?
         do {
             try waitUntil(seconds: 20) {
                 FileManager.default.isWritableFile(atPath: bridgeMount + "/volume.raw")
@@ -269,17 +298,9 @@ private final class MountManager {
                 throw fail("encrypted block bridge failed; see \(logPath)")
             }
 
-            let attach = try run(
-                binaryRoot + "/diskimages2-attach",
-                ["--writable-noautomount", bridgeMount + "/volume.raw"]
-            ).stdoutText
-            guard let exposed = attach.split(separator: "\n")
-                .first(where: { $0.hasPrefix("DI_BSD_NAME=") })?
-                .split(separator: "=", maxSplits: 1).last.map(String.init),
-                FileManager.default.fileExists(atPath: "/dev/\(exposed)") else {
-                throw fail("DiskImages2 did not publish a writable BSD device")
-            }
-            attachedBSD = exposed
+            let published = try blockPublisher.publishWritableImage(at: bridgeMount + "/volume.raw")
+            publishedDevice = published
+            let exposed = published.bsdName
             let filesystemDevice = try resolveFilesystemDevice(exposed)
             let mounted: (String, String?, Process?)
             switch filesystemDevice.magic {
@@ -301,7 +322,7 @@ private final class MountManager {
             persistSessions()
             NSLog("EDP mounted %@ partition %u as %@ at %@", disk.deviceID, partitionType, mounted.0, mounted.1 ?? "(unknown)")
         } catch {
-            if let attachedBSD { try? diskArbitration.eject(attachedBSD) }
+            if let publishedDevice { try? blockPublisher.unpublish(publishedDevice) }
             fuse.terminate()
             try? EDPNativeMountTable.unmountPath(bridgeMount)
             try? FileManager.default.removeItem(atPath: bridgeMount)
@@ -375,7 +396,7 @@ private final class MountManager {
             try? EDPNativeMountTable.unmountPath(userMount)
         }
         session.filesystemProcess?.terminate()
-        try? diskArbitration.eject(session.exposedBSD)
+        try? blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: session.exposedBSD))
         session.fuse.terminate()
         try? EDPNativeMountTable.unmountPath(session.bridgeMount)
         try? FileManager.default.removeItem(atPath: session.bridgeMount)
@@ -472,11 +493,7 @@ private func selectDisk(_ argument: String?, from disks: [PhysicalDisk]) throws 
     return disk
 }
 
-private func authorize(_ diskArgument: String?) throws {
-    try requireRoot()
-    let disk = try selectDisk(diskArgument, from: discoverEDPDisks())
-    var password = try readPassword(prompt: "EDP password for \(disk.mediaName): ")
-    defer { secureZero(&password) }
+private func verifiedPartitionTypes(disk: PhysicalDisk, password: [UInt8]) throws -> [UInt32] {
     let raw = try EDPFileRawDevice(
         path: disk.rawPath,
         declaredSizeBytes: disk.sizeBytes,
@@ -496,6 +513,15 @@ private func authorize(_ diskArgument: String?) throws {
         }
     }
     guard !verified.isEmpty else { throw fail("password did not unlock EDP partition 2 or 4") }
+    return verified
+}
+
+private func authorize(_ diskArgument: String?) throws {
+    try requireRoot()
+    let disk = try selectDisk(diskArgument, from: discoverEDPDisks())
+    var password = try readPassword(prompt: "EDP password for \(disk.mediaName): ")
+    defer { secureZero(&password) }
+    let verified = try verifiedPartitionTypes(disk: disk, password: password)
     try makeCredentialStore().put(
         deviceID: disk.deviceID,
         password: password,
@@ -503,12 +529,12 @@ private func authorize(_ diskArgument: String?) throws {
     )
     print("AUTHORIZED_DEVICE=\(disk.deviceID)")
     print("AUTHORIZED_PARTITIONS=\(verified.map(String.init).joined(separator: ","))")
-    _ = try? run("/bin/launchctl", ["kickstart", "-k", "system/\(launchdLabel)"])
 }
 
 private final class EDPDaemonController: @unchecked Sendable {
     private let store: EDPCredentialStore
     private let manager: MountManager
+    private let queue = DispatchQueue(label: "com.edp.usbvault.controller")
     private var failureDeadline = [String: Date]()
 
     init() throws {
@@ -518,6 +544,10 @@ private final class EDPDaemonController: @unchecked Sendable {
     }
 
     func reconcile() {
+        queue.async { [weak self] in self?.reconcileLocked() }
+    }
+
+    private func reconcileLocked() {
         autoreleasepool {
             do {
                 let disks = try discoverEDPDisks()
@@ -546,16 +576,140 @@ private final class EDPDaemonController: @unchecked Sendable {
             }
         }
     }
+
+    func snapshotData() -> Data {
+        queue.sync {
+            do {
+                let disks = try discoverEDPDisks()
+                let records = try store.load().records
+                let devices = disks.map { disk in
+                    let record = records.first { $0.deviceID == disk.deviceID }
+                    return EDPXPCDevice(
+                        deviceID: disk.deviceID,
+                        bsdName: disk.bsdName,
+                        mediaName: disk.mediaName,
+                        vidPID: "\(disk.vidHex):\(disk.pidHex)",
+                        sizeBytes: disk.sizeBytes,
+                        authorized: record != nil,
+                        mounted: manager.isMounted(deviceID: disk.deviceID),
+                        partitionTypes: record?.partitionTypes ?? []
+                    )
+                }
+                return try JSONEncoder().encode(EDPXPCSnapshot(
+                    devices: devices,
+                    serviceVersion: "0.5.0",
+                    timestamp: ISO8601DateFormatter().string(from: Date())
+                ))
+            } catch {
+                return Data("{\"error\":\"\(String(describing: error).replacingOccurrences(of: "\"", with: "'"))\"}".utf8)
+            }
+        }
+    }
+
+    func authorize(deviceID: String, passwordData: Data) throws {
+        var password = [UInt8](passwordData)
+        defer { secureZero(&password) }
+        try queue.sync {
+            guard let disk = try discoverEDPDisks().first(where: { $0.deviceID == deviceID }) else {
+                throw fail("EDP device is no longer connected")
+            }
+            let verified = try verifiedPartitionTypes(disk: disk, password: password)
+            try store.put(deviceID: deviceID, password: password, partitionTypes: verified)
+            for type in verified { failureDeadline.removeValue(forKey: "\(deviceID):\(type)") }
+        }
+        reconcile()
+    }
+
+    func revoke(deviceID: String) throws {
+        try queue.sync {
+            manager.eject(deviceID: deviceID)
+            try store.remove(deviceID: deviceID)
+        }
+    }
+
+    func eject(deviceID: String) {
+        queue.sync { manager.eject(deviceID: deviceID) }
+    }
+
+    func diagnosticsData() -> Data {
+        queue.sync {
+            let payload: [String: Any] = [
+                "mounts": manager.mountedSummaries(),
+                "nativeMountCount": EDPNativeMountTable.entries().count,
+                "legacyDiscoveryCLI": false,
+                "legacyMountCLI": false,
+                "eventDrivenDiscovery": true,
+                "credentialStore": "System Keychain",
+            ]
+            return (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        }
+    }
+}
+
+private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol {
+    private let controller: EDPDaemonController
+
+    init(controller: EDPDaemonController) {
+        self.controller = controller
+    }
+
+    func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+        guard EDPXPCPeerValidator.isTrusted(newConnection) else {
+            NSLog("Rejected untrusted EDP XPC peer pid=%d uid=%u", newConnection.processIdentifier, newConnection.effectiveUserIdentifier)
+            return false
+        }
+        newConnection.exportedInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+        newConnection.exportedObject = self
+        newConnection.resume()
+        return true
+    }
+
+    func snapshot(withReply reply: @escaping (Data) -> Void) {
+        reply(controller.snapshotData())
+    }
+
+    func authorize(deviceID: String, password: Data, withReply reply: @escaping (String?) -> Void) {
+        do {
+            try controller.authorize(deviceID: deviceID, passwordData: password)
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func revoke(deviceID: String, withReply reply: @escaping (String?) -> Void) {
+        do {
+            try controller.revoke(deviceID: deviceID)
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func eject(deviceID: String, withReply reply: @escaping (String?) -> Void) {
+        controller.eject(deviceID: deviceID)
+        reply(nil)
+    }
+
+    func diagnostics(withReply reply: @escaping (Data) -> Void) {
+        reply(controller.diagnosticsData())
+    }
 }
 
 private func daemon() throws -> Never {
     try requireRoot()
     let controller = try EDPDaemonController()
     let monitor = try EDPDiskEventMonitor()
+    let xpcService = EDPXPCService(controller: controller)
+    let listener = NSXPCListener(machServiceName: edpVaultMachServiceName)
+    listener.delegate = xpcService
+    listener.resume()
     Darwin.signal(SIGTERM, runtimeSignalHandler)
     Darwin.signal(SIGINT, runtimeSignalHandler)
     monitor.start { controller.reconcile() }
-    DispatchSemaphore(value: 0).wait()
+    withExtendedLifetime((monitor, listener, xpcService)) {
+        DispatchSemaphore(value: 0).wait()
+    }
     fatalError("EDP daemon event loop unexpectedly returned")
 }
 
