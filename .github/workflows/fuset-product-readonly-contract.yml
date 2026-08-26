@@ -236,7 +236,9 @@ jobs:
             native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
             native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
           )
-          xcrun swiftc -O -swift-version 6 -warnings-as-errors -framework Security \
+          # Match installer/build-clean-installer.sh for the pre-existing runtime.
+          # Newly added thin targets above remain Swift 6 warnings-as-errors.
+          xcrun swiftc -O -framework Security \
             "${CORE_SOURCES[@]}" \
             product/EDPNTFSWriteSafety.swift product/EDPNTFSMountPolicy.swift \
             product/EDPCredentialStore.swift product/EDPNativeSystem.swift \
