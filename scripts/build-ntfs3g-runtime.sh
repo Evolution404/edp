@@ -79,6 +79,7 @@ for artifact in \
   "${SOURCE_DIR}/src/.libs/ntfs-3g.probe" \
   "${SOURCE_DIR}/ntfsprogs/.libs/ntfslabel" \
   "${SOURCE_DIR}/ntfsprogs/.libs/mkntfs" \
+  "${SOURCE_DIR}/ntfsprogs/.libs/ntfscp" \
   "${SOURCE_DIR}/ntfsprogs/.libs/edp-make-ntfs-unclean" \
   "${SOURCE_DIR}/libntfs-3g/.libs/libntfs-3g.90.dylib"; do
   [[ -e "${artifact}" ]] || {
@@ -97,6 +98,7 @@ cp "${SOURCE_DIR}/ntfsprogs/.libs/ntfslabel" "${OUTPUT_DIR}/ntfs-3g/bin/"
 # mkntfs is retained only for synthetic CI fixtures. The installer copies
 # bin/lib/licenses/source explicitly, so test-tools is never shipped.
 cp "${SOURCE_DIR}/ntfsprogs/.libs/mkntfs" "${OUTPUT_DIR}/ntfs-3g/test-tools/"
+cp "${SOURCE_DIR}/ntfsprogs/.libs/ntfscp" "${OUTPUT_DIR}/ntfs-3g/test-tools/"
 cp "${SOURCE_DIR}/ntfsprogs/.libs/edp-make-ntfs-unclean" \
   "${OUTPUT_DIR}/ntfs-3g/test-tools/"
 cp "${SOURCE_DIR}/libntfs-3g/.libs/libntfs-3g.90.dylib" \
@@ -113,7 +115,7 @@ for binary in ntfs-3g ntfs-3g.probe ntfslabel; do
     "@loader_path/../lib/libntfs-3g.90.dylib" \
     "${OUTPUT_DIR}/ntfs-3g/bin/${binary}" 2>/dev/null || true
 done
-for test_tool in mkntfs edp-make-ntfs-unclean; do
+for test_tool in mkntfs ntfscp edp-make-ntfs-unclean; do
   install_name_tool -change \
     "${INSTALL_PREFIX}/lib/libntfs-3g.90.dylib" \
     "@loader_path/../lib/libntfs-3g.90.dylib" \
@@ -126,7 +128,7 @@ codesign --force --sign - "${OUTPUT_DIR}/ntfs-3g/lib/libntfs-3g.90.dylib"
 for binary in ntfs-3g ntfs-3g.probe ntfslabel; do
   codesign --force --sign - "${OUTPUT_DIR}/ntfs-3g/bin/${binary}"
 done
-for test_tool in mkntfs edp-make-ntfs-unclean; do
+for test_tool in mkntfs ntfscp edp-make-ntfs-unclean; do
   codesign --force --sign - "${OUTPUT_DIR}/ntfs-3g/test-tools/${test_tool}"
 done
 

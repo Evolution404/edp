@@ -104,7 +104,7 @@ export DYLD_LIBRARY_PATH="${LIB}"
 for required in ntfs-3g ntfs-3g.probe; do
   test -x "${BIN}/${required}"
 done
-for required in mkntfs edp-make-ntfs-unclean; do
+for required in mkntfs ntfscp edp-make-ntfs-unclean; do
   test -x "${TOOLS}/${required}"
 done
 
@@ -142,19 +142,19 @@ test "${UNCLEAN_RO_RC}" -eq 0
 echo 'RESULT=NTFS_UNCLEAN_FIXTURE_FAILS_CLOSED'
 
 # Create a hibernation fixture using the detector's actual contract: a root
-# hiberfil.sys with a 4096-byte header beginning with HIBR, then cleanly unmount.
+# hiberfil.sys with a 4096-byte header beginning with HIBR. Use upstream ntfscp
+# directly against the clean image so fixture construction is deterministic and
+# independent of FSKit cold-start latency. ntfscp is retained in test-tools only.
 cp "${CLEAN}" "${HIBERNATED}"
-start_mount "${HIBERNATED}" EDPFAILHIBER "${WORK}/hiber-mount.log"
-echo 'STEP=NTFS_HIBERNATION_FILE_WRITE_BEGIN'
-python3 - "${MOUNT_POINT}/hiberfil.sys" <<'PY'
+HIBER_HEADER="${WORK}/hiber-header.bin"
+python3 - "${HIBER_HEADER}" <<'PY'
 import sys
-path = sys.argv[1]
-with open(path, "wb") as handle:
+with open(sys.argv[1], "wb") as handle:
     handle.write(b"HIBR" + bytes(4092))
 PY
+echo 'STEP=NTFS_HIBERNATION_FILE_WRITE_BEGIN'
+"${TOOLS}/ntfscp" "${HIBERNATED}" "${HIBER_HEADER}" /hiberfil.sys >"${WORK}/ntfscp-hiber.log" 2>&1
 echo 'STEP=NTFS_HIBERNATION_FILE_WRITE_OK'
-stop_mount_cleanly
-echo 'STEP=NTFS_HIBERNATION_FIXTURE_UNMOUNTED'
 
 set +e
 "${BIN}/ntfs-3g.probe" --readwrite "${HIBERNATED}" >"${WORK}/hiber-rw.log" 2>&1
