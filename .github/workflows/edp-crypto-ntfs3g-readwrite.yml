@@ -17,6 +17,8 @@ on:
       - "native/EDPFSKitPoC/Tools/PrepareEncryptedDiskImage.swift"
       - "native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift"
       - "native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c"
+      - "native/EDPFSKitPoC/Tools/ValidateFuse2Create.c"
+      - "native/EDPFSKitPoC/Tools/probe-fuse2-create.sh"
       - "native/EDPFSKitPoC/Tools/probe-edp-crypto-ntfs-readwrite.sh"
       - "product/EDPVaultRuntime.swift"
   workflow_dispatch:
@@ -118,6 +120,13 @@ jobs:
           sleep 2
           echo 'RESULT=CI_ONLY_MACFUSE_MODULE_STATE_SEEDED'
 
+      - name: Probe libfuse2 regular-file create on FSKit
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          EDP_FUSE2_CREATE_MOUNT_POINT=/Volumes/edp-fuse2-create \
+            bash native/EDPFSKitPoC/Tools/probe-fuse2-create.sh
+
       - name: Build pinned bundled NTFS-3G runtime
         timeout-minutes: 8
         run: |
@@ -169,7 +178,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: edp-crypto-ntfs3g-readwrite-${{ github.run_id }}
+          name: edp-crypto-ntfs3g-readwrite-${{ matrix.macfuse.version }}-${{ github.run_id }}
           path: ${{ runner.temp }}/edp-crypto-ntfs3g-readwrite/
           if-no-files-found: ignore
           retention-days: 14

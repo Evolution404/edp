@@ -115,3 +115,11 @@
 - 因此当前不能把 5.3.2 判定为“create 正常”或“create 也失败”；它在更早的 libfuse/FSKit bridge 阶段即不兼容。
 - 暂不修改产品 pin（仍为 5.3.3）。
 - A2 下一判别实验：用最小 libfuse2 filesystem 在 macFUSE 5.3.3 nonlocal FSKit 下直接测试 regular-file create；若最小 create 也失败，则根因在 macFUSE FSKit/libfuse2 compatibility；若最小 create 成功，则继续 instrument NTFS-3G `create` callback / request sequence。
+
+### 2026-08-26 — 最小 libfuse2 CREATE 判别探针
+
+- 新增 `ValidateFuse2Create.c`：纯内存最小 FUSE 2.6 filesystem，只实现 root + regular-file `create/open/read/write/truncate/unlink`。
+- 新增 `probe-fuse2-create.sh`：以 `backend=fskit` nonlocal 方式 mount，然后创建、写入、读取、删除一个普通文件并做 bounded cleanup。
+- 该探针完全绕过 NTFS-3G、EDP crypto、DiskImages2，因此可以把 create 故障归因到 macFUSE FSKit/libfuse2 或 NTFS-3G 两者之一。
+- 已加入 5.3.2 / 5.3.3 CI matrix，且 artifact 名包含 macFUSE 版本，避免矩阵产物重名。
+- `bash -n`、C 编译、`git diff --check` 已通过。
