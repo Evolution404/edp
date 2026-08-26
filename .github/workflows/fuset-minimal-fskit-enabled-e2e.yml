@@ -39,7 +39,7 @@ jobs:
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
           test "$(xcodebuild -version | awk '/Xcode/ {print int($2); exit}')" -ge 26
 
-      - name: Build deterministic 8 MiB raw fixture
+      - name: Build deterministic 8 MiB read-only raw fixture
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/edp-fuset-enabled-e2e.raw"
@@ -57,7 +57,16 @@ jobs:
           print(f"RAW_SHA256={hashlib.sha256(open(path, 'rb').read()).hexdigest()}")
           PY
           test "$(stat -f %z "${RAW}")" -eq 8388608
+          chmod 0444 "${RAW}"
+          test ! -w "${RAW}"
+
+          SHA_BEFORE="$(shasum -a 256 "${RAW}" | awk '{print $1}')"
+          META_BEFORE="$(stat -f '%z:%m:%p' "${RAW}")"
           echo "RAW=${RAW}" >> "${GITHUB_ENV}"
+          echo "BACKING_SHA_BEFORE=${SHA_BEFORE}" >> "${GITHUB_ENV}"
+          echo "BACKING_META_BEFORE=${META_BEFORE}" >> "${GITHUB_ENV}"
+          echo "BACKING_SHA_BEFORE=${SHA_BEFORE}"
+          echo "BACKING_META_BEFORE=${META_BEFORE}"
 
       - name: Stage only official signed FUSE-T FSKit app
         run: |
@@ -151,7 +160,7 @@ jobs:
             -o "${RUNNER_TEMP}/FuseTMinimalBridge"
           test -x "${RUNNER_TEMP}/FuseTMinimalBridge"
 
-      - name: E2-E4 retry with fresh FSKit target
+      - name: E2-E5 bridge to read-only block device
         run: |
           set -euo pipefail
           HIDDEN="${RUNNER_TEMP}/edp-fuset-enabled-$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -184,7 +193,7 @@ jobs:
           if [[ "${mounted}" != true ]]; then
             echo 'BRIDGE_MOUNTED=false' >> "${GITHUB_ENV}"
             echo 'RESULT=E2_FSKIT_ENABLE_LIST_DID_NOT_UNLOCK_HOSTED_MOUNT'
-            exit 0
+            exit 1
           fi
           echo 'BRIDGE_MOUNTED=true' >> "${GITHUB_ENV}"
 
@@ -198,18 +207,9 @@ jobs:
           done
           echo 'RESULT=E2_FUSET_VOLUME_RAW_VISIBLE_AND_MATCHES'
 
-          set +e
           OUT="$(hdiutil attach -readonly -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}" 2>"${RUNNER_TEMP}/nested-hdiutil.err")"
-          RC=$?
-          set -e
-          echo "NESTED_HDIUTIL_RC=${RC}"
           printf '%s\n' "${OUT}"
           cat "${RUNNER_TEMP}/nested-hdiutil.err" || true
-          if [[ ${RC} -ne 0 ]]; then
-            echo 'NESTED_HDIUTIL_ATTACHED=false' >> "${GITHUB_ENV}"
-            echo 'RESULT=E3_HDIUTIL_OVER_FUSET_FAILED'
-            exit 0
-          fi
 
           DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
           test -n "${DISK}"
@@ -225,16 +225,29 @@ jobs:
             cmp "${RUNNER_TEMP}/expected-disk-${LBA}.bin" "${RUNNER_TEMP}/actual-disk-${LBA}.bin"
           done
           diskutil info "${DISK}" | tee "${RUNNER_TEMP}/nested-diskutil.txt"
+          grep -Eq 'Media Read-Only:[[:space:]]+Yes' "${RUNNER_TEMP}/nested-diskutil.txt"
           echo 'RESULT=E4_RANDOM_LBA_MATCH'
           hdiutil detach "${DISK}" -force
+          echo 'NESTED_DISK=' >> "${GITHUB_ENV}"
 
-      - name: Collect enablement and E2-E4 evidence
+          SHA_AFTER="$(shasum -a 256 "${RAW}" | awk '{print $1}')"
+          META_AFTER="$(stat -f '%z:%m:%p' "${RAW}")"
+          echo "BACKING_SHA_AFTER=${SHA_AFTER}" >> "${GITHUB_ENV}"
+          echo "BACKING_META_AFTER=${META_AFTER}" >> "${GITHUB_ENV}"
+          echo "BACKING_SHA_AFTER=${SHA_AFTER}"
+          echo "BACKING_META_AFTER=${META_AFTER}"
+          test "${SHA_AFTER}" = "${BACKING_SHA_BEFORE}"
+          test "${META_AFTER}" = "${BACKING_META_BEFORE}"
+          test ! -w "${RAW}"
+          echo 'RESULT=E5_BACKING_SHA_SIZE_MTIME_MODE_UNCHANGED'
+
+      - name: Collect enablement and E2-E5 evidence
         if: always()
         run: |
           set -euo pipefail
           mkdir -p "$(dirname "${DIAG_PATH}")"
           {
-            echo '# FUSE-T enabled-list E2-E4 macOS 26 CI probe'
+            echo '# FUSE-T enabled-list E2-E5 macOS 26 CI probe'
             echo
             echo 'generated_at_utc=<normalized>'
             echo "runner_os=$(sw_vers -productVersion)"
@@ -244,6 +257,10 @@ jobs:
             echo "bridge_mounted=${BRIDGE_MOUNTED:-unknown}"
             echo "nested_hdiutil_attached=${NESTED_HDIUTIL_ATTACHED:-unknown}"
             echo "nested_disk=${NESTED_DISK:-none}"
+            echo "backing_sha_before=${BACKING_SHA_BEFORE:-unknown}"
+            echo "backing_sha_after=${BACKING_SHA_AFTER:-unknown}"
+            echo "backing_meta_before=${BACKING_META_BEFORE:-unknown}"
+            echo "backing_meta_after=${BACKING_META_AFTER:-unknown}"
             echo
             echo '## enabled state'
             cat "${RUNNER_TEMP}/enabled-state.txt" 2>/dev/null || true
@@ -257,12 +274,15 @@ jobs:
             echo '## nested hdiutil stderr'
             cat "${RUNNER_TEMP}/nested-hdiutil.err" 2>/dev/null || true
             echo
+            echo '## nested diskutil'
+            cat "${RUNNER_TEMP}/nested-diskutil.txt" 2>/dev/null || true
+            echo
             echo '## FSKit runtime log'
             log show --last 5m --style compact \
               --predicate 'process == "fskitd" OR process == "fskit_agent" OR process == "extensionkitservice" OR process == "FskitSrvModule" OR eventMessage CONTAINS[c] "org.fuset.fskit-srv.module"' \
               2>/dev/null | tail -n 1600 || true
           } > "${DIAG_PATH}"
-          sed -n '1,420p' "${DIAG_PATH}"
+          sed -n '1,460p' "${DIAG_PATH}"
 
       - name: Cleanup
         if: always()
