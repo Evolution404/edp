@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
-"""Minimal, dependency-free helpers for the FUSE-T FSKit RPC experiment.
+"""Minimal, dependency-free helpers for the FUSE-T FSKit bridge experiment.
 
-This is PoC-only code.  It deliberately does not mount anything and does not
-encode guessed filesystem-operation response schemas.  Its job is to make the
-parts already proven on macOS reproducible in CI:
+This PoC intentionally contains only protocol pieces that have been observed on
+FUSE-T 1.2.7 or are local fail-closed invariants.  It does not guess directory,
+lookup-item, xattr, or statfs response shapes that have not yet been captured.
+
+Observed contract currently encoded here:
 
 * 8-byte big-endian frame header (metadata length, payload length)
-* JSON metadata + optional binary payload
+* JSON metadata + optional raw binary payload
 * request_id/method validation
-* handshake response contract
+* handshake response requires ok=true + matching session_id
+* open {node_id, open_modes} -> handle_id
+* read {node_id, offset, length} -> ok metadata + raw frame payload
+* close {node_id, keeping_modes} -> ok metadata
 * fixed-size backing reads with strict EOF semantics
-
-The operation-specific schema is added only after it has been extracted from
-FUSE-T 1.2.7 and/or captured from a real FskitSrvModule request.
+* known mutation methods fail closed with EROFS
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
+import hashlib
 import io
 import json
 import os
@@ -25,10 +30,31 @@ import struct
 import tempfile
 import unittest
 from dataclasses import dataclass
-from typing import BinaryIO, Any
+from typing import Any, BinaryIO
 
 MAX_COMPONENT_BYTES = 16 * 1024 * 1024
 _HEADER = struct.Struct(">II")
+VOLUME_RAW_NODE_ID = 2
+VOLUME_RAW_HANDLE_ID = 1
+
+# Method spellings are taken from FUSE-T 1.2.7 binary strings.  This list is a
+# fail-closed guard, not a claim that every method has already been exercised by
+# FskitSrvModule in the EDP PoC.
+READ_ONLY_MUTATION_METHODS = frozenset(
+    {
+        "create",
+        "create_directory",
+        "create_symlink",
+        "remove",
+        "remove_directory",
+        "remove_xattr",
+        "rename",
+        "set_attributes",
+        "set_xattr",
+        "truncate",
+        "write",
+    }
+)
 
 
 class ProtocolError(RuntimeError):
@@ -88,8 +114,6 @@ def write_frame(stream: BinaryIO, frame: RPCFrame) -> None:
     while view:
         written = stream.write(view)
         if written is None:
-            # Buffered streams are allowed to return None while accepting all
-            # data.  This matches BinaryIO.write's documented contract.
             break
         if written <= 0:
             raise ProtocolError("frame write made no progress")
@@ -123,7 +147,7 @@ def handshake_response(request: RPCFrame, *, session_id: str, auth_token: str) -
         raise ProtocolError(f"expected handshake, got {method!r}")
     supplied_token = request.metadata.get("auth_token")
     if supplied_token != auth_token:
-        return error_response(request_id, errno_value=13, message="authentication failed")
+        return error_response(request_id, errno_value=errno.EACCES, message="authentication failed")
     return RPCFrame(
         metadata={
             "request_id": request_id,
@@ -133,10 +157,10 @@ def handshake_response(request: RPCFrame, *, session_id: str, auth_token: str) -
     )
 
 
-def ok_response(request_id: int, **fields: Any) -> RPCFrame:
+def ok_response(request_id: int, *, payload: bytes = b"", **fields: Any) -> RPCFrame:
     metadata: dict[str, Any] = {"request_id": request_id, "ok": True}
     metadata.update(fields)
-    return RPCFrame(metadata=metadata)
+    return RPCFrame(metadata=metadata, payload=payload)
 
 
 def error_response(request_id: int, *, errno_value: int, message: str) -> RPCFrame:
@@ -150,12 +174,15 @@ def error_response(request_id: int, *, errno_value: int, message: str) -> RPCFra
     )
 
 
-class FixedBacking:
-    """Read-only backing used by the future /volume.raw node.
+def _required_nonnegative_int(metadata: dict[str, Any], key: str) -> int:
+    value = metadata.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ProtocolError(f"{key} must be a non-negative integer")
+    return value
 
-    It guarantees the Phase-D invariant: offset < size never produces an
-    artificial zero-byte read.  EOF is represented only by offset >= size.
-    """
+
+class FixedBacking:
+    """Read-only backing for the hidden /volume.raw node."""
 
     def __init__(self, path: str):
         self.path = path
@@ -179,10 +206,58 @@ class FixedBacking:
         return data
 
 
+class VolumeRawBackend:
+    """Observed single-file open/read/close contract plus fail-closed mutations.
+
+    lookup/getattr/directory response schemas intentionally remain outside this
+    class until their complete metadata shapes are captured and checked in.
+    """
+
+    def __init__(self, backing: FixedBacking):
+        self.backing = backing
+
+    def handle(self, request: RPCFrame) -> RPCFrame:
+        request_id, method = validate_request(request)
+
+        if method == "ping":
+            return ok_response(request_id)
+        if method in READ_ONLY_MUTATION_METHODS:
+            return error_response(request_id, errno_value=errno.EROFS, message="read-only filesystem")
+        if method == "open":
+            return self._open(request_id, request.metadata)
+        if method == "read":
+            return self._read(request_id, request.metadata)
+        if method == "close":
+            return self._close(request_id, request.metadata)
+        return error_response(request_id, errno_value=errno.ENOSYS, message=f"unsupported method: {method}")
+
+    def _open(self, request_id: int, metadata: dict[str, Any]) -> RPCFrame:
+        node_id = _required_nonnegative_int(metadata, "node_id")
+        _required_nonnegative_int(metadata, "open_modes")
+        if node_id != VOLUME_RAW_NODE_ID:
+            return error_response(request_id, errno_value=errno.ENOENT, message="unknown node")
+        return ok_response(request_id, handle_id=VOLUME_RAW_HANDLE_ID)
+
+    def _read(self, request_id: int, metadata: dict[str, Any]) -> RPCFrame:
+        node_id = _required_nonnegative_int(metadata, "node_id")
+        offset = _required_nonnegative_int(metadata, "offset")
+        length = _required_nonnegative_int(metadata, "length")
+        if node_id != VOLUME_RAW_NODE_ID:
+            return error_response(request_id, errno_value=errno.ENOENT, message="unknown node")
+        return ok_response(request_id, payload=self.backing.pread(offset, length))
+
+    def _close(self, request_id: int, metadata: dict[str, Any]) -> RPCFrame:
+        node_id = _required_nonnegative_int(metadata, "node_id")
+        _required_nonnegative_int(metadata, "keeping_modes")
+        if node_id != VOLUME_RAW_NODE_ID:
+            return error_response(request_id, errno_value=errno.ENOENT, message="unknown node")
+        return ok_response(request_id)
+
+
 class ContractTests(unittest.TestCase):
     def test_frame_round_trip_with_binary_payload(self) -> None:
         original = RPCFrame(
-            metadata={"request_id": 7, "method": "read_file", "offset": 4096},
+            metadata={"request_id": 7, "method": "read", "offset": 4096},
             payload=b"\x00\x01\xffpayload",
         )
         decoded = read_frame(io.BytesIO(encode_frame(original)))
@@ -219,19 +294,98 @@ class ContractTests(unittest.TestCase):
         )
         response = handshake_response(request, session_id="session-1", auth_token="secret")
         self.assertFalse(response.metadata["ok"])
-        self.assertEqual(response.metadata["errno"], 13)
+        self.assertEqual(response.metadata["errno"], errno.EACCES)
 
-    def test_fixed_backing_random_reads_and_eof(self) -> None:
-        content = bytes((i * 17 + 3) % 256 for i in range(8193))
+    def _make_backend(self, fixture: tempfile.NamedTemporaryFile) -> tuple[bytes, VolumeRawBackend]:
+        content = bytes((i * 17 + 3) % 256 for i in range(65537))
+        fixture.write(content)
+        fixture.flush()
+        return content, VolumeRawBackend(FixedBacking(fixture.name))
+
+    def test_observed_open_read_close_schema(self) -> None:
         with tempfile.NamedTemporaryFile() as fixture:
-            fixture.write(content)
-            fixture.flush()
-            backing = FixedBacking(fixture.name)
-            self.assertEqual(backing.size, len(content))
-            for offset, length in ((0, 1), (1, 31), (4095, 4097), (8192, 64)):
-                self.assertEqual(backing.pread(offset, length), content[offset : offset + length])
-            self.assertEqual(backing.pread(len(content), 1), b"")
-            self.assertEqual(backing.pread(len(content) + 100, 1024), b"")
+            content, backend = self._make_backend(fixture)
+            opened = backend.handle(
+                RPCFrame(metadata={"request_id": 10, "method": "open", "node_id": 2, "open_modes": 1})
+            )
+            self.assertEqual(opened.metadata, {"request_id": 10, "ok": True, "handle_id": 1})
+
+            read = backend.handle(
+                RPCFrame(metadata={"request_id": 11, "method": "read", "node_id": 2, "offset": 4095, "length": 4097})
+            )
+            self.assertEqual(read.metadata, {"request_id": 11, "ok": True})
+            self.assertEqual(read.payload, content[4095 : 4095 + 4097])
+
+            closed = backend.handle(
+                RPCFrame(metadata={"request_id": 12, "method": "close", "node_id": 2, "keeping_modes": 0})
+            )
+            self.assertEqual(closed.metadata, {"request_id": 12, "ok": True})
+
+    def test_random_read_boundary_matrix_and_strict_eof(self) -> None:
+        with tempfile.NamedTemporaryFile() as fixture:
+            content, backend = self._make_backend(fixture)
+            cases = (
+                (0, 1),
+                (1, 31),
+                (511, 2),
+                (4095, 4097),
+                (32767, 8192),
+                (len(content) - 1, 65536),
+                (len(content), 1),
+                (len(content) + 100, 1024),
+            )
+            for request_id, (offset, length) in enumerate(cases, start=20):
+                response = backend.handle(
+                    RPCFrame(
+                        metadata={
+                            "request_id": request_id,
+                            "method": "read",
+                            "node_id": 2,
+                            "offset": offset,
+                            "length": length,
+                        }
+                    )
+                )
+                self.assertTrue(response.metadata["ok"])
+                self.assertEqual(response.payload, content[offset : offset + length])
+                if offset < len(content) and length > 0:
+                    self.assertGreater(len(response.payload), 0)
+                if offset >= len(content):
+                    self.assertEqual(response.payload, b"")
+
+    def test_full_backing_hash_via_chunked_rpc_reads(self) -> None:
+        with tempfile.NamedTemporaryFile() as fixture:
+            content, backend = self._make_backend(fixture)
+            reconstructed = bytearray()
+            offset = 0
+            request_id = 100
+            while offset < len(content):
+                response = backend.handle(
+                    RPCFrame(
+                        metadata={
+                            "request_id": request_id,
+                            "method": "read",
+                            "node_id": 2,
+                            "offset": offset,
+                            "length": 7777,
+                        }
+                    )
+                )
+                self.assertTrue(response.payload)
+                reconstructed.extend(response.payload)
+                offset += len(response.payload)
+                request_id += 1
+            self.assertEqual(len(reconstructed), len(content))
+            self.assertEqual(hashlib.sha256(reconstructed).digest(), hashlib.sha256(content).digest())
+
+    def test_mutations_fail_closed_with_erofs(self) -> None:
+        with tempfile.NamedTemporaryFile() as fixture:
+            _, backend = self._make_backend(fixture)
+            for request_id, method in enumerate(sorted(READ_ONLY_MUTATION_METHODS), start=200):
+                response = backend.handle(RPCFrame(metadata={"request_id": request_id, "method": method}))
+                self.assertFalse(response.metadata["ok"])
+                self.assertEqual(response.metadata["errno"], errno.EROFS)
+                self.assertEqual(response.payload, b"")
 
 
 def _main() -> int:
