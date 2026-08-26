@@ -136,4 +136,8 @@
 - 结论：版本回退不能解决这个最小 create 问题；当前要追踪 `create` 返回之后 FSKit/libfuse2 请求的下一操作（优先检查 `ftruncate` / `fgetattr` / setattr 类 callback），直到最小 probe 能完成 create→write→read。
 - 已在最小 probe 中实现并注册 `fgetattr -> getattr` 与 `ftruncate -> truncate` wrapper，并增加 `FUSE2_FGETATTR` / `FUSE2_FTRUNCATE` / `FUSE2_TRUNCATE` 日志；静态编译、`bash -n`、`git diff --check` 均通过。
 - run `32918751432`：`FUSE2_CREATE` 与 `FUSE2_FGETATTR` 均被实际调用，但随后调用方仍收到 `ENOSYS`，且 `ftruncate/write` 尚未发生，说明缺口继续位于 create 后 Apple 属性阶段。
-- 已继续为最小 probe 增加 macOS 专有 `setattr_x` / `fsetattr_x` / `getxtimes` callback，并逐项打印调用日志；本地静态编译通过。下一轮 CI 用一轮结果确认 FSKit 是否强制依赖这些 Apple 扩展。
+- 已继续为最小 probe 增加 macOS 专有 `setattr_x` / `fsetattr_x` / `getxtimes` callback，并逐项打印调用日志；本地静态编译通过。
+- run `32918908780`：5.3.2 与 5.3.3 的最小 probe 均通过完整 create→write→read→unlink；实际序列为 `CREATE → FGETATTR → FSETATTR_X(valid=0x90000007) → OPEN → WRITE`。这证明 FSKit 在 CREATE 后会立即提交 Apple 扩展属性。
+- `0x90000007` 对应 mode / uid / gid / creation-time / flags；NTFS-3G 2026.7.7 没有直接实现 `setattr_x/fsetattr_x`，而是依赖 libfuse 拆分 fallback 到 `setcrtime/chmod/chown`。
+- 同一 run 中 NTFS-3G 仍在 regular-file create 阶段返回 `ENOENT`，因此下一步开启 NTFS-3G/libfuse debug，精确确认 fallback 是 path/node lookup 失败还是 `setcrtime/chmod/chown` 中某一步失败。
+- macFUSE 5.3.2/5.3.3 已证明该最小行为一致，后续主线回到产品 pin 5.3.3，停止重复双版本矩阵以缩短反馈周期。

@@ -219,6 +219,7 @@ start_ntfs() {
     "${NTFS_RUNTIME}/bin/ntfs-3g" \
       -o backend=fskit \
       -o no_detach \
+      -o debug \
       -o norecover \
       -o windows_names \
       -o streams_interface=openxattr \
