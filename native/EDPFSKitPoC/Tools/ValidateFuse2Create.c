@@ -248,8 +248,13 @@ static void *m_init(struct fuse_conn_info *conn) {
 #ifdef FUSE_CAP_RENAME_SWAP
     fprintf(stderr, "FUSE2_INIT capable=0x%x want_before=0x%x rename_swap_cap=0x%x\n",
             conn->capable, conn->want, FUSE_CAP_RENAME_SWAP);
-    conn->want &= ~FUSE_CAP_RENAME_SWAP;
-    fprintf(stderr, "FUSE2_INIT want_after=0x%x\n", conn->want);
+    if (support_rename_swap) {
+        conn->want |= FUSE_CAP_RENAME_SWAP;
+    } else {
+        conn->want &= ~FUSE_CAP_RENAME_SWAP;
+    }
+    fprintf(stderr, "FUSE2_INIT want_after=0x%x support_swap=%d\n",
+            conn->want, support_rename_swap);
 #endif
     return NULL;
 }

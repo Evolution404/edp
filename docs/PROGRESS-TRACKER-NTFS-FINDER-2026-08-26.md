@@ -187,6 +187,38 @@ commit:
 - 同时继续观察 macFUSE upstream 对 Tahoe/TextEdit/FSKit rename 的修复，不修改真实用户文件。
 
 commit:
+- `1ec3c38 docs: record FSKit atomic rename boundary`
+
+#### 2026-08-26 16:23 — 显式 swap capability 仍不恢复 POSIX rename
+
+目标：
+- 排除“因为 probe/NTFS patch 清除了 `FUSE_CAP_RENAME_SWAP`，FSKit 才异常发送 swap”的可能。
+
+改动：
+- 最小 FUSE2 probe 在 `EDP_FUSE2_SUPPORT_RENAME_SWAP=1` 时显式保留/请求 `FUSE_CAP_RENAME_SWAP`；未开启时继续清除 capability，形成可控对照。
+
+验证：
+- generic FSKit：`capable=0x67a00800`，`want_before=0x86200010`；启用实验后 `want_after=0x86200010`，确认 bit `0x02000000` (`FUSE_CAP_RENAME_SWAP`) 实际保留。
+- libc `rename(created.txt,target.txt)` 仍只触发 `FUSE2_RENAMEX ... flags=0x2`。
+- callback 返回成功后 syscall 返回 0、target 为新内容，但 source 仍存在且持有旧 target 内容；FSKit 没有追加 unlink。probe 最后的 `FUSE2_UNLINK /created.txt` 是测试清理代码，不属于 rename syscall。
+
+结论：
+- PASS。问题不是 capability negotiation 配错；即使明确宣告 swap，macFUSE 5.3.3 FSKit 对普通 overwrite rename 的可见语义仍是“exchange 后 source 保留”。
+- 因此不能通过单纯打开 `FUSE_CAP_RENAME_SWAP` 修复 TextEdit，也不能把当前 NTFS patch 的 `EOPNOTSUPP` 改成字面 swap 后视为完成。
+
+附加实机：
+- 对真实 `/Volumes/EDP-NTFS` 仅创建 `.edp-textedit-automation-probe.txt` 临时文件，AppleScript 驱动 TextEdit 打开、修改、保存，稳定得到 AppleEvent save failure；保存过程中出现 `.sb-*` 临时路径，目标内容保持旧值。关闭文档后专用测试文件已清理，未触碰既有用户文件。
+- 尝试在最小 FUSE 上捕获完整 TextEdit 流程时，macFUSE 先创建 `._target.txt` AppleDouble 文件；`noappledouble` 在 FSKit backend 下未抑制该行为，因此当前单动态文件 probe 尚不足以进入 TextEdit 的 rename 阶段。
+
+下一步：
+- 若继续做 TextEdit 全事务诊断，最小 probe 需要支持多个并存临时文件/AppleDouble，而不是改变生产路径；
+- P0 代码修复仍必须等待可证明的原子 primitive 或 upstream FSKit rename bridge 修复。
+
+补充验证：
+- 将 synthetic probe 的 init 改为在 `support_swap=1` 时真实保留 `FUSE_CAP_RENAME_SWAP` 协商位，再次运行；`want_after=0x86200010` 明确包含 swap capability。
+- 结果仍是：libc `rename()` 返回 0、target 变为新内容、source 仍存在且保存旧 target 内容。说明该错误语义不是因为先前 init 清掉 `want` 导致，而是 FSKit/bridge 对 overwrite rename 的实际编码行为。
+
+commit:
 - pending
 
 ### T2 — P1 Finder 本地卷 + Trash
