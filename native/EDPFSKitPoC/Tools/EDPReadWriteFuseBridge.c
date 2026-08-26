@@ -421,8 +421,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "EDP_FUSE_BRIDGE_INVALID_SIZE\n"); return 66;
     }
 
-    char options[128];
-    snprintf(options, sizeof(options), "backend=fskit,uid=%u,gid=%u",
+    char options[176];
+    snprintf(options, sizeof(options),
+             "backend=fskit,big_writes,noatime,uid=%u,gid=%u",
              getuid(), getgid());
     char *fuse_argv[] = {
         argv[0], "-f", "-o", options, (char *)mountpoint, NULL,

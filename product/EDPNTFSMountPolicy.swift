@@ -4,6 +4,7 @@ import Foundation
 enum EDPNTFSMountPolicy {
     static let fixedOptions: [String] = [
         "backend=fskit",
+        "local",
         "no_detach",
         "norecover",
         "windows_names",

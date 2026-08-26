@@ -139,7 +139,7 @@ jobs:
             native/EDPFSKitPoC/Tools/RenderNTFSMountPolicy.swift \
             -o "${RUNNER_TEMP}/render-ntfs-mount-policy"
           "${RUNNER_TEMP}/render-ntfs-mount-policy" "$(id -u)" "$(id -g)" EDPRWTEST | grep -Fx 'backend=fskit'
-          ! "${RUNNER_TEMP}/render-ntfs-mount-policy" "$(id -u)" "$(id -g)" EDPRWTEST | grep -Fx 'local'
+          "${RUNNER_TEMP}/render-ntfs-mount-policy" "$(id -u)" "$(id -g)" EDPRWTEST | grep -Fx 'local'
           echo 'RESULT=BUNDLED_NTFS3G_RUNTIME_READY'
           echo 'RESULT=SHARED_NTFS_MOUNT_POLICY_READY'
 

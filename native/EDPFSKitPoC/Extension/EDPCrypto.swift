@@ -86,27 +86,34 @@ struct EDPSM4: Sendable {
         guard bytes.count % 16 == 0 else {
             throw EDPNativeCoreError.invalidInput("SM4-ECB input must be 16-byte aligned")
         }
-        var out = [UInt8]()
-        out.reserveCapacity(bytes.count)
-        for offset in stride(from: 0, to: bytes.count, by: 16) {
-            out.append(contentsOf: cryptBlock(Array(bytes[offset..<(offset + 16)]), decrypt: decrypt))
-        }
-        return out
-    }
+        guard !bytes.isEmpty else { return [] }
 
-    private func cryptBlock(_ block: [UInt8], decrypt: Bool) -> [UInt8] {
-        var state = [
-            Self.wordBE(block, 0),
-            Self.wordBE(block, 4),
-            Self.wordBE(block, 8),
-            Self.wordBE(block, 12),
-        ]
-        for index in 0..<32 {
-            let key = decrypt ? roundKeys[31 - index] : roundKeys[index]
-            let next = state[0] ^ Self.roundTransform(state[1] ^ state[2] ^ state[3] ^ key)
-            state = [state[1], state[2], state[3], next]
+        var output = [UInt8](repeating: 0, count: bytes.count)
+        bytes.withUnsafeBufferPointer { input in
+            output.withUnsafeMutableBufferPointer { destination in
+                for offset in stride(from: 0, to: input.count, by: 16) {
+                    var x0 = Self.wordBE(input, offset)
+                    var x1 = Self.wordBE(input, offset + 4)
+                    var x2 = Self.wordBE(input, offset + 8)
+                    var x3 = Self.wordBE(input, offset + 12)
+
+                    for index in 0..<32 {
+                        let key = decrypt ? roundKeys[31 - index] : roundKeys[index]
+                        let next = x0 ^ Self.roundTransform(x1 ^ x2 ^ x3 ^ key)
+                        x0 = x1
+                        x1 = x2
+                        x2 = x3
+                        x3 = next
+                    }
+
+                    Self.storeBE(x3, into: destination, at: offset)
+                    Self.storeBE(x2, into: destination, at: offset + 4)
+                    Self.storeBE(x1, into: destination, at: offset + 8)
+                    Self.storeBE(x0, into: destination, at: offset + 12)
+                }
+            }
         }
-        return Self.bytesBE(state[3]) + Self.bytesBE(state[2]) + Self.bytesBE(state[1]) + Self.bytesBE(state[0])
+        return output
     }
 
     private static func wordBE(_ bytes: [UInt8], _ offset: Int) -> UInt32 {
@@ -116,34 +123,46 @@ struct EDPSM4: Sendable {
             | UInt32(bytes[offset + 3])
     }
 
-    private static func bytesBE(_ value: UInt32) -> [UInt8] {
-        [
-            UInt8(truncatingIfNeeded: value >> 24),
-            UInt8(truncatingIfNeeded: value >> 16),
-            UInt8(truncatingIfNeeded: value >> 8),
-            UInt8(truncatingIfNeeded: value),
-        ]
+    @inline(__always)
+    private static func wordBE(_ bytes: UnsafeBufferPointer<UInt8>, _ offset: Int) -> UInt32 {
+        (UInt32(bytes[offset]) << 24)
+            | (UInt32(bytes[offset + 1]) << 16)
+            | (UInt32(bytes[offset + 2]) << 8)
+            | UInt32(bytes[offset + 3])
     }
 
+    @inline(__always)
+    private static func storeBE(
+        _ value: UInt32,
+        into bytes: UnsafeMutableBufferPointer<UInt8>,
+        at offset: Int
+    ) {
+        bytes[offset] = UInt8(truncatingIfNeeded: value >> 24)
+        bytes[offset + 1] = UInt8(truncatingIfNeeded: value >> 16)
+        bytes[offset + 2] = UInt8(truncatingIfNeeded: value >> 8)
+        bytes[offset + 3] = UInt8(truncatingIfNeeded: value)
+    }
+
+    @inline(__always)
     private static func rotateLeft(_ value: UInt32, by amount: UInt32) -> UInt32 {
         (value << amount) | (value >> (32 - amount))
     }
 
+    @inline(__always)
     private static func tau(_ value: UInt32) -> UInt32 {
-        let bytes = bytesBE(value)
-        return wordBE([
-            sbox[Int(bytes[0])],
-            sbox[Int(bytes[1])],
-            sbox[Int(bytes[2])],
-            sbox[Int(bytes[3])],
-        ], 0)
+        (UInt32(sbox[Int((value >> 24) & 0xff)]) << 24)
+            | (UInt32(sbox[Int((value >> 16) & 0xff)]) << 16)
+            | (UInt32(sbox[Int((value >> 8) & 0xff)]) << 8)
+            | UInt32(sbox[Int(value & 0xff)])
     }
 
+    @inline(__always)
     private static func keyTransform(_ value: UInt32) -> UInt32 {
         let substituted = tau(value)
         return substituted ^ rotateLeft(substituted, by: 13) ^ rotateLeft(substituted, by: 23)
     }
 
+    @inline(__always)
     private static func roundTransform(_ value: UInt32) -> UInt32 {
         let substituted = tau(value)
         return substituted
