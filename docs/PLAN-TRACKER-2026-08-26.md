@@ -152,4 +152,8 @@
 - 结论：这是 **macFUSE FSKit CREATE mode 语义与 NTFS-3G 传统 FUSE adapter 假设不兼容**；不是 EDP crypto、DiskImages2、NTFS on-disk 数据、mount 生命周期或单纯 macFUSE 5.3.3 回归。
 - 已增加最小兼容 patch `patches/ntfs-3g-2026.7.7-macfuse-fskit-create-mode.patch`：`.create` 入口规范化为 `S_IFREG | (mode & 07777)`。该改动只修正 FUSE adapter 的文件类型，不改变 NTFS 核心读写/磁盘结构。
 - `build-ntfs3g-runtime.sh` 在校验固定上游 SHA256 并解包后应用该 patch，并将 patch 一起放入 bundled source 目录，保持构建与 GPL source distribution 可审计。
-- patch 已对固定 NTFS-3G 2026.7.7 原始源码完成 `patch --dry-run`、实际 apply、`bash -n` 与 `git diff --check` 验证。下一步由 macOS 26 CI 验证完整 NTFS create/write/remount。
+- patch 已对固定 NTFS-3G 2026.7.7 原始源码完成 `patch --dry-run`、实际 apply、`bash -n` 与 `git diff --check` 验证。
+- run `32919605335` 验证 CREATE mode patch 有效：root/nested `touch` 均成功，4 MiB 文件创建、顺序写、随机覆盖、临时文件删除全部通过；失败点已后移到 rename。
+- rename debug 显示 macOS/FSKit 发出 `renamex(..., flags=0x4)`，即 `RENAME_EXCL`；NTFS-3G 只实现传统 `.rename`，macFUSE 的 `fuse_fs_renamex()` 在 `.renamex` 缺失时直接返回 `ENOSYS`，不会 fallback。
+- 已增加第二个可审计 patch `patches/ntfs-3g-2026.7.7-macfuse-fskit-renamex.patch`：支持 flags=0 / `RENAME_EXCL`，目标存在时返回 `EEXIST`，否则复用 NTFS-3G 原有 rename；`RENAME_SWAP` 明确不支持并在 init 中关闭其 capability。
+- build 脚本按固定顺序应用 CREATE mode + renamex 两个 patch，并将两者随 bundled source 一并保留。两 patch 已对固定上游 SHA 源码完成顺序 dry-run/apply 验证。

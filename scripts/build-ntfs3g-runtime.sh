@@ -7,6 +7,7 @@ SOURCE_URL="https://tuxera.com/opensource/${ARCHIVE}"
 SOURCE_SHA256="d67b769025d32860549d35c2147e45024d172f81c540d750390ce3602c059dab"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CREATE_MODE_PATCH="${REPO_ROOT}/patches/ntfs-3g-2026.7.7-macfuse-fskit-create-mode.patch"
+RENAMEX_PATCH="${REPO_ROOT}/patches/ntfs-3g-2026.7.7-macfuse-fskit-renamex.patch"
 # Autotools' generated PLUGIN_DIR define is not safely quoted when prefix has
 # spaces. Build under a space-free canonical prefix, then make the selected
 # runtime dylib relocatable with @loader_path below.
@@ -41,13 +42,16 @@ SOURCE_DIR="$(find "${BUILD_ROOT}" -maxdepth 1 -type d -name 'ntfs-3g-*' -print 
   echo "NTFS-3G source directory missing after extraction" >&2
   exit 4
 }
-[[ -f "${CREATE_MODE_PATCH}" ]] || {
-  echo "NTFS-3G macFUSE FSKit compatibility patch missing" >&2
-  exit 4
-}
+for compatibility_patch in "${CREATE_MODE_PATCH}" "${RENAMEX_PATCH}"; do
+  [[ -f "${compatibility_patch}" ]] || {
+    echo "NTFS-3G macFUSE FSKit compatibility patch missing: ${compatibility_patch}" >&2
+    exit 4
+  }
+done
 (
   cd "${SOURCE_DIR}"
   patch --forward --batch -p1 <"${CREATE_MODE_PATCH}"
+  patch --forward --batch -p1 <"${RENAMEX_PATCH}"
 )
 
 (
@@ -91,6 +95,7 @@ cp "${SOURCE_DIR}/COPYING" "${SOURCE_DIR}/COPYING.LIB" \
   "${OUTPUT_DIR}/ntfs-3g/licenses/"
 cp "${BUILD_ROOT}/${ARCHIVE}" "${OUTPUT_DIR}/ntfs-3g/source/"
 cp "${CREATE_MODE_PATCH}" "${OUTPUT_DIR}/ntfs-3g/source/"
+cp "${RENAMEX_PATCH}" "${OUTPUT_DIR}/ntfs-3g/source/"
 
 for binary in ntfs-3g ntfs-3g.probe ntfslabel; do
   install_name_tool -change \

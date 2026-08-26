@@ -1,0 +1,57 @@
+--- a/src/ntfs-3g.c
++++ b/src/ntfs-3g.c
+@@ -679,6 +679,9 @@
+ {
+ #if defined(__APPLE__) || defined(__DARWIN__)
+ 	FUSE_ENABLE_XTIMES(conn);
++#ifdef FUSE_CAP_RENAME_SWAP
++	conn->want &= ~FUSE_CAP_RENAME_SWAP;
++#endif
+ #endif
+ #ifdef FUSE_CAP_DONT_MASK
+ 		/* request umask not to be enforced by fuse */
+@@ -2753,7 +2756,36 @@
+ 		free(stream_name);
+ 	return ret;
+ }
++
++#if defined(__APPLE__) || defined(__DARWIN__)
++#ifndef RENAME_SWAP
++#define RENAME_SWAP 0x00000002
++#endif
++#ifndef RENAME_EXCL
++#define RENAME_EXCL 0x00000004
++#endif
+ 
++static int ntfs_macfuse_renamex(const char *old_path, const char *new_path,
++				unsigned int flags)
++{
++	struct stat st;
++	int ret;
++
++	if (flags & RENAME_SWAP)
++		return -EOPNOTSUPP;
++	if (flags & ~RENAME_EXCL)
++		return -EINVAL;
++	if (flags & RENAME_EXCL) {
++		ret = ntfs_fuse_getattr(new_path, &st);
++		if (!ret)
++			return -EEXIST;
++		if (ret != -ENOENT)
++			return ret;
++	}
++	return ntfs_fuse_rename(old_path, new_path);
++}
++#endif
++
+ static int ntfs_fuse_mkdir(const char *path,
+ 		mode_t mode)
+ {
+@@ -3997,6 +4029,7 @@
+ #endif /* HAVE_SETXATTR */
+ #if defined(__APPLE__) || defined(__DARWIN__)
+ 	/* MacFUSE extensions. */
++	.renamex	= ntfs_macfuse_renamex,
+ 	.getxtimes	= ntfs_macfuse_getxtimes,
+ 	.setcrtime	= ntfs_macfuse_setcrtime,
+ 	.setbkuptime	= ntfs_macfuse_setbkuptime,
