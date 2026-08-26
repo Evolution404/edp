@@ -77,13 +77,21 @@ jobs:
             -o "${RUNNER_TEMP}/validate-ntfs-safety"
           "${RUNNER_TEMP}/validate-ntfs-safety"
 
-      - name: Verify product never opts into unsafe recovery
+      - name: Verify shared product mount policy is fail-closed
         run: |
           set -euo pipefail
-          ! grep -F '"-o", "recover"' product/EDPVaultRuntime.swift
-          ! grep -F 'remove_hiberfile' product/EDPVaultRuntime.swift
-          ! grep -F '"-o", "force"' product/EDPVaultRuntime.swift
-          grep -F '"-o", "norecover"' product/EDPVaultRuntime.swift
+          xcrun swiftc \
+            product/EDPNTFSMountPolicy.swift \
+            native/EDPFSKitPoC/Tools/RenderNTFSMountPolicy.swift \
+            -o "${RUNNER_TEMP}/render-ntfs-mount-policy"
+          POLICY="${RUNNER_TEMP}/ntfs-policy.txt"
+          "${RUNNER_TEMP}/render-ntfs-mount-policy" "$(id -u)" "$(id -g)" EDPFAILCLOSED >"${POLICY}"
+          grep -Fx 'backend=fskit' "${POLICY}"
+          grep -Fx 'norecover' "${POLICY}"
+          ! grep -Fx 'recover' "${POLICY}"
+          ! grep -Fx 'force' "${POLICY}"
+          ! grep -Fx 'remove_hiberfile' "${POLICY}"
+          ! grep -Fx 'local' "${POLICY}"
           echo 'RESULT=PRODUCT_NTFS_UNSAFE_RECOVERY_OPTIONS_ABSENT'
 
       - name: Probe dirty and hibernated fixtures
