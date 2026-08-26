@@ -1,0 +1,31 @@
+# FUSE-T minimal bridge -> Apple filesystem macOS 26 CI
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+raw_size=unknown
+backing_sha_before=unknown
+backing_sha_after=unknown
+backing_meta_before=unknown
+backing_meta_after=unknown
+final_mount=none
+finder_enum_ok=unknown
+
+## baseline raw diskutil
+
+## hidden transport mount
+
+## hdiutil attach
+
+## final diskutil
+
+## final mount
+
+## final POSIX listing
+
+## Finder enumeration
+
+## read-only write attempt
+
+## bridge log
