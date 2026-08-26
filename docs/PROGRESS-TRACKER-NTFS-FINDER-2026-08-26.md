@@ -254,10 +254,13 @@ commit:
 
 下一步：
 
-- [ ] 对 SM4 优化跑标准 vector
-- [ ] 跑现有 native crypto fast checks
+- [x] 对 SM4 优化跑标准 vector
+  - `NATIVE_SM4_GOLDEN=OK`。
+- [x] 跑现有 native crypto fast checks
+  - encrypted writer boundaries / ciphertext persistence / 1024 real-key random reads / reader+writer results 全部 OK。
 - [ ] 跑 DiskImages2/NTFS readwrite E2E
-- [ ] 实盘 256 MiB inner sequential read
+- [x] 实盘 256 MiB inner sequential read
+  - 当前 WIP runtime：268435456 bytes / 4.886164 s = `54,937,873 bytes/s` ≈ **54.94 MB/s**，与历史 WIP ≈55.8 MB/s 一致。
 - [ ] 实盘 256 MiB outer sequential read
 - [ ] 实盘 256 MiB outer sequential write + fsync
 - [ ] 1000×4 KiB small files
@@ -269,6 +272,7 @@ commit:
 ```text
 baseline inner sequential read ≈ 5.8 MB/s
 WIP inner sequential read ≈ 55.8 MB/s
+2026-08-26 本轮复核 WIP inner sequential read ≈ 54.94 MB/s（约 baseline 9.5×）
 WIP outer write + fsync ≈ 37.8 MB/s
 500 × 4 KiB ≈ 6 s
 ```
