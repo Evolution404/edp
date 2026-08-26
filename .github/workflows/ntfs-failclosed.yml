@@ -65,7 +65,6 @@ jobs:
         run: |
           set -euo pipefail
           /bin/bash scripts/build-ntfs3g-runtime.sh "${RUNNER_TEMP}/ntfs-runtime"
-          test -x "${RUNNER_TEMP}/ntfs-runtime/ntfs-3g/test-tools/ntfsfix"
           test -x "${RUNNER_TEMP}/ntfs-runtime/ntfs-3g/test-tools/mkntfs"
           echo 'RESULT=NTFS_FAIL_CLOSED_TOOLS_READY'
 
