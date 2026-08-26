@@ -89,5 +89,8 @@ jobs:
       - name: Probe dirty and hibernated fixtures
         run: |
           set -euo pipefail
+          sudo mkdir -p /Volumes/EDPNTFSFailClosed
+          sudo chown "$(id -u):$(id -g)" /Volumes/EDPNTFSFailClosed
+          chmod 700 /Volumes/EDPNTFSFailClosed
           /bin/bash native/EDPFSKitPoC/Tools/probe-ntfs-failclosed.sh \
             "${RUNNER_TEMP}/ntfs-runtime/ntfs-3g"
