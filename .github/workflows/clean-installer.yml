@@ -73,7 +73,15 @@ jobs:
           /usr/sbin/pkgutil --flatten \
             "${EXPANDED}/ZZ-EDP-USB-Vault.pkg" \
             "${COMPONENT}"
+          set +e
           sudo /usr/sbin/installer -pkg "${COMPONENT}" -target /
+          INSTALL_RC=$?
+          set -e
+          if [[ "${INSTALL_RC}" -ne 0 ]]; then
+            echo "EDP_COMPONENT_INSTALL_RC=${INSTALL_RC}"
+            sudo /usr/bin/tail -n 200 /var/log/install.log || true
+            exit "${INSTALL_RC}"
+          fi
           APP='/Applications/EDP USB Vault.app'
           test -x "${APP}/Contents/MacOS/EDP USB Vault"
           test "$(stat -f '%u' "${APP}")" -eq 0
