@@ -87,82 +87,81 @@ private enum ValidateEDPReadWriteMatrixMain {
         try initialCipher.write(to: temp, options: .atomic)
         let initialCipherHash = EDPCrypto.sha256([UInt8](initialCipher))
 
-        var block: EDPEncryptedReadWriteBlockDevice? = try makeWritableBlock(
-            path: temp.path,
-            size: size,
-            key: key
-        )
-        guard let active = block else { throw MatrixError.failed("failed to construct writable block") }
+        do {
+            let active = try makeWritableBlock(path: temp.path, size: size, key: key)
 
-        try require(try active.read(at: 0, length: size) == expected, "initial full decrypt mismatch")
-        try require(try active.read(at: 15, length: 33) == expected.subdata(in: 15..<48), "cross-SM4 read mismatch")
-        try require(try active.read(at: UInt64(size - 1), length: 1) == expected.subdata(in: (size - 1)..<size), "tail read mismatch")
-        try require(try active.read(at: 7, length: 0).isEmpty, "zero-length read mismatch")
+            try require(try active.read(at: 0, length: size) == expected, "initial full decrypt mismatch")
+            try require(try active.read(at: 15, length: 33) == expected.subdata(in: 15..<48), "cross-SM4 read mismatch")
+            try require(try active.read(at: UInt64(size - 1), length: 1) == expected.subdata(in: (size - 1)..<size), "tail read mismatch")
+            try require(try active.read(at: 7, length: 0).isEmpty, "zero-length read mismatch")
 
-        struct WriteCase {
-            let name: String
-            let offset: Int
-            let length: Int
-            let seed: UInt64
-        }
-        let cases = [
-            WriteCase(name: "head-1B", offset: 0, length: 1, seed: 1),
-            WriteCase(name: "unaligned-31B", offset: 1, length: 31, seed: 2),
-            WriteCase(name: "cross-sm4-33B", offset: 15, length: 33, seed: 3),
-            WriteCase(name: "cross-4K-4097B", offset: 4095, length: 4097, seed: 4),
-            WriteCase(name: "unaligned-7777B", offset: 65531, length: 7777, seed: 5),
-            WriteCase(name: "aligned-4K", offset: 512 * 3, length: 4096, seed: 6),
-            WriteCase(name: "aligned-64K", offset: 512 * 41, length: 64 * 1024, seed: 7),
-            WriteCase(name: "unaligned-64K", offset: 1024 * 1024 + 5, length: 64 * 1024 - 17, seed: 8),
-            WriteCase(name: "aligned-1MiB", offset: 2 * 1024 * 1024, length: 1024 * 1024, seed: 9),
-            WriteCase(name: "tail-1B", offset: size - 1, length: 1, seed: 10),
-        ]
-
-        for item in cases {
-            let replacement = deterministicBytes(count: item.length, seed: item.seed)
-            let beforeLeft = item.offset > 0 ? expected[item.offset - 1] : nil
-            let rightIndex = item.offset + item.length
-            let beforeRight = rightIndex < expected.count ? expected[rightIndex] : nil
-            try active.write(at: UInt64(item.offset), data: replacement)
-            expected.replaceSubrange(item.offset..<(item.offset + item.length), with: replacement)
-            let readBack = try active.read(at: UInt64(item.offset), length: item.length)
-            try require(readBack == replacement, "read-after-write mismatch: \(item.name)")
-            if let beforeLeft {
-                try require(try active.read(at: UInt64(item.offset - 1), length: 1).first == beforeLeft,
-                            "left neighbor corrupted: \(item.name)")
+            struct WriteCase {
+                let name: String
+                let offset: Int
+                let length: Int
+                let seed: UInt64
             }
-            if let beforeRight {
-                try require(try active.read(at: UInt64(rightIndex), length: 1).first == beforeRight,
-                            "right neighbor corrupted: \(item.name)")
+            let cases = [
+                WriteCase(name: "head-1B", offset: 0, length: 1, seed: 1),
+                WriteCase(name: "unaligned-31B", offset: 1, length: 31, seed: 2),
+                WriteCase(name: "cross-sm4-33B", offset: 15, length: 33, seed: 3),
+                WriteCase(name: "cross-4K-4097B", offset: 4095, length: 4097, seed: 4),
+                WriteCase(name: "unaligned-7777B", offset: 65531, length: 7777, seed: 5),
+                WriteCase(name: "aligned-4K", offset: 512 * 3, length: 4096, seed: 6),
+                WriteCase(name: "aligned-64K", offset: 512 * 41, length: 64 * 1024, seed: 7),
+                WriteCase(name: "unaligned-64K", offset: 1024 * 1024 + 5, length: 64 * 1024 - 17, seed: 8),
+                WriteCase(name: "aligned-1MiB", offset: 2 * 1024 * 1024, length: 1024 * 1024, seed: 9),
+                WriteCase(name: "tail-1B", offset: size - 1, length: 1, seed: 10),
+            ]
+
+            for item in cases {
+                let replacement = deterministicBytes(count: item.length, seed: item.seed)
+                let beforeLeft = item.offset > 0 ? expected[item.offset - 1] : nil
+                let rightIndex = item.offset + item.length
+                let beforeRight = rightIndex < expected.count ? expected[rightIndex] : nil
+                try active.write(at: UInt64(item.offset), data: replacement)
+                expected.replaceSubrange(item.offset..<(item.offset + item.length), with: replacement)
+                let readBack = try active.read(at: UInt64(item.offset), length: item.length)
+                try require(readBack == replacement, "read-after-write mismatch: \(item.name)")
+                if let beforeLeft {
+                    try require(try active.read(at: UInt64(item.offset - 1), length: 1).first == beforeLeft,
+                                "left neighbor corrupted: \(item.name)")
+                }
+                if let beforeRight {
+                    try require(try active.read(at: UInt64(rightIndex), length: 1).first == beforeRight,
+                                "right neighbor corrupted: \(item.name)")
+                }
+                print("WRITE_CASE_PASS=\(item.name):offset=\(item.offset):length=\(item.length)")
             }
-            print("WRITE_CASE_PASS=\(item.name):offset=\(item.offset):length=\(item.length)")
+
+            let cipherBeforeZeroWrite = try Data(contentsOf: temp)
+            try active.write(at: 123, data: Data())
+            try require(try Data(contentsOf: temp) == cipherBeforeZeroWrite, "zero-length write changed ciphertext")
+
+            try expectThrow("read-past-end") {
+                _ = try active.read(at: UInt64(size - 1), length: 2)
+            }
+            try expectThrow("write-past-end") {
+                try active.write(at: UInt64(size - 1), data: Data([1, 2]))
+            }
+            try expectThrow("write-offset-past-end") {
+                try active.write(at: UInt64(size + 1), data: Data([1]))
+            }
+
+            try active.synchronize()
+            let finalCipher = try Data(contentsOf: temp)
+            try require(EDPCrypto.sha256([UInt8](finalCipher)) != initialCipherHash,
+                        "ciphertext did not change after writes")
+            try require(finalCipher != expected, "ciphertext leaked plaintext")
+            try require(try active.read(at: 0, length: size) == expected, "full plaintext mismatch before close")
         }
 
-        let cipherBeforeZeroWrite = try Data(contentsOf: temp)
-        try active.write(at: 123, data: Data())
-        try require(try Data(contentsOf: temp) == cipherBeforeZeroWrite, "zero-length write changed ciphertext")
-
-        try expectThrow("read-past-end") {
-            _ = try active.read(at: UInt64(size - 1), length: 2)
-        }
-        try expectThrow("write-past-end") {
-            try active.write(at: UInt64(size - 1), data: Data([1, 2]))
-        }
-        try expectThrow("write-offset-past-end") {
-            try active.write(at: UInt64(size + 1), data: Data([1]))
-        }
-
-        try active.synchronize()
-        let finalCipher = try Data(contentsOf: temp)
-        try require(EDPCrypto.sha256([UInt8](finalCipher)) != initialCipherHash,
-                    "ciphertext did not change after writes")
-        try require(finalCipher != expected, "ciphertext leaked plaintext")
-        try require(try active.read(at: 0, length: size) == expected, "full plaintext mismatch before reopen")
-
-        block = nil
+        // The previous block/raw/reader graph is now out of scope. This is a real
+        // descriptor close/reopen persistence check, not a second handle while the
+        // first writer remains alive.
         let reopened = try makeWritableBlock(path: temp.path, size: size, key: key)
-        try require(try reopened.read(at: 0, length: size) == expected, "persistence mismatch after reopen")
-        print("RESULT=RW_CIPHER_PERSISTENCE_AFTER_REOPEN")
+        try require(try reopened.read(at: 0, length: size) == expected, "persistence mismatch after true reopen")
+        print("RESULT=RW_CIPHER_PERSISTENCE_AFTER_TRUE_REOPEN")
 
         let readOnlyRaw = try EDPFileRawDevice(path: temp.path, declaredSizeBytes: UInt64(size), writable: false)
         let readOnlyReader = try EDPEncryptedPartitionReader(
