@@ -5,12 +5,12 @@ runner_os=26.5.2
 runner_build=25F84
 xcode=Xcode 26.6 Build version 17F113 
 raw_size=67108864
-backing_sha_before=de19105c7fb823d9ff281889334f2e8717146bd2531636160f1c09325857486c
-backing_sha_after=de19105c7fb823d9ff281889334f2e8717146bd2531636160f1c09325857486c
-backing_meta_before=67108864:1787749395:100444
-backing_meta_after=67108864:1787749395:100444
-final_mount=/Volumes/EDP_FUSET_FINAL
-finder_enum_ok=true
+backing_sha_before=4f45e881ede292d67fc9313b9bda903a031e72675740d66d4e48a28d83b0416c
+backing_sha_after=unknown
+backing_meta_before=67108864:1787749754:100444
+backing_meta_after=unknown
+final_mount=none
+finder_enum_ok=unknown
 
 ## baseline raw diskutil
    Device Identifier:         disk8
@@ -33,7 +33,7 @@ finder_enum_ok=true
    Media Type:                Generic
    Protocol:                  Disk Image
    SMART Status:              Not Supported
-   Volume UUID:               5631BD98-7AD3-3C0D-BE3B-310137D926BC
+   Volume UUID:               E2A20E98-96EC-30CF-A955-7FEF36622B86
 
    Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
    Device Block Size:         512 Bytes
@@ -56,77 +56,17 @@ finder_enum_ok=true
 
 
 ## hidden transport mount
-file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-161bb85b-fc0e-4377-b344-8d6053542c1d/session.json on /Users/runner/work/_temp/edp-applefs-hidden-4fe56e45-51e0-4e60-951a-44c0f6c02308 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 
 ## hdiutil attach
-/dev/disk8          	                               	/Volumes/EDP_FUSET_FINAL
 
 ## final diskutil
-   Device Identifier:         disk8
-   Device Node:               /dev/disk8
-   Whole:                     Yes
-   Part of Whole:             disk8
-   Device / Media Name:       Disk Image
-
-   Volume Name:               EDP_FUSET_FINAL
-   Mounted:                   Yes
-   Mount Point:               /Volumes/EDP_FUSET_FINAL
-
-   Content (IOContent):       None
-   File System Personality:   HFS+
-   Type (Bundle):             hfs
-   Name (User Visible):       Mac OS Extended
-   Owners:                    Disabled
-
-   OS Can Be Installed:       No
-   Media Type:                Generic
-   Protocol:                  Disk Image
-   SMART Status:              Not Supported
-   Volume UUID:               5631BD98-7AD3-3C0D-BE3B-310137D926BC
-
-   Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
-   Device Block Size:         512 Bytes
-
-   Volume Total Space:        67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
-   Volume Used Space:         1.6 MB (1605632 Bytes) (exactly 3136 512-Byte-Units) (2.4%)
-   Volume Free Space:         65.5 MB (65503232 Bytes) (exactly 127936 512-Byte-Units) (97.6%)
-   Allocation Block Size:     4096 Bytes
-
-   Media OS Use Only:         No
-   Media Read-Only:           Yes
-   Volume Read-Only:          Yes (read-only mount flag set)
-
-   Device Location:           External
-   Removable Media:           Removable
-   Media Removal:             Software-Activated
-
-   Solid State:               Info not available
-   Virtual:                   Yes
-
 
 ## final mount
-/dev/disk8 on /Volumes/EDP_FUSET_FINAL (hfs, local, nodev, nosuid, read-only, noowners, mounted by runner)
 
 ## final POSIX listing
-/Volumes/EDP_FUSET_FINAL
-/Volumes/EDP_FUSET_FINAL/.fseventsd
-/Volumes/EDP_FUSET_FINAL/.fseventsd/000000000186806f
-/Volumes/EDP_FUSET_FINAL/.fseventsd/0000000001868070
-/Volumes/EDP_FUSET_FINAL/.fseventsd/fseventsd-uuid
-/Volumes/EDP_FUSET_FINAL/EDP Folder
-/Volumes/EDP_FUSET_FINAL/EDP Folder/NESTED.txt
-/Volumes/EDP_FUSET_FINAL/EDP_SENTINEL.txt
 
 ## Finder enumeration
-EDP FolderEDP_SENTINEL.txt
 
 ## read-only write attempt
-touch: /Volumes/EDP_FUSET_FINAL/SHOULD_NOT_WRITE: Read-only file system
 
 ## bridge log
-SESSION_ID=edp-fuset-161bb85b-fc0e-4377-b344-8d6053542c1d
-SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-161bb85b-fc0e-4377-b344-8d6053542c1d/session.json
-SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-161bb85b-f.sock
-MOUNTPOINT=/Users/runner/work/_temp/edp-applefs-hidden-4fe56e45-51e0-4e60-951a-44c0f6c02308
-BACKING_SIZE=67108864
-mount process exited status=0
