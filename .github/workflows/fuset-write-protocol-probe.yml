@@ -1,0 +1,353 @@
+name: FUSE-T Writable RPC Protocol Probe
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - ".github/workflows/fuset-write-protocol-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fuset-write-protocol-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  writable-probe:
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      FUSET_VERSION: "1.2.7"
+      FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
+      FUSET_PKG_URL: "https://github.com/macos-fuse-t/fuse-t/releases/download/1.2.7/fuse-t-macos-installer-1.2.7.pkg"
+      FUSET_BUNDLE_ID: "org.fuset.fskit-srv.module"
+      DIAG_PATH: "docs/diagnostics/fuset-writable-rpc-macos26-ci.txt"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Stage exact official FUSE-T and enable only on disposable runner
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
+          EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
+          curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
+          test "$(shasum -a 256 "${PKG}" | awk '{print $1}')" = "${FUSET_PKG_SHA256}"
+          pkgutil --expand-full "${PKG}" "${EXPANDED}"
+          SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
+          test -n "${SOURCE_APP}"
+          codesign --verify --deep --strict --verbose=2 "${SOURCE_APP}"
+          sudo rm -rf /Applications/fuse-t.app
+          sudo ditto "${SOURCE_APP}" /Applications/fuse-t.app
+          APP=/Applications/fuse-t.app
+          EXT="${APP}/Contents/Extensions/FskitSrvModule.appex"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}" || true
+          pluginkit -a "${APP}" || true
+          pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
+
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${ENABLED_PLIST}" "${FUSET_BUNDLE_ID}" <<'PY'
+          import os, plistlib, sys
+          path, bundle_id = sys.argv[1:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, 'rb') as f:
+                      value = plistlib.load(f)
+                  if isinstance(value, list):
+                      enabled = [x for x in value if isinstance(x, str)]
+              except Exception:
+                  pass
+          if bundle_id not in enabled:
+              enabled.append(bundle_id)
+          with open(path, 'wb') as f:
+              plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          PY
+          chmod 600 "${ENABLED_PLIST}"
+          killall -9 fskit_agent 2>/dev/null || true
+          killall -9 extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+
+      - name: Build writable protocol probe server
+        run: |
+          set -euo pipefail
+          cat > "${RUNNER_TEMP}/writable_probe.py" <<'PY'
+          #!/usr/bin/env python3
+          import argparse, errno, json, os, socket, struct, subprocess, sys, tempfile, uuid
+
+          HEADER = struct.Struct('>II')
+          ROOT = 1
+          FILE = 2
+          NAME = 'volume.raw'
+
+          def read_exact(conn, n):
+              out = bytearray()
+              while len(out) < n:
+                  b = conn.recv(n - len(out))
+                  if not b:
+                      raise EOFError
+                  out += b
+              return bytes(out)
+
+          def read_frame(conn):
+              h = read_exact(conn, 8)
+              ml, pl = HEADER.unpack(h)
+              if ml + pl > 16 * 1024 * 1024:
+                  raise RuntimeError('oversize frame')
+              meta = json.loads(read_exact(conn, ml).decode())
+              payload = read_exact(conn, pl)
+              return meta, payload
+
+          def send(conn, meta, payload=b''):
+              m = json.dumps(meta, sort_keys=True, separators=(',', ':')).encode()
+              conn.sendall(HEADER.pack(len(m), len(payload)) + m + payload)
+
+          def attrs(node, parent, name, kind, mode, size, links):
+              return {
+                  'node_id': node, 'parent_id': parent, 'name': name, 'type': kind,
+                  'mode': mode, 'uid': os.getuid(), 'gid': os.getgid(),
+                  'link_count': links, 'size': size, 'alloc_size': size,
+                  'modify_time_sec': 0, 'modify_time_nsec': 0,
+                  'change_time_sec': 0, 'change_time_nsec': 0,
+                  'access_time_sec': 0, 'access_time_nsec': 0,
+                  'birth_time_sec': 0, 'birth_time_nsec': 0,
+              }
+
+          def ok(rid, **fields):
+              d = {'request_id': rid, 'ok': True}; d.update(fields); return d
+
+          def err(rid, code, msg):
+              return {'request_id': rid, 'ok': False, 'errno': code, 'error': msg}
+
+          ap = argparse.ArgumentParser()
+          ap.add_argument('--backing', required=True)
+          ap.add_argument('--mountpoint', required=True)
+          ap.add_argument('--log', required=True)
+          args = ap.parse_args()
+
+          fd = os.open(args.backing, os.O_RDWR | getattr(os, 'O_CLOEXEC', 0))
+          size = os.fstat(fd).st_size
+          sid = 'edp-fuset-rw-' + str(uuid.uuid4())
+          token = uuid.uuid4().hex
+          group = os.path.expanduser('~/Library/Group Containers/group.org.fuset.fskit-srv/s')
+          os.makedirs(group, mode=0o700, exist_ok=True)
+          sockpath = os.path.join(group, sid[:20] + '.sock')
+          session_dir = tempfile.mkdtemp(prefix=sid + '-')
+          session = os.path.join(session_dir, 'session.json')
+          with open(session, 'w') as f:
+              json.dump({'session_id':sid,'socket_path':sockpath,'auth_token':token,
+                         'namedattr':False,'readonly':False,'volume_name':'EDP Writable Probe'}, f,
+                        sort_keys=True)
+          os.chmod(session, 0o600)
+          os.makedirs(args.mountpoint, exist_ok=True)
+          try: os.unlink(sockpath)
+          except FileNotFoundError: pass
+          srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+          srv.bind(sockpath); os.chmod(sockpath, 0o600); srv.listen(1)
+          mount = subprocess.Popen(['/sbin/mount','-o','nobrowse','-t','fuset',session,args.mountpoint])
+          print('SESSION_JSON=' + session, flush=True)
+          print('SOCKET=' + sockpath, flush=True)
+          conn, _ = srv.accept()
+          dirhandles = set(); nextdir = 100
+          with open(args.log, 'a', buffering=1) as log:
+              while True:
+                  try: meta, payload = read_frame(conn)
+                  except EOFError: break
+                  rid = int(meta.get('request_id', -1)); method = meta.get('method')
+                  if method in ('write','synchronize','set_attributes','open','close'):
+                      clean = dict(meta)
+                      clean['payload_length'] = len(payload)
+                      log.write('RPC=' + json.dumps(clean, sort_keys=True, separators=(',', ':')) + '\n')
+                  if method == 'handshake':
+                      if meta.get('auth_token') != token: send(conn, err(rid, errno.EACCES, 'auth')); continue
+                      send(conn, ok(rid, session_id=sid))
+                  elif method == 'ping': send(conn, ok(rid))
+                  elif method == 'get_root_attributes': send(conn, ok(rid, root_attrs=attrs(ROOT,ROOT,'/','directory',0o755,0,2)))
+                  elif method == 'statfs':
+                      blocks=max(1,(size+4095)//4096); send(conn,ok(rid,block_size=4096,io_size=1048576,blocks=blocks,free_blocks=0,files=2,free_files=0))
+                  elif method == 'lookup':
+                      if meta.get('parent_id')==ROOT and meta.get('name')==NAME: send(conn,ok(rid,lookup_item=attrs(FILE,ROOT,NAME,'file',0o666,size,1)))
+                      else: send(conn,err(rid,errno.ENOENT,'not found'))
+                  elif method == 'get_attributes':
+                      n=meta.get('node_id')
+                      if n==ROOT: send(conn,ok(rid,item_attrs=attrs(ROOT,ROOT,'/','directory',0o755,0,2)))
+                      elif n==FILE: send(conn,ok(rid,item_attrs=attrs(FILE,ROOT,NAME,'file',0o666,size,1)))
+                      else: send(conn,err(rid,errno.ENOENT,'not found'))
+                  elif method == 'open':
+                      if meta.get('node_id')!=FILE: send(conn,err(rid,errno.ENOENT,'not found'))
+                      else: send(conn,ok(rid,handle_id=200))
+                  elif method == 'read':
+                      off=int(meta.get('offset',-1)); length=int(meta.get('length',-1))
+                      if off<0 or length<0: send(conn,err(rid,errno.EINVAL,'range'))
+                      else:
+                          data=os.pread(fd,min(length,max(0,size-off)),off) if off<size else b''
+                          send(conn,ok(rid),data)
+                  elif method == 'write':
+                      off=int(meta.get('offset',-1))
+                      if off<0 or off+len(payload)>size: send(conn,err(rid,errno.ENOSPC,'range'))
+                      else:
+                          n=os.pwrite(fd,payload,off)
+                          if n!=len(payload): send(conn,err(rid,errno.EIO,'short write'))
+                          else: send(conn,ok(rid))
+                  elif method == 'synchronize':
+                      os.fsync(fd); send(conn,ok(rid))
+                  elif method == 'set_attributes':
+                      # Fixed-size transport: allow metadata-only setattr, but never resize volume.raw.
+                      requested = meta.get('size')
+                      if requested is not None and int(requested) != size: send(conn,err(rid,errno.EINVAL,'fixed size'))
+                      else: send(conn,ok(rid,item_attrs=attrs(FILE,ROOT,NAME,'file',0o666,size,1)))
+                  elif method == 'close': send(conn,ok(rid))
+                  elif method == 'open_directory':
+                      if meta.get('node_id')!=ROOT: send(conn,err(rid,errno.ENOTDIR,'not dir'))
+                      else:
+                          h=nextdir; nextdir+=1; dirhandles.add(h); send(conn,ok(rid,handle_id=h))
+                  elif method == 'enumerate_directory':
+                      cookie=int(meta.get('cookie',0)); verifier=int(meta.get('verifier',1))
+                      if cookie==0:
+                          item=attrs(FILE,ROOT,NAME,'file',0o666,size,1); item['cookie']=1
+                          send(conn,ok(rid,dir_items=[item],next_cookie=1,verifier=verifier))
+                      else: send(conn,ok(rid,dir_items=[],next_cookie=cookie,verifier=verifier))
+                  elif method == 'close_directory': send(conn,ok(rid))
+                  elif method == 'list_xattrs': send(conn,ok(rid,xattr_names=[]))
+                  elif method == 'get_xattr': send(conn,err(rid,getattr(errno,'ENOATTR',errno.ENODATA),'none'))
+                  elif method in ('create','create_file','create_directory','create_symlink','remove','remove_file','remove_directory','remove_xattr','rename','set_xattr','truncate'):
+                      send(conn,err(rid,errno.EPERM,'single fixed transport node'))
+                  else: send(conn,err(rid,errno.EOPNOTSUPP,'unsupported '+str(method)))
+          PY
+          chmod +x "${RUNNER_TEMP}/writable_probe.py"
+
+      - name: Capture direct writable RPC and hdiutil writable block behavior
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/rw-probe.raw"
+          python3 - "${RAW}" <<'PY'
+          import hashlib, sys
+          with open(sys.argv[1], 'wb') as f:
+              for i in range(32768):
+                  seed=hashlib.sha256(f'RW-PROBE:{i}'.encode()).digest()
+                  f.write((seed*16)[:512])
+          PY
+          HIDDEN="${RUNNER_TEMP}/rw-hidden-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          RPCLOG="${RUNNER_TEMP}/rw-rpc.log"
+          SERVERLOG="${RUNNER_TEMP}/rw-server.log"
+          mkdir -p "${HIDDEN}"
+          "${RUNNER_TEMP}/writable_probe.py" --backing "${RAW}" --mountpoint "${HIDDEN}" --log "${RPCLOG}" >"${SERVERLOG}" 2>&1 &
+          SERVER_PID=$!
+          echo "SERVER_PID=${SERVER_PID}" >> "${GITHUB_ENV}"
+          echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"
+          echo "RPCLOG=${RPCLOG}" >> "${GITHUB_ENV}"
+          mounted=false
+          for i in $(seq 1 30); do
+            if mount | grep -Fq " on ${HIDDEN} "; then mounted=true; break; fi
+            if ! kill -0 "${SERVER_PID}" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          cat "${SERVERLOG}" || true
+          test "${mounted}" = true
+          mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/hidden-mount.txt"
+          ! grep -F " on ${HIDDEN} " "${RUNNER_TEMP}/hidden-mount.txt" | grep -q 'read-only'
+          EXPOSED="${HIDDEN}/volume.raw"
+          test -f "${EXPOSED}"
+
+          python3 - "${RUNNER_TEMP}/direct-expected.bin" <<'PY'
+          import hashlib, sys
+          out=bytearray()
+          for i in range(8192): out.extend(hashlib.sha256(f'DIRECT-WRITE:{i}'.encode()).digest())
+          open(sys.argv[1],'wb').write(out[:262144])
+          PY
+          dd if="${RUNNER_TEMP}/direct-expected.bin" of="${EXPOSED}" bs=1 seek=12345 conv=notrunc status=none
+          sync
+          dd if="${EXPOSED}" of="${RUNNER_TEMP}/direct-actual.bin" bs=1 skip=12345 count=262144 status=none
+          cmp "${RUNNER_TEMP}/direct-expected.bin" "${RUNNER_TEMP}/direct-actual.bin"
+          dd if="${RAW}" of="${RUNNER_TEMP}/backing-actual.bin" bs=1 skip=12345 count=262144 status=none
+          cmp "${RUNNER_TEMP}/direct-expected.bin" "${RUNNER_TEMP}/backing-actual.bin"
+          echo 'RESULT=RW1_DIRECT_FSKIT_PWRITE_READBACK_OK'
+
+          OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}" 2>"${RUNNER_TEMP}/hdiutil.err")"
+          printf '%s\n' "${OUT}" | tee "${RUNNER_TEMP}/hdiutil.out"
+          cat "${RUNNER_TEMP}/hdiutil.err" || true
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${DISK}"
+          echo "NESTED_DISK=${DISK}" >> "${GITHUB_ENV}"
+          diskutil info "${DISK}" | tee "${RUNNER_TEMP}/diskutil.txt"
+          grep -Eq 'Media Read-Only:[[:space:]]+No' "${RUNNER_TEMP}/diskutil.txt"
+
+          python3 - "${RUNNER_TEMP}/disk-expected.bin" <<'PY'
+          import hashlib, sys
+          out=bytearray()
+          for i in range(2048): out.extend(hashlib.sha256(f'DISK-WRITE:{i}'.encode()).digest())
+          open(sys.argv[1],'wb').write(out[:65536])
+          PY
+          RDISK="/dev/r$(basename "${DISK}")"
+          dd if="${RUNNER_TEMP}/disk-expected.bin" of="${RDISK}" bs=1 seek=2097152 conv=notrunc status=none
+          sync
+          dd if="${RDISK}" of="${RUNNER_TEMP}/disk-actual.bin" bs=1 skip=2097152 count=65536 status=none
+          cmp "${RUNNER_TEMP}/disk-expected.bin" "${RUNNER_TEMP}/disk-actual.bin"
+          dd if="${RAW}" of="${RUNNER_TEMP}/disk-backing.bin" bs=1 skip=2097152 count=65536 status=none
+          cmp "${RUNNER_TEMP}/disk-expected.bin" "${RUNNER_TEMP}/disk-backing.bin"
+          echo 'RESULT=RW2_HDIUTIL_WRITABLE_BLOCK_PWRITE_OK'
+          hdiutil detach "${DISK}" -force
+          echo 'NESTED_DISK=' >> "${GITHUB_ENV}"
+
+          cat "${RPCLOG}" | tee "${RUNNER_TEMP}/rpc-evidence.txt"
+          grep -q '"method":"write"' "${RPCLOG}"
+          grep -q '"payload_length":' "${RPCLOG}"
+          grep -q '"method":"synchronize"' "${RPCLOG}"
+          echo 'RESULT=RW3_WRITE_RPC_SCHEMA_CAPTURED'
+
+      - name: Collect deterministic writable protocol evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${DIAG_PATH}")"
+          {
+            echo '# FUSE-T writable RPC macOS 26 CI probe'
+            echo
+            echo 'generated_at_utc=<normalized>'
+            echo "runner_os=$(sw_vers -productVersion)"
+            echo "runner_build=$(sw_vers -buildVersion)"
+            echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
+            echo
+            echo '## hidden mount'
+            cat "${RUNNER_TEMP}/hidden-mount.txt" 2>/dev/null || true
+            echo
+            echo '## hdiutil / diskutil'
+            cat "${RUNNER_TEMP}/hdiutil.out" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/diskutil.txt" 2>/dev/null || true
+            echo
+            echo '## write RPC metadata'
+            cat "${RUNNER_TEMP}/rpc-evidence.txt" 2>/dev/null || true
+          } > "${DIAG_PATH}"
+          sed -n '1,500p' "${DIAG_PATH}"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          if [[ -n "${NESTED_DISK:-}" ]]; then hdiutil detach "${NESTED_DISK}" -force >/dev/null 2>&1 || true; fi
+          if [[ -n "${HIDDEN:-}" ]]; then umount "${HIDDEN}" >/dev/null 2>&1 || diskutil unmount force "${HIDDEN}" >/dev/null 2>&1 || true; fi
+          if [[ -n "${SERVER_PID:-}" ]]; then kill "${SERVER_PID}" >/dev/null 2>&1 || true; fi
+          sudo rm -rf /Applications/fuse-t.app
+          exit 0
+
+      - name: Commit deterministic writable diagnostic
+        if: always() && github.ref_name == 'test/fuset-minimal-fskit-bridge'
+        run: |
+          set -euo pipefail
+          test -f "${DIAG_PATH}"
+          git add "${DIAG_PATH}"
+          if git diff --cached --quiet -- "${DIAG_PATH}"; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: capture FUSE-T writable RPC [skip ci]'
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
