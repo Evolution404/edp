@@ -574,13 +574,8 @@ private final class MountManager {
             accepted: Set(0...21)
         )
         guard probe.status == 0 else {
-            let reasons: [Int32: String] = [
-                12: "not a valid NTFS volume", 13: "inconsistent NTFS volume",
-                14: "Windows hibernation/fast startup is active",
-                15: "NTFS was not cleanly unmounted", 16: "volume is already in use",
-                19: "insufficient privilege",
-            ]
-            throw fail("NTFS write probe refused the volume: \(reasons[probe.status] ?? "exit \(probe.status)")")
+            throw fail(EDPNTFSWriteSafety.refusalMessage(for: probe.status)
+                ?? "NTFS write probe refused the volume")
         }
         var label = "EDP-NTFS"
         if let result = try? run(binaryRoot + "/ntfslabel", [device]),
