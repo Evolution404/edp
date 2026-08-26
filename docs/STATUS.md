@@ -3,7 +3,47 @@
 更新时间：2026-08-26
 分支：`feat/macos26-native-fskit`
 
-> 本文件是该分支唯一的状态、架构和后续实施交接文档。若 README、旧代码或历史结论与本文冲突，以本文和最新可复现实验证据为准。
+> 本文件是该分支的长期状态文档。**2026-08-26 当前 Finder/NTFS 交接以 `docs/diagnostics/2026-08-26-ntfs-finder-semantics-handoff.md` 和 `docs/PROGRESS-TRACKER-NTFS-FINDER-2026-08-26.md` 为最新执行入口。** 若本文后续历史段落与最新交接冲突，以最新交接和可复现实验证据为准。
+
+## 0. 2026-08-26 当前执行快照
+
+当前阶段已经不再是“能否解密/能否挂载/能否写入”的基础打通阶段。
+
+稳定 NTFS 读写基线：
+
+```text
+56dcf39 feat: enable Finder NTFS read-write mounts
+```
+
+该基线已经在真实 EDP U 盘上完成 `sys.openfile.readwrite`、`edp-readwrite-fuse --device-auth`、`ntfs-3g.probe --readwrite`、NTFS-3G 读写挂载，以及临时文件 write/readback/sync/delete 实机验证。
+
+当前用户反馈的剩余产品问题：
+
+1. TextEdit 修改 txt 后无法保存：已定位为 `rename(temp, existing-target)` 在 macFUSE 5.3.3 FSKit 下返回 `EOPNOTSUPP`；
+2. Finder 拷贝速度慢：基线 inner decrypted view 顺序读约 5.8 MB/s，当前有 SM4/FUSE 性能优化 WIP；
+3. Finder 多选删除异常：普通 unlink 正常，但 generic FSKit 的 `.Trashes` 返回 `EPERM`；
+4. Finder 将交换区归类为网络卷：稳定基线实测 `MNT_LOCAL=false`。
+
+为避免迁移丢失，当前 local-volume + performance 实验已单独保全：
+
+```text
+4f0171d wip: preserve Finder local-volume and performance work
+```
+
+该 WIP 包含：outer NTFS `local`、inner bridge `big_writes,noatime`、SM4 热路径减少 Array 分配，以及对应 CI policy 调整。它**不是稳定发布批准**，下一个 AI 必须重新做 cold mount、Finder/Trash、crypto E2E、性能和 CI 回归。
+
+当前最高优先级：
+
+- P0：解决 TextEdit 原子保存 / rename-over-existing；
+- P1：复核 outer `local` 是否稳定解决网络卷分类和 Trash/多选删除；
+- P1：复核 SM4/FUSE 性能优化；
+- P2：完整回归、installer、CI 后再发布。
+
+请先阅读：
+
+- `docs/diagnostics/2026-08-26-ntfs-finder-semantics-handoff.md`
+- `docs/PROGRESS-TRACKER-NTFS-FINDER-2026-08-26.md`
+- `docs/PLAN-TRACKER-2026-08-26.md`
 
 ## 1. 不可变产品约束
 

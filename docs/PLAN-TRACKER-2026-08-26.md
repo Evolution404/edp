@@ -315,3 +315,12 @@
 - 最终 NTFS-3G mount 去掉 `ro`，使用 production `backend=fskit,norecover,windows_names,streams_interface=openxattr,noatime,big_writes` 读写策略；若 mount table 明确返回 `MNT_RDONLY` 则视为失败。
 - 实体 `/dev/disk4` 完整 XPC smoke 输出 `RESULT=XPC_MOUNT_SMOKE_OK`，daemon 日志确认 `EDP mounted ... partition 2 as NTFS (read/write) at /Volumes/EDP-NTFS`；partition type 4 被 write probe 以 `not a valid NTFS volume` 正确拒绝，不影响 type 2 成功。
 - 实盘最小写验证通过：在 `/Volumes/EDP-NTFS` 创建 44-byte 临时 probe，立即读回内容一致、执行 `sync`、SHA256=`804aeb48591837af764647e84053b41b7bbdde80cf8f58125ccf22a95f2e5152`，随后删除并再次 `sync`，确认 probe 文件不存在；未修改任何既有用户文件。
+
+### 2026-08-26 — Finder 本地卷语义、批量删除与 I/O 性能收口
+
+- 用户实机反馈三项问题：TextEdit 修改 txt 后无法保存、文件复制速度异常慢、Finder 多选文件不能删除。逐项复现后确认并非同一根因：覆盖已有目标的 `rename()` 在 macFUSE 5.3.3 FSKit 下稳定返回 `EOPNOTSUPP`；generic FSKit mount 的 `.Trashes` 访问返回 `EPERM`；原内层解密 `volume.raw` 顺序读仅约 5.8 MB/s。
+- 外层 NTFS-3G 增加 macFUSE `local` 选项后，挂载源由 `macfuse://UUID` 变为 `/dev/diskN` 且 mount flags 出现 `local`；`.Trashes/501` 恢复可访问。真实 Trash 路径批量移动 10 个临时文件 0 错误，100 个文件批量 unlink 0 错误。CI mount-policy ratchet 同步翻转为必须包含 `local`。
+- `local` 只能用于最外层 NTFS；给内层单文件解密 bridge 也加 `local` 会导致 production `ntfs-3g.probe --readwrite` 假报 status 13/EIO。使用既有严格 O_RDONLY 验证链复核当前实体盘时，readonly probe=0、readonly alias 上 readwrite probe=0，证明物理 NTFS 并未损坏。因此内层保持 generic FSKit，仅保留 `big_writes,noatime`。
+- 重写 `EDPSM4` 热路径：取消每 16-byte block 的 slice/state/S-box/output Array 分配，改为一次性输出 buffer + 4 个 `UInt32` 状态寄存器 + 直接 S-box 位运算。标准 SM4 vector、1024 组真实 key 随机读、加密写边界和密文持久化回归全部通过。
+- 实机性能：内层解密 256 MiB 顺序读由约 5.8 MB/s 提升至约 55.8 MB/s（约 9.7×）；外层 NTFS 64 MiB `fsync` 顺序写约 37.8 MB/s；500×4 KiB 小文件写约 6 秒。完成 clean unmount → daemon restart → readwrite probe → cold remount，`RESULT=XPC_MOUNT_SMOKE_OK`，确认写后卷一致性保持。
+- TextEdit 原子保存仍未解决：即使 outer `local`，plain overwrite rename 仍返回 `EOPNOTSUPP`。macFUSE 官方已有 Tahoe/TextEdit 同类问题，且官方明确说明 FSKit backend 仍存在功能与性能限制；本机尝试 VFS/kernel backend 返回 `mount_macfuse: the file system is not available (1)`，当前未要求用户进入 Recovery 降低安全策略启用 kext。该项作为上游 FSKit 限制保留，不以数据层 hack 绕过。
