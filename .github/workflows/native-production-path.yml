@@ -47,6 +47,7 @@ jobs:
             "${CORE[@]}" \
             product/EDPNTFSWriteSafety.swift \
             product/EDPNTFSMountPolicy.swift \
+            product/EDPCredentialStore.swift \
             product/EDPNativeSystem.swift \
             product/EDPVaultRuntime.swift \
             -o "${RUNNER_TEMP}/edp-vaultctl"
@@ -74,3 +75,17 @@ jobs:
           grep -F 'RESULT=NATIVE_IOKIT_DISCOVERY_API_OK' "${RUNNER_TEMP}/native-production.txt"
           grep -F 'RESULT=NATIVE_DISK_ARBITRATION_API_OK' "${RUNNER_TEMP}/native-production.txt"
           grep -F 'RESULT=NATIVE_PRODUCTION_PATH_API_OK' "${RUNNER_TEMP}/native-production.txt"
+
+      - name: Validate Keychain credential storage
+        run: |
+          set -euo pipefail
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            product/EDPCredentialStore.swift \
+            native/EDPFSKitPoC/Tools/ValidateCredentialStore.swift \
+            -o "${RUNNER_TEMP}/validate-credential-store"
+          "${RUNNER_TEMP}/validate-credential-store" | tee "${RUNNER_TEMP}/credential-store.txt"
+          grep -F 'RESULT=KEYCHAIN_PASSWORD_ROUNDTRIP_OK' "${RUNNER_TEMP}/credential-store.txt"
+          grep -F 'RESULT=CREDENTIAL_INDEX_CONTAINS_NO_SECRET_OK' "${RUNNER_TEMP}/credential-store.txt"
+          grep -F 'RESULT=SELF_MANAGED_MASTER_KEY_ABSENT_OK' "${RUNNER_TEMP}/credential-store.txt"
+          grep -F 'RESULT=KEYCHAIN_REVOKE_OK' "${RUNNER_TEMP}/credential-store.txt"
+          grep -F 'RESULT=KEYCHAIN_CREDENTIAL_STORE_E2E_OK' "${RUNNER_TEMP}/credential-store.txt"

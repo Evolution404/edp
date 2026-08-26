@@ -1,4 +1,3 @@
-import CryptoKit
 import Darwin
 import Foundation
 import Security
@@ -6,8 +5,9 @@ import Security
 private let productRoot = "/Library/Application Support/EDP USB Vault"
 private let dataRoot = "/var/db/com.edp.usbvault"
 private let sessionRoot = dataRoot + "/sessions"
-private let credentialPath = dataRoot + "/credentials.json"
-private let masterKeyPath = dataRoot + "/master.key"
+private let credentialIndexPath = dataRoot + "/credential-index.json"
+private let legacyCredentialPath = dataRoot + "/credentials.json"
+private let legacyMasterKeyPath = dataRoot + "/master.key"
 private let launchdLabel = "com.edp.usbvault.mountd"
 
 private enum RuntimeError: Error, CustomStringConvertible {
@@ -108,98 +108,12 @@ private func discoverEDPDisks() throws -> [PhysicalDisk] {
     try EDPNativeDeviceDiscovery.discoverEDPDisks()
 }
 
-private struct StoredCredential: Codable {
-    let deviceID: String
-    let sealedPassword: String
-    let partitionTypes: [UInt32]
-    let updatedAt: String
-}
-
-private struct CredentialFile: Codable {
-    var schemaVersion = 1
-    var records = [StoredCredential]()
-}
-
-private final class CredentialStore {
-    private let key: SymmetricKey
-
-    init() throws {
-        try FileManager.default.createDirectory(
-            atPath: dataRoot,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
-        )
-        guard chmod(dataRoot, 0o700) == 0 else {
-            throw fail("failed to secure credential directory: errno=\(errno)")
-        }
-        if FileManager.default.fileExists(atPath: masterKeyPath) {
-            let data = try Data(contentsOf: URL(fileURLWithPath: masterKeyPath))
-            guard data.count == 32 else { throw fail("invalid credential master key") }
-            key = SymmetricKey(data: data)
-        } else {
-            var bytes = [UInt8](repeating: 0, count: 32)
-            guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-                throw fail("failed to create credential master key")
-            }
-            let data = Data(bytes)
-            try atomicWrite(data, to: masterKeyPath, mode: 0o600)
-            key = SymmetricKey(data: data)
-            secureZero(&bytes)
-        }
-    }
-
-    func load() throws -> CredentialFile {
-        guard FileManager.default.fileExists(atPath: credentialPath) else {
-            return CredentialFile()
-        }
-        return try JSONDecoder().decode(
-            CredentialFile.self,
-            from: Data(contentsOf: URL(fileURLWithPath: credentialPath))
-        )
-    }
-
-    func save(_ file: CredentialFile) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try atomicWrite(try encoder.encode(file), to: credentialPath, mode: 0o600)
-    }
-
-    func password(for record: StoredCredential) throws -> [UInt8] {
-        guard let combined = Data(base64Encoded: record.sealedPassword),
-              let box = try? AES.GCM.SealedBox(combined: combined) else {
-            throw fail("invalid encrypted credential record for \(record.deviceID)")
-        }
-        let clear = try AES.GCM.open(
-            box,
-            using: key,
-            authenticating: Data(record.deviceID.utf8)
-        )
-        return [UInt8](clear)
-    }
-
-    func put(deviceID: String, password: [UInt8], partitionTypes: [UInt32]) throws {
-        let box = try AES.GCM.seal(
-            Data(password),
-            using: key,
-            authenticating: Data(deviceID.utf8)
-        )
-        guard let combined = box.combined else { throw fail("credential encryption failed") }
-        var file = try load()
-        file.records.removeAll { $0.deviceID == deviceID }
-        file.records.append(StoredCredential(
-            deviceID: deviceID,
-            sealedPassword: combined.base64EncodedString(),
-            partitionTypes: partitionTypes.sorted(),
-            updatedAt: ISO8601DateFormatter().string(from: Date())
-        ))
-        try save(file)
-    }
-
-    func remove(deviceID: String) throws {
-        var file = try load()
-        file.records.removeAll { $0.deviceID == deviceID }
-        try save(file)
-    }
+private func makeCredentialStore() throws -> EDPCredentialStore {
+    try EDPCredentialStore(
+        indexPath: credentialIndexPath,
+        legacyCredentialPath: legacyCredentialPath,
+        legacyMasterKeyPath: legacyMasterKeyPath
+    )
 }
 
 private func readPassword(prompt: String) throws -> [UInt8] {
@@ -582,7 +496,7 @@ private func authorize(_ diskArgument: String?) throws {
         }
     }
     guard !verified.isEmpty else { throw fail("password did not unlock EDP partition 2 or 4") }
-    try CredentialStore().put(
+    try makeCredentialStore().put(
         deviceID: disk.deviceID,
         password: password,
         partitionTypes: verified
@@ -593,12 +507,12 @@ private func authorize(_ diskArgument: String?) throws {
 }
 
 private final class EDPDaemonController: @unchecked Sendable {
-    private let store: CredentialStore
+    private let store: EDPCredentialStore
     private let manager: MountManager
     private var failureDeadline = [String: Date]()
 
     init() throws {
-        store = try CredentialStore()
+        store = try makeCredentialStore()
         manager = try MountManager()
         manager.recoverPersistedSessions()
     }
@@ -720,7 +634,7 @@ private enum EDPVaultMain {
                 guard CommandLine.arguments.count == 3 else {
                     throw fail("revoke requires a device id")
                 }
-                try CredentialStore().remove(deviceID: CommandLine.arguments[2])
+                try makeCredentialStore().remove(deviceID: CommandLine.arguments[2])
             case "cleanup":
                 try requireRoot()
                 try MountManager().recoverPersistedSessions()
