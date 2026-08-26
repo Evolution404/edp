@@ -83,6 +83,14 @@ jobs:
               env.write(f"PASSWORD_FILE={password_path}\n")
           print('RESULT=H_REALMETA_VECTOR_READY')
           PY
+          EDP_VID="$(awk -F= '/^EDP_VID=/ {v=$2} END{print v}' "${GITHUB_ENV}")"
+          EDP_PID="$(awk -F= '/^EDP_PID=/ {v=$2} END{print v}' "${GITHUB_ENV}")"
+          EDP_DEVICE_SIZE="$(awk -F= '/^EDP_DEVICE_SIZE=/ {v=$2} END{print v}' "${GITHUB_ENV}")"
+          EDP_PARTITION_TYPE="$(awk -F= '/^EDP_PARTITION_TYPE=/ {v=$2} END{print v}' "${GITHUB_ENV}")"
+          test -n "${EDP_VID}"
+          test -n "${EDP_PID}"
+          test -n "${EDP_DEVICE_SIZE}"
+          test -n "${EDP_PARTITION_TYPE}"
 
           PLAIN="${RUNNER_TEMP}/bench-seed.raw"
           CONTAINER="${RUNNER_TEMP}/bench-edp-whole-device.raw"
