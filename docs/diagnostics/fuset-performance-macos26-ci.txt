@@ -1,0 +1,23 @@
+# FUSE-T minimal FSKit EDP read performance macOS 26 CI
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+bench_span=268435456
+
+## fixture
+
+## hidden transport
+
+## H1 raw trials
+
+## H1 medians
+
+## H2 sequential
+
+## H3 client time -l
+
+## H3 bridge summary
+
+## H3 bridge RSS samples
