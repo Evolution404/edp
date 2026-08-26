@@ -7,7 +7,7 @@
 
 ## 当前总状态
 
-**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E 已完整通过；Phase F 的 F1/F2/F3 已由 GitHub Actions macOS 26 / Xcode 26 实测通过，F5 已有 HFS+ 明确证据并等待修正后的精确类型断言转绿，F4 Finder 自动化继续探测。**
+**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。物理 `/dev/rdiskN` 的 G4/G5/G6 最终实机验收仍保留为待办，不用 hosted CI 冒充物理 U 盘证明。**
 
 当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
 
@@ -183,12 +183,12 @@ CI 关键证据：`docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt`。首次�
 | F1 | ✅ | Disk Arbitration 自动识别 fixture | 64 MiB HFS+ raw fixture 经 hidden FUSE-T `volume.raw` 后，`hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage` 在**不传 filesystem type**的情况下自动产生 `/dev/disk8` 并挂载 `/Volumes/EDP_FUSET_FINAL`；sentinel 与嵌套文件均实际读回 |
 | F2 | ✅ | EDP/backend 不传 filesystem type | `FuseTMinimalBridge.swift` 通过 CI 静态断言，不含 HFS+/APFS/exFAT/FAT/NTFS 类型知识；运行时 `hdiutil` 仅收到 raw image class，无 filesystem type hint；输出 `RESULT=F2_NO_FILESYSTEM_TYPE_HINT_AT_RUNTIME` |
 | F3 | ✅ | 最终 mount 为 `MNT_RDONLY` | `diskutil info`：Media Read-Only=Yes、Volume Read-Only=Yes；mount line：`/dev/disk8 ... (hfs, ... read-only, ...)`；`touch SHOULD_NOT_WRITE` 返回 `Read-only file system` |
-| F4 | 🟡 | Finder 可浏览 | POSIX `find` 已能遍历 sentinel 与嵌套文件；hosted runner 的 Finder AppleEvents 自动化正在独立探测，不能用 TCC/UI 自动化限制替代 Finder 实机验收 |
-| F5 | 🟡 | Finder 最终卷不是 `fuset` 文件系统 | 已有直接证据：最终 `diskutil` 显示 `File System Personality: HFS+`、`Type (Bundle): hfs`，mount line 为 `(hfs, ...)`；上一轮 CI 的负匹配误把卷名 `EDP_FUSET_FINAL` 中的 `FUSET` 当成文件系统类型，已改为 `stat -f %T` + `diskutil` 精确类型断言，等待本轮转绿 |
+| F4 | ✅ | Finder 可浏览 | GitHub Actions hosted macOS 26 的 Finder AppleScript 实际枚举到 `EDP Folder` 与 `EDP_SENTINEL.txt`；不再只是 POSIX `find` 旁证 |
+| F5 | ✅ | Finder 最终卷不是 `fuset` 文件系统 | 最终 `diskutil` 明确显示 `File System Personality: HFS+`、`Type (Bundle): hfs`，mount line 为 `(hfs, ... read-only, ...)`；hidden transport 才是 `fuse-t ... fskit`，两层身份已明确分离 |
 
-Phase F 验收：**核心 F1/F2/F3 已通过；F5 仅剩 CI 精确断言转绿，F4 Finder GUI 枚举单独收口。**
+Phase F 验收：**通过。F1-F5 均由 GitHub Actions macOS 26 / Xcode 26 端到端验证；最终用户卷为 Apple HFS+，FUSE-T 仅承担隐藏单文件 raw transport。**
 
-CI 关键证据：`docs/diagnostics/fuset-applefs-macos26-ci.txt`。当前已重复证明用户可见最终卷是 Apple HFS+ 而非 hidden FUSE-T transport；FUSE-T 只承担隐藏的单文件 raw transport。
+CI 关键证据：`docs/diagnostics/fuset-applefs-macos26-ci.txt`。
 
 ---
 
@@ -196,14 +196,19 @@ CI 关键证据：`docs/diagnostics/fuset-applefs-macos26-ci.txt`。当前已重
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| G1 | ⏳ | 离线 EDP 加密 fixture 接入 | 待执行 |
-| G2 | ⏳ | `read(offset,length)` → SM4 random-access reader | 待执行 |
-| G3 | ⏳ | 不生成完整 plaintext cache | 待执行 |
-| G4 | ⏳ | 真实 EDP 仅 `O_RDONLY|O_CLOEXEC` | 待执行 |
-| G5 | ⏳ | 真实 EDP → Apple 默认 FS → Finder | 待执行 |
-| G6 | ⏳ | 测试后确认无介质写入 | 待执行 |
+| G1 | ✅ | 离线 EDP 加密 fixture 接入 | `.github/workflows/fuset-minimal-fskit-edp-sm4.yml` 在 macOS 26 构造 64 MiB Apple FS raw oracle，经现有 `EDPCrypto` 离线 SM4 加密后由 FUSE-T bridge 解密；`EDPEncryptedPartitionReader` 未复制/重写 crypto |
+| G2 | ✅ | `read(offset,length)` → SM4 random-access reader | `FuseTEDPSM4Bridge` 复用 `EDPFileRawDevice → EDPEncryptedPartitionReader`；多组非对齐、跨 4K/64K、尾部随机窗口与 plaintext oracle 逐字节一致，完整 virtual plaintext SHA 也一致 |
+| G3 | ✅ | 不生成完整 plaintext cache | bridge 输出 `PLAINTEXT_CACHE=none`；`lsof` 只看到 encrypted backing，不打开 plaintext oracle；encrypted backing SHA 与 `size:mtime:mode` 前后不变。最新 exact-head 回归 run `32973525009` 全绿 |
+| G4a | ✅ | 真实捕获 metadata + 正式 unlock 的 hosted read-only 路径 | run `32975531345` 使用真实捕获的 LBA11/LBA12、VID/PID/device size，经正式 `EDPReadOnlyUnlock` 完成 device ID、LBA12、password/file-key、type-2 descriptor 解析；whole-device sparse backing 仅 `O_RDONLY|O_CLOEXEC` 打开，password-file 被消费后删除，未记录密码/derived key |
+| G5a | ✅ | 真实捕获 metadata unlock → Apple FS → Finder（hosted） | 正式 unlock 暴露 logical partition size `118477684736`，hidden `volume.raw` → `/dev/disk8`；系统自动识别 HFS+，Media/Volume Read-Only=Yes；Finder 实际枚举 `EDP Folder`、`EDP_SENTINEL.txt` |
+| G6a | ✅ | hosted whole-device backing 无写入 | 124736503808-byte sparse EDP container 模式 `0444`；前后 `size:mtime:mode` 均为 `124736503808:1787751667:100444`，LBA11/LBA12、encrypted data head/tail 四组 SHA-256 前后完全一致 |
+| G4 | 🟡 | 真实 EDP 仅 `O_RDONLY|O_CLOEXEC` | **代码路径与真实捕获 metadata 已证明**；仍需 macOS 26 实机把物理 `/dev/rdiskN` 交给相同 `EDPFileRawDevice(...declaredSizeBytes..., writable:false)` 路径，确认物理介质 descriptor/权限行为 |
+| G5 | 🟡 | 真实 EDP → Apple 默认 FS → Finder | 真实 metadata/password/key/partition 链已在 hosted CI 通过，但 payload 为测试 Apple FS；物理 EDP 的真实 NTFS volume 在 macOS 26 Finder 中仍需最终实机验收，不虚假标记为完成 |
+| G6 | 🟡 | 测试后确认无介质写入 | hosted real-metadata whole-device backing 不变已证明；仍需物理 USB 实机前后只读证据/介质采样，确认真实介质无写入 |
 
-Phase G 验收：**未完成**。
+Phase G 验收：**G1-G3 与 G4a/G5a/G6a 已通过；真实物理介质 G4/G5/G6 仍待 macOS 26 实机最终验收。**
+
+关键 hosted 证据：`docs/diagnostics/fuset-edp-sm4-macos26-ci.txt`、`docs/diagnostics/fuset-edp-unlock-realmeta-macos26-ci.txt`。后者使用真实捕获 metadata，whole-device sparse fixture 逻辑大小 124736503808 bytes、实际 APFS 占用约 74 MiB；正式 unlock 得到 type-2 start sector 20480、partition size 118477684736，且不记录密码或 derived file key。
 
 ---
 
@@ -233,13 +238,13 @@ Phase H 验收：**未完成**。
 立即执行：
 
 ```text
-F5：让修正后的精确 filesystem-type 断言转绿，并完成 backing 不变式复核
+H1-H3：在 macOS 26 Actions 上以 real-metadata product-unlock bridge 做 4 KiB / 64 KiB / 1 MiB random、sequential、CPU/memory 基线
 ↓
-F4：继续 Finder AppleEvents 枚举；如 hosted runner 因 TCC/UI 会话不可用，则保留为本机 Finder 验收项，不误判底层文件系统失败
+物理 G4-G6：一旦 macOS 26 实机可用，直接用真实 /dev/rdiskN + 本地密码完成 Finder/无写入最终验收，不重复 metadata/FSKit 基础研究
 ↓
-G1-G3：接入离线 EDP/SM4 fixture，把 bridge 的 backing read 切换为 random-access decrypt reader，不生成完整 plaintext cache
+H4-H6：Finder/Quick Look/大文件、backend crash/teardown、socket/session/mount 泄漏
 ↓
-并行次优先级：修复 C7 directory enumeration 尾部 EIO，补齐 D6 mutation syscall matrix
+并行次优先级：修复 C7 directory enumeration 尾部 EIO，补齐 D6 mutation syscall matrix；随后 H7-H10 许可与最终架构决策
 ```
 
 ## 失败实验登记
@@ -264,7 +269,10 @@ G1-G3：接入离线 EDP/SM4 fixture，把 bridge 的 backing read 切换为 ran
 | 2026-08-26 | Phase E backing 设为 0444 后重复 attach | SHA-256、size、mtime、mode 前后完全一致 | E5 已关闭，Phase E 正式通过 |
 | 2026-08-26 | Phase F 首轮 `hdiutil create ... -format UDRW` | macOS 26 报 `-format requires -srcfolder or -srcdevice` | fixture 制作参数问题，不是 bridge/DiskImages 架构失败；已移除该参数 |
 | 2026-08-26 | Phase F 第二轮 Apple filesystem E2E | F1/F2/F3 均实际通过；后续 Finder AppleScript 因脚本语法失败导致 job 红 | 将 Finder UI 自动化与核心磁盘链路分离；先编译 AppleScript 再执行 |
-| 2026-08-26 | Phase F 第三轮 F5 负匹配 | 最终 mount 实际为 `(hfs, ... read-only)`，但卷名 `EDP_FUSET_FINAL` 包含 `FUSET`，`grep -i fuset` 误报 | 禁止对整条 mount line 做模糊负匹配；改用 `stat -f %T` + `diskutil Type (Bundle)` 精确判定 |
+| 2026-08-26 | Phase F 第三轮 F5 负匹配 | 最终 mount 实际为 `(hfs, ... read-only)`，但卷名 `EDP_FUSET_FINAL` 包含 `FUSET`，`grep -i fuset` 误报 | 禁止对整条 mount line 做模糊负匹配；改用 `diskutil Type (Bundle)`/mount 精确判定 |
+| 2026-08-26 | Phase F 第四轮 `stat -f %T` 类型断言 | macOS 上 `%T` 不是预期 filesystem type，测试断言本身错误 | 删除多余 `stat` 判据，最终以 `diskutil File System Personality/Type (Bundle)` + mount line 双证据收口 |
+| 2026-08-26 | generic backing refactor 后 Swift executable 入口 | 单文件 standalone 与多文件 `@main` 构建模式一度冲突 | `2d1f0e4` 将全局初始化收口并兼容 `FUSET_BRIDGE_LIBRARY`；contract/hdiutil/Phase F/SM4 exact-head 全绿 |
+| 2026-08-26 | real captured metadata + sparse whole-device + product unlock 首轮 CI | **G4a/G5a/G6a 首轮全绿**，无架构修补 | 证明正式 unlock 与 FUSE-T/DiskImages/Finder 可以组合；仍严格区分 hosted fixture 与物理 `/dev/rdiskN` 最终验收 |
 
 ---
 
@@ -286,4 +294,11 @@ G1-G3：接入离线 EDP/SM4 fixture，把 bridge 的 backing read 切换为 ran
 | `35a58cd` / `13b8dc0` | Phase F 初始 Apple filesystem E2E；定位 macOS 26 fixture create 参数问题 | 已 push |
 | `ddeef7c` / `a27cb7d` | 修复 HFS+ raw fixture；F1/F2/F3 首次端到端通过并保存诊断 | 已 push |
 | `5232630` / `f0a9210` | 分离 Finder probe；复现 F1/F2/F3，并定位 F5 卷名误匹配测试 bug | 已 push |
-| `86a28ac` | F5 改为精确解析实际 filesystem type，触发第 4 轮 macOS 26 Actions | 已 push / CI 运行中 |
+| `86a28ac` | F5 改为精确 filesystem-type 验证；后续运行确认最终 HFS+/hfs 与 Finder 枚举 | 已 push / 已验证 |
+| `ae74e0e` | 将 FUSE-T RPC transport backing 抽象为 `FuseTReadBacking` | 已 push |
+| `60e9e2d` | 接入现有 `EDPEncryptedPartitionReader` 的 SM4 random-access backing | 已 push |
+| `4bb13a0` / `2d1f0e4` | 修复 standalone/library Swift build-mode 回归；exact-head contract/enabled/hdiutil/AppleFS 全绿 | 已 push |
+| `5ec6df5` | 新增真实 metadata sparse whole-device Apple FS fixture builder | 已 push |
+| `7ef069c` | 新增不接受 file key 的 product-style `FuseTEDPUnlockBridge`，强制走 `EDPReadOnlyUnlock` | 已 push |
+| `6894b0a` | 新增 G4a-G6a real-metadata macOS 26 E2E workflow | 已 push / run `32975531345` 全绿 |
+| `765cee5` | Actions 回写 `fuset-edp-unlock-realmeta-macos26-ci.txt` 诊断证据 | 已 push |
