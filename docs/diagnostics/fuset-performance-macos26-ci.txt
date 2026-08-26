@@ -18,15 +18,72 @@ RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY
  11M	/Users/runner/work/_temp/bench-edp-whole-device.raw
 
 ## hidden transport
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-b3575336-b21e-47b9-aa8e-1c94d5e6c3d2/session.json on /Users/runner/work/_temp/edp-bench-hidden-c4081f9c-a716-4aa9-9207-f68b58ac5914 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+BACKING_MODE=EDP_UNLOCK_RANDOM_ACCESS
+RAW_ACCESS=O_RDONLY|O_CLOEXEC
+PLAINTEXT_CACHE=none
+DEVICE_ID=disk&ven_lexar&prod_usb_flash_drive
+PARTITION_TYPE=2
+PARTITION_START_SECTOR=20480
+PARTITION_SIZE=118477684736
+ALGORITHM=2
+SESSION_ID=edp-fuset-b3575336-b21e-47b9-aa8e-1c94d5e6c3d2
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-b3575336-b21e-47b9-aa8e-1c94d5e6c3d2/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-b3575336-b.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-bench-hidden-c4081f9c-a716-4aa9-9207-f68b58ac5914
+BACKING_SIZE=118477684736
+mount process exited status=0
 
 ## H1 raw trials
+BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 seconds=6.097867 mib_per_s=5.248 iops=1343.4 checksum=1600144
+BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 seconds=6.708624 mib_per_s=4.770 iops=1221.1 checksum=1600144
+BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 seconds=5.732047 mib_per_s=5.583 iops=1429.2 checksum=1600144
+BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 seconds=3.577661 mib_per_s=35.778 iops=572.4 checksum=400428
+BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 seconds=0.106970 mib_per_s=1196.601 iops=19145.6 checksum=400428
+BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 seconds=0.018748 mib_per_s=6827.501 iops=109240.0 checksum=400428
+BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 seconds=2.505953 mib_per_s=102.157 iops=102.2 checksum=49980
+BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 seconds=0.039230 mib_per_s=6525.556 iops=6525.6 checksum=49980
+BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 seconds=0.025060 mib_per_s=10215.449 iops=10215.4 checksum=49980
 
 ## H1 medians
+H1 block_bytes=4096 median_mib_per_s=5.248 median_iops=1343.4
+H1 block_bytes=65536 median_mib_per_s=1196.601 median_iops=19145.6
+H1 block_bytes=1048576 median_mib_per_s=6525.556 median_iops=6525.6
 
 ## H2 sequential
+BENCH pattern=sequential block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 seconds=1.641156 mib_per_s=155.988 iops=156.0 checksum=49980
 
 ## H3 client time -l
+        2.28 real         0.00 user         0.11 sys
+             7143424  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 623  page reclaims
+                   1  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  20  voluntary context switches
+                 486  involuntary context switches
+             2655232  peak memory footprint
 
 ## H3 bridge summary
+bridge_cpu_before=0:12.57
+bridge_cpu_after=0:14.41
+bridge_rss_max_kb=120304
 
 ## H3 bridge RSS samples
+119440  16.1
+119792  45.4
+120080  58.0
+120304  75.5
+119456  67.0
+119456  78.7
+113920  82.8
+ 98480  86.4
+ 88784  90.2
+ 88864  90.9
