@@ -1,0 +1,458 @@
+name: FUSE-T Minimal FSKit Stability
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPUnlockBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTSessionCleanup.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/PrepareEDPFilesystemFixture.swift"
+      - "native/EDPFSKitPoC/Extension/EDPRawIO.swift"
+      - "native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
+      - "native/EDPFSKitPoC/Extension/EDPCrypto.swift"
+      - "native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift"
+      - "native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift"
+      - "native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
+      - "native/EDPFSKitPoC/Extension/EDPBlockDevice.swift"
+      - "fixtures/golden/disks.json"
+      - "fixtures/real_disks/disk4/LBA11.bin"
+      - "fixtures/real_disks/disk4/LBA12.bin"
+      - ".github/workflows/fuset-minimal-fskit-stability.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fuset-minimal-fskit-stability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stability:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      FUSET_VERSION: "1.2.7"
+      FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
+      FUSET_PKG_URL: "https://github.com/macos-fuse-t/fuse-t/releases/download/1.2.7/fuse-t-macos-installer-1.2.7.pkg"
+      FUSET_BUNDLE_ID: "org.fuset.fskit-srv.module"
+      GOLDEN_NAME: "disk4_real_lexar"
+      REAL_LBA11: "fixtures/real_disks/disk4/LBA11.bin"
+      REAL_LBA12: "fixtures/real_disks/disk4/LBA12.bin"
+      VOLNAME: "EDP_STABILITY_FINAL"
+      DIAG_PATH: "docs/diagnostics/fuset-stability-macos26-ci.txt"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify clean macOS 26 runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          test "$(xcodebuild -version | awk '/Xcode/ {print int($2); exit}')" -ge 26
+          test ! -e /Library/Filesystems/macfuse.fs
+          test ! -e /Library/Application\ Support/fuse-t
+          test ! -e /usr/local/bin/go-nfsv4
+          echo 'RESULT=H456_RUNTIME_CLEAN'
+
+      - name: Resolve captured metadata vector
+        run: |
+          set -euo pipefail
+          PASSWORD_FILE="${RUNNER_TEMP}/edp-stability-password"
+          python3 - fixtures/golden/disks.json "${GOLDEN_NAME}" "${PASSWORD_FILE}" "${GITHUB_ENV}" <<'PY'
+          import json, os, sys
+          source, wanted, password_path, env_path = sys.argv[1:]
+          with open(source, 'r', encoding='utf-8') as f:
+              item = next(d for d in json.load(f)['disks'] if d['name'] == wanted)
+          params = item['lba11_params']
+          fd = os.open(password_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          try:
+              os.write(fd, item['password'].encode('utf-8'))
+          finally:
+              os.close(fd)
+          with open(env_path, 'a', encoding='utf-8') as env:
+              env.write(f"EDP_VID={params['vid']}\n")
+              env.write(f"EDP_PID={params['pid']}\n")
+              env.write(f"EDP_DEVICE_SIZE={params['size_bytes']}\n")
+              env.write("EDP_PARTITION_TYPE=2\n")
+              env.write(f"PASSWORD_FILE={password_path}\n")
+          print('RESULT=H456_REALMETA_VECTOR_READY')
+          PY
+
+      - name: Build Apple filesystem with preview and large file
+        run: |
+          set -euo pipefail
+          TEMPLATE="${RUNNER_TEMP}/edp-stability-template.dmg"
+          PLAIN="${RUNNER_TEMP}/edp-stability-plain.raw"
+          hdiutil create -size 192m -fs HFS+ -volname "${VOLNAME}" -layout NONE "${TEMPLATE}"
+          OUT="$(hdiutil attach "${TEMPLATE}")"
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          MOUNT="$(printf '%s\n' "${OUT}" | awk -v v="${VOLNAME}" '$0 ~ ("/Volumes/" v) {print $NF; exit}')"
+          test -n "${DISK}"
+          test -d "${MOUNT}"
+          printf '%s\n' 'EDP stability preview through Apple Quick Look' > "${MOUNT}/EDP_PREVIEW.txt"
+          printf '%s\n' 'EDP-STABILITY-SENTINEL-v1' > "${MOUNT}/EDP_SENTINEL.txt"
+          python3 - "${MOUNT}/EDP_LARGE.bin" <<'PY'
+          import hashlib, sys
+          path = sys.argv[1]
+          target = 64 * 1024 * 1024
+          written = 0
+          with open(path, 'wb') as f:
+              block = 0
+              while written < target:
+                  seed = hashlib.sha256(f'EDP-STABILITY-LARGE:{block}'.encode()).digest()
+                  chunk = (seed * 4096)[:min(128 * 1024, target - written)]
+                  f.write(chunk)
+                  written += len(chunk)
+                  block += 1
+          PY
+          LARGE_SHA="$(shasum -a 256 "${MOUNT}/EDP_LARGE.bin" | awk '{print $1}')"
+          LARGE_SIZE="$(stat -f %z "${MOUNT}/EDP_LARGE.bin")"
+          test "${LARGE_SIZE}" -eq 67108864
+          sync
+          hdiutil detach "${DISK}"
+
+          RAW_OUT="$(hdiutil attach -nomount "${TEMPLATE}")"
+          RAW_DISK="$(printf '%s\n' "${RAW_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${RAW_DISK}"
+          dd if="/dev/r$(basename "${RAW_DISK}")" of="${PLAIN}" bs=1048576 status=none
+          hdiutil detach "${RAW_DISK}"
+          test "$(stat -f %z "${PLAIN}")" -eq 201326592
+          echo "PLAIN=${PLAIN}" >> "${GITHUB_ENV}"
+          echo "LARGE_SHA=${LARGE_SHA}" >> "${GITHUB_ENV}"
+          echo "LARGE_SIZE=${LARGE_SIZE}" >> "${GITHUB_ENV}"
+          echo 'RESULT=H4_APPLE_FS_LARGE_FIXTURE_READY'
+
+      - name: Build sparse real-metadata EDP fixture
+        run: |
+          set -euo pipefail
+          PREPARE_BIN="${RUNNER_TEMP}/PrepareEDPFilesystemFixture"
+          CONTAINER="${RUNNER_TEMP}/edp-stability-whole-device.raw"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/PrepareEDPFilesystemFixture.swift \
+            -o "${PREPARE_BIN}"
+          "${PREPARE_BIN}" \
+            --lba11 "${REAL_LBA11}" \
+            --lba12 "${REAL_LBA12}" \
+            --vid "${EDP_VID}" \
+            --pid "${EDP_PID}" \
+            --device-size "${EDP_DEVICE_SIZE}" \
+            --partition-type "${EDP_PARTITION_TYPE}" \
+            --plaintext "${PLAIN}" \
+            --output "${CONTAINER}" \
+            --password-file "${PASSWORD_FILE}" \
+            | tee "${RUNNER_TEMP}/stability-prepare.log"
+          grep -Fq 'RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY' "${RUNNER_TEMP}/stability-prepare.log"
+          chmod 0444 "${CONTAINER}"
+          echo "CONTAINER=${CONTAINER}" >> "${GITHUB_ENV}"
+          echo 'RESULT=H456_REALMETA_EDP_FIXTURE_READY'
+
+      - name: Stage and enable only official signed FUSE-T FSKit app
+        run: |
+          set -euo pipefail
+          PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
+          EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
+          curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
+          test "$(shasum -a 256 "${PKG}" | awk '{print $1}')" = "${FUSET_PKG_SHA256}"
+          pkgutil --expand-full "${PKG}" "${EXPANDED}"
+          SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
+          test -n "${SOURCE_APP}"
+          codesign --verify --deep --strict --verbose=2 "${SOURCE_APP}"
+          sudo rm -rf /Applications/fuse-t.app
+          sudo ditto "${SOURCE_APP}" /Applications/fuse-t.app
+          APP=/Applications/fuse-t.app
+          EXT="${APP}/Contents/Extensions/FskitSrvModule.appex"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}" || true
+          pluginkit -a "${APP}" || true
+          pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/stability-pluginkit.txt" || true
+          grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/stability-pluginkit.txt"
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${ENABLED_PLIST}" "${FUSET_BUNDLE_ID}" <<'PY'
+          import os, plistlib, sys
+          path, bundle_id = sys.argv[1:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, 'rb') as f:
+                      value = plistlib.load(f)
+                  if isinstance(value, list):
+                      enabled = [x for x in value if isinstance(x, str)]
+              except Exception:
+                  pass
+          if bundle_id not in enabled:
+              enabled.append(bundle_id)
+          with open(path, 'wb') as f:
+              plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          PY
+          chmod 600 "${ENABLED_PLIST}"
+          killall -9 fskit_agent 2>/dev/null || true
+          killall -9 extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+
+      - name: Compile product bridge and crash cleanup helper
+        run: |
+          set -euo pipefail
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors -D FUSET_BRIDGE_LIBRARY \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift \
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPUnlockBridge.swift \
+            -o "${RUNNER_TEMP}/FuseTEDPUnlockBridge"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTSessionCleanup.swift \
+            -o "${RUNNER_TEMP}/FuseTSessionCleanup"
+          echo 'RESULT=H56_CLEANUP_BINARY_READY'
+
+      - name: H4 Finder Quick Look and large file then graceful teardown
+        run: |
+          set -euo pipefail
+          HIDDEN="${RUNNER_TEMP}/edp-stability-normal-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          LOG="${RUNNER_TEMP}/stability-normal-bridge.log"
+          mkdir -p "${HIDDEN}"
+          "${RUNNER_TEMP}/FuseTEDPUnlockBridge" \
+            --backing "${CONTAINER}" --vid "${EDP_VID}" --pid "${EDP_PID}" \
+            --device-size "${EDP_DEVICE_SIZE}" --partition-type "${EDP_PARTITION_TYPE}" \
+            --password-file "${PASSWORD_FILE}" --mountpoint "${HIDDEN}" \
+            --volume-name 'EDP Stability Hidden Raw Transport' >"${LOG}" 2>&1 &
+          BRIDGE_PID=$!
+          for attempt in $(seq 1 30); do
+            if mount | grep -Fq " on ${HIDDEN} "; then break; fi
+            kill -0 "${BRIDGE_PID}" 2>/dev/null
+            sleep 1
+          done
+          mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/h4-hidden-mount.txt"
+          SESSION_JSON="$(awk -F= '/^SESSION_JSON=/ {print substr($0,index($0,"=")+1); exit}' "${LOG}")"
+          SOCKET="$(awk -F= '/^SOCKET=/ {print substr($0,index($0,"=")+1); exit}' "${LOG}")"
+          test -f "${SESSION_JSON}"
+          test -S "${SOCKET}"
+
+          OUT="$(hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage "${HIDDEN}/volume.raw" 2>"${RUNNER_TEMP}/h4-hdiutil.err")"
+          printf '%s\n' "${OUT}" | tee "${RUNNER_TEMP}/h4-attach.txt"
+          FINAL_DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          FINAL_MOUNT="$(printf '%s\n' "${OUT}" | awk -v v="${VOLNAME}" '$0 ~ ("/Volumes/" v) {print $NF; exit}')"
+          test -n "${FINAL_DISK}"
+          test -d "${FINAL_MOUNT}"
+          test "$(stat -f %z "${FINAL_MOUNT}/EDP_LARGE.bin")" -eq "${LARGE_SIZE}"
+          test "$(shasum -a 256 "${FINAL_MOUNT}/EDP_LARGE.bin" | awk '{print $1}')" = "${LARGE_SHA}"
+          echo 'RESULT=H4_LARGE_FILE_64M_HASH_OK'
+
+          FINDER_SCRIPT="${RUNNER_TEMP}/h4-finder.applescript"
+          cat > "${FINDER_SCRIPT}" <<'OSA'
+          on run argv
+              set targetAlias to (POSIX file (item 1 of argv)) as alias
+              tell application "Finder"
+                  return (name of every item of targetAlias) as string
+              end tell
+          end run
+          OSA
+          osacompile -o "${RUNNER_TEMP}/h4-finder.scpt" "${FINDER_SCRIPT}"
+          osascript "${RUNNER_TEMP}/h4-finder.scpt" "${FINAL_MOUNT}" | tee "${RUNNER_TEMP}/h4-finder.txt"
+          grep -Fq 'EDP_LARGE.bin' "${RUNNER_TEMP}/h4-finder.txt"
+          grep -Fq 'EDP_PREVIEW.txt' "${RUNNER_TEMP}/h4-finder.txt"
+          echo 'RESULT=H4_FINDER_LARGE_FILE_ENUMERATION_OK'
+
+          QL_OUT="${RUNNER_TEMP}/h4-quicklook"
+          mkdir -p "${QL_OUT}"
+          qlmanage -t -s 256 -o "${QL_OUT}" "${FINAL_MOUNT}/EDP_PREVIEW.txt" >"${RUNNER_TEMP}/h4-quicklook.txt" 2>&1
+          find "${QL_OUT}" -type f -maxdepth 1 -print | tee "${RUNNER_TEMP}/h4-quicklook-files.txt"
+          test -s "${RUNNER_TEMP}/h4-quicklook-files.txt"
+          echo 'RESULT=H4_QUICKLOOK_THUMBNAIL_OK'
+
+          hdiutil detach "${FINAL_DISK}" -force
+          /sbin/umount "${HIDDEN}"
+          for attempt in $(seq 1 20); do
+            if ! kill -0 "${BRIDGE_PID}" 2>/dev/null; then break; fi
+            sleep 0.5
+          done
+          if kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+            echo 'bridge did not exit after graceful unmount' >&2
+            exit 1
+          fi
+          test ! -e "${SESSION_JSON}"
+          test ! -e "${SOCKET}"
+          rmdir "${HIDDEN}"
+          echo 'RESULT=H6_GRACEFUL_TEARDOWN_NO_SESSION_SOCKET_LEAK'
+
+      - name: Regenerate password for crash session
+        run: |
+          set -euo pipefail
+          PASSWORD_FILE="${RUNNER_TEMP}/edp-stability-crash-password"
+          python3 - fixtures/golden/disks.json "${GOLDEN_NAME}" "${PASSWORD_FILE}" <<'PY'
+          import json, os, sys
+          source, wanted, output = sys.argv[1:]
+          with open(source, 'r', encoding='utf-8') as f:
+              item = next(d for d in json.load(f)['disks'] if d['name'] == wanted)
+          fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+          try:
+              os.write(fd, item['password'].encode('utf-8'))
+          finally:
+              os.close(fd)
+          PY
+          echo "PASSWORD_FILE=${PASSWORD_FILE}" >> "${GITHUB_ENV}"
+
+      - name: H5 backend crash fail-closed and H6 recovery cleanup
+        run: |
+          set -euo pipefail
+          HIDDEN="${RUNNER_TEMP}/edp-stability-crash-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          LOG="${RUNNER_TEMP}/stability-crash-bridge.log"
+          mkdir -p "${HIDDEN}"
+          "${RUNNER_TEMP}/FuseTEDPUnlockBridge" \
+            --backing "${CONTAINER}" --vid "${EDP_VID}" --pid "${EDP_PID}" \
+            --device-size "${EDP_DEVICE_SIZE}" --partition-type "${EDP_PARTITION_TYPE}" \
+            --password-file "${PASSWORD_FILE}" --mountpoint "${HIDDEN}" \
+            --volume-name 'EDP Stability Crash Raw Transport' >"${LOG}" 2>&1 &
+          BRIDGE_PID=$!
+          for attempt in $(seq 1 30); do
+            if mount | grep -Fq " on ${HIDDEN} "; then break; fi
+            kill -0 "${BRIDGE_PID}" 2>/dev/null
+            sleep 1
+          done
+          mount | grep -F " on ${HIDDEN} " | tee "${RUNNER_TEMP}/h5-hidden-mount.txt"
+          SESSION_JSON="$(awk -F= '/^SESSION_JSON=/ {print substr($0,index($0,"=")+1); exit}' "${LOG}")"
+          SOCKET="$(awk -F= '/^SOCKET=/ {print substr($0,index($0,"=")+1); exit}' "${LOG}")"
+          test -f "${SESSION_JSON}"
+          test -S "${SOCKET}"
+
+          OUT="$(hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage "${HIDDEN}/volume.raw" 2>"${RUNNER_TEMP}/h5-hdiutil.err")"
+          printf '%s\n' "${OUT}" | tee "${RUNNER_TEMP}/h5-attach.txt"
+          FINAL_DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          FINAL_MOUNT="$(printf '%s\n' "${OUT}" | awk -v v="${VOLNAME}" '$0 ~ ("/Volumes/" v) {print $NF; exit}')"
+          test -n "${FINAL_DISK}"
+          test -d "${FINAL_MOUNT}"
+          test "$(cat "${FINAL_MOUNT}/EDP_SENTINEL.txt")" = 'EDP-STABILITY-SENTINEL-v1'
+
+          kill -9 "${BRIDGE_PID}"
+          wait "${BRIDGE_PID}" 2>/dev/null || true
+          echo 'RESULT=H5_BACKEND_SIGKILL_INJECTED'
+
+          python3 - "${HIDDEN}/volume.raw" "${RUNNER_TEMP}/h5-dead-read.txt" <<'PY'
+          import subprocess, sys
+          path, log = sys.argv[1:]
+          with open(log, 'w', encoding='utf-8') as out:
+              try:
+                  proc = subprocess.run(
+                      ['/bin/dd', f'if={path}', 'of=/dev/null', 'bs=4096', 'skip=30000', 'count=1'],
+                      stdout=out, stderr=subprocess.STDOUT, text=True, timeout=10,
+                  )
+              except subprocess.TimeoutExpired:
+                  raise SystemExit('backend-dead read hung for more than 10 seconds')
+          if proc.returncode == 0:
+              raise SystemExit('backend-dead uncached read unexpectedly succeeded')
+          print('RESULT=H5_BACKEND_CRASH_READ_FAILS_PROMPTLY')
+          PY
+
+          hdiutil detach "${FINAL_DISK}" -force >"${RUNNER_TEMP}/h5-detach.txt" 2>&1 || true
+          for attempt in $(seq 1 20); do
+            if ! diskutil info "${FINAL_DISK}" >/dev/null 2>&1; then break; fi
+            sleep 0.5
+          done
+          if diskutil info "${FINAL_DISK}" >/dev/null 2>&1; then
+            echo 'Apple disk image remained after forced detach' >&2
+            exit 1
+          fi
+          echo 'RESULT=H5_FINAL_APPLE_VOLUME_FORCE_DETACH_OK'
+
+          "${RUNNER_TEMP}/FuseTSessionCleanup" \
+            --session-json "${SESSION_JSON}" --mountpoint "${HIDDEN}" \
+            | tee "${RUNNER_TEMP}/h6-crash-cleanup.txt"
+          test ! -e "${SESSION_JSON}"
+          test ! -e "${SOCKET}"
+          if mount | grep -Fq " on ${HIDDEN} "; then
+            echo 'hidden mount leaked after crash cleanup' >&2
+            exit 1
+          fi
+          echo 'RESULT=H6_CRASH_RECOVERY_NO_MOUNT_SESSION_SOCKET_LEAK'
+
+      - name: H6 global EDP session leak check
+        run: |
+          set -euo pipefail
+          SOCKET_ROOT="${HOME}/Library/Group Containers/group.org.fuset.fskit-srv/s"
+          if [[ -d "${SOCKET_ROOT}" ]]; then
+            find "${SOCKET_ROOT}" -maxdepth 1 -name 'edp-fuset-*.sock' -print | tee "${RUNNER_TEMP}/h6-socket-leaks.txt"
+            test ! -s "${RUNNER_TEMP}/h6-socket-leaks.txt"
+          fi
+          find "${TMPDIR}" -maxdepth 1 -type d -name 'edp-fuset-*' -print | tee "${RUNNER_TEMP}/h6-session-leaks.txt"
+          test ! -s "${RUNNER_TEMP}/h6-session-leaks.txt"
+          echo 'RESULT=H6_GLOBAL_SESSION_SOCKET_LEAK_CHECK_OK'
+
+      - name: Collect H4-H6 evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${DIAG_PATH}")"
+          {
+            echo '# FUSE-T minimal FSKit H4-H6 stability macOS 26 CI'
+            echo
+            echo 'generated_at_utc=<normalized>'
+            echo "runner_os=$(sw_vers -productVersion)"
+            echo "runner_build=$(sw_vers -buildVersion)"
+            echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
+            echo "large_size=${LARGE_SIZE:-unknown}"
+            echo "large_sha=${LARGE_SHA:-unknown}"
+            echo
+            echo '## fixture'
+            cat "${RUNNER_TEMP}/stability-prepare.log" 2>/dev/null || true
+            echo
+            echo '## H4 hidden mount / Finder / Quick Look'
+            cat "${RUNNER_TEMP}/h4-hidden-mount.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h4-attach.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h4-finder.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h4-quicklook.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h4-quicklook-files.txt" 2>/dev/null || true
+            echo
+            echo '## H5 crash path'
+            cat "${RUNNER_TEMP}/h5-hidden-mount.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h5-attach.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h5-dead-read.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h5-detach.txt" 2>/dev/null || true
+            echo
+            echo '## H6 crash cleanup / leak scans'
+            cat "${RUNNER_TEMP}/h6-crash-cleanup.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h6-socket-leaks.txt" 2>/dev/null || true
+            cat "${RUNNER_TEMP}/h6-session-leaks.txt" 2>/dev/null || true
+          } > "${DIAG_PATH}"
+          sed -n '1,500p' "${DIAG_PATH}"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          pkill -9 -f FuseTEDPUnlockBridge 2>/dev/null
+          mount | awk '$0 ~ /edp-stability-(normal|crash)-/ {print $3}' | while read -r m; do /sbin/umount -f "${m}"; done
+          rm -f "${PASSWORD_FILE:-}"
+          sudo rm -rf /Applications/fuse-t.app
+          exit 0
+
+      - name: Commit deterministic H4-H6 diagnostic
+        if: always() && github.ref_name == 'test/fuset-minimal-fskit-bridge'
+        run: |
+          set -euo pipefail
+          test -f "${DIAG_PATH}"
+          git add "${DIAG_PATH}"
+          if git diff --cached --quiet -- "${DIAG_PATH}"; then
+            echo 'RESULT=H456_DIAGNOSTIC_UNCHANGED'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: capture FUSE-T stability probe [skip ci]'
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
