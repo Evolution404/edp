@@ -28,7 +28,15 @@ private struct Frame {
     var payload: Data = Data()
 }
 
-private final class FixedBacking {
+/// Minimal byte-oriented contract between the FUSE-T RPC transport and its
+/// backing store. The transport does not know whether bytes come from a plain
+/// file, a real raw device, or an on-demand decrypted EDP partition.
+protocol FuseTReadBacking: AnyObject {
+    var size: Int64 { get }
+    func pread(offset: Int64, length: Int) throws -> Data
+}
+
+final class FixedBacking: FuseTReadBacking {
     let fd: Int32
     let size: Int64
 
@@ -73,17 +81,17 @@ private final class FixedBacking {
     }
 }
 
-private final class UnixRPCServer {
+final class UnixRPCServer {
     private let socketPath: String
     private let sessionID: String
     private let authToken: String
-    private let backing: FixedBacking
+    private let backing: any FuseTReadBacking
     private var listenFD: Int32 = -1
     private var clientFD: Int32 = -1
     private var nextDirectoryHandle: Int64 = 100
     private var openDirectoryHandles = Set<Int64>()
 
-    init(socketPath: String, sessionID: String, authToken: String, backing: FixedBacking) {
+    init(socketPath: String, sessionID: String, authToken: String, backing: any FuseTReadBacking) {
         self.socketPath = socketPath
         self.sessionID = sessionID
         self.authToken = authToken
@@ -457,10 +465,9 @@ private func parseArguments() throws -> Arguments {
     return Arguments(backing: backing, mountpoint: mountpoint, volumeName: volumeName)
 }
 
-private func main() throws {
-    let args = try parseArguments()
+func runFuseTBridge(backing: any FuseTReadBacking, mountpoint: String, volumeName: String) throws {
     let fileManager = FileManager.default
-    try fileManager.createDirectory(atPath: args.mountpoint, withIntermediateDirectories: true)
+    try fileManager.createDirectory(atPath: mountpoint, withIntermediateDirectories: true)
 
     let groupSocketDirectory = fileManager.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Group Containers/group.org.fuset.fskit-srv/s", isDirectory: true)
@@ -481,13 +488,12 @@ private func main() throws {
         "auth_token": authToken,
         "namedattr": false,
         "readonly": true,
-        "volume_name": args.volumeName,
+        "volume_name": volumeName,
     ]
     let descriptorData = try JSONSerialization.data(withJSONObject: descriptor, options: [.sortedKeys])
     try descriptorData.write(to: sessionURL, options: .atomic)
     chmod(sessionURL.path, 0o600)
 
-    let backing = try FixedBacking(path: args.backing)
     let server = UnixRPCServer(socketPath: socketPath, sessionID: sessionID, authToken: authToken, backing: backing)
     try server.listen()
 
@@ -498,7 +504,7 @@ private func main() throws {
 
     let mount = Process()
     mount.executableURL = URL(fileURLWithPath: "/sbin/mount")
-    mount.arguments = ["-o", "nobrowse,rdonly", "-t", "fuset", sessionURL.path, args.mountpoint]
+    mount.arguments = ["-o", "nobrowse,rdonly", "-t", "fuset", sessionURL.path, mountpoint]
     mount.standardOutput = FileHandle.standardOutput
     mount.standardError = FileHandle.standardError
     mount.terminationHandler = { process in
@@ -509,16 +515,25 @@ private func main() throws {
     print("SESSION_ID=\(sessionID)")
     print("SESSION_JSON=\(sessionURL.path)")
     print("SOCKET=\(socketPath)")
-    print("MOUNTPOINT=\(args.mountpoint)")
+    print("MOUNTPOINT=\(mountpoint)")
     print("BACKING_SIZE=\(backing.size)")
     fflush(stdout)
 
     try server.serveOneConnection()
 }
 
-do {
-    try main()
-} catch {
-    fputs("FuseTMinimalBridge: \(error)\n", stderr)
-    exit(1)
+#if !FUSET_BRIDGE_LIBRARY
+@main
+private enum FuseTMinimalBridgeMain {
+    static func main() {
+        do {
+            let args = try parseArguments()
+            let backing = try FixedBacking(path: args.backing)
+            try runFuseTBridge(backing: backing, mountpoint: args.mountpoint, volumeName: args.volumeName)
+        } catch {
+            fputs("FuseTMinimalBridge: \(error)\n", stderr)
+            exit(1)
+        }
+    }
 }
+#endif
