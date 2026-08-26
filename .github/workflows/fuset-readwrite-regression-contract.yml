@@ -65,7 +65,7 @@ jobs:
           grep -Fq 'WRITE_CASE_PASS=tail-1B' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'RESULT=RW_RMW_NEIGHBORS_PRESERVED' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'RESULT=RW_BOUNDS_AND_ZERO_LENGTH_PASS' "${RUNNER_TEMP}/rw-matrix.txt"
-          grep -Fq 'RESULT=RW_CIPHER_PERSISTENCE_AFTER_REOPEN' "${RUNNER_TEMP}/rw-matrix.txt"
+          grep -Fq 'RESULT=RW_CIPHER_PERSISTENCE_AFTER_TRUE_REOPEN' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'RESULT=RW_READONLY_BACKING_CANNOT_UPGRADE' "${RUNNER_TEMP}/rw-matrix.txt"
           grep -Fq 'RESULT=EDP_ENCRYPTED_READWRITE_MATRIX_PASS' "${RUNNER_TEMP}/rw-matrix.txt"
 
