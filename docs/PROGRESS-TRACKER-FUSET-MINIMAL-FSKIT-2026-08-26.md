@@ -3,21 +3,23 @@
 日期：2026-08-26  
 分支：`test/fuset-minimal-fskit-bridge`  
 基线：`6c44c1d`  
-配套计划：`docs/PLAN-2026-08-26-fuset-minimal-fskit-bridge.md`
+配套计划：`docs/PLAN-2026-08-26-fuset-minimal-fskit-bridge.md`  
+架构决策：`docs/DECISION-2026-08-26-fuset-minimal-fskit-bridge.md`
 
 ## 当前总状态
 
-**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过；H3 已捕获可用性能/资源基线。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为实机待办，不用 hosted CI 冒充物理 U 盘证明。**
+**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**
 
 当前实验目标：只依赖 FUSE-T 1.2.7 官方签名约 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G；hidden `volume.raw` 仅作 transport，最终用户卷交给 Apple DiskImages + Apple 文件系统驱动。
 
 当前重要边界：
 
-- `/Applications/fuse-t.app`：实验仅使用官方签名 FSKit app bundle。
+- `/Applications/fuse-t.app`：实验只使用官方签名 FSKit app bundle。
 - `org.fuset.fskit-srv.module`：Developer ID Team `6DY7Z4SVDZ`。
 - `/Library/Application Support/fuse-t`、`go-nfsv4`、全局 `libfuse3`：最终 runtime 不安装。
-- macFUSE runtime/KEXT：本实验路径不依赖。
+- macFUSE runtime/KEXT：本实验只读路径不依赖。
 - CI-only `enabledModules.plist` 注入仅在一次性 Actions runner 模拟用户启用官方 extension，**不得进入产品授权绕过路径**。
+- FUSE-T 1.2.7 package 固定 SHA-256 `6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654`；升级必须重跑 binary contract 与 E/F/G/H 核心回归。
 - 当前分支直接在主工作目录使用，不使用 worktree。
 
 ---
@@ -36,7 +38,7 @@
 | A7 | ✅ | FSKit entitlement | `ProvisionsAllDevices=true`；`com.apple.developer.fskit.fsmodule=true` |
 | A8 | ✅ | 无 FUSE-T core/helper/global libfuse | `/Library/Application Support/fuse-t`、`/usr/local/bin/go-nfsv4`、`/usr/local/lib/libfuse3.dylib` 均不存在 |
 | A9 | ✅ | 无 macFUSE runtime/KEXT | filesystem runtime/helper/KEXT 均不在实验运行时 |
-| A10 | ✅ | 第三方 FSKit module 基线 | 当前实验仅使用官方 `org.fuset.fskit-srv.module` |
+| A10 | ✅ | 第三方 FSKit module 基线 | 当前实验只使用官方 `org.fuset.fskit-srv.module` |
 
 Phase A 验收：**通过**。
 
@@ -73,7 +75,7 @@ Phase B 验收：**通过**。最终路径不再需要 libfuse/go-nfsv4。
 | C9 | ⏳ | mutation RPC 全矩阵 fail-closed | 已知 mutation 返回 EROFS，完整方法矩阵待补 |
 | C10 | ✅ | 无 TCP listener | direct backend 仅 app-group Unix socket |
 
-Phase C 验收：**核心只读单文件路径通过**；C7-C9 属于后续协议收口。
+Phase C 验收：**核心只读单文件路径通过**；C7-C9 属于后续协议硬化。
 
 ---
 
@@ -133,7 +135,7 @@ Phase F 验收：**通过**。关键证据：`docs/diagnostics/fuset-applefs-mac
 | G5a | ✅ | real-metadata hosted → Apple FS → Finder | logical partition `118477684736` bytes；`/dev/disk8` HFS+；Finder 枚举成功 |
 | G6a | ✅ | hosted whole-device backing 无写入 | 124736503808-byte sparse container，LBA11/LBA12/data head/tail hash 与 size/mtime/mode 前后不变 |
 | G4 | 🟡 | 物理 EDP 仅 O_RDONLY | 仍需真实 `/dev/rdiskN` descriptor/权限最终确认 |
-| G5 | 🟡 | 物理 EDP → Apple FS → Finder | hosted payload 为测试 Apple FS；真实物理 EDP NTFS Finder 验收待实机 |
+| G5 | 🟡 | 物理 EDP → Apple FS → Finder | hosted payload 为测试 Apple FS；真实物理 EDP 文件系统 Finder 验收待实机 |
 | G6 | 🟡 | 物理介质零写入证明 | hosted 已证明；真实 USB 前后介质采样仍待实机 |
 
 Phase G 验收：**G1-G3、G4a-G6a 通过；物理 G4-G6 保留。**
@@ -148,36 +150,43 @@ Phase G 验收：**G1-G3、G4a-G6a 通过；物理 G4-G6 保留。**
 |---|---|---|---|
 | H1 | ✅ | 4 KiB / 64 KiB / 1 MiB random read benchmark | macOS 26.5.2 / Xcode 26.6、real-metadata product unlock、`F_NOCACHE=1`、read-ahead=0；3 次中位数：4 KiB **7.533 MiB/s / 1928.4 IOPS**，64 KiB **37.234 MiB/s / 595.7 IOPS**，1 MiB **52.357 MiB/s / 52.4 IOPS**；run `32976967634` 全绿 |
 | H2 | ✅ | 256 MiB sequential benchmark | 同一 no-cache 条件，1 MiB block × 256：**45.597 MiB/s**，5.614 s |
-| H3 | ✅ | CPU / memory / context switch baseline | client `/usr/bin/time -l`：5.63 s real、max RSS 7,159,808 bytes、258 voluntary / 24 involuntary context switches；bridge CPU `0:28.09 → 0:32.76`（约 4.67 CPU-s），峰值 RSS **163,808 KiB ≈ 160 MiB**。该内存值偏高，列为后续优化目标而非阻塞正确性 |
-| H4 | ✅ | Finder / Quick Look / 大文件 | run `32978050642`：192 MiB real-metadata EDP fixture；64 MiB `EDP_LARGE.bin` size/hash 完整验证，Finder 实际枚举；`qlmanage` 对 `EDP_PREVIEW.txt` 成功生成 `EDP_PREVIEW.txt.png` thumbnail |
-| H5a | ✅ | backend crash fail-closed | full Apple FS attach 后对 bridge `SIGKILL`；未缓存 read 在 10 s 上限内立即返回 `Connection reset by peer`，无静默错误数据；`/dev/disk8` 可 `hdiutil detach -force` eject |
+| H3 | ✅ | CPU / memory / context switch baseline | client 5.63 s real、max RSS 7,159,808 bytes、258 voluntary / 24 involuntary context switches；bridge CPU `0:28.09 → 0:32.76`（约 4.67 CPU-s），峰值 RSS **163,808 KiB ≈ 160 MiB**；RSS 偏高列为优化目标 |
+| H4 | ✅ | Finder / Quick Look / 大文件 | run `32978050642`：192 MiB real-metadata EDP fixture；64 MiB `EDP_LARGE.bin` size/hash 完整验证，Finder 实际枚举；`qlmanage` 成功生成 `EDP_PREVIEW.txt.png` thumbnail |
+| H5a | ✅ | backend crash fail-closed | full Apple FS attach 后对 bridge `SIGKILL`；未缓存 read 立即 `Connection reset by peer`，无静默错误数据；`/dev/disk8` 可 forced detach/eject |
 | H5b | 🟡 | sleep/wake / 真实拔盘 | hosted runner 无法真实模拟睡眠唤醒和物理 USB 拔插；保留 macOS 26 实机验收 |
-| H6 | ✅ | graceful/crash cleanup 无泄漏 | graceful unmount 后 bridge 自然退出并由 `defer` 删除 session/socket；crash 路径由 `FuseTSessionCleanup.swift` 严格校验 EDP temp/session + app-group socket 后清理；最终全局 `edp-fuset-*` session/socket 扫描为 0 |
-| H7 | ⏳ | FUSE-T binary redistribution 许可结论 | 下一步查 authoritative license |
-| H8 | ⏳ | 商业 bundling / 自动下载许可结论 | 下一步查 authoritative license / 商业条款 |
-| H9 | ⏳ | 与 macFUSE Minimal Runtime 对比 | 待形成体积、依赖、安装授权、Finder 语义、性能对比 |
-| H10 | ⏳ | 最终架构决策 | 待 H7-H9 收口后决策 |
+| H6 | ✅ | graceful/crash cleanup 无泄漏 | graceful unmount 后 bridge 自然退出并删除 session/socket；crash 路径由 `FuseTSessionCleanup.swift` 严格校验 EDP temp/session + app-group socket 后清理；最终全局 `edp-fuset-*` session/socket 扫描为 0 |
+| H7 | ✅ | FUSE-T binary redistribution 许可结论 | 官方 `License.txt`：binary 非商业使用免费且 redistribution 需保留 notice/conditions；**commercial use 或 commercial-software bundling 必须取得 FUSE-T commercial license**。官网也明确 commercial license available for embedding/shipping |
+| H8 | ✅ | commercial bundling / 自动下载边界 | FUSE-T 的 commercial-use 条款意味着不能把“由产品自动下载而非内嵌”当成免费商业绕过；商业场景须先取得授权并按合同分发。对照 macFUSE license 更明确把 commercial context 的 automated download/install 也纳入需 prior written permission 的范围 |
+| H9 | ✅ | 与 macFUSE Minimal Runtime 对比 | 只读目标下 FUSE-T thin path 仅约 1.7 MB signed app + EDP-owned backend，final Finder 卷为 Apple FS；macFUSE+NTFS-3G 既有路径组件/安装/维护面更大，stable 路径还存在 `MNT_LOCAL=false`、TextEdit atomic rename `EOPNOTSUPP` 等 outer-FUSE 语义问题。性能口径不同，不宣称绝对胜负；thin hosted no-cache seq 45.597 MiB/s，macFUSE WIP inner read约 55.8 MiB/s。两者商业分发都需要许可 |
+| H10 | ✅ | 最终架构决策 | **A. 推荐 FUSE-T thin bridge**，仅针对 macOS 26+ EDP 只读路径；商业许可、物理 G4-G6/H5b、version-pin/binary-contract、正常用户 FSKit enablement 为 release gates。完整决策见 `docs/DECISION-2026-08-26-fuset-minimal-fskit-bridge.md` |
 
-Phase H hosted 技术验收：**H1-H4、H5a、H6 通过；H5b 需物理实机；H7-H10 待许可与最终决策。**
+Phase H hosted 技术与架构验收：**H1-H4、H5a、H6-H10 已通过；H5b 需物理实机。架构决策已完成。**
 
 性能关键证据：`docs/diagnostics/fuset-performance-macos26-ci.txt`。第 3 轮曾因 VFS cache 出现 1–10 GiB/s 虚高值，因此不采纳；`7ffb293` 后显式 `F_NOCACHE=1` + `F_RDAHEAD=0`，第 4 轮数据稳定，作为正式 hosted baseline。
 
 稳定性关键证据：`docs/diagnostics/fuset-stability-macos26-ci.txt`。crash read 明确返回 `Connection reset by peer`，final disk `"disk8" ejected.`，recovery 输出 `RESULT=FUSET_SESSION_CRASH_CLEANUP_COMPLETE`。
+
+许可 authoritative sources：
+
+- `https://github.com/macos-fuse-t/fuse-t/blob/main/License.txt`
+- `https://www.fuse-t.org/`
+- `https://github.com/macfuse/framework`
+- `https://github.com/macfuse/macfuse/wiki/Open-Source-Status`
 
 ---
 
 ## 当前下一步
 
 ```text
-H7-H8：核对 FUSE-T 1.2.7 authoritative license、binary redistribution、商业 bundling / 自动下载边界
+P0：把当前 thin bridge 从 PoC 目录收敛为 product read-only runtime adapter；保留 version/SHA/binary-contract supply-chain gate
 ↓
-H9：与 macFUSE Minimal Runtime 做架构/体积/授权/性能/维护复杂度对照
+P0：实现正式安装/检测流程：只验证官方 bundle、签名与 FSKit enablement，绝不写 enabledModules.plist 绕过授权
 ↓
-H10：形成最终推荐架构与产品分发策略
+P1：优化 H3 bridge peak RSS ~160 MiB，并建立 memory regression budget
 ↓
-物理 G4-G6 + H5b：macOS 26 实机可用时，仅做真实 /dev/rdiskN、真实 NTFS Finder、介质零写入、sleep/wake/拔盘最终验收；不重复 hosted 已完成研究
+P1：C7 directory EOF/EIO、C8 xattr、C9/D6 mutation fail-closed matrix
 ↓
-次优先级：C7 directory EOF/EIO、C8 xattr、C9/D6 mutation matrix、H3 RSS 优化
+Release gate：macOS 26 实机 physical G4-G6 + H5b；商业发布场景取得 FUSE-T commercial license
 ```
 
 ## 失败实验登记
@@ -231,3 +240,5 @@ H10：形成最终推荐架构与产品分发策略
 | `7ffb293` / `c383c85` | no-cache benchmark + 正式 H1-H3 diagnostic；run `32976967634` | 已 push / 全绿 |
 | `9bf266d` | validated `FuseTSessionCleanup.swift` crash cleanup helper | 已 push；contract 回归全绿 |
 | `500830b` / `45f4610` | H4-H6 stability workflow + diagnostic；run `32978050642` | 已 push / 全绿 |
+| `67c6e0b` | tracker 收口 hosted H1-H6 | 已 push |
+| `c94feac` | H7-H10 许可、macFUSE 对照与最终架构决策文档 | 已 push |
