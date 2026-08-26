@@ -262,8 +262,11 @@ commit:
 - [x] 实盘 256 MiB inner sequential read
   - 当前 WIP runtime：268435456 bytes / 4.886164 s = `54,937,873 bytes/s` ≈ **54.94 MB/s**，与历史 WIP ≈55.8 MB/s 一致。
 - [ ] 实盘 256 MiB outer sequential read
-- [ ] 实盘 256 MiB outer sequential write + fsync
-- [ ] 1000×4 KiB small files
+  - 本轮尝试 `F_NOCACHE` 后仍测得 454.5 MB/s，明显高于 inner/介质链路，判定仍受 NTFS/FSKit 缓存污染；不作为 cold-read 验收值。
+- [x] 实盘 256 MiB outer sequential write + fsync
+  - 唯一临时文件，`F_NOCACHE` + 4 MiB chunks + `fsync`：268435456 bytes / 6.923977 s = **38.77 MB/s**；完成后删除并 sync，残留 0。
+- [x] 1000×4 KiB small files
+  - 唯一临时目录，1000 个 4096-byte 文件 create/write/close 后全局 sync：**17.782656 s，56.24 files/s**；确认 1000/1000 创建成功后完整清理。
 - [ ] 记录 CPU 占用和平均请求尺寸
 - [ ] 比较 baseline `56dcf39` 与 WIP `4f0171d`
 
@@ -274,7 +277,9 @@ baseline inner sequential read ≈ 5.8 MB/s
 WIP inner sequential read ≈ 55.8 MB/s
 2026-08-26 本轮复核 WIP inner sequential read ≈ 54.94 MB/s（约 baseline 9.5×）
 WIP outer write + fsync ≈ 37.8 MB/s
+2026-08-26 本轮复核 WIP outer 256 MiB write + fsync ≈ 38.77 MB/s
 500 × 4 KiB ≈ 6 s
+2026-08-26 本轮固定口径 1000 × 4 KiB + sync ≈ 17.78 s
 ```
 
 ### 2026-08-26 — P0 rename syscall 边界确认
