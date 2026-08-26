@@ -141,3 +141,15 @@
 - `0x90000007` 对应 mode / uid / gid / creation-time / flags；NTFS-3G 2026.7.7 没有直接实现 `setattr_x/fsetattr_x`，而是依赖 libfuse 拆分 fallback 到 `setcrtime/chmod/chown`。
 - 同一 run 中 NTFS-3G 仍在 regular-file create 阶段返回 `ENOENT`，因此下一步开启 NTFS-3G/libfuse debug，精确确认 fallback 是 path/node lookup 失败还是 `setcrtime/chmod/chown` 中某一步失败。
 - macFUSE 5.3.2/5.3.3 已证明该最小行为一致，后续主线回到产品 pin 5.3.3，停止重复双版本矩阵以缩短反馈周期。
+
+### 2026-08-26 — A2 regular-file CREATE 根因确认
+
+- debug run `32919220730` 抓到了 NTFS-3G 的完整 FUSE 请求链。
+- `MKDIR /EDP-RW` 正常：NTFS-3G 自己在 mkdir adapter 中显式补 `S_IFDIR`，随后 SETATTR 成功。
+- 普通文件 `CREATE` 请求由 macFUSE FSKit 传入 `mode=0644`，即只有权限位、不含 `S_IFREG`。
+- NTFS-3G 2026.7.7 的 `ntfs_fuse_create_file()` 原样把该 `mode` 传入 `ntfs_fuse_mknod_common()`；后者计算 `type = mode & ~07777`，结果为 0。
+- `ntfs_create()` 明确只接受 `S_IFREG/S_IFDIR/S_IFIFO/S_IFSOCK`，因此打印 `Invalid arguments.` 并设置 EINVAL；文件没有真正落盘。随后 libfuse 的 `fgetattr` 找不到新路径，CREATE reply 最终表现为 `ENOENT`。
+- 结论：这是 **macFUSE FSKit CREATE mode 语义与 NTFS-3G 传统 FUSE adapter 假设不兼容**；不是 EDP crypto、DiskImages2、NTFS on-disk 数据、mount 生命周期或单纯 macFUSE 5.3.3 回归。
+- 已增加最小兼容 patch `patches/ntfs-3g-2026.7.7-macfuse-fskit-create-mode.patch`：`.create` 入口规范化为 `S_IFREG | (mode & 07777)`。该改动只修正 FUSE adapter 的文件类型，不改变 NTFS 核心读写/磁盘结构。
+- `build-ntfs3g-runtime.sh` 在校验固定上游 SHA256 并解包后应用该 patch，并将 patch 一起放入 bundled source 目录，保持构建与 GPL source distribution 可审计。
+- patch 已对固定 NTFS-3G 2026.7.7 原始源码完成 `patch --dry-run`、实际 apply、`bash -n` 与 `git diff --check` 验证。下一步由 macOS 26 CI 验证完整 NTFS create/write/remount。
