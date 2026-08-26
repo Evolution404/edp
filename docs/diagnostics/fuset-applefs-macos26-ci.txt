@@ -5,9 +5,9 @@ runner_os=26.5.2
 runner_build=25F84
 xcode=Xcode 26.6 Build version 17F113 
 raw_size=67108864
-backing_sha_before=112631817a7be57e744e014063ecd3c4283dd3b984442783e9853557f4dc4cac
+backing_sha_before=7584b022bb0cc2d4a99af42edd58d0c877d80c14ab7ca5b32540875b9603660e
 backing_sha_after=unknown
-backing_meta_before=67108864:1787750394:100444
+backing_meta_before=67108864:1787755414:100444
 backing_meta_after=unknown
 final_mount=none
 finder_enum_ok=unknown
@@ -33,7 +33,7 @@ finder_enum_ok=unknown
    Media Type:                Generic
    Protocol:                  Disk Image
    SMART Status:              Not Supported
-   Volume UUID:               8524F9CF-162B-33CA-8609-171A7AA94CE1
+   Volume UUID:               2288B700-AFFD-33EB-BDEE-82797D72A2B8
 
    Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
    Device Block Size:         512 Bytes
