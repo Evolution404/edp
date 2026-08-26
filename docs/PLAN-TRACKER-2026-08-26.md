@@ -37,7 +37,7 @@
   - shared policy：`product/EDPNTFSMountPolicy.swift`；产品 runtime 与 NTFS E2E 均从同一 Swift policy 生成参数。
   - 产品已移除错误的 `local` FSKit 参数，固定为已验证的 nonlocal `backend=fskit` 路径。
   - commit `f100656` 上 NTFS RW E2E `32924060750`、Fail-Closed `32924060775`、Clean Installer `32924060769` 全部成功。
-- [ ] A6 raw sparse backup → 恢复验证 → 真实 EDP NTFS 读写（按用户要求本轮不执行）
+- [ ] A6 raw sparse backup → 恢复验证 → 真实 EDP NTFS 读写（进行中）
 
 ### Raw sparse backup 证据
 
@@ -45,7 +45,10 @@
 - [x] 256 MiB 步长抽样 442 个 4 KiB block：404 个全 0、38 个非零，零块比例约 91.4%。
 - [x] 数据区相对 +8/+16/+32/+64/+96/+110 GiB 的 1 MiB window 均为全 0。
 - [x] 分区起点、MFT 物理位置、尾部关键区域验证为非零，排除“读失败误判为 0”。
-- [ ] 实现 raw sparse backup 工具。
+- [x] 实现 raw sparse backup 工具。
+  - `edp-raw-sparse` 的 physical source 只通过 `authopen` 取得 whole-disk `O_RDONLY` fd；没有 raw write mode。
+  - backup 保持完整逻辑尺寸，以 64 KiB 默认粒度跳过全 0 block，并记录逻辑 SHA256、每个 stored extent 的 offset/length/SHA256、sector/chunk/block size 与实际占用。
+  - restore 只允许新建普通文件，硬拒绝 `/dev/*` 输出；synthetic E2E 覆盖 head、LBA11/12、跨 block extent、分离中段 extent 与末尾 sector。
 - [ ] sparse backup 恢复/挂载/SHA256 验证。
 
 ### Phase B — 原生化
@@ -90,7 +93,7 @@
   - NTFS Fail-Closed Safety `32926201454`：success。
   - Clean ExFAT + NTFS Installer `32926201447`：success，并完成实际 privileged XPC round-trip。
   - EDP Crypto + NTFS-3G Read/Write E2E `32926380174`：success。
-- [ ] A6 / raw sparse backup / 真实物理 NTFS 写入：按用户要求本轮明确不执行，不计入本轮其余阶段结项。
+- [ ] A6 / raw sparse backup / 真实物理 NTFS 写入：当前正在推进；此前其余阶段结项证据保持有效。
 
 ### macOS 26 实机 raw-device 权限收口
 
@@ -235,3 +238,11 @@
 - Native Production Path `32926201428`、NTFS Fail-Closed `32926201454`、Clean Installer `32926201447`、手动 exact-head NTFS RW/remount `32926380174` 全部 success。
 - C3 `BlockDevicePublisher` adapter 边界、SwiftUI 用户路径、Keychain、IOKit、Disk Arbitration、事件驱动 daemon 均进入最终生产结构。
 - A6 与 raw sparse backup/restore/真实物理写入保持未执行，符合用户本轮明确要求。
+
+### 2026-08-26 — A6 raw sparse backup 工具里程碑
+
+- 新增 `edp-raw-sparse backup/verify/restore`；backup image 与 manifest 都以新文件 + atomic rename 生成，避免把不完整结果误认成可恢复备份。
+- manifest format v1 保留原盘完整 logical size、sector size、scan chunk、sparse block、logical SHA256、allocated bytes，以及每个 extent 的 offset/length/SHA256。
+- physical backup 唯一授权入口 `EDPRawReadAuthorization.c` 只接受严格的 `/dev/rdiskN` whole-disk path，并固定请求 `O_RDONLY`。
+- restore 明确禁止全部 `/dev/*` 目标；在真实备份恢复与挂载校验完成前，仍不进行任何物理盘写入。
+- 本地 64 MiB synthetic raw E2E 已通过 backup → verify → restore → verify，恢复前后 logical SHA256 一致，完整逻辑尺寸保留且稀疏实际占用低于逻辑尺寸 1/4；GitHub Actions run 待首次 push 后补录。

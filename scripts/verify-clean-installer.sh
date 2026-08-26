@@ -32,6 +32,7 @@ for path in \
   "bin/edp-vaultctl" \
   "bin/edp-readwrite-fuse" \
   "bin/edp-raw-metadata" \
+  "bin/edp-raw-sparse" \
   "bin/libEDPReadWriteBridge.dylib" \
   "bin/diskimages2-attach" \
   "bin/ntfs-3g" \
@@ -95,6 +96,7 @@ printf '%s  %s\n' \
   | /usr/bin/shasum -a 256 -c -
 
 "${ROOT}/bin/edp-vaultctl" help >/dev/null
+"${ROOT}/bin/edp-raw-sparse" help >/dev/null
 "${ROOT}/bin/ntfs-3g.probe" --help >/dev/null
 
 if [[ "${EDP_INSTALLER_SYSTEM_TESTS:-0}" == "1" ]]; then

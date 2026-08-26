@@ -1,0 +1,23 @@
+name: EDP Raw Sparse Backup Safety
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feat/macos26-native-fskit"]
+    paths:
+      - "product/EDPRawReadAuthorization.c"
+      - "product/EDPRawSparseBackup.swift"
+      - "native/EDPFSKitPoC/Tools/probe-raw-sparse-backup.sh"
+      - ".github/workflows/raw-sparse-backup.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  sparse-backup-restore:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Synthetic full-size sparse backup and restore
+        run: bash native/EDPFSKitPoC/Tools/probe-raw-sparse-backup.sh

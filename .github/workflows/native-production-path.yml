@@ -72,6 +72,13 @@ jobs:
           ! grep -F 'run(binaryRoot + "/diskimages2-attach"' product/EDPVaultRuntime.swift
           grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
           cc -Wall -Wextra product/EDPRawMetadataHelper.c -o "${RUNNER_TEMP}/edp-raw-metadata"
+          cc -Wall -Wextra -c product/EDPRawReadAuthorization.c -o "${RUNNER_TEMP}/edp-raw-read-authorization.o"
+          xcrun swiftc -parse-as-library -swift-version 6 -strict-concurrency=complete \
+            -framework CryptoKit -framework Security \
+            product/EDPRawSparseBackup.swift "${RUNNER_TEMP}/edp-raw-read-authorization.o" \
+            -o "${RUNNER_TEMP}/edp-raw-sparse"
+          if grep -F 'O_RDWR' product/EDPRawReadAuthorization.c; then exit 1; fi
+          "${RUNNER_TEMP}/edp-raw-sparse" help | grep -F 'backup-authorized obtains an O_RDONLY fd'
           grep -F 'authopen' native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c
           echo 'RESULT=RAW_DEVICE_AUTHORIZATION_SURFACE_OK'
           echo 'RESULT=SWIFTUI_XPC_PRODUCT_SURFACE_OK'

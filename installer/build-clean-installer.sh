@@ -110,6 +110,14 @@ FUSE_LIBS="$(pkg-config --libs fuse)"
   "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
   -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
 
+/usr/bin/cc -O2 -Wall -Wextra -c \
+  "${REPO_ROOT}/product/EDPRawReadAuthorization.c" \
+  -o "${BUILD_ROOT}/EDPRawReadAuthorization.o"
+xcrun swiftc -parse-as-library -O -framework CryptoKit -framework Security \
+  "${REPO_ROOT}/product/EDPRawSparseBackup.swift" \
+  "${BUILD_ROOT}/EDPRawReadAuthorization.o" \
+  -o "${RUNTIME_STAGE}/bin/edp-raw-sparse"
+
 for item in "${RUNTIME_STAGE}/bin/"* "${RUNTIME_STAGE}/lib/"*; do
   /usr/bin/codesign --force --sign - "${item}"
 done
