@@ -7,7 +7,7 @@
 
 ## 当前总状态
 
-**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E E1-E4 已在 GitHub Actions macOS 26 / Xcode 26 环境端到端通过，下一步收口 E5 并进入 Phase F Apple 默认文件系统挂载。**
+**状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E 已完整通过；Phase F 的 F1/F2/F3 已由 GitHub Actions macOS 26 / Xcode 26 实测通过，F5 已有 HFS+ 明确证据并等待修正后的精确类型断言转绿，F4 Finder 自动化继续探测。**
 
 当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
 
@@ -151,7 +151,7 @@ EDP-owned Unix listener
 | D6 | 🟡 | mutation 全部只读失败 | 外部实测覆盖写 `volume.raw`、`touch new-file`、`rm volume.raw` 均 Permission denied；Swift bridge 对已知 mutation RPC 返回 `EROFS`。仍需补齐所有 mutation 方法名的系统调用覆盖 |
 | D7 | ✅ | fixture 全文件哈希一致 | 8193-byte fixture 经 FSKit 完整读取 SHA-256 `40aad4a3dcbc0f12bfe6231e34fff39eb14338284396b090b01e7eadf3b653ef`，与 backing 完全一致 |
 
-Phase D 验收：**核心随机读/EOF/完整性通过；只读 mutation 覆盖和目录 EIO 继续收口，但不阻塞 Phase E block-image attach。**
+Phase D 验收：**核心随机读/EOF/完整性通过；只读 mutation 覆盖和目录 EIO 继续收口，但不阻塞后续 block-image / Apple 文件系统链路。**
 
 原生 PoC：`native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift`
 
@@ -167,12 +167,12 @@ Phase D 验收：**核心随机读/EOF/完整性通过；只读 mutation 覆盖�
 | E2 | ✅ | `hdiutil attach -readonly -nomount` 读取 hidden `volume.raw` | native Swift bridge 暴露 8 MiB `/volume.raw`；先对 LBA `0/7/4095/8192/16383` 做 raw backing ↔ hidden file 逐扇区 `cmp`，全部一致；随后 nested `hdiutil` 返回 `RC=0` |
 | E3 | ✅ | 产生 `/dev/diskN` | GitHub Actions macOS 26.5.2 / Xcode 26.6 产生 `/dev/disk8`；`diskutil info` 显示 Whole=Yes、Protocol=Disk Image、Virtual=Yes、512-byte block、8388608 bytes、**Media Read-Only=Yes** |
 | E4 | ✅ | 随机 LBA 读回一致 | 对 `/dev/rdisk8` 再读 LBA `0/7/4095/8192/16383`，逐扇区与原始 raw fixture `cmp` 全部一致；`RESULT=E4_RANDOM_LBA_MATCH` |
-| E5 | 🟡 | 确认 backing store 无实际写入 | 当前 bridge backing 以 `O_RDONLY` 打开且 `hdiutil` 使用 `-readonly`，但仍需补一轮 CI：backing chmod 0444 + attach 前后 SHA-256/size/mtime 完全不变，作为独立硬证据 |
+| E5 | ✅ | 确认 backing store 无实际写入 | `a62c23e` 触发的 macOS 26 CI 将 backing 设为 `0444`；attach 前后 SHA-256 均为 `638f4947a865d315c06c6c16913be984ff08270b8da0e22a3fedb044891ff59d`，`size:mtime:mode` 前后均为 `8388608:1787748310:100444`；输出 `RESULT=E5_BACKING_SHA_SIZE_MTIME_MODE_UNCHANGED` |
 | E6 | ➖ | 必要时对照 DiskImages2 adapter | 公共 `hdiutil` 路径已成功产生只读 `/dev/disk8`，当前无须私有/现有 DiskImages2 adapter；仅在后续回归失败时作为对照 |
 
-Phase E 验收：**核心 E1-E4 已通过；thin FUSE-T bridge → hidden `volume.raw` → Apple DiskImages/hdiutil → read-only `/dev/diskN` 已获得 GitHub Actions 端到端证据。E5 仍需补 backing 不变式硬证据。**
+Phase E 验收：**通过。thin FUSE-T bridge → hidden `volume.raw` → Apple DiskImages/hdiutil → read-only `/dev/diskN` 已获得 GitHub Actions 端到端证据，且 backing SHA/size/mtime/mode 不变。**
 
-CI 关键证据：`docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt`。首次仅做 PluginKit 注册时 runner 报 `Module org.fuset.fskit-srv.module is disabled!`；确认 FSKit `enabledModules.plist` 是 bundle-id NSArray 后，在一次性 CI runner 中追加 FUSE-T module 并刷新 `fskit_agent/extensionkitservice/fskitd`，E2-E4 随即全绿。该 enabled-list 写入**只用于 CI 无交互夹具，不属于产品安装/授权方案**。
+CI 关键证据：`docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt`。首次仅做 PluginKit 注册时 runner 报 `Module org.fuset.fskit-srv.module is disabled!`；确认 FSKit `enabledModules.plist` 是 bundle-id NSArray 后，在一次性 CI runner 中追加 FUSE-T module 并刷新 `fskit_agent/extensionkitservice/fskitd`，E2-E5 随即全绿。该 enabled-list 写入**只用于 CI 无交互夹具，不属于产品安装/授权方案**。
 
 ---
 
@@ -180,13 +180,15 @@ CI 关键证据：`docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt`。首次�
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| F1 | ⏳ | Disk Arbitration 自动识别 fixture | 待执行 |
-| F2 | ⏳ | EDP/backend 不传 filesystem type | 待执行 |
-| F3 | ⏳ | 最终 mount 为 `MNT_RDONLY` | 待执行 |
-| F4 | ⏳ | Finder 可浏览 | 待执行 |
-| F5 | ⏳ | Finder 最终卷不是 `fuset` 文件系统 | 待执行 |
+| F1 | ✅ | Disk Arbitration 自动识别 fixture | 64 MiB HFS+ raw fixture 经 hidden FUSE-T `volume.raw` 后，`hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage` 在**不传 filesystem type**的情况下自动产生 `/dev/disk8` 并挂载 `/Volumes/EDP_FUSET_FINAL`；sentinel 与嵌套文件均实际读回 |
+| F2 | ✅ | EDP/backend 不传 filesystem type | `FuseTMinimalBridge.swift` 通过 CI 静态断言，不含 HFS+/APFS/exFAT/FAT/NTFS 类型知识；运行时 `hdiutil` 仅收到 raw image class，无 filesystem type hint；输出 `RESULT=F2_NO_FILESYSTEM_TYPE_HINT_AT_RUNTIME` |
+| F3 | ✅ | 最终 mount 为 `MNT_RDONLY` | `diskutil info`：Media Read-Only=Yes、Volume Read-Only=Yes；mount line：`/dev/disk8 ... (hfs, ... read-only, ...)`；`touch SHOULD_NOT_WRITE` 返回 `Read-only file system` |
+| F4 | 🟡 | Finder 可浏览 | POSIX `find` 已能遍历 sentinel 与嵌套文件；hosted runner 的 Finder AppleEvents 自动化正在独立探测，不能用 TCC/UI 自动化限制替代 Finder 实机验收 |
+| F5 | 🟡 | Finder 最终卷不是 `fuset` 文件系统 | 已有直接证据：最终 `diskutil` 显示 `File System Personality: HFS+`、`Type (Bundle): hfs`，mount line 为 `(hfs, ...)`；上一轮 CI 的负匹配误把卷名 `EDP_FUSET_FINAL` 中的 `FUSET` 当成文件系统类型，已改为 `stat -f %T` + `diskutil` 精确类型断言，等待本轮转绿 |
 
-Phase F 验收：**未完成**。
+Phase F 验收：**核心 F1/F2/F3 已通过；F5 仅剩 CI 精确断言转绿，F4 Finder GUI 枚举单独收口。**
+
+CI 关键证据：`docs/diagnostics/fuset-applefs-macos26-ci.txt`。当前已重复证明用户可见最终卷是 Apple HFS+ 而非 hidden FUSE-T transport；FUSE-T 只承担隐藏的单文件 raw transport。
 
 ---
 
@@ -231,11 +233,11 @@ Phase H 验收：**未完成**。
 立即执行：
 
 ```text
-E5：把 synthetic backing chmod 0444，记录 attach 前后的 SHA-256 / size / mtime，证明 DiskImages2 全链没有修改 backing
+F5：让修正后的精确 filesystem-type 断言转绿，并完成 backing 不变式复核
 ↓
-F1-F5：制作带 Apple 系统可识别文件系统的 synthetic raw fixture，经同一 native bridge → hidden volume.raw → hdiutil/Disk Arbitration 链路，只读自动挂载并验证 sentinel
+F4：继续 Finder AppleEvents 枚举；如 hosted runner 因 TCC/UI 会话不可用，则保留为本机 Finder 验收项，不误判底层文件系统失败
 ↓
-确认最终用户卷由 Apple 系统文件系统驱动提供、不是 fuset；EDP/backend 不传 filesystem type
+G1-G3：接入离线 EDP/SM4 fixture，把 bridge 的 backing read 切换为 random-access decrypt reader，不生成完整 plaintext cache
 ↓
 并行次优先级：修复 C7 directory enumeration 尾部 EIO，补齐 D6 mutation syscall matrix
 ```
@@ -259,6 +261,10 @@ F1-F5：制作带 Apple 系统可识别文件系统的 synthetic raw fixture，�
 | 2026-08-26 | hidden mountpoint 改到 `/private/tmp/edp-fuset-hidden-mnt` | 正常 mount/read，不需要管理员授权 | 后续隐藏 transport 不再创建 `/Volumes` 测试目录 |
 | 2026-08-26 | Actions runner 仅 `lsregister`/PluginKit 注册官方 FUSE-T app | PluginKit 显示 `+`，但 FSKit mount 报 `Module org.fuset.fskit-srv.module is disabled!` | PluginKit enable 与 FSKit enabledModules 是两层状态；不要再把 PluginKit `+` 当作 FSKit 已启用 |
 | 2026-08-26 | Actions runner 将 FUSE-T bundle id 加入一次性 `enabledModules.plist` NSArray + 刷新 FSKit cache | native bridge mount 成功；hidden `volume.raw` → `hdiutil -readonly -nomount` → `/dev/disk8`；5 个随机/边界 LBA 与 raw backing 全一致，Media Read-Only=Yes | Phase E E2-E4 已突破；CI-only enablement 不得演变成产品授权绕过 |
+| 2026-08-26 | Phase E backing 设为 0444 后重复 attach | SHA-256、size、mtime、mode 前后完全一致 | E5 已关闭，Phase E 正式通过 |
+| 2026-08-26 | Phase F 首轮 `hdiutil create ... -format UDRW` | macOS 26 报 `-format requires -srcfolder or -srcdevice` | fixture 制作参数问题，不是 bridge/DiskImages 架构失败；已移除该参数 |
+| 2026-08-26 | Phase F 第二轮 Apple filesystem E2E | F1/F2/F3 均实际通过；后续 Finder AppleScript 因脚本语法失败导致 job 红 | 将 Finder UI 自动化与核心磁盘链路分离；先编译 AppleScript 再执行 |
+| 2026-08-26 | Phase F 第三轮 F5 负匹配 | 最终 mount 实际为 `(hfs, ... read-only)`，但卷名 `EDP_FUSET_FINAL` 包含 `FUSET`，`grep -i fuset` 误报 | 禁止对整条 mount line 做模糊负匹配；改用 `stat -f %T` + `diskutil Type (Bundle)` 精确判定 |
 
 ---
 
@@ -276,3 +282,8 @@ F1-F5：制作带 Apple 系统可识别文件系统的 synthetic raw fixture，�
 | `4c7b065` / `6f08cc2` | 固化 open/read/close/EROFS 边界契约并提取官方 binary JSON tags | 已 push |
 | `ecfe418` / `f6c3644` | Phase E 初始 hdiutil CI：E1 raw baseline 通过，定位 hosted runner FSKit module disabled 边界并保存诊断 | 已 push |
 | `496c322` / `f80a0b1` | CI-only enabledModules array + cache refresh；E2-E4 thin bridge → `/dev/disk8` 端到端通过并保存诊断 | 已 push |
+| `a62c23e` / `c99fd59` | E5：backing 0444 + SHA/size/mtime/mode 前后不变；保存 Actions 证据 | 已 push |
+| `35a58cd` / `13b8dc0` | Phase F 初始 Apple filesystem E2E；定位 macOS 26 fixture create 参数问题 | 已 push |
+| `ddeef7c` / `a27cb7d` | 修复 HFS+ raw fixture；F1/F2/F3 首次端到端通过并保存诊断 | 已 push |
+| `5232630` / `f0a9210` | 分离 Finder probe；复现 F1/F2/F3，并定位 F5 卷名误匹配测试 bug | 已 push |
+| `86a28ac` | F5 改为精确解析实际 filesystem type，触发第 4 轮 macOS 26 Actions | 已 push / CI 运行中 |
