@@ -9,9 +9,9 @@ device_size=124736503808
 partition_type=2
 partition_start_sector=20480
 partition_size=118477684736
-plain_sha=19aae366e776d66e17310fcfccb74a50388e9271433601ce67b13e17901c3428
-container_meta_before=124736503808:1787751667:100444
-container_meta_after=124736503808:1787751667:100444
+plain_sha=82caa448c8f0fd33e142c1034a780c980833d928d5da985ae71986bf3bc87790
+container_meta_before=124736503808:1787755469:100444
+container_meta_after=124736503808:1787755469:100444
 final_mount=/Volumes/EDP_REALMETA_FINAL
 password_logged=false
 derived_file_key_logged=false
@@ -30,17 +30,17 @@ RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY
 ## backing sample hashes before
 lba11=aee737899d2fe7156b050ccbb04d31caf58d29ac63f29ea0ea12223e332dd31c
 lba12=8d85016780640fe31d6d0fa6c8624a397f4da38a58325f0646cf66ec2541f193
-data_head=f09d6759cc199201909bed0261c7654b75e583804daee7c93425d4272b8a1335
-data_tail=0dfd3480d457bf95557d91f7ac90f13f0d44929faffc8b2a620f2d1621775669
+data_head=32665f2c591b7f02beea6051e2df1f2fa8cb6cfbaf40e57d73a5627e21f04429
+data_tail=03374d1711b6024f74341e0d398e12a7fcfe4920b407d5b250faf8b59fd24126
 
 ## backing sample hashes after
 lba11=aee737899d2fe7156b050ccbb04d31caf58d29ac63f29ea0ea12223e332dd31c
 lba12=8d85016780640fe31d6d0fa6c8624a397f4da38a58325f0646cf66ec2541f193
-data_head=f09d6759cc199201909bed0261c7654b75e583804daee7c93425d4272b8a1335
-data_tail=0dfd3480d457bf95557d91f7ac90f13f0d44929faffc8b2a620f2d1621775669
+data_head=32665f2c591b7f02beea6051e2df1f2fa8cb6cfbaf40e57d73a5627e21f04429
+data_tail=03374d1711b6024f74341e0d398e12a7fcfe4920b407d5b250faf8b59fd24126
 
 ## hidden transport
-file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-89c5e301-3cb9-4d62-bb05-a867bc639d41/session.json on /Users/runner/work/_temp/edp-realmeta-hidden-8053fbfc-f18a-40f0-ad88-26f9e8699e6d (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-b0748964-6caa-4281-88a2-ded062dbd92a/session.json on /Users/runner/work/_temp/edp-realmeta-hidden-6e71540d-3945-4523-ba2f-eabf19f7e57f (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 
 ## bridge log
 BACKING_MODE=EDP_UNLOCK_RANDOM_ACCESS
@@ -51,30 +51,31 @@ PARTITION_TYPE=2
 PARTITION_START_SECTOR=20480
 PARTITION_SIZE=118477684736
 ALGORITHM=2
-SESSION_ID=edp-fuset-89c5e301-3cb9-4d62-bb05-a867bc639d41
-SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-89c5e301-3cb9-4d62-bb05-a867bc639d41/session.json
-SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-89c5e301-3.sock
-MOUNTPOINT=/Users/runner/work/_temp/edp-realmeta-hidden-8053fbfc-f18a-40f0-ad88-26f9e8699e6d
+SESSION_ID=edp-fuset-b0748964-6caa-4281-88a2-ded062dbd92a
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-b0748964-6caa-4281-88a2-ded062dbd92a/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-b0748964-6.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-realmeta-hidden-6e71540d-3945-4523-ba2f-eabf19f7e57f
 BACKING_SIZE=118477684736
+ACCESS_MODE=read-only
 mount process exited status=0
 
 ## bridge open files
 COMMAND    PID   USER   FD    TYPE             DEVICE     SIZE/OFF                NODE NAME
-FuseTEDPU 2235 runner  cwd     DIR               1,18          416             2863633 /Users/runner/work/edp-usb-vault/edp-usb-vault
-FuseTEDPU 2235 runner  txt     REG               1,18       399848             2866627 /Users/runner/work/_temp/FuseTEDPUnlockBridge
-FuseTEDPU 2235 runner  txt     REG               1,18        72984             2848681 /Library/Preferences/Logging/.plist-cache.0BQ2GxlJ
-FuseTEDPU 2235 runner  txt     REG               1,18      2374000 1152921500312573276 /usr/lib/dyld
-FuseTEDPU 2235 runner  txt     REG               1,18     35444880 1152921500312583777 /usr/share/icu/icudt78l.dat
-FuseTEDPU 2235 runner    0r    CHR                3,2          0t0                 334 /dev/null
-FuseTEDPU 2235 runner    1w    REG               1,18          650             2866642 /Users/runner/work/_temp/edp-realmeta-bridge.log
-FuseTEDPU 2235 runner    2w    REG               1,18          650             2866642 /Users/runner/work/_temp/edp-realmeta-bridge.log
-FuseTEDPU 2235 runner    3r    REG               1,18 124736503808             2865039 /Users/runner/work/_temp/edp-realmeta-whole-device.raw
-FuseTEDPU 2235 runner    4u   unix 0xd5b4ce936afb0752          0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-89c5e301-3.sock
-FuseTEDPU 2235 runner    5u   unix 0x7ac630dab9d9879d          0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-89c5e301-3.sock
-FuseTEDPU 2235 runner  131u  systm 0x48ee73652816bb0f          0t0                     [ctl com.apple.netsrc id 7 unit 34]
-FuseTEDPU 2235 runner  138u  systm 0xde3d25b72e6913a8          0t0                     [ctl com.apple.netsrc id 7 unit 36]
-FuseTEDPU 2235 runner  143    PIPE 0x26fbe0491d34d2d8        65536                     ->0x6c67315e16ec3a6d
-FuseTEDPU 2235 runner  146    PIPE 0xbd678a3964d82b52        16384                     ->0xf9b9bb0644d893d4
+FuseTEDPU 2331 runner  cwd     DIR               1,14          416             2863745 /Users/runner/work/edp-usb-vault/edp-usb-vault
+FuseTEDPU 2331 runner  txt     REG               1,14       420504             2865574 /Users/runner/work/_temp/FuseTEDPUnlockBridge
+FuseTEDPU 2331 runner  txt     REG               1,14        72984             2848681 /Library/Preferences/Logging/.plist-cache.m9sJI0W3
+FuseTEDPU 2331 runner  txt     REG               1,14      2374000 1152921500312573276 /usr/lib/dyld
+FuseTEDPU 2331 runner  txt     REG               1,14     35444880 1152921500312583777 /usr/share/icu/icudt78l.dat
+FuseTEDPU 2331 runner    0r    CHR                3,2          0t0                 334 /dev/null
+FuseTEDPU 2331 runner    1w    REG               1,14          672             2865586 /Users/runner/work/_temp/edp-realmeta-bridge.log
+FuseTEDPU 2331 runner    2w    REG               1,14          672             2865586 /Users/runner/work/_temp/edp-realmeta-bridge.log
+FuseTEDPU 2331 runner    3r    REG               1,14 124736503808             2864986 /Users/runner/work/_temp/edp-realmeta-whole-device.raw
+FuseTEDPU 2331 runner    4u   unix 0x27ff69b2f57316de          0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-b0748964-6.sock
+FuseTEDPU 2331 runner    5u   unix 0x9c30b7c24d79d4f5          0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-b0748964-6.sock
+FuseTEDPU 2331 runner  131u  systm 0x5b2fc54ecb2ada8b          0t0                     [ctl com.apple.netsrc id 7 unit 32]
+FuseTEDPU 2331 runner  138u  systm 0xd34b26e1878b40ab          0t0                     [ctl com.apple.netsrc id 7 unit 33]
+FuseTEDPU 2331 runner  143    PIPE 0x7226de0dfc5e52f9        65536                     ->0x3364237623d6e982
+FuseTEDPU 2331 runner  146    PIPE 0x62a038d952d4a5ca        16384                     ->0x8c1faf4fcfd95aad
 
 ## final attach
 /dev/disk8          	                               	/Volumes/EDP_REALMETA_FINAL
@@ -100,7 +101,7 @@ FuseTEDPU 2235 runner  146    PIPE 0xbd678a3964d82b52        16384              
    Media Type:                Generic
    Protocol:                  Disk Image
    SMART Status:              Not Supported
-   Volume UUID:               2AA915EB-7068-31B0-B811-22536964BB0D
+   Volume UUID:               564C67D1-F04C-3663-A1A2-FFFDA36992A3
 
    Disk Size:                 118.5 GB (118477684736 Bytes) (exactly 231401728 512-Byte-Units)
    Device Block Size:         512 Bytes
