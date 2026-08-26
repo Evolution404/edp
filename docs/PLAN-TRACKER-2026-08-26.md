@@ -22,7 +22,8 @@
   - 第一个普通文件 `create(O_CREAT)` 返回 `ENOENT`；失败时 mount 与 NTFS-3G 进程仍存活。
   - 结论：问题不是 mount 生命周期，而是 NTFS-3G + macFUSE FSKit 的 regular-file create 路径。
 - [ ] A2 固化正确的 NTFS-3G FSKit 启动方式
-  - 当前实验：`direct decrypted image + local FSKit`，并分别验证 root create 与 nested create。
+  - `direct decrypted image + local FSKit` 已由 run `32917383915` 否决：local module 启用 block resource，内部引出 `/dev/disk8`/Disk Arbitration NTFS probe，未稳定进入常规 mount I/O 阶段。
+  - 当前实验回到已稳定建立 mount 的 `direct decrypted image + nonlocal FSKit`，保留 root create 与 nested create 分离探针，定位 `ENOENT` 的作用域。
 - [ ] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
 - [ ] A4 dirty / hibernated NTFS fail-closed
 - [ ] A5 CI 与产品 NTFS mount 路径统一
@@ -70,3 +71,11 @@
 - 故障点收敛到 regular-file create：目录创建/读取正常，普通文件 `O_CREAT` 返回 `ENOENT`。
 - 本机 `gromgit/fuse/ntfs-3g-mac 2026.7.7` 的标准 mount 配置使用 `local` 等 macFUSE 选项；之前 `local + DiskImages2 block device` 曾出现 hang，但尚未测试 `local + direct decrypted image`。
 - A2 第一项实验改为 `direct decrypted image + local FSKit`；另外增加 root/nested `touch` 分离测试，判断问题是否仅发生在新建目录下的 create。
+
+### 2026-08-26 — A2 local FSKit 实验否决
+
+- run `32917383915`：`direct decrypted image + local FSKit` 失败。
+- unified log 显示 `macfuse-local` 以 `enableBlockResource 1` 加载，并把资源交给 block-resource 路径；Disk Arbitration 随后对内部出现的 `/dev/disk8` 做 NTFS probe 并失败。
+- 该路径还出现 `close_kernel_fd` / unregister fd 异常，和此前 `local + DiskImages2` hang 证据一致。
+- 结论：当前产品不采用 local FSKit；继续使用能稳定建立并保持 mount 的 nonlocal module。
+- 下一实验：nonlocal + root/nested create probe，确认普通文件 create 的失败范围。
