@@ -39,63 +39,43 @@ jobs:
           xcodebuild -version
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
           test "$(xcodebuild -version | awk '/Xcode/ {print int($2); exit}')" -ge 26
-          command -v hdiutil
-          command -v diskutil
 
-      - name: F0 build populated HFS+ raw fixture
+      - name: F0 build populated raw Apple filesystem fixture
         run: |
           set -euo pipefail
           TEMPLATE="${RUNNER_TEMP}/applefs-template.dmg"
           RAW="${RUNNER_TEMP}/applefs-fixture.raw"
           SENTINEL='EDP-FUSET-APPLE-FS-SENTINEL-v1'
 
-          # HFS+ is used only to manufacture a deterministic Apple-readable
-          # filesystem fixture. The EDP bridge never receives this type name.
-          # macOS 26 rejects -format UDRW for a size-created image unless a
-          # source folder/device is supplied; the default create format here is
-          # writable and sufficient for populate -> raw-device extraction.
-          hdiutil create \
-            -size 64m \
-            -fs HFS+ \
-            -volname "${VOLNAME}" \
-            -layout NONE \
-            "${TEMPLATE}"
-
+          # HFS+ is fixture manufacture only. The transport bridge receives
+          # opaque bytes and never receives a filesystem type.
+          hdiutil create -size 64m -fs HFS+ -volname "${VOLNAME}" -layout NONE "${TEMPLATE}"
           ATTACH_OUT="$(hdiutil attach "${TEMPLATE}")"
-          printf '%s\n' "${ATTACH_OUT}"
           TEMPLATE_DISK="$(printf '%s\n' "${ATTACH_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
           TEMPLATE_MOUNT="$(printf '%s\n' "${ATTACH_OUT}" | awk -v v="${VOLNAME}" '$0 ~ ("/Volumes/" v) {print $NF; exit}')"
           test -n "${TEMPLATE_DISK}"
           test -d "${TEMPLATE_MOUNT}"
-
           printf '%s\n' "${SENTINEL}" > "${TEMPLATE_MOUNT}/EDP_SENTINEL.txt"
           mkdir -p "${TEMPLATE_MOUNT}/EDP Folder"
           printf '%s\n' 'nested-file-visible' > "${TEMPLATE_MOUNT}/EDP Folder/NESTED.txt"
           sync
-          test "$(cat "${TEMPLATE_MOUNT}/EDP_SENTINEL.txt")" = "${SENTINEL}"
           hdiutil detach "${TEMPLATE_DISK}"
 
           RAW_OUT="$(hdiutil attach -nomount "${TEMPLATE}")"
-          printf '%s\n' "${RAW_OUT}"
           RAW_SOURCE_DISK="$(printf '%s\n' "${RAW_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
           test -n "${RAW_SOURCE_DISK}"
-          RAW_SOURCE_RDISK="/dev/r$(basename "${RAW_SOURCE_DISK}")"
-          dd if="${RAW_SOURCE_RDISK}" of="${RAW}" bs=1048576 status=none
+          dd if="/dev/r$(basename "${RAW_SOURCE_DISK}")" of="${RAW}" bs=1048576 status=none
           hdiutil detach "${RAW_SOURCE_DISK}"
 
           RAW_SIZE="$(stat -f %z "${RAW}")"
           RAW_SHA="$(shasum -a 256 "${RAW}" | awk '{print $1}')"
-          test "${RAW_SIZE}" -gt 33554432
-          echo "RAW_SIZE=${RAW_SIZE}"
-          echo "RAW_SHA256=${RAW_SHA}"
+          test "${RAW_SIZE}" -eq 67108864
 
-          # Prove the extracted bytes are a standalone raw filesystem before
-          # involving FUSE-T. No filesystem type is passed to this attach.
+          # Baseline proof: the extracted raw bytes mount with no filesystem
+          # type hint even before FUSE-T is involved.
           BASELINE_OUT="$(hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage "${RAW}")"
-          printf '%s\n' "${BASELINE_OUT}"
           BASELINE_DISK="$(printf '%s\n' "${BASELINE_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
           BASELINE_MOUNT="$(printf '%s\n' "${BASELINE_OUT}" | awk -v v="${VOLNAME}" '$0 ~ ("/Volumes/" v) {print $NF; exit}')"
-          test -n "${BASELINE_DISK}"
           test -d "${BASELINE_MOUNT}"
           test "$(cat "${BASELINE_MOUNT}/EDP_SENTINEL.txt")" = "${SENTINEL}"
           test "$(cat "${BASELINE_MOUNT}/EDP Folder/NESTED.txt")" = 'nested-file-visible'
@@ -105,24 +85,21 @@ jobs:
           chmod 0444 "${RAW}"
           test ! -w "${RAW}"
           META_BEFORE="$(stat -f '%z:%m:%p' "${RAW}")"
-          SHA_BEFORE="$(shasum -a 256 "${RAW}" | awk '{print $1}')"
-          test "${SHA_BEFORE}" = "${RAW_SHA}"
 
           echo "RAW=${RAW}" >> "${GITHUB_ENV}"
           echo "EXPECTED_RAW_SIZE=${RAW_SIZE}" >> "${GITHUB_ENV}"
-          echo "BACKING_SHA_BEFORE=${SHA_BEFORE}" >> "${GITHUB_ENV}"
+          echo "BACKING_SHA_BEFORE=${RAW_SHA}" >> "${GITHUB_ENV}"
           echo "BACKING_META_BEFORE=${META_BEFORE}" >> "${GITHUB_ENV}"
           echo "SENTINEL=${SENTINEL}" >> "${GITHUB_ENV}"
           echo 'RESULT=F0_RAW_APPLE_FS_FIXTURE_READY'
 
-      - name: Stage only official signed FUSE-T FSKit app
+      - name: Stage and enable only official signed FUSE-T FSKit app
         run: |
           set -euo pipefail
           PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
           EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
           curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
-          ACTUAL="$(shasum -a 256 "${PKG}" | awk '{print $1}')"
-          test "${ACTUAL}" = "${FUSET_PKG_SHA256}"
+          test "$(shasum -a 256 "${PKG}" | awk '{print $1}')" = "${FUSET_PKG_SHA256}"
           pkgutil --expand-full "${PKG}" "${EXPANDED}"
           SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
           test -n "${SOURCE_APP}"
@@ -138,9 +115,6 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Enable FUSE-T FSKit module on disposable runner
-        run: |
-          set -euo pipefail
           SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
           ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
           mkdir -p "${SETTINGS_DIR}"
@@ -164,21 +138,18 @@ jobs:
           PY
           chmod 600 "${ENABLED_PLIST}"
           plutil -lint "${ENABLED_PLIST}"
-          plutil -p "${ENABLED_PLIST}" | tee "${RUNNER_TEMP}/enabled-state.txt"
           grep -Fq "${FUSET_BUNDLE_ID}" "${ENABLED_PLIST}"
           killall -9 fskit_agent 2>/dev/null || true
           killall -9 extensionkitservice 2>/dev/null || true
           sudo killall -9 fskitd 2>/dev/null || true
           sleep 3
 
-      - name: Compile native minimal bridge and assert type agnosticism
+      - name: Compile type-agnostic native bridge
         run: |
           set -euo pipefail
           SOURCE=native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift
           xcrun swiftc -swift-version 6 -warnings-as-errors "${SOURCE}" -o "${RUNNER_TEMP}/FuseTMinimalBridge"
           test -x "${RUNNER_TEMP}/FuseTMinimalBridge"
-
-          # Runtime bridge must not know the fixture's filesystem personality.
           if grep -Eiq 'HFS\+|Apple_HFS|APFS|ExFAT|MSDOS|FAT32|NTFS' "${SOURCE}"; then
             echo 'unexpected filesystem-type knowledge in transport bridge' >&2
             exit 1
@@ -214,15 +185,12 @@ jobs:
           test -f "${EXPOSED}"
           test "$(stat -f %z "${EXPOSED}")" = "${EXPECTED_RAW_SIZE}"
 
-          # Deliberately no filesystem type hint: DiskImages + Disk Arbitration
-          # must inspect the raw bytes and select the Apple filesystem stack.
+          # No filesystem type hint is supplied here.
           ATTACH_OUT="$(hdiutil attach -readonly -imagekey diskimage-class=CRawDiskImage "${EXPOSED}" 2>"${RUNNER_TEMP}/applefs-hdiutil.err")"
           printf '%s\n' "${ATTACH_OUT}" | tee "${RUNNER_TEMP}/applefs-attach.txt"
-          cat "${RUNNER_TEMP}/applefs-hdiutil.err" || true
           FINAL_DISK="$(printf '%s\n' "${ATTACH_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
           FINAL_MOUNT="$(printf '%s\n' "${ATTACH_OUT}" | awk -v v="${VOLNAME}" '$0 ~ ("/Volumes/" v) {print $NF; exit}')"
           test -n "${FINAL_DISK}"
-
           if [[ -z "${FINAL_MOUNT}" ]]; then
             for attempt in $(seq 1 15); do
               if [[ -d "/Volumes/${VOLNAME}" ]]; then FINAL_MOUNT="/Volumes/${VOLNAME}"; break; fi
@@ -241,34 +209,46 @@ jobs:
           diskutil info "${FINAL_DISK}" | tee "${RUNNER_TEMP}/final-diskutil.txt"
           MOUNT_LINE="$(mount | grep -F " on ${FINAL_MOUNT} " | head -n 1)"
           printf '%s\n' "${MOUNT_LINE}" | tee "${RUNNER_TEMP}/final-mount.txt"
-
           grep -Eq 'Media Read-Only:[[:space:]]+Yes' "${RUNNER_TEMP}/final-diskutil.txt"
           grep -Eq 'Volume Read-Only:[[:space:]]+Yes' "${RUNNER_TEMP}/final-diskutil.txt"
           printf '%s\n' "${MOUNT_LINE}" | grep -Eiq 'read-only|rdonly'
-          set +e
-          touch "${FINAL_MOUNT}/SHOULD_NOT_WRITE" 2>"${RUNNER_TEMP}/readonly-write.err"
-          WRITE_RC=$?
-          set -e
-          test "${WRITE_RC}" -ne 0
+          if touch "${FINAL_MOUNT}/SHOULD_NOT_WRITE" 2>"${RUNNER_TEMP}/readonly-write.err"; then
+            echo 'read-only mount unexpectedly accepted a write' >&2
+            exit 1
+          fi
           test ! -e "${FINAL_MOUNT}/SHOULD_NOT_WRITE"
           echo 'RESULT=F3_FINAL_MOUNT_READ_ONLY'
 
-          # POSIX browsing is mandatory. Finder automation is attempted as an
-          # additional CI signal; a hosted-runner AppleEvents/TCC denial is
-          # recorded separately rather than misclassified as a filesystem bug.
           find "${FINAL_MOUNT}" -maxdepth 2 -print | tee "${RUNNER_TEMP}/final-find.txt"
-          FINDER_ENUM_OK=false
-          set +e
-          osascript - "${FINAL_MOUNT}" >"${RUNNER_TEMP}/finder-enum.txt" 2>"${RUNNER_TEMP}/finder-enum.err" <<'OSA'
+          grep -Fq "${FINAL_MOUNT}/EDP_SENTINEL.txt" "${RUNNER_TEMP}/final-find.txt"
+
+          # F5 is independent of GUI automation and is a mandatory core check.
+          if printf '%s\n' "${MOUNT_LINE}" | grep -Eiq 'fuse-t|fuset'; then
+            echo 'final user-visible filesystem unexpectedly mounted as FUSE-T' >&2
+            exit 1
+          fi
+          grep -Eq 'File System Personality:[[:space:]]+HFS\+' "${RUNNER_TEMP}/final-diskutil.txt"
+          grep -Eq 'Type \(Bundle\):[[:space:]]+hfs' "${RUNNER_TEMP}/final-diskutil.txt"
+          echo 'RESULT=F5_FINAL_FILESYSTEM_IS_APPLE_HFS_NOT_FUSET'
+
+          # Finder is tested explicitly, but hosted-runner AppleEvents/TCC is
+          # kept separate from filesystem correctness. A syntax error is still
+          # treated as a test bug and recorded distinctly.
+          FINDER_SCRIPT="${RUNNER_TEMP}/finder-enum.applescript"
+          cat > "${FINDER_SCRIPT}" <<'OSA'
           on run argv
-              set p to item 1 of argv
+              set targetPath to item 1 of argv
+              set targetAlias to (POSIX file targetPath) as alias
               tell application "Finder"
-                  set namesList to name of every item of folder (POSIX file p as alias)
+                  set itemNames to name of every item of targetAlias
               end tell
-              return namesList as string
+              return itemNames as string
           end run
-          OSA_RC=$?
-          set -e
+          OSA
+          osacompile -o "${RUNNER_TEMP}/finder-enum.scpt" "${FINDER_SCRIPT}"
+          OSA_RC=0
+          osascript "${RUNNER_TEMP}/finder-enum.scpt" "${FINAL_MOUNT}" >"${RUNNER_TEMP}/finder-enum.txt" 2>"${RUNNER_TEMP}/finder-enum.err" || OSA_RC=$?
+          FINDER_ENUM_OK=false
           if [[ ${OSA_RC} -eq 0 ]] && grep -Fq 'EDP_SENTINEL.txt' "${RUNNER_TEMP}/finder-enum.txt"; then
             FINDER_ENUM_OK=true
             echo 'RESULT=F4_FINDER_ENUMERATION_OK'
@@ -278,16 +258,8 @@ jobs:
           fi
           echo "FINDER_ENUM_OK=${FINDER_ENUM_OK}" >> "${GITHUB_ENV}"
 
-          if printf '%s\n' "${MOUNT_LINE}" | grep -Eiq 'fuse-t|fuset'; then
-            echo 'final user-visible filesystem unexpectedly mounted as FUSE-T' >&2
-            exit 1
-          fi
-          grep -Eiq 'File System Personality:|Type \(Bundle\):|File System:' "${RUNNER_TEMP}/final-diskutil.txt"
-          echo 'RESULT=F5_FINAL_FILESYSTEM_IS_NOT_FUSET'
-
           hdiutil detach "${FINAL_DISK}" -force
           echo 'FINAL_DISK=' >> "${GITHUB_ENV}"
-
           SHA_AFTER="$(shasum -a 256 "${RAW}" | awk '{print $1}')"
           META_AFTER="$(stat -f '%z:%m:%p' "${RAW}")"
           echo "BACKING_SHA_AFTER=${SHA_AFTER}" >> "${GITHUB_ENV}"
