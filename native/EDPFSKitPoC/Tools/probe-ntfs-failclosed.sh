@@ -101,7 +101,9 @@ export DYLD_LIBRARY_PATH="${LIB}"
 for required in ntfs-3g ntfs-3g.probe; do
   test -x "${BIN}/${required}"
 done
-test -x "${TOOLS}/mkntfs"
+for required in mkntfs edp-make-ntfs-unclean; do
+  test -x "${TOOLS}/${required}"
+done
 
 CLEAN="${WORK}/clean.img"
 UNCLEAN="${WORK}/unclean.img"
@@ -113,28 +115,13 @@ HIBERNATED="${WORK}/hibernated.img"
 "${BIN}/ntfs-3g.probe" --readwrite "${CLEAN}"
 echo 'RESULT=NTFS_CLEAN_FIXTURE_WRITABLE'
 
-# Create a real unclean-journal fixture: mount read-write with norecover,
-# modify metadata/data, then kill the filesystem process without unmounting.
+# mkntfs creates an empty $LogFile, and NTFS-3G does not synthesize Windows
+# restart records during its own writes. Create a deterministic Windows-style
+# unclean restart page through libntfs-3g instead: one active client, clean bit
+# clear. This is exactly the condition ntfs-3g.probe maps to exit 15.
 cp "${CLEAN}" "${UNCLEAN}"
-start_mount "${UNCLEAN}" EDPFAILUNCLEAN "${WORK}/unclean-mount.log"
-printf 'unclean-power-loss\n' >"${MOUNT_POINT}/power-loss.txt"
-/bin/sync
-echo 'STEP=NTFS_UNCLEAN_CRASH_BEGIN'
-kill -9 "${NTFS_PID}"
-if [[ -n "${NTFS_WORKER_PID}" ]]; then
-  wait "${NTFS_WORKER_PID}" || true
-fi
-NTFS_PID=""
-NTFS_WORKER_PID=""
-echo 'STEP=NTFS_UNCLEAN_PROCESS_KILLED'
-for _ in $(seq 1 100); do
-  is_mounted || break
-  sleep 0.1
-done
-if is_mounted; then
-  /sbin/umount "${MOUNT_POINT}" >/dev/null 2>&1 || true
-fi
-echo 'STEP=NTFS_UNCLEAN_MOUNT_GONE'
+"${TOOLS}/edp-make-ntfs-unclean" "${UNCLEAN}"
+echo 'STEP=NTFS_UNCLEAN_LOGFILE_READY'
 
 set +e
 "${BIN}/ntfs-3g.probe" --readwrite "${UNCLEAN}" >"${WORK}/unclean-rw.log" 2>&1

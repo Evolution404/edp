@@ -65,6 +65,13 @@ done
     --disable-static \
     --enable-extras
   make -j"$(sysctl -n hw.logicalcpu)"
+  /usr/bin/cc \
+    -DHAVE_CONFIG_H -I"${SOURCE_DIR}" \
+    "${REPO_ROOT}/native/EDPFSKitPoC/Tools/MakeNTFSUncleanFixture.c" \
+    -I"${SOURCE_DIR}/include/ntfs-3g" \
+    -L"${SOURCE_DIR}/libntfs-3g/.libs" \
+    -lntfs-3g -framework CoreFoundation \
+    -o "${SOURCE_DIR}/ntfsprogs/.libs/edp-make-ntfs-unclean"
 )
 
 for artifact in \
@@ -72,6 +79,7 @@ for artifact in \
   "${SOURCE_DIR}/src/.libs/ntfs-3g.probe" \
   "${SOURCE_DIR}/ntfsprogs/.libs/ntfslabel" \
   "${SOURCE_DIR}/ntfsprogs/.libs/mkntfs" \
+  "${SOURCE_DIR}/ntfsprogs/.libs/edp-make-ntfs-unclean" \
   "${SOURCE_DIR}/libntfs-3g/.libs/libntfs-3g.90.dylib"; do
   [[ -e "${artifact}" ]] || {
     echo "expected NTFS-3G artifact missing: ${artifact}" >&2
@@ -89,6 +97,8 @@ cp "${SOURCE_DIR}/ntfsprogs/.libs/ntfslabel" "${OUTPUT_DIR}/ntfs-3g/bin/"
 # mkntfs is retained only for synthetic CI fixtures. The installer copies
 # bin/lib/licenses/source explicitly, so test-tools is never shipped.
 cp "${SOURCE_DIR}/ntfsprogs/.libs/mkntfs" "${OUTPUT_DIR}/ntfs-3g/test-tools/"
+cp "${SOURCE_DIR}/ntfsprogs/.libs/edp-make-ntfs-unclean" \
+  "${OUTPUT_DIR}/ntfs-3g/test-tools/"
 cp "${SOURCE_DIR}/libntfs-3g/.libs/libntfs-3g.90.dylib" \
   "${OUTPUT_DIR}/ntfs-3g/lib/"
 cp "${SOURCE_DIR}/COPYING" "${SOURCE_DIR}/COPYING.LIB" \
@@ -103,10 +113,12 @@ for binary in ntfs-3g ntfs-3g.probe ntfslabel; do
     "@loader_path/../lib/libntfs-3g.90.dylib" \
     "${OUTPUT_DIR}/ntfs-3g/bin/${binary}" 2>/dev/null || true
 done
-install_name_tool -change \
-  "${INSTALL_PREFIX}/lib/libntfs-3g.90.dylib" \
-  "@loader_path/../lib/libntfs-3g.90.dylib" \
-  "${OUTPUT_DIR}/ntfs-3g/test-tools/mkntfs" 2>/dev/null || true
+for test_tool in mkntfs edp-make-ntfs-unclean; do
+  install_name_tool -change \
+    "${INSTALL_PREFIX}/lib/libntfs-3g.90.dylib" \
+    "@loader_path/../lib/libntfs-3g.90.dylib" \
+    "${OUTPUT_DIR}/ntfs-3g/test-tools/${test_tool}" 2>/dev/null || true
+done
 install_name_tool -id "@loader_path/libntfs-3g.90.dylib" \
   "${OUTPUT_DIR}/ntfs-3g/lib/libntfs-3g.90.dylib"
 
@@ -114,7 +126,9 @@ codesign --force --sign - "${OUTPUT_DIR}/ntfs-3g/lib/libntfs-3g.90.dylib"
 for binary in ntfs-3g ntfs-3g.probe ntfslabel; do
   codesign --force --sign - "${OUTPUT_DIR}/ntfs-3g/bin/${binary}"
 done
-codesign --force --sign - "${OUTPUT_DIR}/ntfs-3g/test-tools/mkntfs"
+for test_tool in mkntfs edp-make-ntfs-unclean; do
+  codesign --force --sign - "${OUTPUT_DIR}/ntfs-3g/test-tools/${test_tool}"
+done
 
 printf 'NTFS3G_VERSION=%s\n' "${VERSION}"
 printf 'NTFS3G_SOURCE_SHA256=%s\n' "${SOURCE_SHA256}"
