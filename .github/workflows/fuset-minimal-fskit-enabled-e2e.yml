@@ -1,0 +1,291 @@
+name: FUSE-T Minimal FSKit Enabled E2E
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
+      - ".github/workflows/fuset-minimal-fskit-enabled-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fuset-minimal-fskit-enabled-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  enabled-e2e:
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      FUSET_VERSION: "1.2.7"
+      FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
+      FUSET_PKG_URL: "https://github.com/macos-fuse-t/fuse-t/releases/download/1.2.7/fuse-t-macos-installer-1.2.7.pkg"
+      FUSET_BUNDLE_ID: "org.fuset.fskit-srv.module"
+      DIAG_PATH: "docs/diagnostics/fuset-enabled-e2e-macos26-ci.txt"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify hosted runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          test "$(xcodebuild -version | awk '/Xcode/ {print int($2); exit}')" -ge 26
+
+      - name: Build deterministic 8 MiB raw fixture
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/edp-fuset-enabled-e2e.raw"
+          python3 - "${RAW}" <<'PY'
+          import hashlib
+          import os
+          import sys
+
+          path = sys.argv[1]
+          with open(path, "wb") as f:
+              for lba in range(16384):
+                  seed = hashlib.sha256(f"EDP-FUSET-LBA:{lba}".encode()).digest()
+                  f.write((seed * 16)[:512])
+          print(f"RAW_SIZE={os.path.getsize(path)}")
+          print(f"RAW_SHA256={hashlib.sha256(open(path, 'rb').read()).hexdigest()}")
+          PY
+          test "$(stat -f %z "${RAW}")" -eq 8388608
+          echo "RAW=${RAW}" >> "${GITHUB_ENV}"
+
+      - name: Stage only official signed FUSE-T FSKit app
+        run: |
+          set -euo pipefail
+          PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
+          EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
+          curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
+          ACTUAL="$(shasum -a 256 "${PKG}" | awk '{print $1}')"
+          test "${ACTUAL}" = "${FUSET_PKG_SHA256}"
+          pkgutil --expand-full "${PKG}" "${EXPANDED}"
+          SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
+          test -n "${SOURCE_APP}"
+          test -d "${SOURCE_APP}/Contents/Extensions/FskitSrvModule.appex"
+          codesign --verify --deep --strict --verbose=2 "${SOURCE_APP}"
+
+          sudo rm -rf /Applications/fuse-t.app
+          sudo ditto "${SOURCE_APP}" /Applications/fuse-t.app
+          APP=/Applications/fuse-t.app
+          EXT="${APP}/Contents/Extensions/FskitSrvModule.appex"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          pluginkit -a "${EXT}" || true
+          pluginkit -a "${APP}" || true
+          pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit-before.txt" || true
+          grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit-before.txt"
+
+      - name: Prime FSKit enabledModules list on disposable runner
+        run: |
+          set -euo pipefail
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          LEGACY_PREF="${HOME}/Library/Preferences/com.apple.fskit.enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+
+          echo '--- enabledModules candidates before ---' | tee "${RUNNER_TEMP}/enabled-state.txt"
+          for p in "${ENABLED_PLIST}" "${LEGACY_PREF}"; do
+            echo "PATH=${p}" | tee -a "${RUNNER_TEMP}/enabled-state.txt"
+            if [[ -f "${p}" ]]; then
+              plutil -p "${p}" | tee -a "${RUNNER_TEMP}/enabled-state.txt" || true
+            else
+              echo MISSING | tee -a "${RUNNER_TEMP}/enabled-state.txt"
+            fi
+          done
+
+          # FSKit's FSSettings/FSModuleHost contract stores an NSArray of
+          # enabled module bundle identifiers. This is CI-only state on an
+          # ephemeral hosted runner; product code must never bypass user approval.
+          python3 - "${ENABLED_PLIST}" "${FUSET_BUNDLE_ID}" <<'PY'
+          import os
+          import plistlib
+          import sys
+
+          path, bundle_id = sys.argv[1:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, "rb") as f:
+                      value = plistlib.load(f)
+                  if isinstance(value, list):
+                      enabled = [x for x in value if isinstance(x, str)]
+              except Exception as exc:
+                  print(f"IGNORING_INVALID_EXISTING_PLIST={exc}")
+          if bundle_id not in enabled:
+              enabled.append(bundle_id)
+          with open(path, "wb") as f:
+              plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          print(f"ENABLED_MODULES={enabled!r}")
+          PY
+          chmod 600 "${ENABLED_PLIST}"
+          plutil -lint "${ENABLED_PLIST}"
+          plutil -p "${ENABLED_PLIST}" | tee -a "${RUNNER_TEMP}/enabled-state.txt"
+          grep -Fq "${FUSET_BUNDLE_ID}" "${ENABLED_PLIST}"
+          echo "FSKIT_ENABLED_PLIST=${ENABLED_PLIST}" >> "${GITHUB_ENV}"
+
+          # Clear only user/runtime caches. No SIP, AMFI, Recovery or security
+          # policy changes are made. A fresh mountpoint is used below as well.
+          killall -9 fskit_agent 2>/dev/null || true
+          killall -9 extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit-after.txt" || true
+
+      - name: Compile native minimal bridge
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -swift-version 6 \
+            -warnings-as-errors \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
+            -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+          test -x "${RUNNER_TEMP}/FuseTMinimalBridge"
+
+      - name: E2-E4 retry with fresh FSKit target
+        run: |
+          set -euo pipefail
+          HIDDEN="${RUNNER_TEMP}/edp-fuset-enabled-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          LOG="${RUNNER_TEMP}/enabled-bridge.log"
+          mkdir -p "${HIDDEN}"
+          echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"
+          echo "BRIDGE_LOG=${LOG}" >> "${GITHUB_ENV}"
+
+          "${RUNNER_TEMP}/FuseTMinimalBridge" \
+            --backing "${RAW}" \
+            --mountpoint "${HIDDEN}" \
+            --volume-name 'EDP Hidden Raw Transport' \
+            >"${LOG}" 2>&1 &
+          BRIDGE_PID=$!
+          echo "BRIDGE_PID=${BRIDGE_PID}" >> "${GITHUB_ENV}"
+
+          mounted=false
+          for attempt in $(seq 1 25); do
+            if mount | grep -Fq " on ${HIDDEN} "; then
+              mounted=true
+              break
+            fi
+            if ! kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat "${LOG}" || true
+
+          if [[ "${mounted}" != true ]]; then
+            echo 'BRIDGE_MOUNTED=false' >> "${GITHUB_ENV}"
+            echo 'RESULT=E2_FSKIT_ENABLE_LIST_DID_NOT_UNLOCK_HOSTED_MOUNT'
+            exit 0
+          fi
+          echo 'BRIDGE_MOUNTED=true' >> "${GITHUB_ENV}"
+
+          EXPOSED="${HIDDEN}/volume.raw"
+          test -f "${EXPOSED}"
+          test "$(stat -f %z "${EXPOSED}")" -eq 8388608
+          for LBA in 0 7 4095 8192 16383; do
+            dd if="${RAW}" of="${RUNNER_TEMP}/expected-file-${LBA}.bin" bs=512 skip="${LBA}" count=1 status=none
+            dd if="${EXPOSED}" of="${RUNNER_TEMP}/actual-file-${LBA}.bin" bs=512 skip="${LBA}" count=1 status=none
+            cmp "${RUNNER_TEMP}/expected-file-${LBA}.bin" "${RUNNER_TEMP}/actual-file-${LBA}.bin"
+          done
+          echo 'RESULT=E2_FUSET_VOLUME_RAW_VISIBLE_AND_MATCHES'
+
+          set +e
+          OUT="$(hdiutil attach -readonly -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}" 2>"${RUNNER_TEMP}/nested-hdiutil.err")"
+          RC=$?
+          set -e
+          echo "NESTED_HDIUTIL_RC=${RC}"
+          printf '%s\n' "${OUT}"
+          cat "${RUNNER_TEMP}/nested-hdiutil.err" || true
+          if [[ ${RC} -ne 0 ]]; then
+            echo 'NESTED_HDIUTIL_ATTACHED=false' >> "${GITHUB_ENV}"
+            echo 'RESULT=E3_HDIUTIL_OVER_FUSET_FAILED'
+            exit 0
+          fi
+
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${DISK}"
+          test -b "${DISK}"
+          RDISK="/dev/r$(basename "${DISK}")"
+          echo "NESTED_DISK=${DISK}" >> "${GITHUB_ENV}"
+          echo 'NESTED_HDIUTIL_ATTACHED=true' >> "${GITHUB_ENV}"
+          echo "RESULT=E3_BLOCK_DEVICE_READY:${DISK}"
+
+          for LBA in 0 7 4095 8192 16383; do
+            dd if="${RAW}" of="${RUNNER_TEMP}/expected-disk-${LBA}.bin" bs=512 skip="${LBA}" count=1 status=none
+            dd if="${RDISK}" of="${RUNNER_TEMP}/actual-disk-${LBA}.bin" bs=512 skip="${LBA}" count=1 status=none
+            cmp "${RUNNER_TEMP}/expected-disk-${LBA}.bin" "${RUNNER_TEMP}/actual-disk-${LBA}.bin"
+          done
+          diskutil info "${DISK}" | tee "${RUNNER_TEMP}/nested-diskutil.txt"
+          echo 'RESULT=E4_RANDOM_LBA_MATCH'
+          hdiutil detach "${DISK}" -force
+
+      - name: Collect enablement and E2-E4 evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${DIAG_PATH}")"
+          {
+            echo '# FUSE-T enabled-list E2-E4 macOS 26 CI probe'
+            echo
+            echo 'generated_at_utc=<normalized>'
+            echo "runner_os=$(sw_vers -productVersion)"
+            echo "runner_build=$(sw_vers -buildVersion)"
+            echo "xcode=$(xcodebuild -version | tr '\n' ' ')"
+            echo "enabled_plist=${FSKIT_ENABLED_PLIST:-none}"
+            echo "bridge_mounted=${BRIDGE_MOUNTED:-unknown}"
+            echo "nested_hdiutil_attached=${NESTED_HDIUTIL_ATTACHED:-unknown}"
+            echo "nested_disk=${NESTED_DISK:-none}"
+            echo
+            echo '## enabled state'
+            cat "${RUNNER_TEMP}/enabled-state.txt" 2>/dev/null || true
+            echo
+            echo '## pluginkit after cache reset'
+            cat "${RUNNER_TEMP}/pluginkit-after.txt" 2>/dev/null || true
+            echo
+            echo '## bridge log'
+            cat "${BRIDGE_LOG:-/dev/null}" 2>/dev/null || true
+            echo
+            echo '## nested hdiutil stderr'
+            cat "${RUNNER_TEMP}/nested-hdiutil.err" 2>/dev/null || true
+            echo
+            echo '## FSKit runtime log'
+            log show --last 5m --style compact \
+              --predicate 'process == "fskitd" OR process == "fskit_agent" OR process == "extensionkitservice" OR process == "FskitSrvModule" OR eventMessage CONTAINS[c] "org.fuset.fskit-srv.module"' \
+              2>/dev/null | tail -n 1600 || true
+          } > "${DIAG_PATH}"
+          sed -n '1,420p' "${DIAG_PATH}"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          if [[ -n "${NESTED_DISK:-}" ]]; then hdiutil detach "${NESTED_DISK}" -force; fi
+          if [[ -n "${HIDDEN:-}" ]]; then /sbin/umount "${HIDDEN}"; fi
+          if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null; fi
+          sudo rm -rf /Applications/fuse-t.app
+          exit 0
+
+      - name: Commit deterministic diagnostic
+        if: always() && github.ref_name == 'test/fuset-minimal-fskit-bridge'
+        run: |
+          set -euo pipefail
+          test -f "${DIAG_PATH}"
+          git add "${DIAG_PATH}"
+          if git diff --cached --quiet -- "${DIAG_PATH}"; then
+            echo 'RESULT=ENABLED_E2E_DIAGNOSTIC_UNCHANGED'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: capture FUSE-T enabled E2E probe [skip ci]'
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
