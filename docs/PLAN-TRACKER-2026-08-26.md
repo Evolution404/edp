@@ -21,11 +21,13 @@
   - `mkdir EDP-RW` 成功，100 ms 后 mount 和进程仍正常。
   - 第一个普通文件 `create(O_CREAT)` 返回 `ENOENT`；失败时 mount 与 NTFS-3G 进程仍存活。
   - 结论：问题不是 mount 生命周期，而是 NTFS-3G + macFUSE FSKit 的 regular-file create 路径。
-- [ ] A2 固化正确的 NTFS-3G FSKit 启动方式
+- [x] A2 固化正确的 NTFS-3G FSKit 启动方式
   - `direct decrypted image + local FSKit` 已由 run `32917383915` 否决：local module 启用 block resource，内部引出 `/dev/disk8`/Disk Arbitration NTFS probe，未稳定进入常规 mount I/O 阶段。
   - run `32917604083`（commit `fb475ce`）已确认：nonlocal mount 稳定，但 root-level `touch` 与新建目录下 `touch` 都返回 `ENOENT`；故障是整个 regular-file create 路径，不是新建目录后的局部缓存问题。
   - 5.3.2/5.3.3 版本矩阵已完成到最小 FUSE2 create 层。run `32918481783`：两个版本都能稳定建立 nonlocal FSKit mount，`m_create(/created.txt)` 回调都实际被调用并返回成功，但调用方随即收到 `ENOSYS`（`Function not implemented`），未进入 write；因此问题已从 NTFS-3G/EDP/DiskImages2 中剥离，集中到 macFUSE FSKit ↔ libfuse2 create 后续操作序列/缺失 callback 兼容性。
-- [ ] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
+- [x] A3 synthetic NTFS 完整 RW/remount E2E，要求同一 commit 连续 3 次通过
+  - 同一 HEAD `dfbdcc8` 连续成功 runs：`32920159540`、`32920839214`、`32920841484`。
+  - 覆盖 create / 4 MiB+ write / random overwrite / renamex / delete / sync / clean unmount / ciphertext SHA 变化 / 全链重启 / remount / payload SHA 一致 / clean probe / bounded teardown。
 - [ ] A4 dirty / hibernated NTFS fail-closed
 - [ ] A5 CI 与产品 NTFS mount 路径统一
 - [ ] A6 raw sparse backup → 恢复验证 → 真实 EDP NTFS 读写
@@ -157,3 +159,11 @@
 - rename debug 显示 macOS/FSKit 发出 `renamex(..., flags=0x4)`，即 `RENAME_EXCL`；NTFS-3G 只实现传统 `.rename`，macFUSE 的 `fuse_fs_renamex()` 在 `.renamex` 缺失时直接返回 `ENOSYS`，不会 fallback。
 - 已增加第二个可审计 patch `patches/ntfs-3g-2026.7.7-macfuse-fskit-renamex.patch`：支持 flags=0 / `RENAME_EXCL`，目标存在时返回 `EEXIST`，否则复用 NTFS-3G 原有 rename；`RENAME_SWAP` 明确不支持并在 init 中关闭其 capability。
 - build 脚本按固定顺序应用 CREATE mode + renamex 两个 patch，并将两者随 bundled source 一并保留。两 patch 已对固定上游 SHA 源码完成顺序 dry-run/apply 验证。
+
+### 2026-08-26 — A2/A3 结项
+
+- commit `dfbdcc8` 的首次完整 E2E run `32920159540` 成功。
+- 为满足“同一 commit 连续 3 次”门槛，未修改 HEAD，额外 workflow_dispatch 两次；runs `32920839214`、`32920841484` 均成功，且 `headSha` 均为 `dfbdcc8ae6c8acb9f15e6c97420c7530a6f763d2`。
+- 三次均完成完整 teardown；主验证覆盖 NTFS create、4 MiB+ 顺序写、随机覆盖、rename、delete、sync、卸载、密文 SHA 变化、全链重启、remount、payload SHA256 一致以及最终 clean writable probe。
+- A2 结论：产品底层采用 macFUSE 5.3.3 nonlocal FSKit；NTFS-3G 2026.7.7 通过两个最小 Darwin/FSKit adapter patch 兼容 CREATE type 与 `RENAME_EXCL`。
+- A3 正式完成，进入 A4 dirty / hibernated fail-closed。
