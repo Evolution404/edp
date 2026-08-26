@@ -82,7 +82,10 @@ start_mount() {
   NTFS_PID="$(cat "${pid_file}")"
 
   local mounted=0
-  for _ in $(seq 1 100); do
+  # macOS 26 FSKit activation can take >10 seconds on a cold CI runner.
+  # Keep the wait bounded, but align it with the product's 20-second bridge
+  # readiness window plus margin so a healthy mount is not misclassified.
+  for _ in $(seq 1 300); do
     if is_mounted; then
       mounted=1
       break
