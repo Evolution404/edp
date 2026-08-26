@@ -80,6 +80,12 @@ jobs:
           if grep -F 'O_RDWR' product/EDPRawReadAuthorization.c; then exit 1; fi
           "${RUNNER_TEMP}/edp-raw-sparse" help | grep -F 'backup-authorized obtains an O_RDONLY fd'
           grep -F 'authopen' native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c
+          xcrun swiftc -parse-as-library -swift-version 6 -strict-concurrency=complete \
+            -framework CryptoKit native/EDPFSKitPoC/Tools/EDPFilesystemManifest.swift \
+            -o "${RUNNER_TEMP}/edp-filesystem-manifest"
+          grep -F 'O_RDONLY | O_CLOEXEC' native/EDPFSKitPoC/Tools/EDPReadOnlyFuseBridge.c
+          if grep -F 'O_RDWR' native/EDPFSKitPoC/Tools/EDPReadOnlyFuseBridge.c; then exit 1; fi
+          bash -n native/EDPFSKitPoC/Tools/probe-real-edp-backup-readonly.sh
           echo 'RESULT=RAW_DEVICE_AUTHORIZATION_SURFACE_OK'
           echo 'RESULT=SWIFTUI_XPC_PRODUCT_SURFACE_OK'
           echo 'RESULT=DISKIMAGES2_PRIVATE_API_ISOLATED_TO_ADAPTER'

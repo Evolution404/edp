@@ -4,6 +4,11 @@ private final class EDPReadOnlyBridgeContext {
     let raw: EDPFileRawDevice
     let block: EDPEncryptedReadOnlyBlockDevice
 
+    init(raw: EDPFileRawDevice, block: EDPEncryptedReadOnlyBlockDevice) {
+        self.raw = raw
+        self.block = block
+    }
+
     init(cipherPath: String, key: [UInt8]) throws {
         raw = try EDPFileRawDevice(path: cipherPath)
         guard let sizeBytes = raw.sizeBytes else {
@@ -129,6 +134,52 @@ public func edp_ro_open_device(
         return Unmanaged.passRetained(context).toOpaque()
     } catch {
         logBridgeError("EDP_RO_OPEN_DEVICE_ERROR=\(error)\n")
+        return nil
+    }
+}
+
+@_cdecl("edp_ro_open_device_fd")
+public func edp_ro_open_device_fd(
+    _ rawFileDescriptor: Int32,
+    _ vidPointer: UnsafePointer<CChar>?,
+    _ pidPointer: UnsafePointer<CChar>?,
+    _ deviceSizeBytes: UInt64,
+    _ passwordPointer: UnsafePointer<UInt8>?,
+    _ passwordLength: UInt64,
+    _ partitionType: UInt32
+) -> UnsafeMutableRawPointer? {
+    guard rawFileDescriptor >= 0,
+          let vidPointer,
+          let pidPointer,
+          let passwordPointer,
+          passwordLength > 0,
+          passwordLength <= UInt64(Int.max) else {
+        return nil
+    }
+    let passwordBytes = Array(UnsafeBufferPointer(
+        start: passwordPointer,
+        count: Int(passwordLength)
+    ))
+    do {
+        let raw = try EDPFileRawDevice(
+            fileDescriptor: rawFileDescriptor,
+            declaredSizeBytes: deviceSizeBytes,
+            writable: false
+        )
+        let unlocked = try EDPReadOnlyUnlock.unlock(
+            raw: raw,
+            request: EDPReadOnlyUnlockRequest(
+                vidHex: String(cString: vidPointer),
+                pidHex: String(cString: pidPointer),
+                deviceSizeBytes: deviceSizeBytes,
+                passwordBytes: passwordBytes,
+                partitionType: partitionType
+            )
+        )
+        let context = EDPReadOnlyBridgeContext(raw: raw, block: unlocked.block)
+        return Unmanaged.passRetained(context).toOpaque()
+    } catch {
+        logBridgeError("EDP_RO_OPEN_DEVICE_FD_ERROR=\(error)\n")
         return nil
     }
 }

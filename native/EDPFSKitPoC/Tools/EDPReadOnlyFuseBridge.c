@@ -1,5 +1,6 @@
 #define FUSE_USE_VERSION 26
 #include <fuse.h>
+#include <Security/Authorization.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -7,8 +8,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #ifndef ENOATTR
@@ -26,6 +29,12 @@ extern void *edp_ro_open_device(const char *raw_path, const char *vid_hex,
                                 const unsigned char *password_bytes,
                                 unsigned long long password_length,
                                 uint32_t partition_type);
+extern void *edp_ro_open_device_fd(int raw_fd, const char *vid_hex,
+                                   const char *pid_hex,
+                                   unsigned long long device_size_bytes,
+                                   const unsigned char *password_bytes,
+                                   unsigned long long password_length,
+                                   uint32_t partition_type);
 extern unsigned long long edp_ro_size(void *handle);
 extern long long edp_ro_read(void *handle, unsigned long long offset, void *buffer,
                              unsigned long long requested_length);
@@ -98,13 +107,126 @@ static int read_password_fd(int fd, unsigned char *buffer, size_t capacity,
     return 0;
 }
 
+static int receive_fd(int socket_fd) {
+    char payload = 0;
+    struct iovec iov = { .iov_base = &payload, .iov_len = sizeof(payload) };
+    char control[CMSG_SPACE(sizeof(int))];
+    memset(control, 0, sizeof(control));
+    struct msghdr message;
+    memset(&message, 0, sizeof(message));
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1;
+    message.msg_control = control;
+    message.msg_controllen = sizeof(control);
+    ssize_t received;
+    do { received = recvmsg(socket_fd, &message, 0); }
+    while (received < 0 && errno == EINTR);
+    if (received <= 0) return -1;
+    for (struct cmsghdr *item = CMSG_FIRSTHDR(&message);
+         item != NULL;
+         item = CMSG_NXTHDR(&message, item)) {
+        if (item->cmsg_level == SOL_SOCKET && item->cmsg_type == SCM_RIGHTS &&
+            item->cmsg_len >= CMSG_LEN(sizeof(int))) {
+            int fd = -1;
+            memcpy(&fd, CMSG_DATA(item), sizeof(fd));
+            return fd;
+        }
+    }
+    return -1;
+}
+
+static int authopen_readonly_fd(const char *path,
+                                const AuthorizationExternalForm *external_form) {
+    int sockets[2];
+    int input_pipe[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0) return -1;
+    if (pipe(input_pipe) != 0) {
+        close(sockets[0]); close(sockets[1]);
+        return -1;
+    }
+    pid_t child = fork();
+    if (child < 0) {
+        close(sockets[0]); close(sockets[1]);
+        close(input_pipe[0]); close(input_pipe[1]);
+        return -1;
+    }
+    if (child == 0) {
+        close(sockets[0]);
+        close(input_pipe[1]);
+        if (dup2(input_pipe[0], STDIN_FILENO) < 0 ||
+            dup2(sockets[1], STDOUT_FILENO) < 0) _exit(126);
+        close(input_pipe[0]);
+        close(sockets[1]);
+        char flags[32];
+        snprintf(flags, sizeof(flags), "%d", O_RDONLY | O_CLOEXEC);
+        execl("/usr/libexec/authopen", "authopen", "-stdoutpipe", "-extauth",
+              "-o", flags, path, (char *)NULL);
+        _exit(127);
+    }
+    close(sockets[1]);
+    close(input_pipe[0]);
+    const unsigned char *cursor = (const unsigned char *)external_form;
+    size_t remaining = sizeof(*external_form);
+    while (remaining > 0) {
+        ssize_t written = write(input_pipe[1], cursor, remaining);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        cursor += (size_t)written;
+        remaining -= (size_t)written;
+    }
+    close(input_pipe[1]);
+    int fd = receive_fd(sockets[0]);
+    close(sockets[0]);
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    return fd;
+}
+
+static int interactive_readonly_fd(const char *path) {
+    static const char prefix[] = "/dev/rdisk";
+    if (strncmp(path, prefix, sizeof(prefix) - 1) != 0 ||
+        path[sizeof(prefix) - 1] == '\0') return -1;
+    for (const char *cursor = path + sizeof(prefix) - 1; *cursor != '\0'; ++cursor) {
+        if (*cursor < '0' || *cursor > '9') return -1;
+    }
+    AuthorizationRef authorization = NULL;
+    OSStatus status = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,
+                                          kAuthorizationFlagDefaults, &authorization);
+    if (status != errAuthorizationSuccess) return -1;
+    AuthorizationItem item = { "system.privilege.admin", 0, NULL, 0 };
+    AuthorizationRights rights = { 1, &item };
+    AuthorizationFlags flags = kAuthorizationFlagInteractionAllowed |
+                               kAuthorizationFlagExtendRights |
+                               kAuthorizationFlagPreAuthorize;
+    status = AuthorizationCopyRights(authorization, &rights,
+                                     kAuthorizationEmptyEnvironment, flags, NULL);
+    if (status != errAuthorizationSuccess) {
+        AuthorizationFree(authorization, kAuthorizationFlagDefaults);
+        return -1;
+    }
+    AuthorizationExternalForm external_form;
+    status = AuthorizationMakeExternalForm(authorization, &external_form);
+    if (status != errAuthorizationSuccess) {
+        AuthorizationFree(authorization, kAuthorizationFlagDefaults);
+        return -1;
+    }
+    int fd = authopen_readonly_fd(path, &external_form);
+    secure_zero(&external_form, sizeof(external_form));
+    AuthorizationFree(authorization, kAuthorizationFlagDefaults);
+    return fd;
+}
+
 static void print_usage(const char *program) {
     fprintf(stderr,
             "usage:\n"
             "  %s <cipher.img> <32-hex-key> <mountpoint>\n"
             "  %s --device <raw-device> <vid> <pid> <device-size> "
+            "<partition-type> <password-fd> <mountpoint>\n"
+            "  %s --device-authorize /dev/rdiskN <vid> <pid> <device-size> "
             "<partition-type> <password-fd> <mountpoint>\n",
-            program, program);
+            program, program, program);
 }
 
 static int m_getattr(const char *path, struct stat *st) {
@@ -230,7 +352,8 @@ static struct fuse_operations ops = {
 int main(int argc, char **argv) {
     const char *mountpoint = NULL;
 
-    if (argc == 9 && strcmp(argv[1], "--device") == 0) {
+    if (argc == 9 && (strcmp(argv[1], "--device") == 0 ||
+                      strcmp(argv[1], "--device-authorize") == 0)) {
         uint64_t device_size = 0;
         uint32_t partition_type = 0;
         int password_fd = -1;
@@ -253,13 +376,27 @@ int main(int argc, char **argv) {
         }
         close(password_fd);
 
-        block_handle = edp_ro_open_device(
-            argv[2], argv[3], argv[4],
-            (unsigned long long)device_size,
-            password,
-            (unsigned long long)password_length,
-            partition_type
-        );
+        if (strcmp(argv[1], "--device-authorize") == 0) {
+            int raw_fd = interactive_readonly_fd(argv[2]);
+            if (raw_fd < 0) {
+                secure_zero(password, sizeof(password));
+                fprintf(stderr, "EDP_FUSE_AUTHOPEN_READONLY_FAILED\n");
+                return 65;
+            }
+            block_handle = edp_ro_open_device_fd(
+                raw_fd, argv[3], argv[4], (unsigned long long)device_size,
+                password, (unsigned long long)password_length, partition_type
+            );
+            close(raw_fd);
+        } else {
+            block_handle = edp_ro_open_device(
+                argv[2], argv[3], argv[4],
+                (unsigned long long)device_size,
+                password,
+                (unsigned long long)password_length,
+                partition_type
+            );
+        }
         secure_zero(password, sizeof(password));
         if (!block_handle) {
             fprintf(stderr, "EDP_FUSE_BRIDGE_OPEN_DEVICE_FAILED\n");

@@ -56,6 +56,8 @@
   - manifest SHA256：`a63f33eaa905a82684520f9bbd45e6da865ee237ffe6881f8b2019851ea0f123`；末尾仍保留 3 个独立 stored extents。
   - backup final verify 与独立 restored sparse image verify 均返回 `RESULT=EDP_RAW_SPARSE_VERIFY_OK`；restore 返回 `RESULT=EDP_RAW_SPARSE_RESTORE_OK`。
 - [ ] restored image EDP 解密 → NTFS 只读挂载 → 文件 SHA256/关键 metadata 与真实盘比对。
+  - read-only harness 已实现：physical 仅允许 `/dev/rdiskN + authopen O_RDONLY`，restored image 普通只读 open；两边均以 NTFS-3G `ro,norecover,backend=fskit` 挂载。
+  - deterministic manifest 覆盖 path/type/mode/flags/link count/size/mtime/birthtime/symlink target/每个 regular file SHA256，以及解密卷 label、逻辑尺寸、头尾 4 KiB SHA256。
 
 ### Phase B — 原生化
 
@@ -261,3 +263,10 @@
 - manifest 的 source logical SHA256 为 `61e54385b087e70f5378968114a04f8af9b785b2057172830d62629231924423`；final backup 全逻辑 verify 匹配。
 - 已按 manifest 恢复到第二个独立 sparse regular file，恢复镜像 logical size、17 个 extent SHA 与全逻辑 SHA 全部匹配，`RESULT=EDP_RAW_SPARSE_RESTORE_OK`。
 - raw 层 backup/restore 门槛已通过；EDP 解密后的 NTFS 文件/metadata 比对尚未完成，因此真实物理 writable mount / `pwrite` 仍禁止。
+
+### 2026-08-26 — A6 restored/physical NTFS 只读比对 harness
+
+- `EDPReadOnlyFuseBridge` 新增 strictly read-only inherited-fd path；interactive authorization 只接受完整 `/dev/rdiskN` whole-disk path，并固定 `authopen O_RDONLY`。
+- `probe-real-edp-backup-readonly.sh` 依次挂载 physical 与 restored raw，两个 EDP bridge 都只暴露只读 `volume.raw`，NTFS-3G 固定 `ro,norecover,backend=fskit`；同时要求 readwrite probe 返回 0，不能借只读挂载掩盖 dirty/hibernated 状态。
+- `EDPFilesystemManifest.swift` 生成 deterministic 文件/metadata/SHA256 清单，并包含 NTFS label、解密卷逻辑尺寸、boot/tail 4 KiB SHA256；physical/restored JSON 必须 byte-for-byte 一致。
+- 本地 Swift 6 strict compile、C `-Wall -Wextra`、shell syntax、deterministic manifest round-trip 与禁止 `O_RDWR/pwrite` 静态门槛通过；真实执行等待用户在本机终端 Secure input 中输入 EDP 密码。
