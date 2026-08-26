@@ -1,0 +1,96 @@
+# FUSE-T minimal FSKit + EDP SM4 random-access macOS 26 CI
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+plain_sha=a39b4ed606c7be2ee2bc9be81ea43e53958bde47cd85fdad98fd727635f14b71
+cipher_sha_before=b6dcb5d11e51b2dac98f7e595e824b8c6cb14efbe951300cbf83a439eea3e7d2
+cipher_sha_after=b6dcb5d11e51b2dac98f7e595e824b8c6cb14efbe951300cbf83a439eea3e7d2
+cipher_meta_before=67108864:1787749878:100444
+cipher_meta_after=67108864:1787749878:100444
+final_mount=/Volumes/EDP_SM4_FINAL
+
+## encryption
+ENCRYPTED_DISK_BYTES=67108864
+RESULT=EDP_SM4_DISK_IMAGE_ENCRYPTED
+
+## hidden transport
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-121e1994-feb4-4581-821f-6e42f92b9dc1/session.json on /Users/runner/work/_temp/edp-sm4-hidden-52119183-6663-4eae-b762-73342939c754 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+
+## bridge log
+BACKING_MODE=EDP_SM4_RANDOM_ACCESS
+PLAINTEXT_CACHE=none
+SESSION_ID=edp-fuset-121e1994-feb4-4581-821f-6e42f92b9dc1
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-121e1994-feb4-4581-821f-6e42f92b9dc1/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-121e1994-f.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-sm4-hidden-52119183-6663-4eae-b762-73342939c754
+BACKING_SIZE=67108864
+mount process exited status=0
+
+## bridge open files
+COMMAND    PID   USER   FD    TYPE             DEVICE SIZE/OFF                NODE NAME
+FuseTEDPS 1764 runner  cwd     DIR               1,16      416             2863524 /Users/runner/work/edp-usb-vault/edp-usb-vault
+FuseTEDPS 1764 runner  txt     REG               1,16   359440             2865424 /Users/runner/work/_temp/FuseTEDPSM4Bridge
+FuseTEDPS 1764 runner  txt     REG               1,16    72984             2848681 /Library/Preferences/Logging/.plist-cache.B6Mj4qp2
+FuseTEDPS 1764 runner  txt     REG               1,16  2374000 1152921500312573276 /usr/lib/dyld
+FuseTEDPS 1764 runner  txt     REG               1,16 35444880 1152921500312583777 /usr/share/icu/icudt78l.dat
+FuseTEDPS 1764 runner    0r    CHR                3,2      0t0                 334 /dev/null
+FuseTEDPS 1764 runner    1w    REG               1,16      476             2865436 /Users/runner/work/_temp/edp-sm4-bridge.log
+FuseTEDPS 1764 runner    2w    REG               1,16      476             2865436 /Users/runner/work/_temp/edp-sm4-bridge.log
+FuseTEDPS 1764 runner    3r    REG               1,16 67108864             2864973 /Users/runner/work/_temp/edp-sm4-cipher.raw
+FuseTEDPS 1764 runner    4u   unix 0xb37657a5ea6dea8a      0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-121e1994-f.sock
+FuseTEDPS 1764 runner    5u   unix 0x9b4220fe04aabfb4      0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-121e1994-f.sock
+FuseTEDPS 1764 runner  131u  systm 0x87a63dd603d51c11      0t0                     [ctl com.apple.netsrc id 7 unit 32]
+FuseTEDPS 1764 runner  138u  systm 0x22da765a6cb70f90      0t0                     [ctl com.apple.netsrc id 7 unit 34]
+FuseTEDPS 1764 runner  143    PIPE 0x2e96791ee73d0498    65536                     ->0xc746e896128e357b
+FuseTEDPS 1764 runner  146    PIPE 0x4c408d55240340f0    16384                     ->0x371ce2ee4e5285c5
+
+## final attach
+/dev/disk8          	                               	/Volumes/EDP_SM4_FINAL
+
+## final diskutil
+   Device Identifier:         disk8
+   Device Node:               /dev/disk8
+   Whole:                     Yes
+   Part of Whole:             disk8
+   Device / Media Name:       Disk Image
+
+   Volume Name:               EDP_SM4_FINAL
+   Mounted:                   Yes
+   Mount Point:               /Volumes/EDP_SM4_FINAL
+
+   Content (IOContent):       None
+   File System Personality:   HFS+
+   Type (Bundle):             hfs
+   Name (User Visible):       Mac OS Extended
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Disk Image
+   SMART Status:              Not Supported
+   Volume UUID:               32D5592D-A541-3E69-A658-F505A98AD2BC
+
+   Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
+   Device Block Size:         512 Bytes
+
+   Volume Total Space:        67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
+   Volume Used Space:         10.0 MB (9990144 Bytes) (exactly 19512 512-Byte-Units) (14.9%)
+   Volume Free Space:         57.1 MB (57118720 Bytes) (exactly 111560 512-Byte-Units) (85.1%)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           Yes
+   Volume Read-Only:          Yes (read-only mount flag set)
+
+   Device Location:           External
+   Removable Media:           Removable
+   Media Removal:             Software-Activated
+
+   Solid State:               Info not available
+   Virtual:                   Yes
+
+
+## Finder
+EDP FolderEDP_SENTINEL.txt
