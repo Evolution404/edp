@@ -148,12 +148,14 @@ attach_decrypted() {
 
 start_ntfs() {
   : >"${NTFS_LOG}"
-  "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
+  sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+    "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
   local label
-  label="$("${NTFS_RUNTIME}/bin/ntfslabel" "/dev/${DECRYPTED_BSD}" | /usr/bin/tr -d '\r\n')"
+  label="$(sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+    "${NTFS_RUNTIME}/bin/ntfslabel" "/dev/${DECRYPTED_BSD}" | /usr/bin/tr -d '\r\n')"
   [[ "${label}" == "${TEST_VOLUME}" ]]
 
-  DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+  sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
     "${NTFS_RUNTIME}/bin/ntfs-3g" \
       -o backend=fskit \
       -o no_detach \
@@ -285,7 +287,8 @@ log "EXPECTED_NTFS_PAYLOAD_SHA256=${EXPECTED_SHA}"
 log "RESULT=BUNDLED_NTFS3G_FILE_CREATE_RANDOMWRITE_RENAME_DELETE_OK"
 
 unmount_ntfs
-"${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
+sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+  "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
 eject_decrypted
 unmount_bridge
 CIPHER_SHA_AFTER="$(/usr/bin/shasum -a 256 "${CIPHER_IMAGE}" | /usr/bin/awk '{print $1}')"
@@ -303,7 +306,8 @@ log "ACTUAL_NTFS_PAYLOAD_SHA256=${ACTUAL_SHA}"
 log "RESULT=EDP_NTFS3G_WRITE_SURVIVES_FULL_REMOUNT"
 
 unmount_ntfs
-"${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
+sudo -n /usr/bin/env DYLD_LIBRARY_PATH="${NTFS_RUNTIME}/lib" \
+  "${NTFS_RUNTIME}/bin/ntfs-3g.probe" --readwrite "/dev/${DECRYPTED_BSD}"
 eject_decrypted
 unmount_bridge
 
