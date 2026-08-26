@@ -7,7 +7,7 @@
 
 ## 当前总状态
 
-**状态：Phase A 已完成，进入 Phase B**
+**状态：Phase A 已完成；Phase B 官方 FSKit 路径已跑通，正在最小化 helper/resource 契约**
 
 当前实验目标：验证是否能只依赖 FUSE-T 1.2.7 官方签名的 1.7 MB `fuse-t.app`，由 EDP 自己实现 Unix Domain Socket backend，避免安装 FUSE-T 完整 core、`go-nfsv4`、macFUSE 和 NTFS-3G。
 
@@ -20,7 +20,7 @@
 - `/usr/local/lib/libfuse3.dylib`：未安装。
 - macFUSE：此前实验已清理；本分支后续必须重新做无残留确认。
 - FUSE-T core 仅允许从 `/private/tmp` 临时解包用于协议抓取，不做系统安装。
-- 当前分支为独立 worktree，未继承源 checkout 的未提交 `docs/PROGRESS-TRACKER-NTFS-FINDER-2026-08-26.md` 修改。
+- 当前分支已按用户要求直接位于 `/Users/zhangyuxi/Desktop/edp-usb-vault`；不再使用 worktree。原 `feat/filesystem-agnostic-native-readonly` 未提交 tracker 已保存在 `stash@{0}`。
 
 ---
 
@@ -28,7 +28,7 @@
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| A0 | ✅ | 创建隔离 worktree | `/Users/zhangyuxi/.devspace/worktrees/edp-usb-vault-be4e5e14`，base `6c44c1d` |
+| A0 | ✅ | 建立干净实验基线 | 最初以 worktree 从 `6c44c1d` 建分支；随后按用户要求删除 worktree，并在桌面实际 checkout 直接切到 `test/fuset-minimal-fskit-bridge` |
 | A1 | ✅ | 创建测试分支 | `test/fuset-minimal-fskit-bridge` |
 | A2 | ✅ | 编写实验计划 | `docs/PLAN-2026-08-26-fuset-minimal-fskit-bridge.md` |
 | A3 | ✅ | 创建实时 tracker | 本文件 |
@@ -48,13 +48,13 @@ Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applicat
 
 | ID | 状态 | 任务 | 证据/结果 |
 |---|---|---|---|
-| B1 | ⏳ | 获取与 FUSE-T 内置 libfuse 3.19 匹配的最小 hello 示例 | 待执行 |
-| B2 | ⏳ | 仅从 `/private/tmp` 加载 libfuse3，运行 `backend=fskit` | 待执行 |
-| B3 | ⏳ | 捕获官方 session directory / `session.json` | 待执行 |
-| B4 | ⏳ | 捕获 security-scoped FSPathURLResource 创建方式 | 待执行 |
-| B5 | ⏳ | 确认 `go-nfsv4` 在 FSKit backend 是否启动 | 待执行 |
-| B6 | ⏳ | 记录 probe/load/mount 完整日志 | 待执行 |
-| B7 | ⏳ | 提取不依赖 libfuse 的最小 resource 契约 | 待执行 |
+| B1 | ✅ | 获取与 FUSE-T 内置 libfuse 3.19 匹配的最小 hello 示例 | 新增 `native/EDPFSKitPoC/Tools/FuseTHello319.c`，`FUSE_USE_VERSION=319`；使用 FUSE-T 1.2.7 自带 headers/lib 编译成功；运行时报告 `FUSE library version: 3.19.0-rc0` |
+| B2 | ✅ | 仅从 `/private/tmp` 加载 libfuse3，运行 `backend=fskit` | 不向系统安装 core；`DYLD_LIBRARY_PATH` 指向解包后的临时 `libfuse3.4.dylib`；将 helper 通过 `FUSE_NFSSRV_PATH`/`_FUSE_DAEMON_PATH` 指向 `/private/tmp/.../go-nfsv4-1.2.7` 后，FSKit mount 成功 |
+| B3 | ✅ | 捕获官方 session directory / `session.json` | `/private/tmp/fuset-session-3466332312/session.json`；字段确认：`session_id`、`socket_path`、`auth_token`、`namedattr`、`readonly`；socket 位于 `~/Library/Group Containers/group.org.fuset.fskit-srv/s/*.sock` |
+| B4 | 🟡 | 捕获 security-scoped FSPathURLResource 创建方式 | 已捕获成功行为：FskitSrvModule 对同一 `session.json` 的 `probeResource`/`loadResource` 均获得可访问的 `FSPathURLResource`；直接 `/sbin/mount` 普通 file URL 会 EACCES。尚需提取 helper 如何向 FSKit 传递 security-scoped resource |
+| B5 | ✅ | 确认 `go-nfsv4` 在 FSKit backend 是否启动 | **会启动**：`go-nfsv4-1.2.7 -r --backend fskit <mountpoint>`；但 `lsof` 确认无 TCP listener，仅 Unix domain sockets。因此 FSKit backend 本身不是网络卷 |
+| B6 | ✅ | 记录 probe/load/mount 完整日志 | `probeResource → session init → usable result → loadResource → session ready → rpc connected → rpc handshake accepted → volume init → activate → mount`；`hello.txt` 实际读取成功，mount 显示 `fuse-t, local, ... fskit` |
+| B7 | ⏳ | 提取不依赖 libfuse/go-nfsv4 的最小 resource 契约 | 当前核心任务：拆出 `go-nfsv4` 的 FSKit-only session/socket/resource 逻辑，替换 19 MB helper |
 
 已知失败样本（分支建立前）：
 
@@ -67,7 +67,22 @@ Phase A 验收：**通过**。当前系统为：只保留官方签名 `/Applicat
 
 结论：直接传普通 file URL 不够，必须复现官方 security-scoped resource 路径。
 
-Phase B 验收：**未完成**。
+Phase B 验收：**官方参考路径已通过；最小化契约 B4/B7 未完成。**
+
+已确认官方参考链：
+
+```text
+FuseTHello319
+→ temporary libfuse3.4.dylib
+→ go-nfsv4-1.2.7 --backend fskit
+→ session.json + Unix domain socket
+→ security-scoped FSPathURLResource
+→ signed FskitSrvModule.appex
+→ Apple FSKit
+→ /Volumes/EDP-FUSET-Hello
+```
+
+实际读回：`EDP FUSE-T FSKit bridge smoke`。
 
 ---
 
@@ -192,11 +207,11 @@ Phase H 验收：**未完成**。
 立即执行：
 
 ```text
-B1 获取与 FUSE-T 内置 libfuse 3.19 匹配的最小示例
+B4/B7 定位 `go-nfsv4 --backend fskit` 如何创建/传递 security-scoped resource
 ↓
-B2 仅从 `/private/tmp` 临时加载 libfuse3，运行 `backend=fskit`
+C1 捕获 Unix socket 首帧与 handshake framing
 ↓
-B3 捕获官方 session/resource 创建路径
+实现最小 EDP-owned helper，目标移除 19 MB `go-nfsv4`
 ```
 
 ## 失败实验登记
@@ -213,4 +228,5 @@ B3 捕获官方 session/resource 创建路径
 | Commit | 内容 | 远端状态 |
 |---|---|---|
 | `2fe69cd` | 新测试分支 + 计划 + 实时 tracker | 已 push |
-| 待提交 | Phase A：固化 FUSE-T 最小签名/运行时基线 | 待 push |
+| `ac8c1b1` | Phase A：固化 FUSE-T 最小签名/运行时基线 | 已 push |
+| 待提交 | Phase B：FUSE-T 3.19 官方 `backend=fskit` 参考路径跑通 | 待 push |
