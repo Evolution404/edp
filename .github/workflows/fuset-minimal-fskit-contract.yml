@@ -87,48 +87,71 @@ jobs:
             file "${EXT_BIN}"
             shasum -a 256 "${GO_BIN}" "${EXT_BIN}"
             echo
+            echo '## Embedded Go JSON struct tags'
+            python3 - "${GO_BIN}" <<'PY'
+          import re
+          import sys
+          path = sys.argv[1]
+          data = open(path, 'rb').read()
+          tags = sorted(set(x.decode('ascii', 'replace') for x in re.findall(rb'json:"[^"\x00]{1,96}"', data)))
+          for tag in tags:
+              print(tag)
+          PY
+            echo
+            echo '## Embedded protocol tokens'
+            python3 - "${GO_BIN}" "${EXT_BIN}" <<'PY'
+          import re
+          import sys
+          wanted = {
+              'auth_token', 'session_id', 'request_id', 'socket_path', 'method', 'ok', 'errno',
+              'lookup_item', 'dir_items', 'eof', 'cookie', 'verifier', 'max_entries', 'parent_id',
+              'node_id', 'handle_id', 'open_modes', 'keeping_modes', 'offset', 'length', 'payload',
+              'handshake', 'ping', 'get_root_attributes', 'statfs', 'lookup', 'open_directory',
+              'enumerate_directory', 'close_directory', 'open', 'read', 'close', 'list_xattrs',
+              'get_xattr', 'create', 'create_directory', 'create_symlink', 'remove',
+              'remove_directory', 'rename', 'set_attributes', 'set_xattr', 'remove_xattr',
+              'truncate', 'write', 'readonly', 'namedattr'
+          }
+          for path in sys.argv[1:]:
+              data = open(path, 'rb').read()
+              printable = set(x.decode('ascii', 'replace') for x in re.findall(rb'[A-Za-z_][A-Za-z0-9_]{1,63}', data))
+              print(f'[{path}]')
+              for token in sorted(wanted & printable):
+                  print(token)
+          PY
+            echo
             echo '## go-nfsv4 focused strings'
             strings -a "${GO_BIN}" \
-              | grep -Eai 'handshake|auth_token|session_id|request_id|socket_path|open_directory|enumerate_directory|close_directory|lookup|statfs|get_root_attributes|open_file|read_file|close_file|node_id|file_handle|directory_handle|offset|length|readonly|namedattr|xattr|errno|payload' \
+              | grep -Eai 'handshake|auth_token|session_id|request_id|socket_path|open_directory|enumerate_directory|close_directory|lookup|statfs|get_root_attributes|open_file|read_file|close_file|node_id|file_handle|handle_id|directory_handle|dir_items|cookie|verifier|eof|max_entries|offset|length|readonly|namedattr|xattr|errno|payload' \
               | sort -u \
-              | head -n 1200 || true
+              | head -n 1400 || true
             echo
             echo '## FskitSrvModule focused strings'
             strings -a "${EXT_BIN}" \
-              | grep -Eai 'handshake|auth_token|session_id|request_id|socket_path|open_directory|enumerate_directory|close_directory|lookup|statfs|get_root_attributes|open_file|read_file|close_file|node_id|file_handle|directory_handle|offset|length|readonly|namedattr|xattr|errno|payload|readFileWithNodeID|fetchAttributesForNodeID|enumerateDirectory' \
+              | grep -Eai 'handshake|auth_token|session_id|request_id|socket_path|open_directory|enumerate_directory|close_directory|lookup|statfs|get_root_attributes|open_file|read_file|close_file|node_id|file_handle|handle_id|directory_handle|dir_items|cookie|verifier|eof|max_entries|offset|length|readonly|namedattr|xattr|errno|payload|readFileWithNodeID|fetchAttributesForNodeID|enumerateDirectory' \
               | sort -u \
-              | head -n 1200 || true
+              | head -n 1400 || true
             echo
             echo '## Mach-O symbols containing fskit/rpc'
             nm -nm "${EXT_BIN}" 2>/dev/null \
               | grep -Eai 'fskit|rpc|handshake|lookup|enumerate|readFile|fetchAttributes' \
-              | head -n 800 || true
+              | head -n 1000 || true
             echo
-            echo '## Go symbols containing fskit/rpc'
-            if command -v go >/dev/null 2>&1; then
-              go tool nm "${GO_BIN}" 2>/dev/null \
-                | grep -Eai 'fskit|rpc|handshake|lookup|enumerate|readFile|fetchAttributes' \
-                | head -n 800 || true
-              echo
-              echo '## Go objdump focused on FSKit RPC frame helpers'
-              go tool objdump -s '.*[Ff]skit.*RPC.*' "${GO_BIN}" 2>/dev/null \
-                | head -n 2400 || true
-            else
-              echo 'go toolchain not present on runner'
-            fi
+            echo '## go-nfsv4 Mach-O symbols containing fskit/rpc'
+            nm -nm "${GO_BIN}" 2>/dev/null \
+              | grep -Eai 'fskit|rpc|handshake|lookup|enumerate|readFile|fetchAttributes' \
+              | head -n 1000 || true
           } > "${TMP}"
 
           cp "${TMP}" "${DIAG_PATH}"
           echo "DIAGNOSTIC_LINES=$(wc -l < "${DIAG_PATH}" | tr -d ' ')"
           echo "DIAGNOSTIC_BYTES=$(wc -c < "${DIAG_PATH}" | tr -d ' ')"
-          sed -n '1,260p' "${DIAG_PATH}"
+          sed -n '1,340p' "${DIAG_PATH}"
 
       - name: Commit deterministic diagnostic back to experiment branch
         if: github.ref_name == 'test/fuset-minimal-fskit-bridge'
         run: |
           set -euo pipefail
-          # generated_at_utc would make the file change every run; normalize it
-          # before committing so reruns are idempotent.
           perl -0pi -e 's/generated_at_utc=.*/generated_at_utc=<normalized>/g' "${DIAG_PATH}"
           git add "${DIAG_PATH}"
           if git diff --cached --quiet -- "${DIAG_PATH}"; then
