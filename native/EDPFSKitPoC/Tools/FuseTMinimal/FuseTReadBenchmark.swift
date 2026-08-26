@@ -87,77 +87,72 @@ private func readFull(fd: Int32, buffer: UnsafeMutableRawPointer, length: Int, o
     }
 }
 
-@main
-private enum FuseTReadBenchmarkMain {
-    static func main() {
-        do {
-            try run()
-        } catch {
-            fputs("FuseTReadBenchmark: \(error)\n", stderr)
-            exit(1)
-        }
+private func runBenchmark() throws {
+    let args = try parseArguments()
+    let fd = Darwin.open(args.path, O_RDONLY | O_CLOEXEC)
+    guard fd >= 0 else { throw BenchError.posix("open", errno) }
+    defer { Darwin.close(fd) }
+
+    var status = stat()
+    guard fstat(fd, &status) == 0 else { throw BenchError.posix("fstat", errno) }
+    guard status.st_size >= 0 else { throw BenchError.invalid("negative file size") }
+    let fileSize = UInt64(status.st_size)
+    guard args.spanBytes <= fileSize else {
+        throw BenchError.invalid("benchmark span exceeds file size")
     }
 
-    private static func run() throws {
-        let args = try parseArguments()
-        let fd = Darwin.open(args.path, O_RDONLY | O_CLOEXEC)
-        guard fd >= 0 else { throw BenchError.posix("open", errno) }
-        defer { Darwin.close(fd) }
+    var buffer = [UInt8](repeating: 0, count: args.blockSize)
+    var checksum: UInt64 = 0
+    var state: UInt64 = 0x4d595df4d0f33173
+    let alignment: UInt64 = 4096
+    let maxStart = args.spanBytes - UInt64(args.blockSize)
+    let randomSlots = maxStart / alignment + 1
+    let sequentialSlots = args.spanBytes / UInt64(args.blockSize)
+    guard args.pattern != .sequential || sequentialSlots > 0 else {
+        throw BenchError.invalid("sequential span has no complete block")
+    }
 
-        var status = stat()
-        guard fstat(fd, &status) == 0 else { throw BenchError.posix("fstat", errno) }
-        guard status.st_size >= 0 else { throw BenchError.invalid("negative file size") }
-        let fileSize = UInt64(status.st_size)
-        guard args.spanBytes <= fileSize else {
-            throw BenchError.invalid("benchmark span exceeds file size")
-        }
-
-        var buffer = [UInt8](repeating: 0, count: args.blockSize)
-        var checksum: UInt64 = 0
-        var state: UInt64 = 0x4d595df4d0f33173
-        let alignment: UInt64 = 4096
-        let maxStart = args.spanBytes - UInt64(args.blockSize)
-        let randomSlots = maxStart / alignment + 1
-        let sequentialSlots = args.spanBytes / UInt64(args.blockSize)
-        guard args.pattern != .sequential || sequentialSlots > 0 else {
-            throw BenchError.invalid("sequential span has no complete block")
-        }
-
-        let start = DispatchTime.now().uptimeNanoseconds
-        try buffer.withUnsafeMutableBytes { rawBuffer in
-            guard let base = rawBuffer.baseAddress else { return }
-            for operation in 0..<args.operations {
-                let offset: UInt64
-                switch args.pattern {
-                case .random:
-                    state = state &* 6364136223846793005 &+ 1442695040888963407
-                    offset = (state % randomSlots) * alignment
-                case .sequential:
-                    offset = UInt64(operation % Int(sequentialSlots)) * UInt64(args.blockSize)
-                }
-                try readFull(fd: fd, buffer: base, length: args.blockSize, offset: offset)
-                checksum &+= UInt64(base.load(as: UInt8.self))
+    let start = DispatchTime.now().uptimeNanoseconds
+    try buffer.withUnsafeMutableBytes { rawBuffer in
+        guard let base = rawBuffer.baseAddress else { return }
+        for operation in 0..<args.operations {
+            let offset: UInt64
+            switch args.pattern {
+            case .random:
+                state = state &* 6364136223846793005 &+ 1442695040888963407
+                offset = (state % randomSlots) * alignment
+            case .sequential:
+                offset = UInt64(operation % Int(sequentialSlots)) * UInt64(args.blockSize)
             }
+            try readFull(fd: fd, buffer: base, length: args.blockSize, offset: offset)
+            checksum &+= UInt64(base.load(as: UInt8.self))
         }
-        let end = DispatchTime.now().uptimeNanoseconds
-        let elapsed = Double(end - start) / 1_000_000_000.0
-        let totalBytes = UInt64(args.blockSize) * UInt64(args.operations)
-        let mib = Double(totalBytes) / (1024.0 * 1024.0)
-        let throughput = mib / elapsed
-        let iops = Double(args.operations) / elapsed
-        print(
-            String(
-                format: "BENCH pattern=%@ block_bytes=%d operations=%d span_bytes=%llu total_bytes=%llu seconds=%.6f mib_per_s=%.3f iops=%.1f checksum=%llu",
-                args.pattern.rawValue,
-                args.blockSize,
-                args.operations,
-                args.spanBytes,
-                totalBytes,
-                elapsed,
-                throughput,
-                iops,
-                checksum
-            )
-        )
     }
+    let end = DispatchTime.now().uptimeNanoseconds
+    let elapsed = Double(end - start) / 1_000_000_000.0
+    let totalBytes = UInt64(args.blockSize) * UInt64(args.operations)
+    let mib = Double(totalBytes) / (1024.0 * 1024.0)
+    let throughput = mib / elapsed
+    let iops = Double(args.operations) / elapsed
+    print(
+        String(
+            format: "BENCH pattern=%@ block_bytes=%d operations=%d span_bytes=%llu total_bytes=%llu seconds=%.6f mib_per_s=%.3f iops=%.1f checksum=%llu",
+            args.pattern.rawValue,
+            args.blockSize,
+            args.operations,
+            args.spanBytes,
+            totalBytes,
+            elapsed,
+            throughput,
+            iops,
+            checksum
+        )
+    )
+}
+
+do {
+    try runBenchmark()
+} catch {
+    fputs("FuseTReadBenchmark: \(error)\n", stderr)
+    exit(1)
 }
