@@ -186,7 +186,7 @@ cat > "${SCRIPTS}/postinstall" <<'POSTINSTALL'
 set -e
 ROOT="/Library/Application Support/EDP USB Vault"
 APP="/Applications/EDP USB Vault.app"
-/usr/bin/chown -R root:wheel "${ROOT}" "${APP}"
+/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
 /bin/chmod -R go-w "${ROOT}" "${APP}"
 /bin/chmod 0755 "${ROOT}" "${ROOT}/bin" "${ROOT}/lib"
 /bin/chmod 0755 "${ROOT}/bin/"*
