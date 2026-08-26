@@ -1,0 +1,126 @@
+# FUSE-T minimal FSKit + captured EDP metadata unlock macOS 26 CI
+
+generated_at_utc=<normalized>
+runner_os=26.5.2
+runner_build=25F84
+xcode=Xcode 26.6 Build version 17F113 
+device_id=disk&ven_lexar&prod_usb_flash_drive
+device_size=124736503808
+partition_type=2
+partition_start_sector=20480
+partition_size=118477684736
+plain_sha=19aae366e776d66e17310fcfccb74a50388e9271433601ce67b13e17901c3428
+container_meta_before=124736503808:1787751667:100444
+container_meta_after=124736503808:1787751667:100444
+final_mount=/Volumes/EDP_REALMETA_FINAL
+password_logged=false
+derived_file_key_logged=false
+
+## fixture preparation
+PREPARED_DEVICE_ID=disk&ven_lexar&prod_usb_flash_drive
+PREPARED_PARTITION_TYPE=2
+PREPARED_PARTITION_START_SECTOR=20480
+PREPARED_PARTITION_SIZE_BYTES=118477684736
+PREPARED_PLAINTEXT_BYTES=67108864
+PREPARED_DEVICE_SIZE_BYTES=124736503808
+PREPARED_SECRET_OUTPUT=false
+RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY
+ 74M	/Users/runner/work/_temp/edp-realmeta-whole-device.raw
+
+## backing sample hashes before
+lba11=aee737899d2fe7156b050ccbb04d31caf58d29ac63f29ea0ea12223e332dd31c
+lba12=8d85016780640fe31d6d0fa6c8624a397f4da38a58325f0646cf66ec2541f193
+data_head=f09d6759cc199201909bed0261c7654b75e583804daee7c93425d4272b8a1335
+data_tail=0dfd3480d457bf95557d91f7ac90f13f0d44929faffc8b2a620f2d1621775669
+
+## backing sample hashes after
+lba11=aee737899d2fe7156b050ccbb04d31caf58d29ac63f29ea0ea12223e332dd31c
+lba12=8d85016780640fe31d6d0fa6c8624a397f4da38a58325f0646cf66ec2541f193
+data_head=f09d6759cc199201909bed0261c7654b75e583804daee7c93425d4272b8a1335
+data_tail=0dfd3480d457bf95557d91f7ac90f13f0d44929faffc8b2a620f2d1621775669
+
+## hidden transport
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-89c5e301-3cb9-4d62-bb05-a867bc639d41/session.json on /Users/runner/work/_temp/edp-realmeta-hidden-8053fbfc-f18a-40f0-ad88-26f9e8699e6d (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+
+## bridge log
+BACKING_MODE=EDP_UNLOCK_RANDOM_ACCESS
+RAW_ACCESS=O_RDONLY|O_CLOEXEC
+PLAINTEXT_CACHE=none
+DEVICE_ID=disk&ven_lexar&prod_usb_flash_drive
+PARTITION_TYPE=2
+PARTITION_START_SECTOR=20480
+PARTITION_SIZE=118477684736
+ALGORITHM=2
+SESSION_ID=edp-fuset-89c5e301-3cb9-4d62-bb05-a867bc639d41
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-89c5e301-3cb9-4d62-bb05-a867bc639d41/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-89c5e301-3.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-realmeta-hidden-8053fbfc-f18a-40f0-ad88-26f9e8699e6d
+BACKING_SIZE=118477684736
+mount process exited status=0
+
+## bridge open files
+COMMAND    PID   USER   FD    TYPE             DEVICE     SIZE/OFF                NODE NAME
+FuseTEDPU 2235 runner  cwd     DIR               1,18          416             2863633 /Users/runner/work/edp-usb-vault/edp-usb-vault
+FuseTEDPU 2235 runner  txt     REG               1,18       399848             2866627 /Users/runner/work/_temp/FuseTEDPUnlockBridge
+FuseTEDPU 2235 runner  txt     REG               1,18        72984             2848681 /Library/Preferences/Logging/.plist-cache.0BQ2GxlJ
+FuseTEDPU 2235 runner  txt     REG               1,18      2374000 1152921500312573276 /usr/lib/dyld
+FuseTEDPU 2235 runner  txt     REG               1,18     35444880 1152921500312583777 /usr/share/icu/icudt78l.dat
+FuseTEDPU 2235 runner    0r    CHR                3,2          0t0                 334 /dev/null
+FuseTEDPU 2235 runner    1w    REG               1,18          650             2866642 /Users/runner/work/_temp/edp-realmeta-bridge.log
+FuseTEDPU 2235 runner    2w    REG               1,18          650             2866642 /Users/runner/work/_temp/edp-realmeta-bridge.log
+FuseTEDPU 2235 runner    3r    REG               1,18 124736503808             2865039 /Users/runner/work/_temp/edp-realmeta-whole-device.raw
+FuseTEDPU 2235 runner    4u   unix 0xd5b4ce936afb0752          0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-89c5e301-3.sock
+FuseTEDPU 2235 runner    5u   unix 0x7ac630dab9d9879d          0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-89c5e301-3.sock
+FuseTEDPU 2235 runner  131u  systm 0x48ee73652816bb0f          0t0                     [ctl com.apple.netsrc id 7 unit 34]
+FuseTEDPU 2235 runner  138u  systm 0xde3d25b72e6913a8          0t0                     [ctl com.apple.netsrc id 7 unit 36]
+FuseTEDPU 2235 runner  143    PIPE 0x26fbe0491d34d2d8        65536                     ->0x6c67315e16ec3a6d
+FuseTEDPU 2235 runner  146    PIPE 0xbd678a3964d82b52        16384                     ->0xf9b9bb0644d893d4
+
+## final attach
+/dev/disk8          	                               	/Volumes/EDP_REALMETA_FINAL
+
+## final diskutil
+   Device Identifier:         disk8
+   Device Node:               /dev/disk8
+   Whole:                     Yes
+   Part of Whole:             disk8
+   Device / Media Name:       Disk Image
+
+   Volume Name:               EDP_REALMETA_FINAL
+   Mounted:                   Yes
+   Mount Point:               /Volumes/EDP_REALMETA_FINAL
+
+   Content (IOContent):       None
+   File System Personality:   HFS+
+   Type (Bundle):             hfs
+   Name (User Visible):       Mac OS Extended
+   Owners:                    Disabled
+
+   OS Can Be Installed:       No
+   Media Type:                Generic
+   Protocol:                  Disk Image
+   SMART Status:              Not Supported
+   Volume UUID:               2AA915EB-7068-31B0-B811-22536964BB0D
+
+   Disk Size:                 118.5 GB (118477684736 Bytes) (exactly 231401728 512-Byte-Units)
+   Device Block Size:         512 Bytes
+
+   Volume Total Space:        67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
+   Volume Used Space:         10.0 MB (9990144 Bytes) (exactly 19512 512-Byte-Units) (14.9%)
+   Volume Free Space:         57.1 MB (57118720 Bytes) (exactly 111560 512-Byte-Units) (85.1%)
+   Allocation Block Size:     4096 Bytes
+
+   Media OS Use Only:         No
+   Media Read-Only:           Yes
+   Volume Read-Only:          Yes (read-only mount flag set)
+
+   Device Location:           External
+   Removable Media:           Removable
+   Media Removal:             Software-Activated
+
+   Solid State:               Info not available
+   Virtual:                   Yes
+
+
+## Finder
+EDP FolderEDP_SENTINEL.txt
