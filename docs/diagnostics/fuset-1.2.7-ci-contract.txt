@@ -16,6 +16,191 @@ package_sha256=6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654
 76d9fd335f0c2007b7ac02bb424a4ae41dde3380daa1d7d510d9a7c9e5f534bb  /Users/runner/work/_temp/fuse-t-expanded/fuse-t-core.pkg/Payload/Library/Application Support/fuse-t/bin/go-nfsv4-1.2.7
 199ba1246d36db18ebf45c60abd3d68ca4b4ad9d8080d55aa8e856f574772086  /Users/runner/work/_temp/fuse-t-expanded/fuse-t-fskit.pkg/Payload/Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex/Contents/MacOS/FskitSrvModule
 
+## Embedded Go JSON struct tags
+json:"-"
+json:"access_time_nsec"
+json:"access_time_sec"
+json:"alloc_size"
+json:"auth_token"
+json:"auth_token,omitempty"
+json:"available_blocks,omitempty"
+json:"birth_time_nsec"
+json:"birth_time_sec"
+json:"block_size,omitempty"
+json:"blocks,omitempty"
+json:"change_time_nsec"
+json:"change_time_sec"
+json:"compress"
+json:"cookie,omitempty"
+json:"dir_items,omitempty"
+json:"domain"
+json:"errno,omitempty"
+json:"error,omitempty"
+json:"filename"
+json:"files,omitempty"
+json:"free_blocks,omitempty"
+json:"free_files,omitempty"
+json:"gid"
+json:"handle_id"
+json:"handle_id,omitempty"
+json:"hostname"
+json:"io_size,omitempty"
+json:"item_attrs,omitempty"
+json:"keeping_modes,omitempty"
+json:"length,omitempty"
+json:"link_count"
+json:"link_target,omitempty"
+json:"localtime"
+json:"lookup_item,omitempty"
+json:"max_entries,omitempty"
+json:"maxage"
+json:"maxbackups"
+json:"maxsize"
+json:"method"
+json:"mode"
+json:"mode,omitempty"
+json:"modify_time_nsec"
+json:"modify_time_sec"
+json:"name"
+json:"name,omitempty"
+json:"namedattr"
+json:"new_name,omitempty"
+json:"new_parent_id,omitempty"
+json:"next_cookie,omitempty"
+json:"node_id"
+json:"node_id,omitempty"
+json:"offset,omitempty"
+json:"ok"
+json:"open_modes,omitempty"
+json:"parent_id"
+json:"parent_id,omitempty"
+json:"port"
+json:"read_data,omitempty"
+json:"readonly"
+json:"rename_flags,omitempty"
+json:"request_id,omitempty"
+json:"root_attrs,omitempty"
+json:"session_id"
+json:"session_id,omitempty"
+json:"set_access_time_nsec,omitempty"
+json:"set_access_time_sec,omitempty"
+json:"set_birth_time_nsec,omitempty"
+json:"set_birth_time_sec,omitempty"
+json:"set_gid,omitempty"
+json:"set_mode,omitempty"
+json:"set_modify_time_nsec,omitempty"
+json:"set_modify_time_sec,omitempty"
+json:"set_size,omitempty"
+json:"set_uid,omitempty"
+json:"size"
+json:"socket_path"
+json:"sync_flags,omitempty"
+json:"text"
+json:"ttl"
+json:"type"
+json:"uid"
+json:"verifier,omitempty"
+json:"volume_name,omitempty"
+json:"write_data,omitempty"
+json:"write_size,omitempty"
+json:"xattr_flags,omitempty"
+json:"xattr_name,omitempty"
+json:"xattr_names,omitempty"
+
+## Embedded protocol tokens
+[/Users/runner/work/_temp/fuse-t-expanded/fuse-t-core.pkg/Payload/Library/Application Support/fuse-t/bin/go-nfsv4-1.2.7]
+auth_token
+close
+close_directory
+cookie
+create
+create_directory
+create_symlink
+dir_items
+enumerate_directory
+eof
+errno
+get_root_attributes
+get_xattr
+handle_id
+handshake
+keeping_modes
+length
+list_xattrs
+lookup
+lookup_item
+max_entries
+method
+namedattr
+node_id
+offset
+ok
+open
+open_directory
+open_modes
+parent_id
+payload
+read
+readonly
+remove
+remove_directory
+remove_xattr
+rename
+request_id
+session_id
+set_attributes
+set_xattr
+socket_path
+statfs
+truncate
+verifier
+write
+[/Users/runner/work/_temp/fuse-t-expanded/fuse-t-fskit.pkg/Payload/Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex/Contents/MacOS/FskitSrvModule]
+auth_token
+close
+close_directory
+cookie
+create
+create_directory
+create_symlink
+dir_items
+enumerate_directory
+errno
+get_root_attributes
+get_xattr
+handle_id
+handshake
+keeping_modes
+length
+list_xattrs
+lookup
+lookup_item
+max_entries
+method
+namedattr
+node_id
+offset
+ok
+open
+open_directory
+open_modes
+parent_id
+payload
+ping
+read
+readonly
+remove_directory
+remove_xattr
+rename
+request_id
+session_id
+set_attributes
+set_xattr
+socket_path
+statfs
+verifier
+write
+
 ## go-nfsv4 focused strings
 goLookupHost
 handshakeErr
@@ -28,12 +213,14 @@ package_sha256=6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654
  A reboot might be required.Space to store the file that is waiting to be printed is not available on the server.The BitLocker startup key or recovery password could not be read from external media.The Windows I/O reparse tag does not match the one that is in the NTFS reparse point.The function attempted to use a name that is reserved for use by another transaction.The log service has reached the maximum allowable containers allocated to a log file.The specified file is encrypted and the user does not have the ability to decrypt it.The specified image file did not have the correct format. It appears to be NE format.The specified image file did not have the correct format: it appears to be LE format.The transport can only process the specified request on the client side of a session.The transport can only process the specified request on the server side of a session.reflect.Value.Interface: cannot return value obtained from unexported field or methodA boot application hash does not match the hash computed when BitLocker was turned on.An attempt was made to attach to a device that was already attached to another device.An invalid name request was made. The name requested cannot be retrieved at this time.IPsec Dos Protection received an IPsec specific multicast packet which is not allowed.No service is operating at the destination port of the transport on the remote system.The IPsec authentication configuration is not compatible with the authentication type.The packet was received on an IPsec SA that does not match the packet characteristics.The requested operation cannot be performed on a file with a user mapped section open.The specified frequency range is already in the specified monitor frequency range set.The transport rejected the specified network address due to invalid use of a wildcard.The wireless LAN interface is power down and does not support the requested operation.This error occurred because a DDC/CI message had an invalid value in its length field.Your interactive logon privilege has been disabled. Contact your system administrator.reflect: New of type that may not be allocated in heap (possibly undefined cgo C type){EXCEPTION} Illegal Instruction An attempt was made to execute an illegal instruction.An attempt was made to map a file of size zero with the maximum size specified as zero.An attempt was made to query image information on a section that does not map an image.An illegal operation was attempted on a registry key that has been marked for deletion.An operation failed because a DDC/CI message had an invalid value in its command field.Indicates a name that was specified as a remote computer name is syntactically invalid.RtlFindMessage could not locate the requested message ID in the message table resource.The activation context activation stack for the running thread of execution is corrupt.The specified content transformation is not pinned on the specified VidPN present path.{Network Name Not Found} The specified share name cannot be found on the remote server.A component used by the isolation facility has requested that the process be terminated.An attempt to delay-load a .dll or get a function address in a delay-loaded .dll failed.NtClose was called on a handle that was protected from close via NtSetInformationObject.The ID of the specified video present source is being used by another source in the set.The ID of the specified video present target is being used by another target in the set.The NTFS symbolic link could not be resolved even though the initial file name is valid.The attempt to insert the ID in the index failed because the ID is already in the index.The buffer passed in to NtPushTransaction or NtPullTransaction is not in a valid format.The driver trying to start is not the same as the driver for the posted display adapter.The group cannot be converted due to attribute restrictions on the requested group type.The sparse operation could not be completed because a transaction is active on the file.The specified image file did not have the correct format: it did not have an initial MZ.This feature of BitLocker Drive Encryption is not included with this version of Windows.{FT Orphaning} A disk that is part of a fault-tolerant volume can no longer be accessed.An attempt was made to open an anonymous-level token. Anonymous tokens may not be opened.An attempt was made to start the redirector, but the redirector has already been started.Failed to acquire lock on a newly created lock-owner file, yet its lock count is non-zeroIndicates a particular security ID may not be assigned as the primary group of an object.Short name settings may not be changed on this volume due to the global registry setting.The network logon failed. This may be because the validation authority cannot be reached.The operation could not be completed because the transaction manager does not have a log.The pinned mode must remain in the set on the VidPN's co-functional modality enumeration.The protected output cannot enable analog copy protection because it does not support it.The request was rejected because the enlistment in question is not a superior enlistment.The transport address could not be opened because all the available addresses are in use.{Conflicting Address Range} The specified address range conflicts with the address space.{Incorrect System Call Level} An invalid level was passed into the specified system call.{Ordinal Not Found} The ordinal %ld could not be located in the dynamic link library %hs.A machine check error has occurred. Check the system event log for additional information.A process has requested access to a session, but has not been granted those access rights.An open/create operation completed while an opportunistic lock (oplock) break is underway.Attempted to remove a client confirmation that was running one or more blocking operationsMutual Authentication failed. The server password is out of date at the domain controller.The GDI display device passed to this function does not have any active protected outputs.The ID of the specified monitor descriptor is being used by another descriptor in the set.The application attempted to enable DOS graphics mode. DOS graphics mode is not supported.The client you are using is not licensed to use this system. Your logon request is denied.The display adapter is being polled for children too frequently at the same polling level.The log service encountered an invalid container state when attempting a requested action.The reparse attribute cannot be set because it is incompatible with an existing attribute.The requested operation was made in the context of a transaction that is no longer active.The resource loader failed to load an MUI file because the file failed to pass validation.The specified display adapter child device already has an external device connected to it.When accessing a new tape of a multi-volume partition, the current blocksize is incorrect.A notification could not be delivered because a message queue has reached maximum capacity.An attempt was made to access a network file, but the network software was not yet started.IPsec dropped an incoming ESP packet in authenticated firewall mode.
  lockedg= lockedm= m->curg= marked   method:  ms cpu,  not in [ of type  runtime= s.limit= s.state= sigcode= threads= unmarked wbuf1.n= wbuf2.n=%!(EXTRA %6d: %#x %s %q: %s(MISSING)(deleted)(unknown), newval=, oldval=, size = , tail = ,nobrowse-%s, --%s/dev/null01234567_2001::/322002::/16224.0.0.02441406253ffe::/16: status=:%s:$DATAAUTH_NONEAuthorityBADCOOKIEBassa_VahBhaiksukiBigEndianClassINETCuneiformDiacriticGC (idle)Hex_DigitInheritedInstMatchInstRune1InterfaceKhudawadiLocationsMalayalamMongolianNabataeanNegotiateNot ReadyNotify %dOP_ACCESSOP_COMMITOP_CREATEOP_LOOKUPOP_REMOVEOP_RENAMEOP_SAVEFHOP_VERIFYPalmyreneParseBoolParseUintQueryInfoRSASHA256RSASHA512RemoveAllSamaritanSeptemberStatFS %dSundaneseTypeCNAMETypeHINFOTypeMINFOUNSTABLE4WRITEW_LTWednesday[:^word:][:alnum:][:alpha:][:ascii:][:blank:][:cntrl:][:digit:][:graph:][:lower:][:print:][:punct:][:space:][:upper:]
  lockedg= lockedm= m->curg= marked   ms cpu,  not in [ of type  runtime= s.limit= s.state= sigcode= threads= unmarked wbuf1.n= wbuf2.n=%6d: %#x %s %q: %s(deleted)(unknown), newval=, oldval=, size = , tail = ,nobrowse-%s, --%s/dev/null01234567_2001::/322002::/16224.0.0.02441406253ffe::/16: status=:%s:$DATAAUTH_NONEAuthorityBADCOOKIEBassa_VahBhaiksukiBigEndianClassINETCuneiformDiacriticGC (idle)Hex_DigitInheritedInstMatchInstRune1InterfaceKhudawadiLocationsMalayalamMongolianNabataeanNegotiateNot ReadyNotify %dOP_ACCESSOP_COMMITOP_CREATEOP_LOOKUPOP_REMOVEOP_RENAMEOP_SAVEFHOP_VERIFYPalmyreneParseBoolParseUintQueryInfoRSASHA256RSASHA512RemoveAllSamaritanSeptemberStatFS %dSundaneseTypeCNAMETypeHINFOTypeMINFOUNSTABLE4WRITEW_LTWednesday[:^word:][:alnum:][:alpha:][:ascii:][:blank:][:cntrl:][:digit:][:graph:][:lower:][:print:][:punct:][:space:][:upper:]
+ m= n=%0X%25%: %d %d/%hs'"'): ,ro---....gz.js///01_125200204206304400404443500625: `:0x::1?*[???ACKANYAPLAVCAprAugCAACDSDLVDSADecEIDEOFFebFriGETGIDHIPHanJanJulJunKEYL32L64LOCLaoMD4MD5MarMayMonMroNIDNXTNaNNkoNovOIDOPTOctPC=PGPPTRPWDRSASETSIGSOASPFSRVSatSepSunTTLTXTThuTueUIDURIUTCVaiViaWedX25YES"""\# 
  MB,  and  cnt= got= max= ms,  ptr  tab= top=$HOME%d %d%d/%s%q:%q%s*%d%s-%d%s.%s%s:%d&#34;&#39;&amp;(nil), fp:.avif.html.jpeg.json.lock.sock.test.wasm.webp1562578125::/96:path<nil>AFSDBAdlamAprilBamumBatakBuhidCLASSCNAMECSYNCClassDHCIDDNAMEDograECDSAED448EUI48EUI64ErrorFlushGreekHINFOHTTPSISPKIIoctlKhmerLatinLimbuLocalM=%d MAILAMAILBMINFOMarchNAPTRNINFONSEC3NushuOghamOriyaOsageOtherQUERYREPLYRRSIGRangeRealmRunicSHA-1SSHFPSTermTakriTamilTypeAUINFOWrite[=%s]\IPC$\u202] = (allowarrayblockboolsbytescfreechdirchmodclosecountcpuidcrashcrc32debugdeferdelaydns: errnoerrorfalsefatalfaultfcntlfilesfloatflushfusetgFreegcinggetwdgscanhchanhostshttpsimap2imap3imapsinit int16int32int64levellocallockslstatmatchmheapmkdirmonthmutexpanicparsepmullpop3srangerouterune scav schedskip:sleepslicesmbfsspacesudogsvqxXsweeptest.text/traceudp: uint8uintsutf-8valuewrite B ->  Value addr= alloc base  code= ctxt: curg= free  goid  jobs= list= m->p= max=  min=  next= p->m= prev= span=#
  MB,  and  cnt= got= max= ms,  ptr  tab= top=$HOME$USER%d %d%d/%s%q:%q%s*%d%s-%d%s.%s%s:%d&#34;&#39;&amp;, fp:.avif.html.jpeg.json.lock.sock.test.wasm.webp1562578125::/96:path<nil>AFSDBAdlamAprilBamumBatakBuhidCLASSCNAMECSYNCClassDHCIDDNAMEDograECDSAED448EUI48EUI64ErrorFlushGreekHINFOHTTPSISPKIIoctlKhmerLatinLimbuLocalM=%d MAILAMAILBMINFOMarchNAPTRNINFONSEC3NushuOghamOriyaOsageOtherQUERYREPLYRRSIGRangeRealmRunicSHA-1SSHFPSTermTakriTamilTypeAUINFOWrite[=%s]\IPC$\u202] = (allowarrayblockboolsbytescfreechdirchmodclosecountcrashdebugdeferdelaydns: errnoerrorfalsefaultfcntlfilesfloatflushfusetgFreegcinggetwdgscanhchanhostshttpsimap2imap3imapsinit int16int32int64levellocallockslstatmatchmheapmkdirmonthmutexpanicparsepop3srangerouterune scav schedskip:sleepslicesmbfsspacesse41sse42ssse3sudogsvqxXsweeptest.text/traceudp: uint8uintsutf-8valuewrite B ->  Value addr= alloc base  code= ctxt: curg= free  goid  jobs= list= m->p= max=  min=  next= p->m= prev= span=#
  This drop is benign.Indicates a security descriptor is not in the necessary format (absolute or self-relative).No more authority agent values are available for the particular identifier authority value.Returned by enumeration APIs to indicate more information is available to successive calls.The activation context being deactivated is not active for the current thread of execution.The driver could not be loaded because a previous version of the driver is still in memory.The log policy could not be installed because a policy of the same type is already present.{Corrupt File} The file or directory %hs is corrupt and unreadable. Run the Chkdsk utility.{Data Not Accepted} The TDI client could not handle the data received during an indication.{Object Exists} An attempt was made to create an object but the object name already exists.A file system or file system filter driver has successfully completed an FsFilter operation.A transaction scope could not be entered because the scope handler has not been initialized.An attempt was made to remove a token ring group address that is in use by other components.Group policy does not permit turning off BitLocker Drive Encryption on roaming data volumes.The ALPC message being canceled has already been retrieved from the queue on the other side.The Kerberos protocol encountered an error while attempting to use the smart card subsystem.The allocation cannot be used from its current segment location for the specified operation.The attempt to purge this file from memory failed to purge some or all the data from memory.The log service encountered an attempt to erroneously allocate or dispose reservation space.The resource manager attempted to prepare a transaction that it has not successfully joined.The thread pool 0x%p was released while a thread was posting a callback to 0x%p(0x%p) to it.The transactional metadata attribute on the file or directory %hs is corrupt and unreadable.This indicates that the caller made the connection request in the wrong routing compartment.{Hard Disk Error} While accessing the hard disk, a disk operation failed even after retries.{Unable to Load Device Driver} %hs device driver could not be loaded. Error Status was 0x%x.An attempt was made to acquire a mutant such that its maximum count would have been exceeded.An attempt was made to exceed the limit on the number of domains per server for this release.An operation is being attempted that requires the display adapter to be in a quiescent state.Either the target process, or the target thread's containing process, is a protected process.Indicates that the user supplied an invalid descriptor when trying to set up LDT descriptors.The compression operation could not be completed because a transaction is active on the file.The crypto system or checksum function is invalid because a required function is unavailable.The log service encountered a metadata file that could not be created by the log file system.The remote server sent mismatching version number or Fid for a file opened with transactions.Data cannot be moved because the source device cannot communicate with the destination device.Memory mapping (creating a mapped section) a remote file under a transaction is not supported.The character encoding in the XML declaration did not match the encoding used in the document.The receive operation was successful. Check the ALPC completion list for the received message.The workstation does not have a trust secret for the primary domain in the local LSA database.This indicates that there was an AuthIP failure when attempting to connect to the remote host.You have attempted to load a legacy device driver while its device instance had been disabled.A new member could not be added to a local group because the member has the wrong account type.After a callback to 0x%p(0x%p), a completion call to FreeLibrary(%p) failed with status 0x%08x.After a callback to 0x%p(0x%p), a completion call to Set event(0x%p) failed with status 0x%08x.An array passed to a function cannot hold all of the data that the function wants to put in it.Indicates that an attempt was made to change the size of the LDT for a process that has no LDT.Only one unassigned mode set can exist at any one time for a particular VidPN source or target.The end-of-file marker has been reached. There is no valid data in the file beyond this marker.The remote server sent an invalid response for a file being opened with Client Side Encryption.The volume for a file has been externally altered such that the opened file is no longer valid.{Application Error} The exception %s (0x%08lx) occurred in the application at location 0x%08lx.{Bad File} The attributes of the specified mapping file for a section of memory cannot be read.{Cancel Timeout} The driver %hs failed to complete a canceled I/O request in the allotted time.After a callback to 0x%p(0x%p), a completion call to ReleaseMutex(%p) failed with status 0x%08x.An attempt was made to release a semaphore such that its maximum count would have been exceeded.An attempt was made to turn on a lead link display adapter when the chain links were turned off.The PKU2U protocol encountered an error while attempting to utilize the associated certificates.The metadata of the resource manager has been corrupted. The resource manager will not function.The smart card provider could not perform the action because the context was acquired as silent.The specified ResourceManager made no changes or updates to the resource under this transaction.The specified VidPN topology is valid but is not supported by this model of the display adapter.The user account is restricted so that it may not be used to log on from the source workstation.fuse session negotiated profile=%s client=%s proto=%d.%d max_write=%d flags=0x%08x flags2=0x%08x{Illegal EA} The specified extended attribute (EA) name contains at least one illegal character.{Non-Inheritable ACL} An access control list (ACL) contains no components that can be inherited.A component's file does not match the verification information present in the component manifest.A member could not be added to or removed from the local group because the member does not exist.Client Side Encryption is not supported by the remote server even though it claims to support it.The BitLocker encryption key could not be obtained from the startup key or the recovery password.The HDCP SRM passed to this function did not comply with section 5 of the HDCP 1.1 specification.The device has indicated that its door is open. Further operations require it closed and secured.The directory service was unable to initialize the subsystem that allocates relative identifiers.The savepoint operation failed because files are open on the transaction, which is not permitted.Unable to accomplish the requested task because the local machine does not have any IP addresses.{EXCEPTION} Alignment Fault A data type misalignment was detected in a load or store instruction.An attempt was made to start a lead link display adapter when the chain links had not yet started.The PVP does not support mirroring display devices because they do not have any protected outputs.The Unicode character is not defined in the Unicode character set that is installed on the system.The smart card certificate used for authentication has expired. Contact your system administrator.The specified image file did not have the correct format: it appears to be a 16-bit Windows image.The specified image file did not have the correct format; it appears to be a 32-bit Windows image.The specified image file did not have the correct format; it appears to be a 64-bit Windows image.A volume has been accessed for which a file system driver is required that has not yet been loaded.An attempt was made to create a symbolic link in a registry key that already has subkeys or values.Indicates the specified environment variable name was not found in the specified environment block.The attempted logon is invalid. This is either due to a bad username or authentication information.The log service encountered an attempt to read from a marshaling area with an invalid read context.The name or SID of the specified domain is inconsistent with the trust information for that domain.The protected output cannot enable the CGMS-A protection technology because it does not support it.The transport element of the medium changer contains media, which is causing the operation to fail.This function failed because the GDI device passed to it did not have a monitor associated with it.A security context was deleted before the context was completed. This is considered a logon failure.An attempt to allocate a hardware resource failed because the resource is used by another component.It is too late to perform the requested operation, because the transaction has already been aborted.Records were appended to the log or reservation changes were made, but the log could not be flushed.The attempted write operation encountered a write already in progress for some portion of the range.The request to thaw frozen transactions was ignored because transactions were not previously frozen.The server process is running under a SID that is different from the SID that is required by client.The specified content geometry transformation is not supported on the respective VidPN present path.cipher: the nonce can't have zero length, or the security of the key will be immediately compromised{Driver Entry Point Not Found} The %hs device driver could not locate the ordinal %ld in driver %hs.{Hard Disk Error} While accessing the hard disk, a recalibrate operation failed, even after retries.The password provided is too short to meet the policy of your user account. Choose a longer password.{Invalid Mapping} An attempt was made to create a view for a section that is bigger than the section.The page fault mappings changed in the middle of processing a fault so the operation must be retried.The I/O device is configured incorrectly or the configuration parameters to the driver are incorrect.The function failed because the specified GDI display device was not attached to the Windows desktop.The number of reserved log records or the adjustment of the number of reserved log records is invalid.The security stream for the given volume is in an inconsistent state. Please run CHKDSK on the volume.This function failed because the GDI device passed to it did not have any monitors associated with it.The smart card certificate used for authentication was not trusted. Contact your system administrator.In a mixed domain, cannot nest local groups with other local groups, if the group is security enabled.{EXCEPTION} Register NaT consumption faults. A NaT value is consumed on a non-speculative instruction.The specified VidPN source cannot be used because there is no available VidPN target to connect it to.{Handles Closed} Handles to objects have been automatically closed because of the requested operation.The specified attributes are invalid or are incompatible with the attributes for the group as a whole.It is too late to perform the requested operation, because the transaction has already been committed.There is bad cabling, non-termination, or the controller is not able to obtain access to the hard disk.</table>
 ---- no stack trace for//Guest@127.0.0.1:%d/%s/etc/apache2/mime.types0123456789aAbBcCdDeEfF_2006-01-02T15-04-05.00023283064365386962890625<invalid reflect.Value>Close: GetAttr() failedGetxattr failed with IOLogical_Order_ExceptionMB during sweep; swept Noncharacter_Code_PointOpen: doesn't exist: %sOpen: path %s not foundP224 point not on curveP384 point not on curveP521 point not on curveParent process has diedSIGIO: i/o now possibleSIGSYS: bad system callSetInfo: invalid fileidSetxattr failed with IOSignature Not Yet ValidThe cluster node is up.The debugger continued.The string is too long.Transport driver error.", missing CPU support
 , i = , not , val .local.onion0.%02d390625<-chanACPKIXAcceptAnswerArabicAugustBADALGBADKEYBADSIGBrahmiCANCELCancelCarianChakmaCommonCookieCopticDNSKEYExpectFormatFridayGOAWAYGOROOTGOST94GothicHangulHatranHebrewHyphenIQUERYKaithiKhojkiLengthLepchaLogoffLycianLydianMondayNF4BLKNF4CHRNF4DIRNF4LNKNF4REGNIMLOCNOTIFYNOTIMPPADDEDPragmaRSAMD5RejangSCHED SHA256SHA384SHA512SMIMEASTATUSSTREETServerStringSundaySyriacTALINKTMPDIRTai_LeTangutTeluguThaanaTypeMXTypeNSUNSPECUPDATEWanchoYezidiZONEMD[]byte\\\044\\\092\ufffd
 , i = , not , val .local.onion0.%02d390625<-chanACPKIXAcceptAnswerArabicAugustBADALGBADKEYBADSIGBrahmiCANCELCancelCarianChakmaCommonCookieCopticDNSKEYExpectFormatFridayGOAWAYGOROOTGOST94GothicHangulHatranHebrewHyphenIQUERYKaithiKhojkiLengthLepchaLogoffLycianLydianMondayNF4BLKNF4CHRNF4DIRNF4LNKNF4REGNIMLOCNOTIFYNOTIMPPADDEDPragmaRSAMD5RejangSCHED SHA256SHA384SHA512SMIMEASTATUSSTREETServerStringSundaySyriacTALINKTMPDIRTai_LeTangutTeluguThaanaTypeMXTypeNSUNSPECUPDATEWanchoYezidiZONEMD[]byte\ufffd
+; COOKIE: 
 ; DNSSEC ALGORITHM UNDERSTOOD: broken negotiate response formatbufio: invalid use of UnreadBytebufio: invalid use of UnreadRunebufio: tried to fill full buffercan't send after socket shutdowncannot represent time as UTCTimecrypto/aes: input not full blockend outside usable address spacefound mapping with reserved ID=0frame_windowupdate_zero_inc_connfskit rpc close_directory failedfuse getxattr returned error: %dfuse init lib returned error: %dgo package net: hostLookupOrder(in literal false (expecting 'a')in literal false (expecting 'e')in literal false (expecting 'l')in literal false (expecting 's')integer is not minimally encodedinternal buffer exceeds %d bytesinvalid limiter event type foundinvalid lock request for ipcTreeinvalid range: failed to overlapinvalid read request for ipcTreelisten on fskit rpc endpoint: %wmime: expected token after slashnon-Go code disabled sigaltstacknumerical argument out of domainopRemove: Removexattr failed: %vpanic while printing panic valuereadPythonMultilines: parsing %qreflect.nameFrom: tag too long: reflect: NumIn of non-func type reflect: NumOut of non-func typeremovespecial on invalid pointerresource temporarily unavailableruntime: fixalloc size too largeruntime: mcall function returnedruntime: newstack called from g=runtime: root level max pages = runtime: stack split at bad timeruntime: sudog with non-nil elemruntime: sudog with non-nil nextruntime: sudog with non-nil prevscanstack: goroutine not stoppedscavenger state is already wiredsessionServerSetup challenge: %vslice bounds out of range [%x::]slice bounds out of range [:%x:]slice bounds out of range [::%x]software caused connection abortstring exceeded 255 bytes in txtsweep increased allocation countsymlink: filehandle not found %dsync: Unlock of unlocked RWMutexsync: negative WaitGroup countertemporary fskit rpc accept errortransform: short internal bufferunexpected v2 init reply size %dunexpected v3 init reply size %dunsupported opnum in rpc requestuse of closed network connection of method on nil interface value to pointer to array with length (base::)?SubmitMutexProfileData.*142108547152020037174224853515625710542735760100185871124267578125A system shutdown is in progress.A tape access reached a set mark.An incorrect mutex was specified.An invalid version was specified.Debugger cannot provide a handle.Error: Logrus exit handler error:GODEBUG: no value specified for "Getxattr: filehandle not found %dNo interfaces have been exported.No principal name was registered.SIGCHLD: child status has changedSIGTTIN: background read from ttySIGXFSZ: file size limit exceededSetxattr: filehandle not found %dThe Eventlog log file is corrupt.The IO was completed by a filter.The IPsec integrity check failed.The MODEM.INF file was not found.The allocation is currently busy.The assembly is not a deployment.The cluster network is not valid.The cluster node is already down.The driver does not support COPP.The mutex is not currently owned.The name syntax is not supported.The page file quota was exceeded.Truncate: filehandle not found %d__malloc_alloc_template::allocateapplication/x-www-form-urlencodedbase outside usable address spacebroken cipher context data formatbytes.Buffer.Grow: negative countcan't read log file directory: %sconcurrent map read and map writecrypto/aes: output not full blockexec: error sending signal to Cmdfailed to remove fskit rpc socketfindInterfaceByAddress failed: %vfindrunnable: negative nmspinningflag needs an argument: %q in -%sfound function with reserved ID=0found location with reserved id=0frame_pushpromise_promiseid_shortfreeing stack not in a stack spanfskit rpc create_directory failedfskit rpc remove_directory failedfuse listxattr returned error: %dgetOpenedHandle: shareAccess != 0go package net: confVal.netCgo = heapBitsSetType: unexpected shifthttp2: recursive push not allowedhttp: CloseIdleConnections calledhttp: invalid Read on closed Bodyhttp: multiple registrations for inappropriate file type or formatindefinite length found (not DER)invalid flush request for ipcTreeinvalid value %q for flag -%s: %vkey-value delimiter not found: %sleafCounts[maxBits][maxBits] != nmin must be a non-zero power of 2misrounded allocation in sysAllocnet/http: skip alternate protocoloperation not supported by deviceoperation not supported on socketoverflow packing uint64 as uint48pad size larger than data payloadpseudo header field after regularqueryInfoFile: open not found: %dreadlink: filehandle not found %dreflect.nameFrom: name too long: reflect: Field index out of rangereflect: NumOut of non-func type reflect: array index out of rangereflect: chanDir of non-chan typereflect: slice index out of rangeregexp: unhandled case in compileruntime: castogscanstatus oldval=runtime: failed mSpanList.insert runtime: goroutine stack exceeds runtime: memory allocated by OS [runtime: name offset out of rangeruntime: text offset out of rangeruntime: type offset out of rangeslice bounds out of range [%x:%y]stackalloc not on scheduler stackstoplockedm: inconsistent lockingstruct contains unexported fieldssync: RUnlock of unlocked RWMutextimer period must be non-negativetoo many Answers to pack (>65535)too many levels of remote in pathtoo many levels of symbolic linkstoo many references: can't splicetree %d doesn't exist: command %dunknown shorthand flag: %q in -%sunsupported interface in bind reqwaiting for unsupported file type3552713678800500929355621337890625: day-of-year does not match monthA user mode unwind is in progress.An attempt to unload media failed.Could not enable CPU profiling: %sDebugger received a RIP exception.Debugger received a control break.Flag --%s has been deprecated, %s
 ; DNSSEC ALGORITHM UNDERSTOOD: broken negotiate response formatbufio: invalid use of UnreadBytebufio: invalid use of UnreadRunebufio: tried to fill full buffercan't send after socket shutdowncannot represent time as UTCTimecrypto/aes: input not full blockend outside usable address spacefound mapping with reserved ID=0frame_windowupdate_zero_inc_connfskit rpc close_directory failedfuse getxattr returned error: %dfuse init lib returned error: %dgo package net: hostLookupOrder(in literal false (expecting 'a')in literal false (expecting 'e')in literal false (expecting 'l')in literal false (expecting 's')integer is not minimally encodedinvalid limiter event type foundinvalid lock request for ipcTreeinvalid range: failed to overlapinvalid read request for ipcTreelisten on fskit rpc endpoint: %wmime: expected token after slashnon-Go code disabled sigaltstacknumerical argument out of domainopRemove: Removexattr failed: %vpanic while printing panic valuereadPythonMultilines: parsing %qreflect.nameFrom: tag too long: reflect: NumIn of non-func type reflect: NumOut of non-func typeremovespecial on invalid pointerresource temporarily unavailableruntime: fixalloc size too largeruntime: mcall function returnedruntime: newstack called from g=runtime: root level max pages = runtime: stack split at bad timeruntime: sudog with non-nil elemruntime: sudog with non-nil nextruntime: sudog with non-nil prevscanstack: goroutine not stoppedscavenger state is already wiredsessionServerSetup challenge: %vslice bounds out of range [%x::]slice bounds out of range [:%x:]slice bounds out of range [::%x]software caused connection abortstring exceeded 255 bytes in txtsweep increased allocation countsymlink: filehandle not found %dsync: Unlock of unlocked RWMutexsync: negative WaitGroup countertemporary fskit rpc accept errortransform: short internal bufferunexpected v2 init reply size %dunexpected v3 init reply size %dunsupported opnum in rpc requestuse of closed network connection of method on nil interface value to pointer to array with length (base::)?SubmitMutexProfileData.*142108547152020037174224853515625710542735760100185871124267578125A system shutdown is in progress.A tape access reached a set mark.An incorrect mutex was specified.An invalid version was specified.Debugger cannot provide a handle.Error: Logrus exit handler error:GODEBUG sys/cpu: can not enable "GODEBUG: no value specified for "Getxattr: filehandle not found %dNo interfaces have been exported.No principal name was registered.SIGCHLD: child status has changedSIGTTIN: background read from ttySIGXFSZ: file size limit exceededSetxattr: filehandle not found %dThe Eventlog log file is corrupt.The IO was completed by a filter.The IPsec integrity check failed.The MODEM.INF file was not found.The allocation is currently busy.The assembly is not a deployment.The cluster network is not valid.The cluster node is already down.The driver does not support COPP.The mutex is not currently owned.The name syntax is not supported.The page file quota was exceeded.Truncate: filehandle not found %d__malloc_alloc_template::allocateapplication/x-www-form-urlencodedbase outside usable address spacebroken cipher context data formatbytes.Buffer.Grow: negative countcan't read log file directory: %sconcurrent map read and map writecrypto/aes: output not full blockexec: error sending signal to Cmdfailed to remove fskit rpc socketfindInterfaceByAddress failed: %vfindrunnable: negative nmspinningflag needs an argument: %q in -%sfound function with reserved ID=0found location with reserved id=0frame_pushpromise_promiseid_shortfreeing stack not in a stack spanfskit rpc create_directory failedfskit rpc remove_directory failedfuse listxattr returned error: %dgetOpenedHandle: shareAccess != 0go package net: confVal.netCgo = heapBitsSetType: unexpected shifthttp2: recursive push not allowedhttp: CloseIdleConnections calledhttp: invalid Read on closed Bodyhttp: multiple registrations for inappropriate file type or formatindefinite length found (not DER)invalid flush request for ipcTreeinvalid value %q for flag -%s: %vkey-value delimiter not found: %sleafCounts[maxBits][maxBits] != nmin must be a non-zero power of 2misrounded allocation in sysAllocnet/http: skip alternate protocoloperation not supported by deviceoperation not supported on socketoverflow packing uint64 as uint48pad size larger than data payloadpseudo header field after regularqueryInfoFile: open not found: %dreadlink: filehandle not found %dreflect.nameFrom: name too long: reflect: Field index out of rangereflect: NumOut of non-func type reflect: array index out of rangereflect: chanDir of non-chan typereflect: slice index out of rangeregexp: unhandled case in compileruntime: castogscanstatus oldval=runtime: failed mSpanList.insert runtime: goroutine stack exceeds runtime: memory allocated by OS [runtime: name offset out of rangeruntime: text offset out of rangeruntime: type offset out of rangeslice bounds out of range [%x:%y]stackalloc not on scheduler stackstoplockedm: inconsistent lockingstruct contains unexported fieldssync: RUnlock of unlocked RWMutextimer period must be non-negativetoo many Answers to pack (>65535)too many levels of remote in pathtoo many levels of symbolic linkstoo many references: can't splicetree %d doesn't exist: command %dunknown shorthand flag: %q in -%sunsupported interface in bind reqwaiting for unsupported file type3552713678800500929355621337890625: day-of-year does not match monthA user mode unwind is in progress.An attempt to unload media failed.Could not enable CPU profiling: %sDebugger received a RIP exception.Debugger received a control break.Flag --%s has been deprecated, %s
 ; LOCAL OPT: accept-charsetallocfreetracealready existsbad allocCountbad record MACbad restart PCbad span stateclose: no opencontent-lengthdata truncatedexplicit,tag:1file too largefileTreeCreatefinalizer waitfuset-session-gcstoptheworldget_attributesinit reply %+vinternal errorinvalid optioninvalid syntaxioctl: code %dis a directorykey size wrongmkdir() failedmultipartfilesneed more datanil elem type!no module dataopDelegpurge()opReadlink: %vpacket too bigpollCache.lockprotocol errorread mem statsruntime: full=runtime: mmap(runtime: want=runtime\.panics.allocCount= semaRoot queuestack overflowstopm spinningstore64 failedsync.Cond.Waittc_deletearraytc_new_nothrowtext file busytime.Location(too many linkstoo many userstrace/BPT trapunexpected EOFunknown methodunknown mode: unreachable:  unsafe.Pointerwork.full != 0write: no openzero parameter  with GC prog
@@ -44,6 +231,7 @@ package_sha256=6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654
 ; PADDING: _FUSE_COMMFDabi mismatchaltmatch -> anynotnl -> bad SVCB keybad flushGenbad g statusbad rdlengthbad recoveryblock_devicecaller errorcan't happencas64 failedchan receivechild exitedclose notifycontent-typecontext.TODOdevice errordumping heapecho requestend tracegc
 ; SUBNET: _FUSE_MONFD_M_allocate_adisk._tcpadditionalsalarm clockalloc_spaceallocationsassistQueueauthoritiesavx512vbmi2avx512vnniwbad addressbad argSizebad m valuebad messagebad timedivbad verb '%broken pipecgocall nilchar_deviceclobberfreecontentionscreated by do_memalignfile existsfinal tokenflags: do; float32nan2float64nan1float64nan2float64nan3fskit_agentgccheckmarkhttp-serverhttps_proxyi/o timeoutinuse_spacelist_xattrslisten_addrmSpanManualmax_entriesmethodargs(minTrigger=nanosecondsnetpollInitnil Contextnil contextopPutfh: %vopPutrootfhparse errorraw-controlreflect.SetreflectOffsretry-afterruntime: P runtime: g runtime: p runtime\..*scheddetailsetnonblockshort writesocket_pathstack tracestarting...tc_memaligntc_newarraytime: file tracealloc(unknown(%d)unreachablevolume name B (
 ; SUBNET: _FUSE_MONFD_M_allocate_adisk._tcpadditionalsalarm clockalloc_spaceallocationsassistQueueauthoritiesbad addressbad argSizebad m valuebad messagebad timedivbad verb '%broken pipecgocall nilchar_deviceclobberfreecontentionscreated by do_memalignfile existsfinal tokenflags: do; float32nan2float64nan1float64nan2float64nan3fskit_agentgccheckmarkhttp-serverhttps_proxyi/o timeoutinuse_spacelist_xattrslisten_addrmSpanManualmax_entriesmethodargs(minTrigger=nanosecondsnetpollInitnil Contextnil contextopPutfh: %vopPutrootfhparse errorraw-controlreflect.SetreflectOffsretry-afterruntime: P runtime: g runtime: p runtime\..*scheddetailsetnonblockshort writesocket_pathstack tracestarting...tc_memaligntc_newarraytime: file tracealloc(unknown(%d)unreachablevolume name B (
+?Eof
 .WithDeadline(/anon_hugepage/etc/protocols/usr/bin/pkill190734863281252006010215040595367431640625: extra text: <not Stringer>Accept-CharsetCLAIM_PREVIOUSCLICOLOR_FORCEContent-LengthDNSKEY MissingDSA-NSEC3-SHA1Dkim-SignatureFskitSrvModuleGC (dedicated)GC assist waitGC worker initINTERNAL_ERRORInstEmptyWidthMAX_FRAME_SIZEMB; allocated NFS4ERR_ACCESSNFS4ERR_BADXDRNFS4ERR_DENIEDNFS4ERR_LOCKEDNFS4ERR_NOTDIRNFS_LIMIT_SIZENFSv4: NULL OpOPEN4_NOCREATEOP_DELEGRETURNOP_SETCLIENTIDOther_ID_StartPROTOCOL_ERRORPattern_SyntaxQueryDirectoryQuotation_MarkRCodeNameErrorREFUSED_STREAMREQUEST_METHODRRSIGs MissingRemovexattr %dResourceHeaderSIGABRT: abortSMBSigningKey
 .WithDeadline(/anon_hugepage/etc/protocols/usr/bin/pkill190734863281252006010215040595367431640625: extra text: <not Stringer>Accept-CharsetCLAIM_PREVIOUSCLICOLOR_FORCEContent-LengthDNSKEY MissingDSA-NSEC3-SHA1Dkim-SignatureFskitSrvModuleGC (dedicated)GC assist waitGC worker initINTERNAL_ERRORInstEmptyWidthMAX_FRAME_SIZEMB; allocated NFS4ERR_ACCESSNFS4ERR_BADXDRNFS4ERR_DENIEDNFS4ERR_LOCKEDNFS4ERR_NOTDIRNFS_LIMIT_SIZENFSv4: NULL OpOPEN4_NOCREATEOP_DELEGRETURNOP_SETCLIENTIDOther_ID_StartPROTOCOL_ERRORPattern_SyntaxQueryDirectoryQuotation_MarkRCodeNameErrorREFUSED_STREAMREQUEST_METHODRRSIGs MissingRemovexattr %dResourceHeaderSIGABRT: abortTreeDisconnectUnmounting: %s\.+*?()|[]{}^$
 (::)?do_malloc_pages/debug/pprof/cmdline/debug/pprof/profile/usr/share/zoneinfo/37252902984619140625Create open: %v, %+vDNSSEC IndeterminateEMULTIHOP (Reserved)Egyptian_HieroglyphsFailed to listen: %dFailed to listen: %vGot accept error: %vIDS_Trinary_OperatorMAX_HEADER_LIST_SIZEMeroitic_HieroglyphsMissing service nameNFS4ERR_CB_PATH_DOWNNFS4ERR_LOCK_NOTSUPPNFS4ERR_NOFILEHANDLENFS4ERR_SHARE_DENIEDOP_RELEASE_LOCKOWNEROpen: %s, flags 0x%xReadDir: pos %d, eofSIGALRM: alarm clockSIGTERM: terminationSTREAM ioctl timeoutSeek: invalid offsetSeek: invalid whenceTerminal_PunctuationThe TPM is disabled.The network is busy.WOW Assertion Error.
@@ -57,12 +245,16 @@ package_sha256=6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654
 [0m[%s]%s %-44s application/octet-streambad defer entry in panicbroken quety info formatbypassed recovery failedcan't scan our own stackcertificate unobtainablecipher: invalid tag sizeconnection reset by peerdouble traceGCSweepStartencrypted flag is not onerror decrypting messageexec: Stdout already setflate: maxBits too largefloating point exceptionframe_headers_prio_shortfskit rpc request failedfskit rpc unknown methodfunction not implementedgcDrainN phase incorrecthash of unhashable type http2: canceling requestidna: disallowed rune %UinitSpan: unaligned baseinvalid argument to Intninvalid transport formatinvalid user name formatjson: unsupported type: malformed profile formatmalformed sample: %s: %vmulticast listener querymultiple hash algorithmsnamed attributes supportopReaddir: %v, cookie %dopSetclientidConfirm: %voverflow unpacking uint8pageAlloc: out of memoryqueuefinalizer during GCrange partially overlapsreadlink: failed with %vreceiveRequest error: %vreflect.Value.SetComplexresource length too longrunqsteal: runq overflowruntime: found obj at *(runtime: markroot index runtime: p.searchAddr = span has no free objectsstack trace unavailable
 [0m%s %-44s __builtin_(vec_)?new__pthread_sighandlerasn1: syntax error: authentication errorbad system page sizebad use of bucket.bpbad use of bucket.mpbroken close requestbroken create formatbroken ioctl requestcan not add field %qcertificate requiredchan send (nil chan)close of nil channelcom.apple.FinderInfoconnection error: %sconnection error: %vdodeltimer0: wrong Pflag: help requestedflate: closed writerfloating point errorforcegc: phase errorframe_settings_mod_6go of nil func valuegopark: bad g statusgzip: invalid headerheader line too longhttp2: stream closedhttp: POST too largeinconsistent lockedminvalid DNS responseinvalid message typeinvalid repeat countinvalid write resultjson: Unmarshal(nil json: Unmarshal(nil)json: error calling kern.maxfilesperprocmalformed ELF binarymalloc during signalmalloc_zone_memalignmismatched extensionno profiles to mergenotetsleep not on g0number has no digitsopClose: transactionopRemove: failed: %voverflow packing hexoverflow packing optoverflow unpacking ap mcache not flushedpacer: assist ratio=pad length too largepreempt off reason: read: invalid fileidreaddir: %d error %vreading request: %v
 *[]net.hostLookupOrder
+*[]runtime.typeOff
 *[8]net.hostLookupOrder
+*[8]runtime.typeOff
+**map.bucket[runtime.typeOff]*runtime._type
 *ber.tagAndLength
 *chan net.ipLookupResult
 *chan net.portLookupResult
 *chan<- net.ipLookupResult
 *chan<- net.portLookupResult
+*dns.EDNS0_COOKIE
 *fusefs.fskitLookupCacheVal
 *fusefs.lookupCacheVal
 *fuseproto.GetxattrIn
@@ -86,6 +278,12 @@ package_sha256=6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654
 *nfsv4.NfsResop4_OP_LOOKUP
 *nfsv4.NfsResop4_OP_LOOKUPP
 *norm.lookupFunc
+*reflect.nameOff
+*reflect.typeOff
+*reflectlite.nameOff
+*reflectlite.typeOff
+*runtime.nameOff
+*runtime.typeOff
 *struct { F uintptr; .autotmp_16 chan<- net.portLookupResult; .autotmp_17 *net._Ctype_struct_addrinfo; .autotmp_18 string; .autotmp_19 string }
 *struct { F uintptr; lookupGroupCtx context.Context; resolverFunc func(context.Context, string, string) ([]net.IPAddr, error); network string; host string }
 *sync.readOnly
@@ -94,18 +292,22 @@ package_sha256=6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654
 /dev/urandom/private/tmp/sbin/umount127.0.0.1:%d127.0.0.1:53152587890625762939453125AUTH_BADCREDAUTH_BADVERFAUTH_TOOWEAKBidi_ControlCIDR addressCONTINUATIONCached ErrorChangeNotifyCloudMachineContent-TypeDNSSEC BogusDuration: %vECDSA-SHA256ECDSA-SHA384ECDSA-SHA512GARBAGE_ARGSGOTRACEBACK=I/O possibleInstAltMatchInvalid DataJoin_ControlListxattr %dLittleEndianLookup %d/%sMSG_ACCEPTEDMax-ForwardsMeetei_MayekMime-VersionMissing portMkdir: %d/%sMounting: %sNF4NAMEDATTRNFS4ERR_FBIGNFS4ERR_NXIONFS4ERR_PERMNFS4ERR_ROFSNFS4ERR_SAMENFS4ERR_XDEVNSEC MissingOPEN4_CREATEOP_CB_RECALLOP_PUTROOTFHOP_RESTOREFHPROC_UNAVAILPROG_UNAVAILPUSH_PROMISEPahawh_HmongRCodeRefusedRCodeSuccessRPC_MISMATCHSERIALNUMBERSMB2AESCMAC
 /Library/Logs/fuse-t/fuse-t.err/Library/Logs/fuse-t/fuse-t.log11368683772161602973937988281255684341886080801486968994140625A Win32 process already exists.An RPC protocol error occurred.An address failed to translate.Debugger handled the exception.Debugger obtained control of C.Debugger terminated the thread.Lookup: filehandle not found %dNTVDM encountered a hard error.PRIORITY frame with stream ID 0RPC message is not of type CALLSIGSEGV: segmentation violationStatFS: filehandle not found %dThe cluster node is already up.The cluster node is not paused.The cluster node was not found.The data supplied is malformed.The endpoint cannot be created.The endpoint format is invalid.The filter weight is not valid.The group member was not found.The network address is invalid.The object name already exists.The time interval is not valid.The type UUID is not supported.Unlink: filehandle not found %dactiveConn :%d, accept more: %vattachment; filename="%s-delta"bad certificate status responsebad write barrier buffer boundsbroken hash context data formatbroken negotiate context formatcall from within the Go runtimecasgstatus: bad incoming valuescheckmark found unmarked objectchmod fskit unix rpc socket: %wcreate fskit rpc socket dir: %wdns: reading random id failed: dns: svcbalpn: alpn-id too longencoding/hex: invalid byte: %#Uentersyscallblock inconsistent error getting log file info: %sfailed to compress log file: %vfatal: bad g in signal handler
 /opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/internal/poll/errno_unix.go
+/opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/net/http/cookie.go
 /opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/net/lookup_unix.go
 /opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/net/lookup.go
 /opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/os/user/cgo_lookup_unix.go
 /opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/os/user/lookup_stubs.go
 /opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/os/user/lookup_unix.go
 /opt/homebrew/Cellar/go@1.19/1.19.10/libexec/src/os/user/lookup.go
+/Users/alexf/golang/pkg/mod/github.com/geoffgarside/ber@v1.1.0/ber.go
+/Users/alexf/golang/pkg/mod/github.com/geoffgarside/ber@v1.1.0/common.go
 /Users/alexf/golang/pkg/mod/golang.org/x/net@v0.15.0/ipv4/payload_cmsg.go
 /Users/alexf/golang/pkg/mod/golang.org/x/net@v0.15.0/ipv4/payload.go
 /Users/alexf/golang/pkg/mod/golang.org/x/net@v0.15.0/ipv6/payload_cmsg.go
 /Users/alexf/golang/pkg/mod/golang.org/x/net@v0.15.0/ipv6/payload.go
 &*map.bucket[net.hostLookupOrder]string
 # Lookups = %d
+#*map[runtime.typeOff]*runtime._type
 %!(BADPREC)) returned , elemsize=, npages = ,actimeo=%d.WithCancel/dev/stderr/dev/stdout/index.html/sbin/mount0123456789_0x[0-9a-f]+127.0.0.1:030517578125: frame.sp=AFP_AfpInfoAUTH_DECODEAUTH_FAILEDBLAKE2b-256BLAKE2b-384BLAKE2b-512BLAKE2s-256ClassHESIODDives_AkuruENABLE_PUSHEND_HEADERSGOMEMLIMIT=GOTRACEBACKGetxattr %dHTTPS_PROXYIdeographicIn-Reply-ToInstCaptureInstRuneAnyMarshalJSONMarshalTextMedefaidrinNandinagariNew_Tai_LueOP_OPENATTROP_PUTPUBFHOP_READLINKOld_PersianOld_SogdianOpenDir: %sPau_Cin_HauReadlink %dReceived %vReturn-PathRmdir %d/%sSHA-512/224SHA-512/256SMB2AESCCM
 %02d %02d %0.3f %s (__)?posix_memalign,  g->atomicstatus=, gp->atomicstatus=--- Memory map: ------ threadz \d+ ---/.fuse-t/fuse-t.ini/debug/pprof/symbol/usr/lib/locale/TZ/149011611938476562520060102150405Z07007450580596923828125APL length too longAPL prefix too longCLAIM_DELEGATE_PREVCanadian_AboriginalContent-DispositionDoSampledAllocationFSKIT_RPC_TRANSPORTGC work not flushedIDS_Binary_OperatorINADEQUATE_SECURITYINITIAL_WINDOW_SIZEKhitan_Small_ScriptNFS4ERR_ATTRNOTSUPPNFS4ERR_BAD_STATEIDNFS4ERR_LEASE_MOVEDNFS4ERR_NAMETOOLONGNFS4ERR_OLD_STATEIDNFS4ERR_RECLAIM_BADNFS4ERR_SERVERFAULTNo Zone Key Bit SetOPEN_DELEGATE_WRITEOpen reply: %v, %+vPattern_White_SpaceProxy-AuthorizationRCodeNotImplementedRPC prog. not availRPC_GSS_SVC_PRIVACYRead failed with %vReadDir: %v, pos %dSET_TO_CLIENT_TIME4SET_TO_SERVER_TIME4SIGTRAP: trace trapSymlink %s -> %d/%sThe tag is invalid.Write: %d offset %d_cgo_setenv missingadjusttimers: bad pafter array elementattribute not foundbad file descriptorbad flag syntax: %sbad kind in runfinqbad notifyList sizebad runtime
 </html>A heap has been corrupted.An FWP_RANGE is not valid.Application popup: %1 : %2Debugger will reply later.Getxattr() of %d/%s failedGetxattr() of %v/%s failedMkdir reply entry: %v, %+vMknod reply entry: %v, %+vOpenDir: path %s not foundServer is already shutdownThe allocation is invalid.The filter does not exist.The object does not exist.The smart card is blocked.There are no more members.Unsupported DS Digest Type
@@ -118,8 +320,10 @@ A global group cannot have a cross-domain member.A new guard page for the stack 
 A specified authentication package is unknown.A target with an incorrect type was specified.An RPC is already in progress for this thread.An attempt was made to use an incorrect table.An integer value is outside the allowed range.An internal error caused an operation to fail.An operation failed because the disk was full.Indicates there are no more LUIDs to allocate.Smart card logon is required and was not used.The data received from the monitor is invalid.The data used for this operation is not valid.The metadata disk region pointer is incorrect.The provided context did not match the target.The specified buffer contains ill-formed data.The specified mode is already in the mode set.The specified primary surface size is invalid.The specified video present source is invalid.The specified video present target is invalid.The system is in the process of shutting down.both Setctty and Foreground set in SysProcAttrbytes.Reader.UnreadByte: at beginning of slicebytes.Reader.UnreadRune: at beginning of slicecharacter at offset %d has non-ASCII value %#xcipher.NewCTR: IV length must equal block sizecipher: CCM mode requires 128-bit block cipherdns: svcbipv4hint: expected ipv4, hint is ipv6dns: svcbipv6hint: expected ipv6, hint is ipv4edwards25519: invalid field element input sizefirst path segment in URL cannot contain colonmath/big: mismatched montgomery number lengthsmemory reservation exceeds address space limitpanicwrap: unexpected string after type name: profile duration exceeds server's WriteTimeoutreflect.Value.Slice: slice index out of boundsreleased less than one physical page of memoryrequest Content-Type isn't multipart/form-datarequested file exists and it's not a directoryruntime: name offset base pointer out of rangeruntime: panic before malloc heap initialized
 acceptactivealloc_allocsavx512callocchan<-closedcookiedarwindomainefenceempty errno error:exec: expectff02::fuse-tgopherhangupheaderinterninuse_ip+netkilledlengthlistenmallocmethodminutendots:netdnsnil rrnoautonobodynumberobjectoffsetparentpopcntrdonlyrdrandrdseedrdtscpreadatremoteremoverenamereturnrune1 rwsizesecondselectserversocketsocks5stringstructsweep sysctlsysmontc_newtcp://telnetthreadtimersuint16uint32uint64unusedvallocwritev (scan  (scan) (trap  MB in  Value> allocs dying= flags= len=%d locks= m->g0= nmsys= pad1=  pad2=  s=nil
 acceptactivealloc_allocscallocchan<-closedcookiedarwindomainefenceempty errno error:exec: expectff02::fuse-tgopherhangupheaderinterninuse_ip+netisZeuskilledlengthlistenmallocmethodminutendots:netdnsnil rrnoautonobodynumberobjectoffsetparentrdonlyreadatremoteremoverenamereturnrune1 rwsizesecondselectserversocketsocks5stringstructsweep sysctlsysmontc_newtcp://telnetthreadtimersuint16uint32uint64unusedvallocwritev (scan  (scan) (trap  MB in  Value> allocs dying= flags= len=%d locks= m->g0= nmsys= pad1=  pad2=  s=nil
+AddCookie
 after object keyapplication/jsonapplication/wasmavx512vpclmulqdqbad g transitionbad special kindbad summary databad symbol tablebinary.BigEndiancache attributescastogscanstatuscontent-encodingcontent-languagecontent-locationcontext canceleddivision by zerodns: bad addressdns: bad netmaskexec: no commandexpected integergc: unswept spangcshrinkstackoffheader too shorthostLookupOrder=integer overflowinvalid argumentinvalid g statusinvalid rune %#Ulength too largemSpanList.insertmSpanList.removemalloc_zone_freemessage mismatchmessage too longmissing stackmapnew file tree %dnewmHandoff.lockno renegotiationno route to hostno such flag -%vnon-Go function
 arch-specific crc32 instruction for IEEE not availablebytes.Buffer: reader returned negative count from Readfailed to release fskit write handle node=%d handle=%dfmt: scanning called UnreadRune with no rune availablefskit notify inval entry truncated payload=%d want>=%dfskit rpc handshake rejected due to invalid auth tokengcControllerState.findRunnable: blackening not enabledhandleReparsePointReq: reparse tag not supported: 0x%xhttp: Request.Write on Request with no Host or URL setname is not in canonical format (it must end with a .)no goroutines (main called runtime.Goexit) - deadlock!panic calling String method on zero %v for flag %s: %vquotedprintable: invalid unescaped byte 0x%02x in bodyread loop ending; caller owns writable underlying connx509: cannot verify signature: algorithm unimplementedA process being terminated has no threads to terminate.An EA operation failed because the EA set is too large.An advanced installer failed during setup or servicing.An attempt was made to map a file that cannot be found.An attempt was made to reinitialize the ACPI subsystem.Asynchronous requests are not valid for this operation.No mode is pinned on the specified VidPN source/target.Security on the log and its containers is inconsistent.Stack traces that led to the creation of new OS threadsThe RC manifest has and invalid ultimate fallback name.The RPC call completed before all pipes were processed.The SMB client requested a CSE FSCTL on a non-CSE file.The beginning of a tape or partition has been detected.The injection handle is being closed by another thread.The maximum named pipe instance count has been reached.The network interface does not support this media type.The operation that was requested is pending completion.The page file quota for the process has been exhausted.The referenced assembly is not installed on the system.The request must be handled by the stack overflow code.The specified connection has already been disconnected.The validation information class requested was invalid.bufio.Scanner: SplitFunc returns negative advance countcasfrom_Gscanstatus:top gp->status is not in scan statedns: svcbmandatory: value length is not a multiple of 2error when getting key of section %q: key %q not existsgentraceback callback cannot be used with non-zero skipnet/http: request canceled while waiting for connectionos: invalid use of WriteAt on file opened with O_APPENDreflect: internal error: invalid use of makeMethodValue{Sector Not Found} The specified sector does not exist.A busy signal was detected at a remote site on callback.A close operation is pending on the terminal connection.A universal group cannot have a local group as a member.An invalid parameter was passed to a C runtime function.Copy protection error
+atEOF
 AuthLength
 bitLength
 BitLength
@@ -127,15 +331,22 @@ BuildSetxattrReq
 bytes.Buffer: reader returned negative count from Readfailed to release fskit write handle node=%d handle=%dfmt: scanning called UnreadRune with no rune availablefskit notify inval entry truncated payload=%d want>=%dfskit rpc handshake rejected due to invalid auth tokengcControllerState.findRunnable: blackening not enabledhandleReparsePointReq: reparse tag not supported: 0x%xhttp: Request.Write on Request with no Host or URL setname is not in canonical format (it must end with a .)no goroutines (main called runtime.Goexit) - deadlock!panic calling String method on zero %v for flag %s: %vquotedprintable: invalid unescaped byte 0x%02x in bodyread loop ending; caller owns writable underlying connx509: cannot verify signature: algorithm unimplementedA process being terminated has no threads to terminate.An EA operation failed because the EA set is too large.An advanced installer failed during setup or servicing.An attempt was made to map a file that cannot be found.An attempt was made to reinitialize the ACPI subsystem.Asynchronous requests are not valid for this operation.No mode is pinned on the specified VidPN source/target.Security on the log and its containers is inconsistent.Stack traces that led to the creation of new OS threadsThe RC manifest has and invalid ultimate fallback name.The RPC call completed before all pipes were processed.The SMB client requested a CSE FSCTL on a non-CSE file.The beginning of a tape or partition has been detected.The injection handle is being closed by another thread.The maximum named pipe instance count has been reached.The network interface does not support this media type.The operation that was requested is pending completion.The page file quota for the process has been exhausted.The referenced assembly is not installed on the system.The request must be handled by the stack overflow code.The specified connection has already been disconnected.The validation information class requested was invalid.bufio.Scanner: SplitFunc returns negative advance countcasfrom_Gscanstatus:top gp->status is not in scan statedns: svcbmandatory: value length is not a multiple of 2error when getting key of section %q: key %q not existsgentraceback callback cannot be used with non-zero skipnet/http: request canceled while waiting for connectionos: invalid use of WriteAt on file opened with O_APPENDreflect: internal error: invalid use of makeMethodValue{Sector Not Found} The specified sector does not exist.A busy signal was detected at a remote site on callback.A close operation is pending on the terminal connection.A universal group cannot have a local group as a member.An invalid parameter was passed to a C runtime function.Copy protection error
 cacheLookup
 clientHandshake
+clientVerifier
 composeLookupAnswers
 compress/flate.(*deflateFast).shiftOffsets
 compress/flate.(*huffmanEncoder).bitLength
 compress/flate.generateFixedOffsetEncoding
 compress/flate.lengthCode
+compress/flate.noEOF
 compress/flate.offsetCode
 compress/flate.token.length
 compress/flate.token.offset
+compress/gzip.noEOF
+confirmationsByClientVerifier
 ContentLength
+Cookie
+Cookies
+Cookieverf
 cuOffset
 CurrentByteOffset
 d*struct { F uintptr; .autotmp_10 chan<- net.ipLookupResult; .autotmp_11 string; .autotmp_12 string }
@@ -152,6 +363,10 @@ encoding/asn1.base128IntLength
 encoding/asn1.lengthLength
 encoding/asn1.parseTagAndLength
 encoding/asn1.stripTagAndLength
+encoding/binary.sizeof
+encoding/json.(*scanner).eof
+EOF1
+eofError
 Errno
 Failed to parse given IP: %vFailed to start a server: %vFixedStack is not power-of-2Log archival is in progress.Lookup from cache: %d/%s, %vOpen: base path %s not foundPrepended_Concatenation_MarkRead %d (%d) off %d, size %dRename: to path %s not foundSIGCONT: continue after stopSIGHUP: terminal line hangupSIGWINCH: window size changeThe byte count is too small.The device has been removed.The endpoint is a duplicate.The interface was not found.The manager type is unknown.The provider does not exist.The sublayer does not exist.The thread was not canceled.Unsupported DNSKEY AlgorithmWrite failed with IO: %v, %d[originating from goroutine asn1: string not valid UTF-8attachment; filename="trace"broken error response formatcannot unmarshal DNS messagecomparing uncomparable type cpu profiling already in usecreate fskit fuse bridge: %wcreate fskit session dir: %wcrypto/rsa: decryption errordestination address requireddns: svcbalpn: empty alpn-iderrors: target cannot be nilexpected command: %v, got %vfatal: morestack on gsignal
 filesize limit exceededflate: internal error: frame_goaway_has_streamframe_headers_pad_shortframe_rststream_bad_lenfskit rpc lookup failedfskit rpc rename failedfskit rpc statfs failedgarbage collection scangcDrain phase incorrectgenerate auth token: %whttp2: handler panickedhttp: request too largeindex out of range [%x]interrupted system callinvalid URI for requestinvalid escape sequenceinvalid m->lockedInt = json: cannot unmarshal kSecTrustSettingsPolicykSecTrustSettingsResultleft over markroot jobsmakechan: bad alignmentmissing port in addressmissing protocol schememissing type in runfinqmisuse of profBuf.writemulticast listener donemultipart: NextPart: %vnanotime returning zeronet/http context value net/http: abort Handlernew stateid created: %vno application protocolno receiver for msg: %dno space left on deviceno trust settings foundopRename: from %v to %voperation not permittedoperation not supportedoverflow packing base32overflow packing base64overflow packing uint16overflow packing uint32overflow packing uint64overflow unpacking SVCBoverflow unpacking aaaaoverflowing header sizepanic during preemptoffprocresize: invalid argprofiling timer expiredqueryInfoFile: class %dreading named attributereadxattrs: %d error %vreflect.Value.Interfacereflect.Value.NumMethodreflect.methodValueCallreflectlite.Value.IsNilruntime: internal errorruntime: invalid type  runtime: netpoll failedruntime: s.allocCount= s.allocCount > s.nelemssame as previous threadschedule: holding lockssegment length too longshrinkstack at bad timeskipping Question Classsocket is not connectedspan has no free stacksstack growth after forksyntax error in patternsystem huge page size (text/css; charset=utf-8text/xml; charset=utf-8too many pointers (>10)truncated tag or lengthunexpected address typeunexpected map key typeunexpected signal valueunknown connection typeunknown error code 0x%xunpacking Question.Nameunpacking Question.Typeunsupported %s value %qunsupported certificateunsupported packet typeunsupported query classvarint integer overflowwire: send raw bytes=%dwork.nwait > work.nproc%d: %#x/%#x/%#x %s %s %s(Mutex::)?ReaderUnlock.*([.]so$|[.]so[._][0-9]+)/usr/share/lib/zoneinfo/116415321826934814453125582076609134674072265625Copy protection failure.Failed to fire hook: %v
@@ -162,6 +377,7 @@ Flush: filehandle not found %dGODEBUG: unknown cpu feature "GetAttr(%d) returned
 Flush: filehandle not found %dGODEBUG: unknown cpu feature "GetAttr(%d) returned error: %vHEADERS frame with stream ID 0MapIter.Key called before NextOpen: returned error %d for %sSIGPROF: profiling alarm clockSIGUSR1: user-defined signal 1SIGUSR2: user-defined signal 2SIGVTALRM: virtual alarm clockThe RPC server is unavailable.The TCP/IP stack is not ready.The binding handle is invalid.The classify cannot be pended.The cluster node is not valid.The directory service is busy.The injection handle is stale.The log metadata flush failed.The object UUID was not found.The session has been canceled.The setting is not registered.The string binding is invalid.The time-out value is invalid.The version option is invalid.Write: filehandle not found %d\A(\d+) @(( 0x[0-9a-f]+)+)\n\z\A(\w+) profile: total \d+\n\zabi mismatch detected between asn1: cannot marshal nil valueassignment to entry in nil mapattachment; filename="profile"broken oplock break ack formatcan't assign requested addresscheckdead: inconsistent countscrypto/dsa: invalid public keycrypto/rsa: verification errordomain must be fully qualifiedduplicate address confirmationerror handling dce request: %vextra delimiter at end of linefailed to generate server guidfailed to get system page sizefattr4ToAttributes failed: %+vframe_continuation_zero_streamframe_settings_ack_with_lengthfreedefer with d._panic != nilfuse getattr returned error %dfuseGetxattrOut reply: %v, %+vget open handler failed: %v %vgetOpenedHandle: Open() failedhttp: named cookie not presenticmp node information responsein exponent of numeric literalinappropriate ioctl for deviceinvalid network interface nameinvalid pointer found on stacklooking for beginning of valuemime: duplicate parameter namemissing validateFirstLine funcmulticast router advertisementno message available on STREAMnotetsleep - waitm out of syncopCreate: Wrong handle type %vopLink: GetAttr() of %v failedoverflow unpacking APL addressprotocol version not supportedprotocol wrong type for socketqueryDirectory: invalid fileidqueryInfoSec: GetAttr() failedreflect: Elem of invalid type reflect: Len of non-array typereflect: Out of non-func type runqputslow: queue is not fullruntime: bad pointer in frame runtime: found in object at *(runtime: impossible type kind runtime: totalMapped-released=socket operation on non-socketstat fskit rpc socket path: %wstopping fskit rpc accept loopstream error: stream ID %d; %vstrings: negative Repeat countsync: inconsistent mutex statesync: unlock of unlocked mutextext/javascript; charset=utf-8too few operands for format '%transform: short source bufferunsafe.Slice: len out of range) not in usable address space: ...additional frames elided...
 fmt: unknown base; can't happenframe_headers_prio_weight_shortfskit rpc create_symlink failedfskit rpc get_attributes failedfskit rpc open_directory failedfskit rpc set_attributes failedfuse init failed with error: %vhttp2: connection error: %v: %vin literal null (expecting 'l')in literal null (expecting 'u')in literal true (expecting 'e')in literal true (expecting 'r')in literal true (expecting 'u')internal error - misuse of itabinvalid network interface indexjson: invalid number literal %qlen msg %d, maxEntries %d, n %dmalformed time zone informationmergeRuneSets odd length []runemissing sample type informationnon in-use span in unswept listnot implemented on darwin/amd64overflow unpacking domain namespacer: sweep done at heap size pattern contains path separatorqueryInfoFile: GetAttr() failedreflect.MakeSlice: negative capreflect.MakeSlice: negative lenreflect: Len of non-array type reflect: NumIn of non-func typerename: filehandle not found %dresetspinning: not a spinning mruntime: cannot allocate memoryruntime: profBuf already closedruntime: split stack overflow: shared library version mismatchsignal_recv: inconsistent stateslice bounds out of range [%x:]slice bounds out of range [:%x]tls: no certificates configuredunrecognized APL address familyunsupported class %d in SetInfoverifyAttributes: trailing datawriteBytes with unfinished bits (types from different packages)(base::)?RecordLockProfileData.*0123456789ABCDEFGHIJKLMNOPQRSTUV28421709430404007434844970703125: day-of-year does not match dayABCDEFGHIJKLMNOPQRSTUVWXYZ234567An invalid HANDLE was specified.Create: returned error %d for %sDebugger terminated the process.Failed to obtain random data: %sGetAttr: filehandle not found %dInvalid asynchronous RPC handle.MapIter.Value called before NextNFSv4: COMPOUND Op: %s, minor %dReadDir: filehandle not found %dSIGFPE: floating-point exceptionSIGTTOU: background write to ttySetAttr: filehandle not found %dThe RPC server is not listening.The cluster node already exists.The driver does not support OPM.The driver does not support UAB.The name service is unavailable.The network options are invalid.The object UUID is the nil UUID.The request needs to be retried.The security context is invalid.The specified stride is invalid.The stream is not a tiny stream.There are no protocol sequences.Write %d (%d), offset %d, len %d" not supported for cpu option "
 fmt: unknown base; can't happenframe_headers_prio_weight_shortfskit rpc create_symlink failedfskit rpc get_attributes failedfskit rpc open_directory failedfskit rpc set_attributes failedfuse init failed with error: %vhttp2: connection error: %v: %vin literal null (expecting 'l')in literal null (expecting 'u')in literal true (expecting 'e')in literal true (expecting 'r')in literal true (expecting 'u')internal error - misuse of itabinvalid network interface indexjson: invalid number literal %qlen msg %d, maxEntries %d, n %dmalformed time zone informationmergeRuneSets odd length []runemissing sample type informationnon in-use span in unswept listnot implemented on darwin/arm64overflow unpacking domain namespacer: sweep done at heap size pattern contains path separatorqueryInfoFile: GetAttr() failedreflect.MakeSlice: negative capreflect.MakeSlice: negative lenreflect: Len of non-array type reflect: NumIn of non-func typerename: filehandle not found %dresetspinning: not a spinning mruntime: cannot allocate memoryruntime: profBuf already closedruntime: split stack overflow: shared library version mismatchsignal_recv: inconsistent stateslice bounds out of range [%x:]slice bounds out of range [:%x]tls: no certificates configuredunrecognized APL address familyunsupported class %d in SetInfoverifyAttributes: trailing datawriteBytes with unfinished bits (types from different packages)(base::)?RecordLockProfileData.*0123456789ABCDEFGHIJKLMNOPQRSTUV28421709430404007434844970703125: day-of-year does not match dayABCDEFGHIJKLMNOPQRSTUVWXYZ234567An invalid HANDLE was specified.Create: returned error %d for %sDebugger terminated the process.Failed to obtain random data: %sGetAttr: filehandle not found %dInvalid asynchronous RPC handle.MapIter.Value called before NextNFSv4: COMPOUND Op: %s, minor %dReadDir: filehandle not found %dSIGFPE: floating-point exceptionSIGTTOU: background write to ttySetAttr: filehandle not found %dThe RPC server is not listening.The cluster node already exists.The driver does not support OPM.The driver does not support UAB.The name service is unavailable.The network options are invalid.The object UUID is the nil UUID.The request needs to be retried.The security context is invalid.The specified stride is invalid.The stream is not a tiny stream.There are no protocol sequences.Write %d (%d), offset %d, len %d" not supported for cpu option "
+fmt.(*ss).notEOF
 FragLength
 funcnameOffset
 Function ID %d not foundGODEBUG sys/cpu: value "Lookup() of %v/%s failedMkdir: path not found %sNFS4ERR_RECLAIM_CONFLICTOpen: already exists: %sThe ALPC port is closed.The entry was not found.The log data is corrupt.The print queue is full.The request was aborted.", required CPU feature
@@ -236,8 +452,36 @@ github.com/fuse-t-org/go-nfsv4/pkg/runtime.ReadFixedLengthOpaque
 github.com/fuse-t-org/go-nfsv4/pkg/runtime.ReadVariableLengthOpaque
 github.com/fuse-t-org/go-nfsv4/pkg/runtime.WriteFixedLengthOpaque
 github.com/fuse-t-org/go-nfsv4/pkg/runtime.WriteVariableLengthOpaque
+github.com/geoffgarside/ber
+github.com/geoffgarside/ber._parseBase128Int
+github.com/geoffgarside/ber.canHaveDefaultValue
+github.com/geoffgarside/ber.checkInteger
+github.com/geoffgarside/ber.getUniversalType
+github.com/geoffgarside/ber.init
 github.com/geoffgarside/ber.invalidLength
+github.com/geoffgarside/ber.isNumeric
+github.com/geoffgarside/ber.isPrintable
+github.com/geoffgarside/ber.parseBase128Int
+github.com/geoffgarside/ber.parseBigInt
+github.com/geoffgarside/ber.parseBitString
+github.com/geoffgarside/ber.parseBMPString
+github.com/geoffgarside/ber.parseBool
+github.com/geoffgarside/ber.parseField
+github.com/geoffgarside/ber.parseFieldParameters
+github.com/geoffgarside/ber.parseGeneralizedTime
+github.com/geoffgarside/ber.parseIA5String
+github.com/geoffgarside/ber.parseInt32
+github.com/geoffgarside/ber.parseInt64
+github.com/geoffgarside/ber.parseNumericString
+github.com/geoffgarside/ber.parseObjectIdentifier
+github.com/geoffgarside/ber.parsePrintableString
+github.com/geoffgarside/ber.parseSequenceOf
+github.com/geoffgarside/ber.parseT61String
 github.com/geoffgarside/ber.parseTagAndLength
+github.com/geoffgarside/ber.parseUTCTime
+github.com/geoffgarside/ber.parseUTF8String
+github.com/geoffgarside/ber.setDefaultValue
+github.com/geoffgarside/ber.UnmarshalWithParams
 github.com/grandcat/zeroconf.(*Server).composeLookupAnswers
 github.com/macos-fuse-t/go-smb2/internal/smb2.CreateContextDecoder.DataLength
 github.com/macos-fuse-t/go-smb2/internal/smb2.CreateContextDecoder.DataOffset
@@ -273,6 +517,10 @@ github.com/macos-fuse-t/go-smb2/internal/smb2.WriteRequestDecoder.Length
 github.com/macos-fuse-t/go-smb2/internal/smb2.WriteRequestDecoder.Offset
 github.com/macos-fuse-t/go-smb2/server.FileRenameInformationInfoDecoder.FileNameLength
 github.com/macos-fuse-t/go-smb2/server.SecurityDescriptorDecoder.OffsetDacl
+github.com/miekg/dns.(*EDNS0_COOKIE).Option
+github.com/miekg/dns.(*EDNS0_COOKIE).pack
+github.com/miekg/dns.(*EDNS0_COOKIE).String
+github.com/miekg/dns.(*EDNS0_COOKIE).unpack
 github.com/miekg/dns.truncateMsgFromRdlength
 GODEBUG sys/cpu: can not disable "IPsec dropped a clear text packet.Listxattr: filehandle not found %dMallocedMemBlock::MallocedMemBlockNo RPCs are active on this thread.No network adapters are available.Open %d: open count %d, handles %vOther_Default_Ignorable_Code_PointSIGURG: urgent condition on socketThe cluster network was not found.The cluster node is not reachable.The network responded incorrectly.The operation cannot be performed.The protocol driver %1 is invalid.The specified OID cannot be found.The tape could not be partitioned.Too many SIDs have been specified.__gnu_cxx::new_allocator::allocatebad executable (or shared library)crypto/aes: invalid buffer overlapcrypto/rc4: invalid buffer overlapcrypto/rsa: missing public modulusdoaddtimer: P already set in timerempty NSEC(3) block in type bitmapexecutable file not found in $PATHfailed to close fskit rpc listenerfailed to decode fskit rpc requestfailed to remove fskit session dirflag provided but not defined: -%sforEachP: sched.safePointWait != 0frame_settings_window_size_too_bigframe_windowupdate_zero_inc_streamfskit rpc lookup conversion failedgenerate fskit rpc socket name: %whttp2: aborting request body writehttp: connection has been hijackedhttp: persistConn.readLoop exitinghttp: read on closed response bodyillegal base32 data at input byte illegal base64 data at input byte in \u hexadecimal character escapeinvalid cancel request for ipcTreeinvalid nested repetition operatorinvalid or unsupported Perl syntaxinvalid padding bits in BIT STRINGmspan.ensureSwept: m is not lockedmultiple mappings with same id: %dopClose(): cannot find stateid: %vout of memory allocating allArenasreflect: ChanDir of non-chan type reflect: Field index out of boundsreflect: Field of non-struct type reflect: string index out of rangerepeated SVCB keys are not allowedruntime.SetFinalizer: cannot pass runtime: g is running but p is notruntime: netpollBreak write failedruntime: standard file descriptor schedule: spinning with local workslice bounds out of range [%x:%y:]slice bounds out of range [:%x:%y]stream error: stream ID %d; %v; %vtimeout waiting for client prefacetrace: non-empty full trace buffer{EXCEPTION} Array bounds exceeded.'_' must separate successive digits177635683940025046467781066894531252006-01-02T15:04:05.999999999Z07:0088817841970012523233890533447265625Access to the HTTP proxy is denied.An inconsistent state has occurred.An invalid SuperName was specified.An invalid client ID was specified.CONTINUATION frame with stream ID 0Close %d: open count %d, handles %vFATTR4_SIZE is a required attributeInvalid recursive dispatch attempt.No interfaces have been registered.Open: doesn't exists: overwrite: %sThe ALPC message has been canceled.The RPC failed and did not execute.The authentication type is unknown.The cluster network already exists.The cluster node has been poisoned.The directory service cannot start.The file decryption attempt failed.The file encryption attempt failed.The given Timeout interval expired.The network path cannot be located.The specified domain did not exist.The specified group already exists.The specified group does not exist.The specified task name is invalid.The virtual memory cannot be freed.advertise smb service using bonjourattempt to clear non-empty span setbroken session setup request formatcrypto/md5: invalid hash state sizeencoding/hex: odd length hex stringfailed to encode fskit rpc responsefile type does not support deadlinefindrunnable: netpoll with spinningflate: corrupt input before offset greyobject: obj not pointer-alignedgzip.Write: Extra data is too largegzip: invalid compression level: %dhpack: invalid Huffman-encoded datahttp: server closed idle connectionincompatible mech type in tokenInitincompatible period types %v and %vincompatible sample types %v and %vinvalid argument %q for %q flag: %vinvalid setInfo request for ipcTreemheap.freeSpanLocked - invalid freemime: bogus characters after %%: %qmime: invalid RFC 2047 encoded-wordmismatched begin/end of activeSweepmismatched profile records and tagsmount attempt failed with; retryingmultiple functions with same id: %dmultiple locations with same id: %dnetwork dropped connection on resetno such multicast network interfaceopRename: Rename() failed: %v to %voverflow unpacking uint64 as uint48padding contains non-zero values %vpersistentalloc: align is too largepidleput: P has non-empty run queuereflect.MakeSlice of non-slice typeruntime/pprof: converting profile: runtime: close polldesc w/o unblockruntime: inconsistent read deadlineryuFtoaFixed32 called with prec > 9superfluous leading zeros in lengthtoo many Questions to pack (>65535)too many transfer items in bind reqtraceback did not unwind completelytransform: short destination buffertxOpen: unsupported open with claimtxOpenExisting: open %s: flags 0x%xunsigned integer overflow on token unsupported fuse session profile %dversion 2 multicast listener reportx509: decryption password incorrect{EXCEPTION} Privileged instruction.(SpinLockHolder::)?~SpinLockHolder.*(base::)?SubmitSpinLockProfileData.*) is larger than maximum page size () is not Grunnable or Gscanrunnable
 golang.org/x/net/ipv4.(*payloadHandler).ok
@@ -319,21 +567,35 @@ hashOffset
 header too shorthostLookupOrder=integer overflowinvalid argumentinvalid g statusinvalid rune %#Ulength too largemSpanList.insertmSpanList.removemalloc_zone_freemessage mismatchmessage too longmissing stackmapnew file tree %dnewmHandoff.lockno renegotiationno route to hostno such flag -%vnon-Go function
 heap profile: *(\d+): *(\d+) *\[ *(\d+): *(\d+) *\] @ fragmentationzpadding bytes must all be zeros unless AllowIllegalWrites is enabledreflect: reflect.Value.UnsafePointer on an invalid notinheap pointersize of %d elements exceeds bitmap4's maximum of 4294967295 elementsA component is missing file verification information in its manifest.A floating point operation at the RPC server caused a divide by zero.A virtual disk support provider for the specified file was not found.An attempt was made to add a duplicate multicast address to the list.An attempt was made to send an invalid packet on a network interface.An invalid operation was attempted on an active transport connection.Attempted to start a new transaction while another one is in progressIndicates the specified procedure address cannot be found in the DLL.The attribute type specified to the directory service is not defined.The bucket array must be grown. Retry the transaction after doing so.The directory service has exhausted the pool of relative identifiers.The operation was attempted beyond the valid data length of the file.The range could not be added to the range list because of a conflict.The reserved log space or the adjustment of the log space is invalid.The specified handle is not open to the server end of the named pipe.The specified request is not a valid operation for the target device.fskit readdir kernel error node=%d cookie=%d fh=%d offset=%d errno=%d{Already Committed} The specified address range is already committed.{Missing System File} The required system file %hs is bad or missing.{Section Too Large} The specified section is too big to map the file.{TDI Event Pending} The TDI indication has entered the pending state.{Volume Shadow Copy Service} The system is now ready for hibernation.A generic command executable returned a result that indicates failure.A malformed function table was encountered during an unwind operation.A new encrypted file is being created and a $EFS needs to be provided.A valid hibernation file has been invalidated and should be abandoned.An error occurred while receiving data from the device on the I2C bus.An invalid exception disposition was returned by an exception handler.File is encrypted and should be opened in Client Side Encryption mode.Indicates the specified image file did not contain a resource section.No logon servers are currently available to service the logon request.The Client Drive Mapping Service has connected on Terminal Connection.The ID of the specified mode is being used by another mode in the set.The IPsec cipher configuration is not compatible with the cipher type.The activation context being deactivated has already been deactivated.The allocation being referenced does not belong to the current device.The arbiter has deferred arbitration of these resources to its parent.The driver was not loaded because the system is starting in safe mode.The enumeration template or subscription will never match any objects.The name of an attribute in an identity is not within the legal range.The resource manager tried to register a protocol that already exists.The specified file already has a notification GUID associated with it.The tape partition information could not be found when loading a tape.The transport does not recognize the specified transaction request ID.This operation is supported only when you are connected to the server.Transactions cannot be frozen because a freeze is already in progress.bytes.Buffer: UnreadByte: previous operation was not a successful readcannot convert slice with length %y to pointer to array with length %xdns: svcbipv6hint: ipv6 address byte array length not a multiple of 16{No Disk} There is no disk in the drive. Insert a disk into drive %hs.A local group cannot have another cross-domain local group as a member.An attempt was made to logon, but the NetLogon service was not started.An error occurred while transmitting data to the device on the I2C bus.At attempt was made to remove a multicast address that was never added.Indicates that the specified string is not valid for IDN normalization.The remote server or share does not support transacted file operations.The requested log size for the file system resource manager is invalid.The specified access control entry (ACE) contains an invalid condition.The specified transaction context is already enlisted in a transaction.The type of port handle is invalid for the operation that is requested.The value of an attribute in an identity is not within the legal range.json: invalid use of ,string struct tag, trying to unmarshal %q into %vtoo many concurrent operations on a single file or socket (max 1048575){No Media} There is no media in the drive. Insert media into drive %hs.A file cannot be opened because the share access flags are incompatible.A filter cannot contain multiple conditions operating on a single field.A new or existing archive tail or the base of the active log is invalid.A policy on the log in question prevented the operation from completing.A requested read/write cannot be granted due to a conflicting file lock.BitLocker Drive Encryption cannot enter RAW access mode for this volume.BitLocker Drive Encryption is not included with this version of Windows.Copy protection error
 heap profile: *(\d+): *(\d+) *\[ *(\d+): *(\d+) *\] @ growthztxOpenExisting: Cannot find matching open owner, key found %v{Not Implemented} The requested operation is not implemented.0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZA UUID that is valid only on this computer has been allocated.A policy cannot contain the same keying module more than once.An attempt has been made to open a DFS exit path control file.IPsec Dos Protection received an incorrectly formatted packet.Indicates that the specified image is already loaded as a DLL.No monitor is connected on the specified video present target.The log service encountered a log stream with no restart area.The log service encountered a partial or incomplete log block.The network interface does not support this object identifier.The network interface is not ready to complete this operation.The process hosting the driver for this device has terminated.The size of the buffer is invalid for the specified operation.The specified VidPN topology recommendation reason is invalid.The specified medium changer source element contains no media.The subsystem needed to support the image type is not present.There is not enough power to complete the requested operation.found bad pointer in Go heap (incorrect use of unsafe or cgo?)http2: request header list larger than peer's advertised limitlimiterEvent.stop: found wrong event in p's limiter event slotreflect: reflect.Value.Pointer on an invalid notinheap pointerruntime: internal error: misuse of lockOSThread/unlockOSThreadstrings.Reader.UnreadRune: previous operation was not ReadRune{Audit Failed} An attempt to generate a security audit failed.An EA operation failed because the name or EA index is invalid.An invalid parameter was specified during context registration.An operation was attempted to a volume after it was dismounted.Application verifier has found an error in the current process.Business rule scripts are disabled for the calling application.Indicates that the directory trying to be deleted is not empty.Not enough video memory is available to complete the operation.Stack traces that led to blocking on synchronization primitivesThe $Txf directory must be empty for this operation to succeed.The WMI operation is not supported by the data block or method.The address handle that was given to the transport was invalid.The maximum supported number of present paths has been reached.The offload operation on the network interface has been paused.The requested propagation protocol was not registered as a CRM.The requested section is not present in the activation context.The specified VidPN topology is stale; obtain the new topology.The transport did not receive a release for a pending response.This file is checked out or locked for editing by another user.dns: internal error: unpack should never be called on RR_Headerfskit readdir syncCall failed node=%d cookie=%d fh=%d offset=%dhttp2: push would exceed peer's SETTINGS_MAX_CONCURRENT_STREAMSmalformed GOMEMLIMIT; see `go doc runtime/debug.SetMemoryLimit`{TDI Event Done} The TDI indication has completed successfully.A protocol error was detected between the driver and the device.A user-mode APC was delivered before the given Interval expired.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_An attempt was made to access a field outside the defined range.An internal error occurred in the Win32 x86 emulation subsystem.Could not probe and lock the underlying memory of an allocation.Insufficient resources are available to complete this operation.No ranges for the specified operation were able to be processed.Not enough free space remains on the volume to allow encryption.Previous exclusive VidPn source owner has released its ownershipThe BitLocker encryption key could not be obtained from the TPM.The Diffie-Hellman group is not compatible with the policy type.The display adapter must have at least one video present source.The display adapter must have at least one video present target.The file was locked and at least one user of the file can write.The object is referenced by other objects and cannot be deleted.The passed ACL did not contain the minimum required information.The requested device object does not exist for the given volume.The requested operation cannot be performed in full-screen mode.The requested session is not configured to allow remote control.The revision number specified in the structure is not supported.The specified file has been renamed and thus cannot be modified.The specified registry key is referenced by a predefined handle.The target server does not have acceptable Kerberos credentials.The transport had previously responded to a transaction request.The transport rejected the specified network address as invalid.cipher: len(ciphertext)-tagSize exceeds the maximum payload sizeflate: invalid compression level %d: want value in range [-2, 9]http: request method or response status code does not allow bodyjson: invalid number literal, trying to unmarshal %q into NumberreadPythonMultilines: failed to skip to the end, returning errorA locked allocation cannot be used in the current command buffer.A request has already been made to handle the log full condition.A thread is getting dispatched with MCA EXCEPTION because of MCA.An attempt was made to free virtual memory that is not allocated.An error occurred while performing a cross domain move operation.An invalid system service was specified in a system service call.An operation attempted to exceed an implementation-defined limit.An operation was attempted on a nonexistent transport connection.Some of the information to be translated has not been translated.The authentication method is not compatible with the policy type.The binding handle does not contain all the required information.The call timed out while waiting to acquire the transaction lock.The call was made from the wrong session and cannot be completed.The caller attempted to wait for a mutex that has been abandoned.The flat name of the trusted domain already exists in the forest.The monitor descriptor contains an invalid detailed timing block.The monitor descriptor contains an invalid standard timing block.The operation could not be completed due to bad clusters on disk.The policy object is shared and can only be modified at the root.The request failed because a pinned allocation cannot be evicted.The request will be completed later by an NDIS status indication.The specified VidPN present path copy protection type is invalid.The specified VidPN's present path importance ordinal is invalid.The system has reached its licensed logon limit. Try again later.The transaction handle associated with this operation is invalid.The transport endpoint already has an address associated with it.The transport timed out a request that is waiting for a response.Too many GUIDs were requested from the allocation server at once.Used to indicate that a read operation was done on an empty pipe.runtime.SetFinalizer: pointer not at beginning of allocated blockA duplicate handler definition has been provided for an operation.An array that must contain at least one element has a zero length.An error was detected between two drivers or within an I/O driver.An instance already exists with this name on the volume specified.Cannot change the primary group ID of a domain controller account.Foreign security principals cannot be members of universal groups.The connection handle that was given to the transport was invalid.The lead adapter in a linked configuration was not enumerated yet.The packet was received on an IPsec SA whose lifetime has expired.The power state of the current device cannot support this request.The specified directory service attribute or value already exists.The specified directory service attribute or value does not exist.The symbolic link cannot be followed because its type is disabled.The transport-connection attempt was refused by the remote system.The type of a token object is inappropriate for its attempted use.There is no encryption recovery policy configured for this system.discriminant open_delegation4.delegation_type has unknown value %druntime: ReadTrace called from multiple goroutines simultaneously
+heapBitsSetTypeGCProg: small allocationhttp: putIdleConn: keep alives disabledinvalid oplockBreak request for ipcTreemath/big: buffer too small to fit valuemismatched count during itab table copymissing argument to repetition operatormissing closing key quote from %q to %qmissing verb: % at end of format stringmspan.sweep: bad span state after sweepnegative minwidth, tabwidth, or paddingout of memory allocating heap arena mapreaddir cookie nOt valid anymore %d, %dreflect.MakeMapWithSize of non-map typeruntime: blocked write on free polldescruntime: casfrom_Gscanstatus failed gp=stack growth not allowed in system callstrings.NewReplacer: odd argument countsuspendG from non-preemptible goroutinetags don't match (%d vs %+v) %+v %s @%dtraceback: unexpected SPWRITE function trailing backslash at end of expressionunsupported profile %d for create reply{Data Late} A data late error occurred.{EXCEPTION} Floating-point stack check.%s, version: %s, crash log starts here:
 HitLength
 idna: disallowed rune %UinitSpan: unaligned baseinvalid argument to Intninvalid transport formatinvalid user name formatjson: unsupported type: malformed profile formatmalformed sample: %s: %vmulticast listener querymultiple hash algorithmsnamed attributes supportopReaddir: %v, cookie %dopSetclientidConfirm: %voverflow unpacking uint8pageAlloc: out of memoryqueuefinalizer during GCrange partially overlapsreadlink: failed with %vreceiveRequest error: %vreflect.Value.SetComplexresource length too longrunqsteal: runq overflowruntime: C malloc failedruntime: found obj at *(runtime: markroot index runtime: p.searchAddr = span has no free objectsstack trace unavailable
 inconsistent function %p: %dinvalid P224Element encodinginvalid P384Element encodinginvalid P521Element encodinginvalid proxy address %q: %vinvalid runtime symbol tablejson: Unmarshal(non-pointer libfuse initialization errormalformed MIME header line: mheap.freeSpanLocked - span missing stack in shrinkstackmspan.sweep: m is not lockedmulticast router terminationmultipart: boundary is emptymultipart: message too largeneed padding in bucket (key)newProfBuf: buffer too largenewproc1: new g is not Gdeadnewproc1: newg missing stacknot a valid logrus Level: %qopLookup failed with err: %vos: process already finishedos: process already releasedoverflow on character value parsing "%s": invalid syntaxqueryInfoSec: invalid fileidreflect.MakeSlice: len > capreflect: In of non-func typeregion exceeds uintptr rangeruntime: bad lfnode address runtime: casgstatus: oldval=runtime: kevent failed with runtime: kqueue failed with runtime: no module data for save on system g not allowedstarted fskit helper sessionsymlink reply entry: %v, %+vtxOpen: open with claim_prevunexpected end of JSON inputunsupported compression for write session descriptor: %w{Fatal Application Exit} %hs cannot be converted to type //Guest@%s._smb._tcp.local/%s45474735088646411895751953125Create: %s, mode %o, flags %dMissing service instance nameRead: filehandle not found %dSIGPIPE: write to broken pipeSMB2_0_INFO_QUOTA unsupportedThe I/O request was canceled.The array bounds are invalid.The entry name is incomplete.The network name was deleted.The object name is not found.The request is not supported.The user account has expired.There is nothing to unexport.Time.UnmarshalBinary: no dataUnsupported RPC pipe version.accepted fskit rpc connectionaddspecial on invalid pointerboolean value not zero or onebroken lease break ack formatbufio.Scanner: token too longcrypto/aes: invalid key size crypto/rc4: invalid key size doRecordGoroutineProfile gp1=encode session descriptor: %wexec: Wait was already calledexecuting on Go runtime stackfattr4ToAttributes failed: %vframe_pushpromise_pad_too_bigframe_pushpromise_zero_streamfskit rpc remove_xattr failedfuse lookup returned error %dgc done but gcphase != _GCoffgfput: bad status (not Gdead)handle type not supported: %vhttp2: client conn not usablehttp: idle connection timeoutilnpv6 locator update messageinteger not minimally-encodedinvalid character class rangeinvalid function symbol tableinvalid length of trace eventio: read/write on closed pipekSecTrustSettingsPolicyStringmime: invalid media parametermismatched local address typemissing closing key quote: %smulticast router solicitationneed padding in bucket (elem)notesleep - waitm out of syncopReadlink: Readlink error %vopReleaseLockowner: implementopSetattr: failed %v, mask %voperation already in progressoverflow unpacking APL prefixpadding contained in alphabetpkcs12: odd-length BMP stringport=%d,mountport=%d,vers=4%sprotocol family not supportedqueryInfoFile: invalid fileidqueryInfoFileSystem: class %dreflect: Elem of invalid typereflect: In of non-func type reflect: Key of non-map type reflect: Out of non-func typeregexp/syntax: internal errorruntime: impossible type kindruntime: levelShift[level] = runtime: marking free object runtime: p.gcMarkWorkerMode= runtime: split stack overflowruntime: sudog with non-nil cruntime: summary max pages = runtime: traceback stuck. pc=semacquire not on the G stackstring concatenation too longsyntax error scanning booleantoo many compression pointerstoo many open files in systemtrace: reading after shutdownunexpected init reply size %dunknown IP protocol specifiedunknown certificate authorityunsupported dialect specifiedzero length OBJECT IDENTIFIER{EXCEPTION} Integer overflow. (types from different scopes) in prepareForSweep; sweepgen  locals stack map entries for 227373675443232059478759765625A long jump has been executed.A network data fault occurred.A transaction recovery failed.Close: filehandle not found %dDelete failed to get attrs: %vError setting up listener: %v
+internal/poll.(*FD).eofError
 internal/poll.errnoErr
 internal/profile.encodeLength
+internal/reflectlite.(*rtype).nameOff
+internal/reflectlite.(*rtype).typeOff
+internal/reflectlite.resolveNameOff
+internal/reflectlite.resolveTypeOff
+internal/reflectlite.TypeOf
+internal/reflectlite.ValueOf
 invalid changeNotify request for ipcTreeio.File directory missing ReadDir methodlisten on fskit unix rpc endpoint %q: %vmalformed MIME header: missing colon: %qmarkWorkerStop: unknown mark worker modemismatched scale ratios, got %d, want %dmultipart: unexpected line in Next(): %qmust be able to track idle limiter eventoverflowing NSEC(3) block in type bitmapqueryInfoFileSystem: unsupported type %dquotedprintable: invalid hex byte 0x%02xrefill of span with free space remainingreflect.Value.SetBytes of non-byte slicereflect.Value.setRunes of non-rune sliceruntime.SetFinalizer: first argument is runtime: netpollBreak write failed with runtime: out of memory: cannot allocate runtime: typeBitsBulkBarrier with type  ryuFtoaFixed32 called with negative prectime: Stop called on uninitialized Timerwire: send raw bytes=%d hdr_parse_err=%v{EXCEPTION} Possible deadlock condition. closed, unable to open /dev/null, errno= received on thread with no signal stack
 IPsec dropped a clear text packet.Listxattr: filehandle not found %dMallocedMemBlock::MallocedMemBlockNo RPCs are active on this thread.No network adapters are available.Open %d: open count %d, handles %vOther_Default_Ignorable_Code_PointSIGURG: urgent condition on socketThe cluster network was not found.The cluster node is not reachable.The network responded incorrectly.The operation cannot be performed.The protocol driver %1 is invalid.The specified OID cannot be found.The tape could not be partitioned.Too many SIDs have been specified.__gnu_cxx::new_allocator::allocatebad executable (or shared library)crypto/aes: invalid buffer overlapcrypto/rc4: invalid buffer overlapcrypto/rsa: missing public modulusdoaddtimer: P already set in timerempty NSEC(3) block in type bitmapexecutable file not found in $PATHfailed to close fskit rpc listenerfailed to decode fskit rpc requestfailed to remove fskit session dirflag provided but not defined: -%sforEachP: sched.safePointWait != 0frame_settings_window_size_too_bigframe_windowupdate_zero_inc_streamfskit rpc lookup conversion failedgenerate fskit rpc socket name: %whttp2: aborting request body writehttp: connection has been hijackedhttp: persistConn.readLoop exitinghttp: read on closed response bodyillegal base32 data at input byte illegal base64 data at input byte in \u hexadecimal character escapeinvalid cancel request for ipcTreeinvalid nested repetition operatorinvalid or unsupported Perl syntaxinvalid padding bits in BIT STRINGmspan.ensureSwept: m is not lockedmultiple mappings with same id: %dopClose(): cannot find stateid: %vout of memory allocating allArenasreflect: ChanDir of non-chan type reflect: Field index out of boundsreflect: Field of non-struct type reflect: string index out of rangerepeated SVCB keys are not allowedruntime.SetFinalizer: cannot pass runtime: g is running but p is notruntime: netpollBreak write failedruntime: standard file descriptor schedule: spinning with local workslice bounds out of range [%x:%y:]slice bounds out of range [:%x:%y]stream error: stream ID %d; %v; %vtimeout waiting for client prefacetrace: non-empty full trace buffer{EXCEPTION} Array bounds exceeded.'_' must separate successive digits177635683940025046467781066894531252006-01-02T15:04:05.999999999Z07:0088817841970012523233890533447265625Access to the HTTP proxy is denied.An inconsistent state has occurred.An invalid SuperName was specified.An invalid client ID was specified.CONTINUATION frame with stream ID 0Close %d: open count %d, handles %vFATTR4_SIZE is a required attributeInvalid recursive dispatch attempt.No interfaces have been registered.Open: doesn't exists: overwrite: %sThe ALPC message has been canceled.The RPC failed and did not execute.The authentication type is unknown.The cluster network already exists.The cluster node has been poisoned.The directory service cannot start.The file decryption attempt failed.The file encryption attempt failed.The given Timeout interval expired.The network path cannot be located.The specified domain did not exist.The specified group already exists.The specified group does not exist.The specified task name is invalid.The virtual memory cannot be freed.advertise smb service using bonjourattempt to clear non-empty span setbroken session setup request formatcrypto/md5: invalid hash state sizeencoding/hex: odd length hex stringfailed to encode fskit rpc responsefile type does not support deadlinefindrunnable: netpoll with spinningflate: corrupt input before offset greyobject: obj not pointer-alignedgzip.Write: Extra data is too largegzip: invalid compression level: %dhpack: invalid Huffman-encoded datahttp: server closed idle connectionincompatible mech type in tokenInitincompatible period types %v and %vincompatible sample types %v and %vinvalid argument %q for %q flag: %vinvalid setInfo request for ipcTreemheap.freeSpanLocked - invalid freemime: bogus characters after %%: %qmime: invalid RFC 2047 encoded-wordmismatched begin/end of activeSweepmismatched profile records and tagsmount attempt failed with; retryingmultiple functions with same id: %dmultiple locations with same id: %dnetwork dropped connection on resetno such multicast network interfaceopRename: Rename() failed: %v to %voverflow unpacking uint64 as uint48padding contains non-zero values %vpersistentalloc: align is too largepidleput: P has non-empty run queuereflect.MakeSlice of non-slice typeruntime/pprof: converting profile: runtime: close polldesc w/o unblockruntime: inconsistent read deadlineryuFtoaFixed32 called with prec > 9superfluous leading zeros in lengthtoo many Questions to pack (>65535)too many transfer items in bind reqtraceback did not unwind completelytransform: short destination buffertxOpen: unsupported open with claimtxOpenExisting: open %s: flags 0x%xunsigned integer overflow on token unsupported fuse session profile %dversion 2 multicast listener reportx509: decryption password incorrect{EXCEPTION} Privileged instruction.(SpinLockHolder::)?~SpinLockHolder.*(base::)?SubmitSpinLockProfileData.*) is larger than maximum page size () is not Grunnable or Gscanrunnable
 IPsec dropped a packet due to DOS throttle.No protocol sequences have been registered.Short names are not enabled on this volume.The RPC protocol sequence is not supported.The binding does not contain an entry name.The binding handle is not the correct type.The device will not start without a reboot.The file server is temporarily unavailable.The referenced assembly could not be found.The requested operation requires elevation.The requested print file has been canceled.The resume flag to a timer API was ignored.The specified process is not part of a job.The system does not support RAID-5 volumes.The volume change journal is being deleted.There are no EFS keys defined for the user.allocate unique fskit rpc socket path in %qbufio: tried to rewind past start of buffercipher: incorrect nonce length given to CCMedwards25519: invalid point encoding lengthexplicit time type given to non-time memberfailed to break cache for node=%d handle=%dfskit readdir empty node=%d cookie=%d fh=%dfskit rpc request rejected before handshakegcBgMarkWorker: unexpected gcMarkWorkerModegrew heap, but no adequate free space foundhandleDeleteReparsePointReq: invalid fileidheapBitsSetTypeGCProg: unexpected bit countmeasures of the retained heap are not equalmethodValueCallFrameObjs is not in a modulemult64bitPow10: power of 10 is out of rangemultiple Read calls return no data or errorno multipart boundary param in Content-Typenon in-use span found with specials bit setreadPythonMultilines: end of value, got: %qreflect: nil type passed to Type.Implementsroot level max pages doesn't fit in summaryruntime.SetFinalizer: finalizer already setruntime.SetFinalizer: first argument is nilruntime: casfrom_Gscanstatus bad oldval gp=runtime: heapBitsSetTypeGCProg: total bits runtime: opened unexpected file descriptor runtime: releaseSudog with non-nil gp.paramruntime:stoplockedm: lockedg (atomicstatus=transform: inconsistent byte count returnedunfinished open-coded defers in deferreturnunknown runnable goroutine during bootstrap{Device Busy} The device is currently busy.{EXCEPTION} Multiple floating-point faults.{Media Changed} The media may have changed.{Out of Paper} The printer is out of paper. using value obtained using unexported fieldA cluster join operation is not in progress.Access to %1 is monitored by policy rule %2.Attempted to replace confirmed client recordIPsec Dos Protection failed to lookup state.Kerberos sub-protocol User2User is required.No more data is available from the RPC pipe.Nothing to present due to desktop occlusion.Stack traces of holders of contended mutexesThe ACPI subsystem has not been initialized.The RC manifest has an invalid culture name.The RPC pipe object has already been closed.The cached page was locked during operation.The cluster network interface was not found.The debugger did not perform a state change.The log service found an invalid log sector.The network BIOS session limit was exceeded.The object UUID has already been registered.The provided callback is already registered.The requested system device cannot be found.The server is in use and cannot be unloaded.The specified VidPN present path is invalid.The specified monitor descriptor is invalid.The specified page protection was not valid.The transport aborted a pending transaction.Unable to contact the global catalog server.Volume metadata read or write is incomplete.[ERR] zeroconf: failed to send announcement:active sweepers found at start of mark phasecipher: NewGCM requires 128-bit block ciphercrypto/sha256: invalid hash state identifiercrypto/sha512: invalid hash state identifierencoding alphabet contains newline characterfskit rpc create_directory conversion failedgcmarknewobject called while doing checkmarkgetOpenedHandle: internalizeStateID() failedheapInUse and consistent stats are not equalhome agent address discovery request messagehttp: putIdleConn: too many idle connectionsinsufficient data for calculated length typemappedReady and other memstats are not equalmime: unexpected content after media subtypemismatch: sample has: %d values vs. %d typesmult128bitPow10: power of 10 is out of rangemultipart: expecting a new Part; got line %qno P available, write barriers are forbiddenout of memory allocating heap arena metadatareflect: funcLayout with interface receiver reflect: slice length out of range in SetLenruntime: lfstack.push invalid packing: node=timed out waiting for FSKit backend shutdowntotalFree and consistent stats are not equalunsafe.Slice: ptr is nil and len is not zerouse of WriteTo with pre-connected connectionwrite length %d exceeds maximum file size %d{EXCEPTION} Floating-point denormal operand.{EXCEPTION} Floating-point division by zero.%q shorthand is more than one ASCII characterA context is already defined for this object.The SID filtering operation removed all SIDs.The WMI data item or data block is read-only.The cluster network interface already exists.The global system lock could not be acquired.The object is built-in and cannot be deleted.The requested virtualization size is too big.The required security context does not exist.The specified client type was not recognized.The specified monitor source mode is invalid.The specified session name is already in use.The specified visible region size is invalid.The system does not support mirrored volumes.The terminal connection driver %1 is invalid.The transport connection is now disconnected.There is no transaction metadata on the file.another fskit helper is already active for %sattempt to read ea from non-exsiting file: %sbufio.Scanner: Read returned impossible countcharacter string exceeds maximum length (255)context: internal error: missing cancel errorexitsyscall: syscall frame is no longer validfskit mount failed; resetting extension stategetOpenedHandle: shareAccess(%v, %d):  %d, %dheapBitsSetType: called with non-pointer typehttp: putIdleConn: connection is in bad statemath/big: cannot unmarshal %q into a *big.Intparsing/packing of this section has completedproduced a trigger greater than the heap goalreflect: internal error: invalid method indexreflect: nil type passed to Type.AssignableToruntime: failed mSpanList.remove span.npages=totalAlloc and consistent stats are not equaltransform: input and output are not identicaltransitioning GC to the same state as before?tried to run scavenger from another goroutinezero length explicit tag was not an asn1.Flag{Data Overrun} A data overrun error occurred.{EXCEPTION} Floating-point invalid operation.{File Not Found} The file %hs does not exist.{Path Not Found} The path %hs does not exist. (bad use of unsafe.Pointer? try -d=checkptr)
 isReadonlyMutation
 json:"auth_token,omitempty"
 json:"auth_token"
+json:"cookie,omitempty"
+json:"dir_items,omitempty"
 json:"errno,omitempty"
+json:"handle_id,omitempty"
+json:"handle_id"
 json:"length,omitempty"
 json:"lookup_item,omitempty"
+json:"max_entries,omitempty"
 json:"namedattr"
+json:"next_cookie,omitempty"
 json:"node_id,omitempty"
 json:"node_id"
 json:"offset,omitempty"
@@ -342,6 +604,7 @@ json:"request_id,omitempty"
 json:"session_id,omitempty"
 json:"session_id"
 json:"socket_path"
+json:"verifier,omitempty"
 json:"xattr_flags,omitempty"
 json:"xattr_name,omitempty"
 json:"xattr_names,omitempty"
@@ -385,6 +648,8 @@ morebuf={pc:^([\t\f ]+)(.*)accept-encodingaccept-languageapplication/pdfasyncpre
 morebuf={pc:^([\t\f ]+)(.*)accept-encodingaccept-languageapplication/pdfasyncpreemptoffbad certificatebad system callcomm socket: %screate name: %sdelete: no opendescriptor_pathdouble scavengeelem size wrongfmipv6 messagesforce gc (idle)invalid addressinvalid argSizeinvalid booleaninvalid messageinvalid pointermalloc deadlockmisaligned maskmissing addressmissing mcache?ms: gomaxprocs=negative offsetnetwork is downnew ipc tree %dno such processno-default-alpnnon-minimal tagnot a directorynot enough datanum_symbols: 1
 mstartbad sequence numberbad unicode format bad value for fieldbinary.LittleEndiancgocall unavailableclient disconnectedcontent-dispositioncredential is emptydevice power is offdirectory not emptydisc quota exceededdodeltimer: wrong Penumerate_directoryexpired certificateextended echo replyfile already closedfile already existsfile does not existframe_data_stream_0get_root_attributeshttp: Server closedif-unmodified-sinceillegal instructioninformation requestinvalid URL escape libfuse2-compatiblem not found in allmmalloc_zone_reallocmarking free objectmarkroot: bad indexmime: no media typemissing ']' in hostmissing deferreturnmpl control messagemspan.sweep: state=multipart/form-datamultipartmaxheadersno STREAM resourcesnotesleep not on g0nwait > work.nprocsoperation timed outoperator new(\[\])?pageAlloc.scav.lockpanic during mallocpanic during panic
 Namedattr
+nameoff
+nameOff
 net.(*addrinfoErrno).Error
 net.(*addrinfoErrno).Temporary
 net.(*addrinfoErrno).Timeout
@@ -447,7 +712,9 @@ net.lookupProtocolMap
 net.lookupStaticHost
 net.lookupStaticHost.func1
 net.simpleMaskLength
+NextCookie
 NextEntryOffset
+notEOF
 offset
 Offset
 offsetEncoding
@@ -465,6 +732,7 @@ os/user.lookupUnixUid.func2
 os/user.lookupUserId
 os/user.lookupUserId.func1
 outgoingLength
+panic holding lockspanicwrap: no ( in panicwrap: no ) in parsing profile: %vprevious owner diedproxy-authorizationquery info type: %dreaddir end: eof %vreflect.Value.Bytesreflect.Value.Fieldreflect.Value.Floatreflect.Value.Indexreflect.Value.IsNilreflect.Value.Slicerevoked certificaterouter solicitationrpl control messageruntime: heapInUse=runtime: pcdata is runtime: preempt g0runtime: totalFree=runtime\.call[0-9]*sampling period=%d
 Payload
 payloadHandler
 pclnOffset
@@ -476,13 +744,27 @@ readHandshake
 readNamedAttribute
 Readonly
 readxattrs
+rebootVerifier
+reflect.(*rtype).nameOff
+reflect.(*rtype).typeOff
+reflect.resolveNameOff
+reflect.resolveTypeOff
+reflect.rtypeOff
 reflect.StructTag.Lookup
+reflect.TypeOf
 reflect.Value.SetIntreflect.makeFuncStubrouter advertisementruntime: double waitruntime: pipe failedruntime: totalAlloc=runtime\.reflectcallselectgo: bad wakeupsemaRoot rotateRightstopped (tty output)sysctl kern.hostnametime: invalid numbertrace: out of memorytype not a pointer: unclosed section: %sunexpected IP lengthunexpected network: unknown PSK identityurgent I/O conditionwirep: already in goworkbuf is not emptywrite of Go pointer  of unexported method pcHeader.textStart=  previous allocCount=# GCCPUFraction = %v
+reflect.ValueOf
 Removexattr
 retOffset
 roffset
 runtime: text offset base pointer out of rangeruntime: type offset base pointer out of rangeslice bounds out of range [:%x] with length %ystopTheWorld: not stopped (status != _Pgcstop)sysGrow bounds not aligned to pallocChunkBytestried to park scavenger from another goroutine{I/O Bus Reset} An I/O bus reset was detected.<li><div class=profile-name>%s: </div> %s</li>
 runtime: unexpected error while checking standard file descriptor {Bad CRC} A cyclic redundancy check (CRC) checksum error occurred.{Invalid EA Flag} An invalid extended attribute (EA) flag was set.A yield execution was performed and no thread was available to run.An address has not yet been associated with the transport endpoint.An attempt was made to lower a quota limit below the current usage.An attempt was made to suspend a thread that has begun termination.An attempt was made to unlock a page of memory that was not locked.An error was encountered while processing an XML digital signature.An instance of a named pipe cannot be found in the listening state.An invalid initial stack was specified in a call to NtCreateThread.It is not possible to create any more miniversions for this stream.The GUID passed was not recognized as valid by a WMI data provider.The attribute syntax specified to the directory service is invalid.The call is not allowed for the current security association state.The directory service was unable to allocate a relative identifier.The domain name of the trusted domain already exists in the forest.The length of the buffer submitted for this operation is not valid.The length of the submitted buffer for this operation is too small.The log service encountered a log sector with invalid block parity.The log service encountered a metadata file with inconsistent data.The specified display adapter and all of its state have been reset.The specified source is not part of the specified VidPN's topology.The specified target is not part of the specified VidPN's topology.The system could not allocate the required space in a registry log.The terminal connection driver %1 was not found in the system path.The timer resolution was not previously set by the current process.The user password must be changed before logging on the first time.The volume encryption algorithm cannot be used on this sector size.There is an IP address conflict with another system on the network.\s*([[:xdigit:]]+)-([[:xdigit:]]+):\s*(\S+)(\s.*@)?([[:xdigit:]]+)?A requested file lock cannot be granted due to other existing locks.A write operation was attempted to a volume after it was dismounted.An instance already exists at this altitude on the volume specified.An invalid unwind target was encountered during an unwind operation.Indicates the sub-authority value is invalid for the particular use.Multisampling is not supported on the respective VidPN present path.Reconnecting a disconnected session to the console is not supported.The KDC was unable to generate a referral for the service requested.The TCP connection is not offloadable by the Chimney offload target.The action type is not one of the allowed action types for a filter.The application attempted to activate a disabled activation context.The call tried to associate two objects with incompatible lifetimes.The driver was not loaded because it failed its initialization call.The operation requires a nonephemeral log, but the log is ephemeral.The resources required for this device conflict with the MCFG table.The specified video present path is already in the VidPN's topology.The transport address could not be opened because it already exists.The value provided was an invalid value for an identifier authority.crypto/hmac: hash generation function does not produce unique valuesgo package net: built with netgo build tag; using Go's DNS resolver
+runtime.(*_type).nameOff
+runtime.(*_type).typeOff
+runtime.cfuncnameFromNameoff
+runtime.funcnameFromNameoff
+runtime.resolveNameOff
+runtime.resolveTypeOff
 runtime/pprof.(*profMap).lookup
 runtime/pprof.(*protobuf).length
 runtime/pprof.Lookup
@@ -490,6 +772,7 @@ SaltLength
 semaRoot rotateLeftskip this directorystopm holding locksstopped (tty input)sysMemStat overflowtc_newarray_nothrowtoo many open filesunexpected InstFailunexpected g statusunknown Go type: %vunknown certificateunknown hash value unknown wait reasonunsupported messagewindow size changeswrong info class %dzero length segment markroot jobs done
 sending lease break node=%d handle=%d lease_state=%dsize of %d bytes exceeds field's maximum of %d bytesspan set block with unpopped elements found in reset{Device Offline} The printer has been taken offline.{End of Media} The end of the media was encountered.A directory service resource limit has been exceeded.A floating point overflow occurred at the RPC server.A global group cannot have a local group as a member.A group marked "use for deny only" cannot be enabled.A null context handle is passed as an [in] parameter.A write operation failed while converting the volume.An IKE policy cannot contain an Extended Mode policy.Close %d: attempting to close unopened file/handle %dFlush %d: attempting to flush unopened file/handle %dIndicates that the specified image is already loaded.Monitor descriptor contains invalid manufacture date.Reissue the given operation as a cached I/O operationReleasing all open handles: handle: %v openhandle: %dThe GUID allocation server is disabled at the moment.The KDC reply contained more than one principal name.The Plug and Play query operation was not successful.The WMI data item or data block could not be changed.The binding to the network interface is being closed.The client certificate account mapping is not unique.The manifest file contains one or more syntax errors.The object path component was not a directory object.The remote network is not reachable by the transport.The remote storage service encountered a media error.The size of the manifest exceeds the maximum allowed.The specified VidPN is active and cannot be accessed.The specified interrupt vector was already connected.The specified monitor frequency range set is invalid.The supplied variant structure contains invalid data.bufio.Scan: too many empty tokens without progressingdiscriminant rejected_reply.stat has unknown value %dfailed to release fskit read handle node=%d handle=%dfskit readdir lookup failed node=%d name=%q cookie=%dfskit rpc set_attributes missing supported attributeshttp: putIdleConn: too many idle connections for hostreflect.Value.Slice: string slice index out of boundsreflect: non-interface type passed to Type.Implements{EXCEPTION} Breakpoint A breakpoint has been reached.(-?\d+): *(-?\d+) *\[ *(\d+): *(\d+) *] @([ x0-9a-f]*)A device was removed so enumeration must be restarted.A floating point underflow occurred at the RPC server.A nonpaged pool must be used for this type of context.Copy protection error
 serverHandshake
+serverVerifier
 Set-CookieUNCHECKED4User-AgentX-Go-Pprof[:^alnum:][:^alpha:][:^ascii:][:^blank:][:^cntrl:][:^digit:][:^graph:][:^lower:][:^print:][:^punct:][:^space:][:^upper:][:xdigit:]abort trapatomicand8bad varintcomplex128contentioncreatetempdebug calldebug modedns: <nil>dontbrowseecho replyexecerrdotfloat32nanfloat64nanfuse-t.inigetsockoptgoroutine heapgrowthhttp_proxyimage/avifimage/jpegimage/webpimpossibleinvalidptrmSpanInUsemultipart-nil headernotifyListopOpen: %vopPutpubfhopRead: %vopWrite %vopen_modesprofInsertrequest_idrune <nil>runtime: gs.state = schedtracesemacquiresession_idset-cookiesetSecInfosetsockoptshares: %vshort readskipping: stackLarget.Kind == tc_pvalloctc_reallocterminatedticks.locktime.Date(time.Localtracefree(tracegc()
 SetAttr: %dSetxattr %dSignWritingSoft_DottedTreeConnectWarang_CitiWhite_Space[:^xdigit:]
 Setxattr
@@ -528,10 +811,13 @@ tinyoffset
 tlsHandshakeTimeout
 type..eq.github.com/fuse-t-org/go-nfsv4/fuse.fskitLookupCacheVal
 type..eq.github.com/fuse-t-org/go-nfsv4/fuse.lookupCacheVal
+type..eq.github.com/geoffgarside/ber.fieldParameters
 type..eq.github.com/geoffgarside/ber.tagAndLength
+type..eq.github.com/miekg/dns.EDNS0_COOKIE
 type..eq.golang.org/x/net/ipv4.payloadHandler
 type..eq.golang.org/x/net/ipv6.payloadHandler
 type..eq.net.portLookupResult
+typeOff
 unixpacketunknown pcunmount %suser-agentxattr_name  -%s, --%s  of size   (targetpc= , plugin:  KiB work,  bytes ...
 value=alt -> answersany -> atomicsbackendbad offbdoUxXvbonjourbooleancharsetcmdlinecommentcomplexconnectconsolecpuprofdebug=1dohpatherr: %vexpiresfields.float32float64forcegcfstatatgatewaygctracehead = http://integerinvalidlogfilelookup minpc= nil keynoatimenode_idnomtimenop -> nosniffnumber objectsopRenewpacer: panic: profilepvallocreaddirreallocrecvmsgrefererrefreshrunningsamplessecondssendmsgsignal stringssymlinksyscalltc_freeuintptrunknownutf-8''volnamewaitingwarning bytes,  etypes  is not  maxpc=  mcount= minLC=  minutes nalloc= newval= nfreed= packed= pointer stack=[ status %!Month(%s: (%s), errno=--- %v:
 value=alt -> answersany -> avx512fbackendbad offbdoUxXvbonjourbooleancharsetcmdlinecommentcomplexconnectconsolecpuprofcs     debug=1dohpatherr: %vexpiresfields.float32float64forcegcfs     fstatatgatewaygctracegs     head = http://integerinvalidlogfilelookup minpc= nil keynoatimenode_idnomtimenop -> nosniffnumber objectsopRenewosxsavepacer: panic: profilepvallocr10    r11    r12    r13    r14    r15    r8     r9     rax    rbp    rbx    rcx    rdi    rdx    readdirreallocrecvmsgrefererrefreshrflags rip    rsi    rsp    runningsamplessecondssendmsgsignal stringssymlinksyscalltc_freeuintptrunknownvolnamewaiting bytes,  etypes  is not  maxpc=  mcount= minLC=  minutes nalloc= newval= nfreed= packed= pointer stack=[ status %!Month(%s: (%s), errno=--- %v:
@@ -551,6 +837,8 @@ vendor/golang.org/x/text/unicode/norm.(*nfkcTrie).lookupValue
 vendor/golang.org/x/text/unicode/norm.(*sparseBlocks).lookup
 vendor/golang.org/x/text/unicode/norm.lookupInfoNFC
 vendor/golang.org/x/text/unicode/norm.lookupInfoNFKC
+verifier
+Verifier
 wbufSpans} stack=[      --%s  netGo =  (deleted) MB goal,  at line:  flushGen  for type  gfreecnt= heapGoal= pages at  ptrSize=  runqsize= runqueue= s.base()= spinning= stopwait= stream=%d sweepgen  sweepgen= targetpc= throwing= until pc=%!(NOVERB)%!Weekday((BADINDEX), bound = , limit = ,namedattr,nostreams,rwsize=%d--- mutex:.localhost/dev/null
 wbufSpans} stack=[      --%s  netGo =  (deleted) MB goal,  at line:  flushGen  for type  gfreecnt= heapGoal= pages at  ptrSize=  runqsize= runqueue= s.base()= spinning= stopwait= stream=%d sweepgen  sweepgen= targetpc= throwing= until pc=%!Weekday(, bound = , limit = ,namedattr,nostreams,rwsize=%d--- mutex:.localhost/dev/stdin/etc/hosts0123456789122070312561035156258.8.8.8:80:authorityAUTH_ERRORAUTH_SHORTAdditionalBad varintCLAIM_NULLChorasmianClassCHAOSClassCSNETConnectionContent-IdDATA_SYNC4DSA-SHA256DeprecatedDevanagariECDSA-SHA1END_STREAMEXCLUSIVE4FILE_SYNC4GC forced
 writeHandshakeRecord
@@ -559,9 +847,13 @@ XattrName
 XattrNames
 xattrs
 Z*struct { F uintptr; ch <-chan singleflight.Result; lookupGroupCancel context.CancelFunc }
+ZeroReadIsEOF
 
 ## FskitSrvModule focused strings
 _binaryPayload
+_directoryCookie
+_directoryResumeCookie
+_directoryVerifier
 _handshakeComplete
 _handshakeInProgress
 _namedattrEnabled
@@ -574,8 +866,13 @@ binaryPayload
 close_directory
 close_directory failed
 connectAndHandshakeWithReply:
+cookie
 dataWithLength:
 deliverResponseDictionary:payload:
+dir_items
+directoryCookie
+directoryResumeCookie
+directoryVerifier
 discardExactLength:fromSocketFD:error:
 dispatchResponseHandler:response:payload:error:
 enumerate_directory
@@ -606,6 +903,7 @@ get_xattr
 get_xattr failed
 getXattrNamed:forNodeID:reply:
 getXattrNamed:ofItem:replyHandler:
+handle_id
 handshake
 handshake failed
 handshakeComplete
@@ -622,19 +920,24 @@ lookup failed
 lookup_item
 lookupItemNamed:inDirectory:replyHandler:
 lookupItemNamed:parentID:reply:
+max_entries
 maximumNameLength
 maximumXattrSize
 maximumXattrSizeInBits
 namedattr
 namedattrEnabled
+next_cookie
+nextDirectoryVerifierForItem:
 node_id
 offset
 open_directory
 open_directory failed
+packEntryWithName:itemType:itemID:nextCookie:attributes:
 payload
 payload_length
 performRequest:payload:completion:
 performRequest:payload:directReadIntoOwner:buffer:capacity:completion:
+rangeOfString:options:
 readExactLength:fromSocketFD:intoBuffer:error:
 readFileWithNodeID:offset:length:intoBuffer:reply:
 readFileWithNodeID:offset:length:reply:
@@ -653,6 +956,9 @@ session_id
 set_xattr
 set_xattr failed
 setBinaryPayload:
+setDirectoryCookie:
+setDirectoryResumeCookie:
+setDirectoryVerifier:
 setHandshakeComplete:
 setHandshakeInProgress:
 setPayload:
@@ -679,6 +985,10 @@ Tc,N,V_handshakeComplete
 Tc,N,V_handshakeInProgress
 Tc,R,N,V_namedattrEnabled
 Tc,R,N,V_readonlyEnabled
+TQ,N,V_directoryCookie
+TQ,N,V_directoryResumeCookie
+TQ,N,V_directoryVerifier
+verifier
 writeContents:toFile:atOffset:replyHandler:
 writeFileWithNodeID:offset:data:reply:
 writeFramedData:payload:socketFD:error:
@@ -1023,5 +1333,351 @@ xattrOperationsInhibited
 0010000000022440 (__TEXT,__text) non-external _OBJC_IVAR_$_FskitSrvRPCClient._writerQueue
 0010000000022444 (__TEXT,__text) non-external _OBJC_IVAR_$_FskitSrvRPCClient._callbackQueue
 
-## Go symbols containing fskit/rpc
-go toolchain not present on runner
+## go-nfsv4 Mach-O symbols containing fskit/rpc
+0000000100054810 (__TEXT,__text) non-external _runtime.FuncForPC
+000000010005c560 (__TEXT,__text) non-external _runtime.traceFrameForPC
+000000010007b510 (__TEXT,__text) non-external _time.lookup
+0000000100085110 (__TEXT,__text) non-external _time.(*Location).lookup
+0000000100085390 (__TEXT,__text) non-external _time.(*Location).lookupFirstZone
+0000000100086f70 (__TEXT,__text) non-external _time.(*Location).lookupName
+0000000100089230 (__TEXT,__text) non-external _time.readFile
+0000000100089520 (__TEXT,__text) non-external _time.readFile.func1
+00000001000a1720 (__TEXT,__text) non-external _reflect.StructTag.Lookup
+00000001000b7f90 (__TEXT,__text) non-external _os.LookupEnv
+00000001000ba0a0 (__TEXT,__text) non-external _os.ReadFile
+00000001000ba340 (__TEXT,__text) non-external _os.ReadFile.func1
+00000001000d8950 (__TEXT,__text) non-external _net.(*conf).hostLookupOrder
+00000001000d9610 (__TEXT,__text) non-external _net.(*conf).hostLookupOrder.func1
+00000001000e0280 (__TEXT,__text) non-external _net.(*Resolver).goLookupHostOrder
+00000001000e0520 (__TEXT,__text) non-external _net.goLookupIPFiles
+00000001000e07a0 (__TEXT,__text) non-external _net.(*Resolver).goLookupIP
+00000001000e08b0 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder.func1
+00000001000e08c0 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder
+00000001000e1770 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder.func4
+00000001000e1800 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder.func3
+00000001000e19b0 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder.func3.2
+00000001000e1a20 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder.func3.1
+00000001000e1b40 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder.func2
+00000001000e1cf0 (__TEXT,__text) non-external _net.(*Resolver).goLookupIPCNAMEOrder.func2.1
+00000001000e5340 (__TEXT,__text) non-external _net.lookupStaticHost
+00000001000e5690 (__TEXT,__text) non-external _net.lookupStaticHost.func1
+00000001000ecea0 (__TEXT,__text) non-external _net.lookupPortMap
+00000001000ed170 (__TEXT,__text) non-external _net.(*Resolver).LookupHost
+00000001000ed3d0 (__TEXT,__text) non-external _net.(*Resolver).lookupIPAddr
+00000001000ede70 (__TEXT,__text) non-external _net.(*Resolver).lookupIPAddr.func2
+00000001000edec0 (__TEXT,__text) non-external _net.(*Resolver).lookupIPAddr.func1
+00000001000edfd0 (__TEXT,__text) non-external _net.(*Resolver).lookupIPAddr.func1.1
+00000001000ee030 (__TEXT,__text) non-external _net.(*Resolver).LookupPort
+00000001000ee790 (__TEXT,__text) non-external _net.lookupProtocol
+00000001000ee960 (__TEXT,__text) non-external _net.(*Resolver).lookupHost
+00000001000eea80 (__TEXT,__text) non-external _net.(*Resolver).lookupIP
+00000001000eebf0 (__TEXT,__text) non-external _net.(*Resolver).lookupPort
+00000001000f15e0 (__TEXT,__text) non-external _net.goLookupPort
+00000001000f7ba0 (__TEXT,__text) non-external _net.cgoLookupHost
+00000001000f7d70 (__TEXT,__text) non-external _net.cgoLookupPort
+00000001000f8240 (__TEXT,__text) non-external _net.cgoLookupPort.func1
+00000001000f82b0 (__TEXT,__text) non-external _net.cgoLookupServicePort
+00000001000f8690 (__TEXT,__text) non-external _net.cgoLookupServicePort.func2
+00000001000f8710 (__TEXT,__text) non-external _net.cgoLookupServicePort.func2.1
+00000001000f8770 (__TEXT,__text) non-external _net.cgoLookupServicePort.func1
+00000001000f8870 (__TEXT,__text) non-external _net.cgoPortLookup
+00000001000f8920 (__TEXT,__text) non-external _net.cgoLookupIPCNAME
+00000001000f8ee0 (__TEXT,__text) non-external _net.cgoLookupIPCNAME.func2
+00000001000f8f60 (__TEXT,__text) non-external _net.cgoLookupIPCNAME.func2.1
+00000001000f8fc0 (__TEXT,__text) non-external _net.cgoLookupIPCNAME.func1
+00000001000f90d0 (__TEXT,__text) non-external _net.cgoIPLookup
+00000001000f9180 (__TEXT,__text) non-external _net.cgoLookupIP
+00000001000f9440 (__TEXT,__text) non-external _net.cgoLookupIP.func1
+00000001000fbd20 (__TEXT,__text) non-external _net.(*Resolver).lookupIP-fm
+00000001000fc630 (__TEXT,__text) non-external _type..eq.net.portLookupResult
+0000000100100cd0 (__TEXT,__text) non-external _strings.(*genericReplacer).lookup
+00000001001635d0 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/bidi.LookupRune
+0000000100163650 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/bidi.Lookup
+00000001001639d0 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/bidi.LookupString
+0000000100165ac0 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.lookupInfoNFC
+0000000100165b90 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.lookupInfoNFKC
+0000000100169e80 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.(*nfcTrie).lookup
+000000010016a170 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.(*nfcTrie).lookupString
+000000010016a450 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.(*nfcTrie).lookupValue
+000000010016a4f0 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.(*nfkcTrie).lookup
+000000010016a7f0 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.(*nfkcTrie).lookupString
+000000010016aae0 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.(*nfkcTrie).lookupValue
+000000010016ab80 (__TEXT,__text) non-external _vendor/golang.org/x/text/unicode/norm.(*sparseBlocks).lookup
+000000010016db40 (__TEXT,__text) non-external _vendor/golang.org/x/net/idna.(*idnaTrie).lookupString
+000000010016de30 (__TEXT,__text) non-external _vendor/golang.org/x/net/idna.(*idnaTrie).lookupValue
+000000010016e170 (__TEXT,__text) non-external _vendor/golang.org/x/net/idna.(*sparseBlocks).lookup
+00000001001a75c0 (__TEXT,__text) non-external _runtime/pprof.(*profMap).lookup
+00000001001a7e50 (__TEXT,__text) non-external _runtime/pprof.Lookup
+00000001001dd3a0 (__TEXT,__text) non-external _os/user.lookupUnixUid
+00000001001dd5b0 (__TEXT,__text) non-external _os/user.lookupUnixUid.func1
+00000001001dd600 (__TEXT,__text) non-external _os/user.lookupUnixUid.func1.1
+00000001001dd700 (__TEXT,__text) non-external _os/user.lookupUnixUid.func2
+00000001001e0780 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse/proto.LookupReq
+00000001001e9260 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.lookupInfoNFC
+00000001001e9330 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.lookupInfoNFKC
+00000001001ed020 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.(*nfcTrie).lookup
+00000001001ed310 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.(*nfcTrie).lookupString
+00000001001ed5f0 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.(*nfcTrie).lookupValue
+00000001001ed690 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.(*nfkcTrie).lookup
+00000001001ed990 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.(*nfkcTrie).lookupString
+00000001001edc80 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.(*nfkcTrie).lookupValue
+00000001001edd20 (__TEXT,__text) non-external _golang.org/x/text/unicode/norm.(*sparseBlocks).lookup
+00000001001ee0f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.NewFskitFS
+00000001001ee4e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.NewFskitFS.func1
+00000001001ee540 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).RootAttributes
+00000001001ee580 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).StatFS
+00000001001ee7a0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).GetAttributes
+00000001001ee9d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).SetAttr
+00000001001eee50 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Listxattr
+00000001001ef170 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Getxattr
+00000001001ef450 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Setxattr
+00000001001ef610 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Removexattr
+00000001001ef710 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).FSync
+00000001001ef820 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Lookup
+00000001001efbf0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).EnumerateDirectory
+00000001001efc60 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).CreateFile
+00000001001efff0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).CreateDirectory
+00000001001f02c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).RemoveFile
+00000001001f03e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).RemoveDirectory
+00000001001f0500 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Rename
+00000001001f0680 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Open
+00000001001f0840 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Close
+00000001001f0930 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Read
+00000001001f0a50 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Write
+00000001001f0b40 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Write.func1
+00000001001f0d10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Symlink
+00000001001f0ff0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Readlink
+00000001001f10f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.direntTypeToFskitType
+00000001001f1290 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.vfsFileTypeToFskitType
+00000001001f1430 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).readDirectoryPage
+00000001001f2440 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).shouldExcludeChild
+00000001001f2510 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).resolveExcludedParentNode
+00000001001f25b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).resolveExcludedParentNode.func1
+00000001001f26b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).openDir
+00000001001f2840 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).releaseDir
+00000001001f2930 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).OpenDirectory
+00000001001f2980 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).CloseDirectory
+00000001001f29d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).releaseCreatedFile
+00000001001f2ac0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).cacheAttr
+00000001001f2bd0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).getCacheAttr
+00000001001f2d70 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).deleteCacheAttr
+00000001001f2e10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).deleteCacheAttr.func1
+00000001001f3020 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).cacheLookup
+00000001001f31a0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).getLookupCache
+00000001001f3410 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).deleteCacheLookup
+00000001001f34f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Notify
+00000001001f3e20 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FuseFS).getLookupCache
+00000001001f4090 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FuseFS).cacheLookup
+00000001001f4210 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FuseFS).deleteCacheLookup
+00000001001f62f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FuseFS).Lookup
+00000001001fcd40 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FuseSmbFS).Lookup
+00000001002031a0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/fuse.(*FskitFS).Notify-fm
+0000000100203490 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/fuse.FskitDirEntry
+00000001002036b0 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/fuse.fskitAttrCacheVal
+0000000100203750 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/fuse.fskitLookupCacheVal
+00000001002037f0 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/fuse.lookupCacheVal
+00000001002056c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AuthFlavor).ReadFrom
+0000000100205750 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AuthFlavor.WriteTo
+00000001002057c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*OpaqueAuth).ReadFrom
+00000001002058c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*OpaqueAuth).WriteTo
+0000000100205960 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*OpaqueAuth).GetEncodedSizeBytes
+0000000100205980 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*MsgType).ReadFrom
+0000000100205a10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.MsgType.WriteTo
+0000000100205a80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*ReplyStat).ReadFrom
+0000000100205b10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReplyStat.WriteTo
+0000000100205b80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptStat).ReadFrom
+0000000100205c10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptStat.WriteTo
+0000000100205c80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RejectStat).ReadFrom
+0000000100205d10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RejectStat.WriteTo
+0000000100205d80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AuthStat).ReadFrom
+0000000100205e10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AuthStat.WriteTo
+0000000100205e80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RpcMsg).ReadFrom
+00000001002060b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RpcMsg).WriteTo
+0000000100206150 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RpcMsgBody_CALL).WriteTo
+00000001002061e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RpcMsgBody_CALL).GetEncodedSizeBytes
+0000000100206210 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RpcMsgBody_REPLY).WriteTo
+00000001002062a0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RpcMsgBody_REPLY).GetEncodedSizeBytes
+00000001002062f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*CallBody).ReadFrom
+0000000100206460 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*CallBody).WriteTo
+00000001002065a0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*CallBody).GetEncodedSizeBytes
+00000001002065d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReadReplyBody
+0000000100206780 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*ReplyBody_MSG_ACCEPTED).WriteTo
+0000000100206810 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*ReplyBody_MSG_ACCEPTED).GetEncodedSizeBytes
+0000000100206860 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*ReplyBody_MSG_DENIED).WriteTo
+00000001002068f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*ReplyBody_MSG_DENIED).GetEncodedSizeBytes
+0000000100206940 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReply).ReadFrom
+0000000100206b40 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReply).WriteTo
+0000000100206bd0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReply).GetEncodedSizeBytes
+0000000100206c40 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReplyReplyData_SUCCESS).WriteTo
+0000000100206cd0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReplyReplyData_SUCCESS).GetEncodedSizeBytes
+0000000100206ce0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReplyReplyData_PROG_MISMATCH).WriteTo
+0000000100206da0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReplyReplyData_PROG_MISMATCH).GetEncodedSizeBytes
+0000000100206db0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReplyReplyData_default).WriteTo
+0000000100206e20 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptedReplyReplyData_default).GetEncodedSizeBytes
+0000000100206e30 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReadRejectedReply
+0000000100206ff0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RejectedReply_RPC_MISMATCH).WriteTo
+00000001002070b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RejectedReply_RPC_MISMATCH).GetEncodedSizeBytes
+00000001002070c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RejectedReply_AUTH_ERROR).WriteTo
+0000000100207150 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RejectedReply_AUTH_ERROR).GetEncodedSizeBytes
+0000000100207160 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.init
+0000000100207c10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*MsgType).WriteTo
+0000000100207cb0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AuthFlavor).WriteTo
+0000000100207d50 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*ReplyStat).WriteTo
+0000000100207df0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AcceptStat).WriteTo
+0000000100207e90 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*RejectStat).WriteTo
+0000000100207f30 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.(*AuthStat).WriteTo
+0000000100207fd0 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RpcMsg
+000000010020e2f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Lookup4args).ReadFrom
+000000010020e3b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Lookup4args).WriteTo
+000000010020e420 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Lookup4args).GetEncodedSizeBytes
+000000010020e430 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Lookup4res).ReadFrom
+000000010020e4c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Lookup4res).WriteTo
+000000010020e530 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Lookupp4res).ReadFrom
+000000010020e5c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Lookupp4res).WriteTo
+00000001002146e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*RpcGssSvcT).ReadFrom
+0000000100214770 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.RpcGssSvcT.WriteTo
+00000001002147e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*RpcsecGssInfo).ReadFrom
+00000001002148f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*RpcsecGssInfo).WriteTo
+00000001002149b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*RpcsecGssInfo).GetEncodedSizeBytes
+0000000100214af0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Secinfo4_RPCSEC_GSS).WriteTo
+0000000100214b80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*Secinfo4_RPCSEC_GSS).GetEncodedSizeBytes
+00000001002182b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsArgop4_OP_LOOKUP).WriteTo
+0000000100218340 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsArgop4_OP_LOOKUP).GetEncodedSizeBytes
+0000000100218360 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsArgop4_OP_LOOKUPP).WriteTo
+00000001002183c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsArgop4_OP_LOOKUPP).GetEncodedSizeBytes
+000000010021afd0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsResop4_OP_LOOKUP).WriteTo
+000000010021b060 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsResop4_OP_LOOKUP).GetEncodedSizeBytes
+000000010021b070 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsResop4_OP_LOOKUPP).WriteTo
+000000010021b100 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*NfsResop4_OP_LOOKUPP).GetEncodedSizeBytes
+000000010021ec90 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.(*RpcGssSvcT).WriteTo
+00000001002202b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*Server).HandleConnection
+0000000100220590 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*connectionHandler).readMessages
+0000000100220dc0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*connectionHandler).readMessages.func2
+0000000100220ed0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*connectionHandler).readMessages.func1
+0000000100220fe0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*connectionHandler).replyWithoutReturnValue
+0000000100221160 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*recordMarkingReader).maybeReadRecordMarker
+00000001002212f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*recordMarkingReader).Read
+00000001002214d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*recordMarkingReader).discardRemaining
+0000000100221630 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*successiveReadTriggeringReader).Close
+0000000100221730 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*connectionHandler).readMessages-fm
+0000000100221790 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.recordMarkingReader
+0000000100221820 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.(*successiveReadTriggeringReader).Read
+0000000100221830 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.successiveReadTriggeringReader.Read
+000000010022a400 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/nfsv4.(*compoundState).lookupNamedAttribute
+000000010022a810 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/nfsv4.(*compoundState).opLookup
+0000000100278340 (__TEXT,__text) non-external _github.com/grandcat/zeroconf.(*Server).composeLookupAnswers
+00000001002abd40 (__TEXT,__text) non-external _golang.org/x/exp/maps.Keys[go.shape.map[string]github.com/macos-fuse-t/go-smb2/vfs.VFSFileSystem_0,go.shape.string_1,go.shape.interface { Close(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) error; FSync(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) error; Flush(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) error; GetAttr(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) (*github.com/macos-fuse-t/go-smb2/vfs.Attributes, error); Getxattr(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, string, []uint8) (int, error); Link(github.com/macos-fuse-t/go-smb2/vfs.VfsNode, github.com/macos-fuse-t/go-smb2/vfs.VfsNode, string) (*github.com/macos-fuse-t/go-smb2/vfs.Attributes, error); Listxattr(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) ([]string, error); Lookup(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, string) (*github.com/macos-fuse-t/go-smb2/vfs.Attributes, error); Mkdir(string, int) (*github.com/macos-fuse-t/go-smb2/vfs.Attributes, error); Open(string, int, int) (github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, error); OpenDir(string) (github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, error); Read(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, []uint8, uint64, int) (int, error); ReadDir(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, int, int) ([]github.com/macos-fuse-t/go-smb2/vfs.DirInfo, error); Readlink(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) (string, error); Removexattr(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, string) error; Rename(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, string, int) error; SetAttr(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, *github.com/macos-fuse-t/go-smb2/vfs.Attributes) (*github.com/macos-fuse-t/go-smb2/vfs.Attributes, error); Setxattr(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, string, []uint8) error; StatFS(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) (*github.com/macos-fuse-t/go-smb2/vfs.FSAttributes, error); Symlink(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, string, int) (*github.com/macos-fuse-t/go-smb2/vfs.Attributes, error); Truncate(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, uint64) error; Unlink(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle) error; Write(github.com/macos-fuse-t/go-smb2/vfs.VfsHandle, []uint8, uint64, int) (int, error) }_2]
+00000001002add70 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).Mount
+00000001002adf70 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).mountArgs
+00000001002ae2c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).runMountCommand
+00000001002ae400 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).resetExtensionState
+00000001002ae5f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).StartServer
+00000001002aedd0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).Shutdown.func1
+00000001002aee50 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).Shutdown
+00000001002af2e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).acquireMountLock
+00000001002af7a0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).releaseMountLock
+00000001002af890 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startUnmountWatcher
+00000001002af910 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startUnmountWatcher.func1
+00000001002afa10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startUnmountWatcher.func1.2
+00000001002afa80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startUnmountWatcher.func1.1
+00000001002afb70 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).shutdownAndExit
+00000001002afbe0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).shutdownAndExit.func1
+00000001002afc20 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).mountPresent
+00000001002afd60 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.fskitSessionRoot
+00000001002aff40 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer
+00000001002b0350 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func3
+00000001002b05e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func3.1
+00000001002b0900 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func3.1.2
+00000001002b0970 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func3.1.1
+00000001002b09d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func3.2
+00000001002b0a30 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func2
+00000001002b0c20 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func2.1
+00000001002b0c80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func1
+00000001002b0e70 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startRPCServer.func1.1
+00000001002b0ed0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).listenRPCTransport
+00000001002b1290 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).startUnixRPCListener
+00000001002b1580 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitUnixListenError).Error
+00000001002b1620 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitUnixListenError).Unwrap
+00000001002b16c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.nextFskitUnixSocketPath
+00000001002b18d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.fskitSocketDir
+00000001002b19e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.configureFskitConnSocketBuffers
+00000001002b1b10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.configureFskitConnSocketBuffers.func1
+00000001002b1c10 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection
+00000001002b32d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func6
+00000001002b3360 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func4
+00000001002b36f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func4.1
+00000001002b3750 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func3
+00000001002b4580 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func3.1
+00000001002b45e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func2
+00000001002b4650 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func2.1
+00000001002b46b0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func1
+00000001002b4850 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCConnection.func5
+00000001002b48c0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.readFskitRPCFrame
+00000001002b4bb0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.writeFskitRPCFrame
+00000001002b4ea0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCRequest
+00000001002bc550 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCRequest.func2
+00000001002bc640 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCRequest.func1
+00000001002bc730 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).ensureOpen
+00000001002bc9e0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).ensureOpen.func1
+00000001002bca40 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).updateOpenModes
+00000001002bcd40 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).updateOpenModes.func1
+00000001002bcda0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).acquireOpenHandleForIO
+00000001002bcf80 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).acquireOpenHandleForIO.func1
+00000001002bcfe0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).releaseOpenHandleForIO
+00000001002bd290 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).syncOpenFiles
+00000001002bd530 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).registerDirectoryHandle
+00000001002bd6d0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).directoryState
+00000001002bd8f0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).directoryState.func1
+00000001002bd950 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).releaseDirectoryHandle
+00000001002bdc90 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).cleanup
+00000001002bdfc0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*fskitRPCConnState).cleanup.func1
+00000001002be120 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.defaultFskitFSFactory
+00000001002be180 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.vfsDirEntryToFskitItemAttributes
+00000001002be370 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.hasCompleteFskitDirEntryAttributes
+00000001002be470 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.vfsAttrsToFskitItemAttributes
+00000001002be960 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.fskitErrorResponse
+00000001002bebe0 (__TEXT,__text) non-external _github.com/fuse-t-org/go-nfsv4/backend.normalizeFskitLookupError
+00000001002c07b0 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/backend.fskitRPCOpenFileState
+00000001002c0800 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/backend.fskitItemAttributes
+00000001002c08e0 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/backend.fskitUnixListenError
+00000001002c0a90 (__TEXT,__text) non-external _type..eq.github.com/fuse-t-org/go-nfsv4/backend.fskitSessionDescriptor
+000000010044f708 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/backend.fskitUnixListenError,error
+000000010044f768 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.recordMarkingReader,io.Reader
+00000001004506a0 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/rpcserver.successiveReadTriggeringReader,io.ReadCloser
+0000000100451600 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/backend.FskitBackend,github.com/fuse-t-org/go-nfsv4/backend.Backend
+0000000100452ec0 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsArgop4_OP_LOOKUP,github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsArgop4
+0000000100452ef8 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsArgop4_OP_LOOKUPP,github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsArgop4
+0000000100453710 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsResop4_OP_LOOKUP,github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsResop4
+0000000100453748 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsResop4_OP_LOOKUPP,github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.NfsResop4
+0000000100454200 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.Secinfo4_RPCSEC_GSS,github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.Secinfo4
+0000000100454468 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptedReplyReplyData_PROG_MISMATCH,interface { GetEncodedSizeBytes() int; GetStat() github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptStat; WriteTo(io.Writer) (int64, error); github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.isAcceptedReplyReplyData() }
+00000001004544a0 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptedReplyReplyData_SUCCESS,interface { GetEncodedSizeBytes() int; GetStat() github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptStat; WriteTo(io.Writer) (int64, error); github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.isAcceptedReplyReplyData() }
+00000001004544d8 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptedReplyReplyData_default,interface { GetEncodedSizeBytes() int; GetStat() github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptStat; WriteTo(io.Writer) (int64, error); github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.isAcceptedReplyReplyData() }
+0000000100454510 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RejectedReply_AUTH_ERROR,github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RejectedReply
+0000000100454548 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RejectedReply_RPC_MISMATCH,github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RejectedReply
+0000000100454580 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReplyBody_MSG_ACCEPTED,github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReplyBody
+00000001004545b8 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReplyBody_MSG_DENIED,github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReplyBody
+00000001004545f0 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RpcMsgBody_CALL,interface { GetEncodedSizeBytes() int; GetMtype() github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.MsgType; WriteTo(io.Writer) (int64, error); github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.isRpcMsgBody() }
+0000000100454628 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RpcMsgBody_REPLY,interface { GetEncodedSizeBytes() int; GetMtype() github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.MsgType; WriteTo(io.Writer) (int64, error); github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.isRpcMsgBody() }
+0000000100457720 (__DATA_CONST,__rodata) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCRequest.jump307
+00000001004577a0 (__DATA_CONST,__rodata) non-external _github.com/fuse-t-org/go-nfsv4/fuse.direntTypeToFskitType.jump3
+0000000100457a00 (__DATA_CONST,__rodata) non-external _github.com/fuse-t-org/go-nfsv4/backend.(*FskitBackend).handleRPCRequest.jump951
+0000000100458698 (__DATA_CONST,__rodata) non-external _go.itab.*github.com/fuse-t-org/go-nfsv4/fuse.FskitFS,github.com/fuse-t-org/go-nfsv4/backend.fskitRPCFS
+0000000100637a80 (__DATA,__noptrdata) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2..inittask
+0000000100639b40 (__DATA,__noptrdata) non-external _github.com/fuse-t-org/go-nfsv4/pkg/rpcserver..inittask
+0000000100672eb8 (__DATA,__data) non-external _github.com/fuse-t-org/go-nfsv4/backend.fskitListenTCP
+0000000100672ec0 (__DATA,__data) non-external _github.com/fuse-t-org/go-nfsv4/backend.fskitListenUnix
+0000000100672f28 (__DATA,__data) non-external _main.newFskitBackend
+0000000100672f88 (__DATA,__data) non-external _net.testHookLookupIP
+00000001006737d0 (__DATA,__data) non-external _vendor/golang.org/x/net/idna.Lookup
+000000010067d5e0 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/nfsv4.RpcGssSvcT_name
+000000010067d5f8 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AcceptStat_name
+000000010067d600 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AuthFlavor_name
+000000010067d608 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.AuthStat_name
+000000010067d610 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.MsgType_name
+000000010067d618 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.RejectStat_name
+000000010067d620 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/pkg/protocols/rpcv2.ReplyStat_name
+000000010067d830 (__DATA,__bss) non-external _net.lookupOrderName
+000000010067dd60 (__DATA,__bss) non-external _encoding/asn1.enumeratedType
+000000010067ded0 (__DATA,__bss) non-external _github.com/fuse-t-org/go-nfsv4/fuse.excludedFskitMountPath
+000000010067df20 (__DATA,__bss) non-external _github.com/geoffgarside/ber.enumeratedType
