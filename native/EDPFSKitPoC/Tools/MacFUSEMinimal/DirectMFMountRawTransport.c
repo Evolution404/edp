@@ -19,9 +19,11 @@
 #if defined(__APPLE__)
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
 extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak_import));
+extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak_import));
 #else
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
 extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak));
+extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 #endif
 
 #ifndef ENOATTR
@@ -654,14 +656,29 @@ int main(int argc, char **argv) {
         MFRelease(message);
     }
 
-    if (EDPDirectMFMountTeardownActive != NULL &&
+    bool lifecycle_teardown = EDPDirectMFMountTeardownActive != NULL &&
         EDPDirectMFMountTeardownComplete != NULL &&
-        EDPDirectMFMountTeardownActive()) {
+        EDPDirectMFMountMarkTransportReleased != NULL &&
+        EDPDirectMFMountTeardownActive();
+
+    if (fsync(backing_fd) != 0) {
+        perror("fsync backing");
+    }
+
+    if (lifecycle_teardown) {
+        /* The signal worker already closed the channel.  Drop the server's
+         * final channel ownership before it asks DA to eject the virtual
+         * disk, then stay alive only to report the completed gate. */
+        MFRelease(channel);
+        close(backing_fd);
+        EDPDirectMFMountMarkTransportReleased();
+        fprintf(stderr, "DIRECT_MFMOUNT_SERVER_TRANSPORT_RELEASED=1\n");
+
         struct timespec delay = {
             .tv_sec = 0,
             .tv_nsec = 100 * 1000 * 1000,
         };
-        for (int attempt = 0; attempt < 150; attempt++) {
+        for (int attempt = 0; attempt < 600; attempt++) {
             if (EDPDirectMFMountTeardownComplete()) {
                 break;
             }
@@ -670,14 +687,11 @@ int main(int argc, char **argv) {
         fprintf(stderr,
                 "DIRECT_MFMOUNT_TEARDOWN_COMPLETE=%d\n",
                 EDPDirectMFMountTeardownComplete() ? 1 : 0);
+    } else {
+        MFChannelClose(channel);
+        MFRelease(channel);
+        close(backing_fd);
     }
-
-    if (fsync(backing_fd) != 0) {
-        perror("fsync backing");
-    }
-    MFChannelClose(channel);
-    MFRelease(channel);
-    close(backing_fd);
     fprintf(stderr, "DIRECT_MFMOUNT_EXIT=%d\n", exit_code);
     return exit_code;
 }

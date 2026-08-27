@@ -35,6 +35,7 @@ struct da_unmount_context {
 
 static atomic_bool g_teardown_active = false;
 static atomic_bool g_teardown_complete = false;
+static atomic_bool g_transport_released = false;
 
 bool EDPDirectMFMountTeardownActive(void) {
     return atomic_load_explicit(&g_teardown_active, memory_order_acquire);
@@ -42,6 +43,10 @@ bool EDPDirectMFMountTeardownActive(void) {
 
 bool EDPDirectMFMountTeardownComplete(void) {
     return atomic_load_explicit(&g_teardown_complete, memory_order_acquire);
+}
+
+void EDPDirectMFMountMarkTransportReleased(void) {
+    atomic_store_explicit(&g_transport_released, true, memory_order_release);
 }
 
 static char *copy_string(const char *source) {
@@ -144,9 +149,24 @@ static bool wait_for_da_operation(struct da_unmount_context *context) {
     return context->completed;
 }
 
+static bool wait_for_transport_release(void) {
+    struct timespec delay = {
+        .tv_sec = 0,
+        .tv_nsec = 100 * 1000 * 1000,
+    };
+    for (int attempt = 0; attempt < 100; attempt++) {
+        if (atomic_load_explicit(&g_transport_released,
+                                 memory_order_acquire)) {
+            return true;
+        }
+        nanosleep(&delay, NULL);
+    }
+    return false;
+}
+
 static int unmount_source_with_disk_arbitration(const char *source,
                                                 const char *mountpoint,
-                                                MFChannelRef channel) {
+                                                MFChannelRef *channel) {
     const char *expected_bsd_name = source + strlen("/dev/");
     DASessionRef session = DASessionCreate(kCFAllocatorDefault);
     if (session == NULL) {
@@ -239,7 +259,7 @@ static int unmount_source_with_disk_arbitration(const char *source,
      * the whole-disk unmount acknowledgement, then deactivate that same
      * virtual disk with DADiskEject. */
     errno = 0;
-    bool closed = MFChannelClose(channel);
+    bool closed = MFChannelClose(*channel);
     int saved_errno = errno;
     fprintf(stderr,
             "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d\n",
@@ -251,6 +271,21 @@ static int unmount_source_with_disk_arbitration(const char *source,
         CFRelease(disk);
         CFRelease(session);
         return saved_errno == 0 ? EIO : saved_errno;
+    }
+
+    MFRelease(*channel);
+    *channel = NULL;
+    bool transport_released = wait_for_transport_release();
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_TRANSPORT_RELEASED=%d source=%s\n",
+            transport_released ? 1 : 0,
+            source);
+    if (!transport_released) {
+        DASessionUnscheduleFromRunLoop(session, run_loop,
+                                       kCFRunLoopDefaultMode);
+        CFRelease(disk);
+        CFRelease(session);
+        return ETIMEDOUT;
     }
 
     if (mount_source_is_present(mountpoint, source)) {
@@ -337,15 +372,18 @@ static void *termination_wait_worker(void *opaque) {
      * whole source, close its transport, and deactivate that exact source. */
     atomic_store_explicit(&g_teardown_active, true, memory_order_release);
     atomic_store_explicit(&g_teardown_complete, false, memory_order_release);
+    atomic_store_explicit(&g_transport_released, false, memory_order_release);
     fprintf(stderr,
             "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d\n",
             signal_number);
     int unmount_result = unmount_source_with_disk_arbitration(
         source,
         args->mountpoint,
-        args->channel
+        &args->channel
     );
     if (unmount_result != 0) {
+        atomic_store_explicit(&g_teardown_complete, true,
+                              memory_order_release);
         atomic_store_explicit(&g_teardown_active, false, memory_order_release);
         fprintf(stderr,
                 "DIRECT_MFMOUNT_DA_UNMOUNT_FAILED=%d source=%s\n",
