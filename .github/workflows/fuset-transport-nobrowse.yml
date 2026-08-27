@@ -1,4 +1,4 @@
-name: FUSE-T FSKit Transport No-Browse
+name: FUSE-T FSKit Transport Finder Visibility
 
 on:
   push:
@@ -14,27 +14,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: fuset-transport-nobrowse-${{ github.ref }}
+  group: fuset-transport-finder-visibility-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  typed-update:
-    name: ${{ matrix.scenario }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - scenario: baseline-initial-nobrowse-dropped
-            update_mode: none
-            expect_hidden: "0"
-          - scenario: candidate-update-explicit-fuset-node
-            update_mode: node
-            expect_hidden: "1"
-          - scenario: candidate-update-explicit-fuset-source-node
-            update_mode: source-node
-            expect_hidden: "1"
+  finder-visibility-contract:
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       FUSET_VERSION: "1.2.7"
       FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
@@ -51,14 +37,13 @@ jobs:
           xcodebuild -version
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
 
-      - name: Stage official FUSE-T FSKit app
+      - name: Stage exact official FUSE-T FSKit runtime
         run: |
           set -euo pipefail
           PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
           EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
           curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
-          ACTUAL="$(shasum -a 256 "${PKG}" | awk '{print $1}')"
-          test "${ACTUAL}" = "${FUSET_PKG_SHA256}"
+          test "$(shasum -a 256 "${PKG}" | awk '{print $1}')" = "${FUSET_PKG_SHA256}"
           pkgutil --expand-full "${PKG}" "${EXPANDED}"
           SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
           test -n "${SOURCE_APP}"
@@ -102,21 +87,55 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build writable fixture and verifier
+      - name: Build writable bridge and Foundation Finder-browsability probe
         run: |
           set -euo pipefail
-          RAW="${RUNNER_TEMP}/nobrowse.raw"
+          RAW="${RUNNER_TEMP}/finder-visibility.raw"
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
-          printf 'EDP-NOBROWSE-PROBE' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
+          printf 'EDP-FINDER-VISIBILITY' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
             native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
             -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+
+          cat >"${RUNNER_TEMP}/InspectVolume.swift" <<'SWIFT'
+          import Foundation
+
+          @main
+          struct InspectVolume {
+              static func main() throws {
+                  guard CommandLine.arguments.count == 2 else { exit(64) }
+                  let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+                  let values = try url.resourceValues(forKeys: [
+                      .volumeIsBrowsableKey,
+                      .volumeNameKey,
+                      .volumeLocalizedNameKey,
+                      .volumeIsLocalKey,
+                      .volumeIsReadOnlyKey,
+                      .volumeMountFromLocationKey,
+                      .volumeTypeNameKey,
+                  ])
+                  guard let browsable = values.volumeIsBrowsable else {
+                      fputs("volumeIsBrowsable unavailable\n", stderr)
+                      exit(65)
+                  }
+                  print("BROWSABLE=\(browsable ? 1 : 0)")
+                  print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
+                  print("LOCALIZED_NAME=\(values.volumeLocalizedName ?? "<nil>")")
+                  print("LOCAL=\(values.volumeIsLocal == true ? 1 : 0)")
+                  print("READ_ONLY=\(values.volumeIsReadOnly == true ? 1 : 0)")
+                  print("MOUNT_FROM=\(values.volumeMountFromLocation ?? "<nil>")")
+                  print("TYPE=\(values.volumeTypeName ?? "<nil>")")
+              }
+          }
+          SWIFT
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
+            "${RUNNER_TEMP}/InspectVolume.swift" -o "${RUNNER_TEMP}/InspectVolume"
+
           cat >"${RUNNER_TEMP}/check-nobrowse.c" <<'EOF'
           #include <errno.h>
           #include <stdio.h>
           #include <string.h>
           #include <sys/mount.h>
-
           int main(int argc, char **argv) {
               if (argc != 2) return 64;
               struct statfs info;
@@ -124,101 +143,119 @@ jobs:
                   fprintf(stderr, "statfs: %s\n", strerror(errno));
                   return 65;
               }
-              const int hidden = (info.f_flags & MNT_DONTBROWSE) != 0;
               printf("STATFS_FLAGS=0x%08x MNT_DONTBROWSE=%d FSTYPE=%s SOURCE=%s\n",
-                     info.f_flags, hidden, info.f_fstypename, info.f_mntfromname);
-              return hidden ? 0 : 1;
+                     info.f_flags, (info.f_flags & MNT_DONTBROWSE) != 0,
+                     info.f_fstypename, info.f_mntfromname);
+              return 0;
           }
           EOF
           xcrun clang -Wall -Wextra -Werror "${RUNNER_TEMP}/check-nobrowse.c" -o "${RUNNER_TEMP}/check-nobrowse"
           echo "RAW=${RAW}" >> "${GITHUB_ENV}"
 
-      - name: Verify explicit FSKit typed update and writable transport
-        env:
-          EXPECT_HIDDEN: ${{ matrix.expect_hidden }}
-          SCENARIO: ${{ matrix.scenario }}
-          UPDATE_MODE: ${{ matrix.update_mode }}
+      - name: Probe safe product-level hiding candidates
         run: |
           set -euo pipefail
-          HIDDEN="${RUNNER_TEMP}/.edp-nobrowse-$(uuidgen | tr '[:upper:]' '[:lower:]')"
-          LOG="${RUNNER_TEMP}/bridge.log"
-          mkdir -p "${HIDDEN}"
-          echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"
+          RESULTS="${RUNNER_TEMP}/finder-visibility-results.txt"
+          : >"${RESULTS}"
+          SAFE_CANDIDATES=0
 
-          "${RUNNER_TEMP}/FuseTMinimalBridge" \
-            --writable \
-            --backing "${RAW}" \
-            --mountpoint "${HIDDEN}" \
-            --volume-name 'EDP NoBrowse Transport' \
-            >"${LOG}" 2>&1 &
-          BRIDGE_PID=$!
-          echo "BRIDGE_PID=${BRIDGE_PID}" >> "${GITHUB_ENV}"
+          run_case() {
+            local case_id="$1"
+            local location="$2"
+            local volume_name="$3"
+            local prehide="$4"
+            local mountpoint log pid inspect browsable exposed out disk
 
-          mounted=false
-          for attempt in $(seq 1 30); do
-            if mount | grep -Fq " on ${HIDDEN} "; then
-              mounted=true
-              break
+            if [[ "${location}" == "volumes" ]]; then
+              mountpoint="/Volumes/.edp-p0-${case_id}-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+              sudo mkdir -p "${mountpoint}"
+              sudo chown "$(id -u):$(id -g)" "${mountpoint}"
+            else
+              mountpoint="${RUNNER_TEMP}/.edp-p0-${case_id}-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+              mkdir -p "${mountpoint}"
             fi
-            if ! kill -0 "${BRIDGE_PID}" 2>/dev/null; then
-              break
+            if [[ "${prehide}" == "yes" ]]; then
+              chflags hidden "${mountpoint}"
             fi
-            sleep 1
-          done
-          cat "${LOG}" || true
-          test "${mounted}" = true
-          SESSION_JSON="$(sed -n 's/^SESSION_JSON=//p' "${LOG}" | tail -n 1)"
-          test -n "${SESSION_JSON}"
-          test -f "${SESSION_JSON}"
 
-          echo "MOUNT_BEFORE=$(mount | grep -F " on ${HIDDEN} ")"
-          set +e
-          "${RUNNER_TEMP}/check-nobrowse" "${HIDDEN}"
-          before_status=$?
-          set -e
-          test "${before_status}" -eq 1
+            log="${RUNNER_TEMP}/${case_id}.bridge.log"
+            "${RUNNER_TEMP}/FuseTMinimalBridge" \
+              --writable \
+              --backing "${RAW}" \
+              --mountpoint "${mountpoint}" \
+              --volume-name "${volume_name}" \
+              >"${log}" 2>&1 &
+            pid=$!
 
-          case "${UPDATE_MODE}" in
-            none)
-              ;;
-            node)
-              sudo /sbin/mount -u -t fuset -o nobrowse "${HIDDEN}"
-              ;;
-            source-node)
-              sudo /sbin/mount -u -t fuset -o nobrowse "${SESSION_JSON}" "${HIDDEN}"
-              ;;
-            *)
-              echo "unknown update mode: ${UPDATE_MODE}" >&2
-              exit 64
-              ;;
-          esac
+            mounted=false
+            for attempt in $(seq 1 30); do
+              if mount | grep -Fq " on ${mountpoint} "; then mounted=true; break; fi
+              if ! kill -0 "${pid}" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            cat "${log}"
+            test "${mounted}" = true
+            echo "CASE=${case_id} MOUNTPOINT=${mountpoint} VOLUME_NAME=${volume_name}" | tee -a "${RESULTS}"
+            mount | grep -F " on ${mountpoint} " | tee -a "${RESULTS}"
+            "${RUNNER_TEMP}/check-nobrowse" "${mountpoint}" | tee -a "${RESULTS}"
+            inspect="$(${RUNNER_TEMP}/InspectVolume "${mountpoint}")"
+            printf '%s\n' "${inspect}" | tee -a "${RESULTS}"
+            browsable="$(printf '%s\n' "${inspect}" | sed -n 's/^BROWSABLE=//p')"
+            test "${browsable}" = 0 -o "${browsable}" = 1
 
-          echo "MOUNT_AFTER=$(mount | grep -F " on ${HIDDEN} ")"
-          set +e
-          "${RUNNER_TEMP}/check-nobrowse" "${HIDDEN}"
-          hidden_status=$?
-          set -e
-          case "${hidden_status}" in
-            0) actual_hidden=1 ;;
-            1) actual_hidden=0 ;;
-            *) exit "${hidden_status}" ;;
-          esac
-          echo "SCENARIO=${SCENARIO} UPDATE_MODE=${UPDATE_MODE} EXPECT_HIDDEN=${EXPECT_HIDDEN} ACTUAL_HIDDEN=${actual_hidden}"
-          test "${actual_hidden}" = "${EXPECT_HIDDEN}"
+            exposed="${mountpoint}/volume.raw"
+            test -f "${exposed}"
+            cmp <(dd if="${RAW}" bs=1 skip=4096 count=21 status=none) \
+                <(dd if="${exposed}" bs=1 skip=4096 count=21 status=none)
+            printf 'RW' | dd of="${exposed}" bs=1 seek=8192 conv=notrunc status=none
+            cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
+            echo "RW_OK=1" | tee -a "${RESULTS}"
 
-          EXPOSED="${HIDDEN}/volume.raw"
-          test -f "${EXPOSED}"
-          cmp <(dd if="${RAW}" bs=1 skip=4096 count=18 status=none) \
-              <(dd if="${EXPOSED}" bs=1 skip=4096 count=18 status=none)
-          printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
-          cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
-          echo "RESULT=FUSET_TRANSPORT_TYPED_UPDATE_${SCENARIO}_OK"
+            out="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${exposed}" 2>"${RUNNER_TEMP}/${case_id}.attach.err)"
+            printf '%s\n' "${out}" | tee -a "${RESULTS}"
+            disk="$(printf '%s\n' "${out}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+            test -n "${disk}"
+            hdiutil detach "${disk}" -force >/dev/null
+            echo "DISKIMAGES2_RAW_ATTACH_OK=1" | tee -a "${RESULTS}"
+
+            /sbin/umount "${mountpoint}"
+            kill "${pid}" 2>/dev/null || true
+            if [[ "${location}" == "volumes" ]]; then sudo rmdir "${mountpoint}" || true; else rmdir "${mountpoint}" || true; fi
+
+            if [[ "${case_id}" == "baseline-product-shape" ]]; then
+              test "${browsable}" = 1
+              echo "BASELINE_EXPECTED_BROWSABLE=1" | tee -a "${RESULTS}"
+            elif [[ "${browsable}" = 0 ]]; then
+              SAFE_CANDIDATES=$((SAFE_CANDIDATES + 1))
+              echo "SAFE_CANDIDATE=${case_id}" | tee -a "${RESULTS}"
+            else
+              echo "CANDIDATE_REJECTED_BROWSABLE=${case_id}" | tee -a "${RESULTS}"
+            fi
+            echo '---' | tee -a "${RESULTS}"
+          }
+
+          # Current product shape: dot-prefixed mountpoint under /Volumes, visible transport label.
+          run_case baseline-product-shape volumes 'EDP P0 Visible Transport' no
+          # Moving the internal mount outside /Volumes must be tested, not assumed to hide it.
+          run_case internal-runtime-root runtime 'EDP P0 Runtime Transport' no
+          # Handoff's last-resort label strategy.
+          run_case dot-prefixed-volume-name volumes '.EDP P0 Hidden Transport' no
+          # Filesystem hidden flag on the mountpoint directory before FSKit mount.
+          run_case hidden-mountpoint-flag volumes 'EDP P0 Hidden Flag Transport' yes
+          # Combined isolation candidate if neither mechanism is sufficient alone.
+          run_case runtime-dot-volume-name runtime '.EDP P0 Runtime Hidden Transport' no
+
+          cat "${RESULTS}"
+          echo "SAFE_CANDIDATES=${SAFE_CANDIDATES}"
+          test "${SAFE_CANDIDATES}" -ge 1
+          echo 'RESULT=P0_FUSET_TRANSPORT_HAS_NONBROWSABLE_RW_DISKIMAGES2_CANDIDATE'
 
       - name: Cleanup
         if: always()
         run: |
           set +e
-          if [[ -n "${HIDDEN:-}" ]]; then /sbin/umount "${HIDDEN}" 2>/dev/null || sudo /sbin/umount "${HIDDEN}" 2>/dev/null; fi
-          if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null; fi
+          mount | awk '$3 ~ /^\/Volumes\/\.edp-p0-/ || $3 ~ /\/\.edp-p0-/ {print $3}' | while read -r m; do /sbin/umount "${m}" 2>/dev/null || sudo /sbin/umount "${m}" 2>/dev/null; done
+          pkill -f "${RUNNER_TEMP}/FuseTMinimalBridge" 2>/dev/null || true
+          sudo find /Volumes -maxdepth 1 -type d -name '.edp-p0-*' -exec rmdir {} \; 2>/dev/null || true
           sudo rm -rf /Applications/fuse-t.app
           exit 0
