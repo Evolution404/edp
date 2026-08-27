@@ -5,6 +5,7 @@ on:
     branches: ["test/fuset-minimal-fskit-bridge"]
     paths:
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
+      - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c"
       - ".github/workflows/direct-mfmount-fskit-transport.yml"
   workflow_dispatch:
 
@@ -129,7 +130,18 @@ jobs:
           xcrun clang -std=c17 -Wall -Wextra -Werror \
             -I"${INCLUDE_DIR}" \
             -F"${FRAMEWORK_DIR}" \
-            native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c \
+            -DMFMount=EDPAsyncMFMount \
+            -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c \
+            -o "${RUNNER_TEMP}/direct-main.o"
+          xcrun clang -std=c17 -Wall -Wextra -Werror \
+            -I"${INCLUDE_DIR}" \
+            -F"${FRAMEWORK_DIR}" \
+            -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c \
+            -o "${RUNNER_TEMP}/direct-mount-shim.o"
+          xcrun clang \
+            "${RUNNER_TEMP}/direct-main.o" \
+            "${RUNNER_TEMP}/direct-mount-shim.o" \
+            -F"${FRAMEWORK_DIR}" \
             -framework MFMount \
             -framework CoreFoundation \
             -Wl,-rpath,"${FRAMEWORK_DIR}" \
