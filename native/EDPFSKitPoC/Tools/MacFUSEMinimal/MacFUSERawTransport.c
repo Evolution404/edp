@@ -12,6 +12,18 @@
 
 static int g_backing_fd = -1;
 static off_t g_backing_size = 0;
+static const char kFinderInfoXattr[] = "com.apple.FinderInfo";
+
+/*
+ * FinderInfo is 32 bytes. For folders/volume roots, Finder flags occupy bytes
+ * 8-9 in big-endian order. kIsInvisible is 0x4000. This diagnostic exposes
+ * the attribute only on the transport root; volume.raw remains unmodified.
+ */
+static const unsigned char kInvisibleFinderInfo[32] = {
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0x40, 0x00,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
 
 static int raw_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
     (void)fi;
@@ -101,6 +113,23 @@ static int raw_statfs(const char *path, struct statvfs *st) {
     return 0;
 }
 
+static int raw_getxattr(const char *path, const char *name, char *value, size_t size) {
+    if (strcmp(path, "/") != 0 || strcmp(name, kFinderInfoXattr) != 0) return -ENOATTR;
+    if (value == NULL || size == 0) return (int)sizeof(kInvisibleFinderInfo);
+    if (size < sizeof(kInvisibleFinderInfo)) return -ERANGE;
+    memcpy(value, kInvisibleFinderInfo, sizeof(kInvisibleFinderInfo));
+    return (int)sizeof(kInvisibleFinderInfo);
+}
+
+static int raw_listxattr(const char *path, char *list, size_t size) {
+    if (strcmp(path, "/") != 0) return 0;
+    const size_t required = sizeof(kFinderInfoXattr);
+    if (list == NULL || size == 0) return (int)required;
+    if (size < required) return -ERANGE;
+    memcpy(list, kFinderInfoXattr, required);
+    return (int)required;
+}
+
 static struct fuse_operations g_operations = {
     .getattr = raw_getattr,
     .readdir = raw_readdir,
@@ -109,6 +138,8 @@ static struct fuse_operations g_operations = {
     .write = raw_write,
     .fsync = raw_fsync,
     .statfs = raw_statfs,
+    .getxattr = raw_getxattr,
+    .listxattr = raw_listxattr,
 };
 
 int main(int argc, char **argv) {
