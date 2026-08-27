@@ -1,0 +1,82 @@
+name: Transport Runtime Policy Dispatch
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "product/EDPTransportProvider.swift"
+      - "product/EDPFuseTRuntimePolicy.swift"
+      - "product/EDPMacFUSERuntimePolicy.swift"
+      - "product/EDPTransportRuntimePolicy.swift"
+      - ".github/workflows/transport-runtime-dispatch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: macos-26
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install only official macFUSE 5.3.2
+        run: |
+          set -euo pipefail
+          test ! -e /Applications/fuse-t.app
+          DMG="${RUNNER_TEMP}/macfuse.dmg"
+          curl -fsSL --retry 3 https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.2/macfuse-5.3.2.dmg -o "${DMG}"
+          test "$(shasum -a 256 "${DMG}" | awk '{print $1}')" = 9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936
+          ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
+          VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
+          PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach "${VOL}" >/dev/null
+          APP=/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app
+          LS=/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister
+          "${LS}" -f -R -trusted "${APP}"
+          while IFS= read -r EXT; do pluginkit -a "${EXT}" || true; done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
+          pluginkit -a "${APP}" || true
+          test ! -e /Applications/fuse-t.app
+      - name: Default Local succeeds without FUSE-T and explicit FUSE-T fails independently
+        run: |
+          set -euo pipefail
+          cat >"${RUNNER_TEMP}/Probe.swift" <<'SWIFT'
+          import Foundation
+          @main enum Probe {
+              static func main() {
+                  do {
+                      let local = try EDPTransportRuntimePolicy.verifySelectedRuntime(
+                          environment: [:], requireFinderHidden: true
+                      )
+                      print("DEFAULT_BACKEND=\(local.backend.rawValue)")
+                      print("DEFAULT_HIDDEN=\(local.finderHidden)")
+                      print("DEFAULT_RUNTIME=\(local.runtimeDescription)")
+                  } catch {
+                      fputs("default local failed: \(error)\n", stderr); exit(1)
+                  }
+
+                  do {
+                      _ = try EDPTransportRuntimePolicy.verifySelectedRuntime(
+                          environment: [EDPTransportProvider.environmentKey: "fuset"],
+                          requireFinderHidden: false
+                      )
+                      fputs("FUSE-T unexpectedly accepted without runtime\n", stderr); exit(2)
+                  } catch {
+                      print("EXPLICIT_FUSET_MISSING_RUNTIME_FAILS=1")
+                  }
+                  print("RESULT=TRANSPORT_RUNTIME_DISPATCH_BACKEND_SPECIFIC")
+              }
+          }
+          SWIFT
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
+            product/EDPTransportProvider.swift \
+            product/EDPFuseTRuntimePolicy.swift \
+            product/EDPMacFUSERuntimePolicy.swift \
+            product/EDPTransportRuntimePolicy.swift \
+            "${RUNNER_TEMP}/Probe.swift" -o "${RUNNER_TEMP}/probe"
+          "${RUNNER_TEMP}/probe" | tee "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'DEFAULT_BACKEND=macfuse-local' "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'DEFAULT_HIDDEN=true' "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'EXPLICIT_FUSET_MISSING_RUNTIME_FAILS=1' "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'RESULT=TRANSPORT_RUNTIME_DISPATCH_BACKEND_SPECIFIC' "${RUNNER_TEMP}/out.txt"
