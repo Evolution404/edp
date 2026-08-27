@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -26,6 +27,7 @@ extern void edp_rw_close(void *handle);
 
 static void *g_edp_handle = NULL;
 static const int g_virtual_fd = 0x4d46;
+static const char *g_mountpoint = NULL;
 
 static void secure_zero(void *buffer, size_t length) {
     volatile unsigned char *bytes = buffer;
@@ -128,7 +130,19 @@ static int install_termination_handlers(void) {
 
 static MFMessageRef edp_next_message(MFChannelRef channel) {
     MFMessageRef message = MFChannelCopyNextMessage(channel);
-    if (message == NULL && errno == EINTR) errno = ENODEV;
+    if (message == NULL && errno == EINTR) {
+        int saved = errno;
+        if (g_mountpoint != NULL) {
+            errno = 0;
+            int result = unmount(g_mountpoint, 0);
+            fprintf(stderr,
+                    "DIRECT_INTERNAL_UNMOUNT_RESULT=%d errno=%d mountpoint=%s\n",
+                    result,
+                    errno,
+                    g_mountpoint);
+        }
+        errno = saved == EINTR ? ENODEV : saved;
+    }
     return message;
 }
 
@@ -215,6 +229,7 @@ int main(int argc, char **argv) {
         return 65;
     }
 
+    g_mountpoint = mountpoint;
     g_edp_handle = edp_rw_open_device_fd(raw_fd, vid, pid, device_size,
                                          password, password_length,
                                          (uint32_t)partition);
@@ -235,5 +250,6 @@ int main(int argc, char **argv) {
     (void)edp_rw_sync(g_edp_handle);
     edp_rw_close(g_edp_handle);
     g_edp_handle = NULL;
+    g_mountpoint = NULL;
     return result;
 }
