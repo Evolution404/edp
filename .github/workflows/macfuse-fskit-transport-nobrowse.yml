@@ -1,4 +1,4 @@
-name: macFUSE Local FSKit Hidden RW Transport
+name: macFUSE FSKit FinderInfo Visibility A/B
 
 on:
   push:
@@ -12,11 +12,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: macfuse-fskit-hidden-transport-${{ github.ref }}
+  group: macfuse-fskit-finderinfo-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  hidden-rw-transport:
+  finderinfo-ab:
     runs-on: macos-26
     timeout-minutes: 20
     env:
@@ -25,7 +25,6 @@ jobs:
       MACFUSE_DMG_URL: "https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg"
       MACFUSE_FSKIT_GENERIC_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse"
       MACFUSE_FSKIT_LOCAL_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse-local"
-      TRANSPORT_VOLUME_NAME: "EDP macFUSE Hidden Transport"
 
     steps:
       - uses: actions/checkout@v6
@@ -44,7 +43,6 @@ jobs:
           curl --fail --location --retry 3 --silent --show-error "${MACFUSE_DMG_URL}" -o "${DMG}"
           test "$(shasum -a 256 "${DMG}" | awk '{print $1}')" = "${MACFUSE_DMG_SHA256}"
           ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
-          printf '%s\n' "${ATTACH}"
           VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
           test -n "${VOL}"
           PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
@@ -72,7 +70,7 @@ jobs:
           python3 - "${ENABLED_PLIST}" "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" <<'PY'
           import os, plistlib, sys
           path = sys.argv[1]
-          bundle_ids = sys.argv[2:]
+          ids = sys.argv[2:]
           enabled = []
           if os.path.exists(path):
               try:
@@ -82,7 +80,7 @@ jobs:
                       enabled = [x for x in value if isinstance(x, str)]
               except Exception:
                   pass
-          for bundle_id in bundle_ids:
+          for bundle_id in ids:
               if bundle_id not in enabled:
                   enabled.append(bundle_id)
           with open(path, "wb") as f:
@@ -97,7 +95,7 @@ jobs:
           grep -Fq "+    ${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
           grep -Fq "+    ${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build transport and visibility probes
+      - name: Build transport and metadata probes
         run: |
           set -euo pipefail
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -107,151 +105,158 @@ jobs:
             $(pkg-config --cflags --libs fuse3) \
             -o "${RUNNER_TEMP}/raw_transport"
 
-          cat >"${RUNNER_TEMP}/inspect.c" <<'EOF'
-          #include <stdio.h>
-          #include <sys/mount.h>
-          int main(int argc, char **argv) {
-              if (argc != 2) return 64;
-              struct statfs st;
-              if (statfs(argv[1], &st) != 0) return 65;
-              printf("FSTYPE=%s FLAGS=0x%08x MNT_DONTBROWSE=%d\n",
-                     st.f_fstypename, st.f_flags, (st.f_flags & MNT_DONTBROWSE) != 0);
-              return 0;
-          }
-          EOF
-          xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/inspect.c" -o "${RUNNER_TEMP}/inspect"
-
-          cat >"${RUNNER_TEMP}/InspectVolume.swift" <<'SWIFT'
+          cat >"${RUNNER_TEMP}/InspectPath.swift" <<'SWIFT'
           import Foundation
 
           @main
-          struct InspectVolume {
+          struct InspectPath {
               static func main() throws {
                   guard CommandLine.arguments.count == 2 else { exit(64) }
                   let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
                   let values = try url.resourceValues(forKeys: [
+                      .isHiddenKey,
                       .volumeIsBrowsableKey,
                       .volumeNameKey,
-                      .volumeLocalizedNameKey,
                       .volumeIsLocalKey,
-                      .volumeIsReadOnlyKey,
                       .volumeTypeNameKey,
                   ])
-                  guard let browsable = values.volumeIsBrowsable else { exit(65) }
-                  print("BROWSABLE=\(browsable ? 1 : 0)")
+                  print("ITEM_HIDDEN=\(values.isHidden == true ? 1 : 0)")
+                  print("BROWSABLE=\(values.volumeIsBrowsable == true ? 1 : 0)")
                   print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
-                  print("LOCALIZED_NAME=\(values.volumeLocalizedName ?? "<nil>")")
                   print("LOCAL=\(values.volumeIsLocal == true ? 1 : 0)")
-                  print("READ_ONLY=\(values.volumeIsReadOnly == true ? 1 : 0)")
                   print("TYPE=\(values.volumeTypeName ?? "<nil>")")
               }
           }
           SWIFT
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
-            "${RUNNER_TEMP}/InspectVolume.swift" -o "${RUNNER_TEMP}/InspectVolume"
+            "${RUNNER_TEMP}/InspectPath.swift" -o "${RUNNER_TEMP}/InspectPath"
 
-      - name: Collect local FSKit nobrowse contract
+      - name: Compare visible control against FinderInfo invisible root
         run: |
           set -euo pipefail
-          RAW="${RUNNER_TEMP}/macfuse-hidden.raw"
-          MOUNTPOINT="/Volumes/.edp-macfuse-hidden-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          RAW="${RUNNER_TEMP}/finderinfo-ab.raw"
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
-          printf 'EDP-MACFUSE-HIDDEN' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
-          sudo mkdir -p "${MOUNTPOINT}"
-          sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
-          echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
+          printf 'EDP-FINDERINFO-AB' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
 
-          "${RUNNER_TEMP}/raw_transport" "${RAW}" -f -d \
-            -o "backend=fskit,local,nobrowse,volname=${TRANSPORT_VOLUME_NAME}" \
-            "${MOUNTPOINT}" >"${RUNNER_TEMP}/transport.log" 2>&1 &
-          TRANSPORT_PID=$!
-          echo "TRANSPORT_PID=${TRANSPORT_PID}" >> "${GITHUB_ENV}"
+          run_variant() {
+            local tag="$1"
+            local expose="$2"
+            local volume_name="EDP P0 ${tag}"
+            local mountpoint="/Volumes/EDP-P0-${tag}-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+            local log_file="${RUNNER_TEMP}/${tag}.transport.log"
 
-          mounted=false
-          for attempt in $(seq 1 30); do
-            if mount | grep -Fq " on ${MOUNTPOINT} "; then mounted=true; break; fi
-            if ! kill -0 "${TRANSPORT_PID}" 2>/dev/null; then break; fi
-            sleep 1
-          done
+            sudo mkdir -p "${mountpoint}"
+            sudo chown "$(id -u):$(id -g)" "${mountpoint}"
+            EDP_INVISIBLE_FINDERINFO="${expose}" \
+              "${RUNNER_TEMP}/raw_transport" "${RAW}" -f -d \
+              -o "backend=fskit,local,volname=${volume_name}" \
+              "${mountpoint}" >"${log_file}" 2>&1 &
+            local pid=$!
 
-          echo '=== transport log ==='
-          cat "${RUNNER_TEMP}/transport.log" || true
-          echo '=== process state ==='
-          ps aux | grep -Ei 'raw_transport|fskit|macfuse|MFMount' | grep -v grep || true
-          echo '=== matching mounts ==='
-          mount | grep -Ei 'macfuse|fskit|edp-macfuse' || true
+            local mounted=false
+            for attempt in $(seq 1 30); do
+              if mount | grep -Fq " on ${mountpoint} "; then mounted=true; break; fi
+              if ! kill -0 "${pid}" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            cat "${log_file}" || true
+            test "${mounted}" = true
+            echo "${tag}_MOUNTED=1"
 
-          if [[ "${mounted}" != true ]]; then
-            echo 'MOUNTED=0'
-            echo '=== FSKit/macFUSE unified log ==='
-            log show --last 3m --style compact \
-              --predicate '(process == "fskitd") OR (process CONTAINS[c] "macfuse") OR (subsystem CONTAINS[c] "fskit") OR (subsystem CONTAINS[c] "macfuse")' \
-              2>/dev/null | tail -n 400 || true
-            exit 2
-          fi
-          echo 'MOUNTED=1'
+            local inspect
+            inspect="$(${RUNNER_TEMP}/InspectPath "${mountpoint}")"
+            printf '%s\n' "${inspect}"
+            local item_hidden
+            item_hidden="$(printf '%s\n' "${inspect}" | sed -n 's/^ITEM_HIDDEN=//p')"
+            local browsable
+            browsable="$(printf '%s\n' "${inspect}" | sed -n 's/^BROWSABLE=//p')"
+            echo "${tag}_ITEM_HIDDEN=${item_hidden}"
+            echo "${tag}_BROWSABLE=${browsable}"
 
-          FLAGS="$(${RUNNER_TEMP}/inspect "${MOUNTPOINT}")"
-          printf '%s\n' "${FLAGS}"
-          if printf '%s\n' "${FLAGS}" | grep -Fq 'MNT_DONTBROWSE=1'; then
-            FLAG_OK=1
-          else
-            FLAG_OK=0
-          fi
-          echo "MNT_DONTBROWSE_OK=${FLAG_OK}"
+            set +e
+            local finder_hex
+            finder_hex="$(xattr -px com.apple.FinderInfo "${mountpoint}" 2>/dev/null | tr -d '[:space:]')"
+            local xattr_status=$?
+            set -e
+            echo "${tag}_FINDERINFO_XATTR_STATUS=${xattr_status}"
+            echo "${tag}_FINDERINFO_HEX=${finder_hex:-<none>}"
 
-          FOUNDATION="$(${RUNNER_TEMP}/InspectVolume "${MOUNTPOINT}")"
-          printf '%s\n' "${FOUNDATION}"
-          if [[ "$(printf '%s\n' "${FOUNDATION}" | sed -n 's/^BROWSABLE=//p')" = 0 ]]; then
-            FOUNDATION_HIDDEN=1
-          else
-            FOUNDATION_HIDDEN=0
-          fi
-          echo "FOUNDATION_HIDDEN=${FOUNDATION_HIDDEN}"
+            if [[ "${expose}" = 0 ]]; then
+              test "${xattr_status}" -ne 0
+              test "${item_hidden}" = 0
+            else
+              test "${xattr_status}" -eq 0
+              test "${#finder_hex}" -eq 64
+              test "${finder_hex:16:4}" = "4000"
+            fi
 
-          open -a Finder
-          finder_ok=false
-          for attempt in $(seq 1 15); do
-            if osascript -e 'tell application "Finder" to get name of every disk' >"${RUNNER_TEMP}/finder.txt" 2>/dev/null; then finder_ok=true; break; fi
-            sleep 1
-          done
-          test "${finder_ok}" = true
-          cat "${RUNNER_TEMP}/finder.txt"
-          if grep -Fq "${TRANSPORT_VOLUME_NAME}" "${RUNNER_TEMP}/finder.txt"; then
-            FINDER_HIDDEN=0
-            echo 'FINDER_TRANSPORT_VISIBLE=1'
-          else
-            FINDER_HIDDEN=1
-            echo 'FINDER_TRANSPORT_VISIBLE=0'
-          fi
+            if xcrun --find GetFileInfo >/dev/null 2>&1; then
+              echo "${tag}_GETFILEINFO=$(xcrun GetFileInfo -a "${mountpoint}" 2>/dev/null || true)"
+            fi
+            echo "${tag}_MDITEM_FSINVISIBLE=$(mdls -raw -name kMDItemFSInvisible "${mountpoint}" 2>/dev/null || true)"
 
-          EXPOSED="${MOUNTPOINT}/volume.raw"
-          test -f "${EXPOSED}"
-          cmp <(dd if="${RAW}" bs=1 skip=4096 count=18 status=none) \
-              <(dd if="${EXPOSED}" bs=1 skip=4096 count=18 status=none)
-          printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
-          cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
-          echo 'RW_OK=1'
+            killall Finder 2>/dev/null || true
+            open -a Finder
+            sleep 2
+            osascript -e 'tell application "Finder" to get name of every disk' >"${RUNNER_TEMP}/${tag}.finder.txt"
+            cat "${RUNNER_TEMP}/${tag}.finder.txt"
+            if grep -Fq "${volume_name}" "${RUNNER_TEMP}/${tag}.finder.txt"; then
+              echo "${tag}_FINDER_VISIBLE=1"
+              printf '1' >"${RUNNER_TEMP}/${tag}.finder-visible"
+            else
+              echo "${tag}_FINDER_VISIBLE=0"
+              printf '0' >"${RUNNER_TEMP}/${tag}.finder-visible"
+            fi
+            printf '%s' "${item_hidden}" >"${RUNNER_TEMP}/${tag}.item-hidden"
 
-          OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"
-          printf '%s\n' "${OUT}"
-          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
-          test -n "${DISK}"
-          hdiutil detach "${DISK}" -force >/dev/null
-          echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
+            if [[ "${expose}" = 1 ]]; then
+              local exposed="${mountpoint}/volume.raw"
+              test -f "${exposed}"
+              printf 'RW' | dd of="${exposed}" bs=1 seek=8192 conv=notrunc status=none
+              cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
+              echo 'RW_OK=1'
+              local out disk
+              out="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${exposed}")"
+              printf '%s\n' "${out}"
+              disk="$(printf '%s\n' "${out}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+              test -n "${disk}"
+              hdiutil detach "${disk}" -force >/dev/null
+              echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
+            fi
 
-          if [[ "${FLAG_OK}" = 1 && "${FOUNDATION_HIDDEN}" = 1 && "${FINDER_HIDDEN}" = 1 ]]; then
-            echo 'RESULT=MACFUSE_LOCAL_FSKIT_HIDDEN_RW_TRANSPORT_OK'
+            /sbin/umount "${mountpoint}" 2>/dev/null || sudo /sbin/umount "${mountpoint}"
+            kill "${pid}" 2>/dev/null || true
+            rmdir "${mountpoint}" 2>/dev/null || sudo rmdir "${mountpoint}" 2>/dev/null || true
+          }
+
+          run_variant CONTROL 0
+          run_variant FINDERINFO 1
+
+          CONTROL_HIDDEN="$(cat "${RUNNER_TEMP}/CONTROL.item-hidden")"
+          FINDERINFO_HIDDEN="$(cat "${RUNNER_TEMP}/FINDERINFO.item-hidden")"
+          CONTROL_FINDER="$(cat "${RUNNER_TEMP}/CONTROL.finder-visible")"
+          FINDERINFO_FINDER="$(cat "${RUNNER_TEMP}/FINDERINFO.finder-visible")"
+          echo "AB_CONTROL_ITEM_HIDDEN=${CONTROL_HIDDEN}"
+          echo "AB_FINDERINFO_ITEM_HIDDEN=${FINDERINFO_HIDDEN}"
+          echo "AB_CONTROL_FINDER_VISIBLE=${CONTROL_FINDER}"
+          echo "AB_FINDERINFO_FINDER_VISIBLE=${FINDERINFO_FINDER}"
+
+          test "${CONTROL_HIDDEN}" = 0
+          test "${FINDERINFO_HIDDEN}" = 1
+          if [[ "${CONTROL_FINDER}" = 1 && "${FINDERINFO_FINDER}" = 0 ]]; then
+            echo 'RESULT=FINDERINFO_HIDES_FSKIT_TRANSPORT_IN_FINDER'
             exit 0
           fi
-          echo "RESULT=MACFUSE_LOCAL_FSKIT_NOBROWSE_NOT_IMPLEMENTED flag=${FLAG_OK} foundation=${FOUNDATION_HIDDEN} finder=${FINDER_HIDDEN}"
+          echo 'RESULT=FINDERINFO_METADATA_RECOGNIZED_BUT_HOSTED_FINDER_INCONCLUSIVE'
           exit 1
 
       - name: Cleanup
         if: always()
         run: |
           set +e
-          if [[ -n "${MOUNTPOINT:-}" ]]; then /sbin/umount "${MOUNTPOINT}" 2>/dev/null || sudo /sbin/umount "${MOUNTPOINT}" 2>/dev/null; fi
-          if [[ -n "${TRANSPORT_PID:-}" ]]; then kill "${TRANSPORT_PID}" 2>/dev/null || true; fi
-          sudo find /Volumes -maxdepth 1 -type d -name '.edp-macfuse-hidden-*' -exec rmdir {} \; 2>/dev/null || true
+          pkill -f "${RUNNER_TEMP}/raw_transport" 2>/dev/null || true
+          mount | awk '/\/Volumes\/EDP-P0-(CONTROL|FINDERINFO)-/ {print $3}' | while read -r mp; do
+            /sbin/umount "${mp}" 2>/dev/null || sudo /sbin/umount "${mp}" 2>/dev/null || true
+            sudo rmdir "${mp}" 2>/dev/null || true
+          done
           exit 0
