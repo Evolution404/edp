@@ -22,6 +22,14 @@
 - 相关证据 runs：`33035729103`、`33035940110`、`33036981246`、`33037233968`。
 - 相关提交：`a6bd237`、`d84092c`、`85fc98b`、`c35bb268`。
 
+官方源码核对（2026-08-27）：
+
+- macFUSE `5.3.2` 的 Library-3 gitlink 为 `afdd74cf`；`fuse_session_mount_callback()` 用 `DADiskCreateFromVolumePath()` 保存 `DADiskRef`，但 `fuse_session_unmount()` 只是调用无 callback 的 `DADiskUnmount()` 后立即 `CFRelease`，没有等待 Disk Arbitration 完成，也没有在 graceful 路径随后关闭 channel。
+- macFUSE `5.3.3` 的 Library-3 gitlink 为 `9a3db24b`；新增完整 mount state machine。unmount 在独立线程调度 DASession/run loop，等待 `DADiskUnmount` callback，成功后才 `fuse_session_close()`；失败时恢复 DADisk ownership 和 mounted 状态。
+- 因此 5.3.2 → 5.3.3 **确实存在 libfuse teardown 实现差异**，但 Direct MFMount adapter 绕过 libfuse，不会自动获得 5.3.3 的 state machine；`_MFChannelInterrupt` 也不是上述正确 teardown 的决定性步骤。
+- Direct adapter 当前按同一所有权顺序实现：从 mount table 解析 `/dev/diskN` source → `DADiskCreateFromBSDName()` → 调度并等待 `DADiskUnmount` callback → 关闭 MFChannel → 验证 source/mountpoint 均从 mount table 消失。这样可以用完全相同的代码验证 5.3.2/5.3.3 runtime，而不会把 library 版本自身的不同 teardown 实现混入结果。
+- 官方源码：`https://github.com/macfuse/library`；版本 gitlink 来自 `macfuse/macfuse` 的 `macfuse-5.3.2` / `macfuse-5.3.3` tag。
+
 当前唯一诊断主线：
 
 ```text
@@ -43,10 +51,10 @@ mountpoint
 | L2 | ✅ | Local FSKit + DiskImages2 + Finder 隐藏 | 已通过 |
 | L3 | ✅ | 排除 `MFChannelClose()` 作为 volume unmount | 只关闭 channel，不移除 Local volume |
 | L4 | ✅ | 排除 mountpoint shell unmount 路径 | `diskutil unmount` / 普通 `unmount(2)` 均失败，不再重复 |
-| L5 | 🟡 | 解析真实 mount source `/dev/diskN` 并对 source `DADiskRef` teardown | 当前最高优先级 |
+| L5 | 🟡 | 解析真实 mount source `/dev/diskN` 并对 source `DADiskRef` teardown | 已实现 source lookup、scheduled DASession、callback wait、channel close 和 mount-table gate；等待 matrix |
 | L6 | ⏳ | mount table 消失后同路径 remount | 等待 L5 |
 | L7 | ⏳ | 两轮 mount → RW → unmount → remount → encrypted marker persistence | 任一版本稳定通过即停止诊断并固定该版本 |
-| L8 | 🟡 | macFUSE 5.3.2 / 5.3.3 真实行为差异 | 仅确认 `_MFChannelInterrupt` 符号差异；尚无 lifecycle 行为差异证据 |
+| L8 | 🟡 | macFUSE 5.3.2 / 5.3.3 真实行为差异 | 已确认 libfuse teardown 源码存在实质差异；相同 Direct lifecycle 下的 runtime 行为差异等待 matrix |
 | L9 | ⏳ | 产品 transport provider 接入 `macfuse-local` | L7 后把 `EDPVaultRuntime.swift` 从硬编码 `edp-fuset-readwrite` / `EDPFuseTRuntimePolicy` 迁移到正式 provider |
 | L10 | ⏳ | 完整产品 E2E | encrypted mount → RW → DiskImages2 → Apple FS/Finder → unmount → remount → persistence |
 

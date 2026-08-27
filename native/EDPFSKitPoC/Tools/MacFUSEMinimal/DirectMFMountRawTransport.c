@@ -16,6 +16,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#if defined(__APPLE__)
+extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
+#else
+extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
+#endif
+
 #ifndef ENOATTR
 #define ENOATTR ENODATA
 #endif
@@ -525,7 +531,12 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
             result = 0;
             break;
         case FUSE_DESTROY:
-            state->running = false;
+            if (EDPDirectMFMountTeardownActive != NULL &&
+                EDPDirectMFMountTeardownActive()) {
+                fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_DEFERRED=1\n");
+            } else {
+                state->running = false;
+            }
             result = 0;
             break;
         case FUSE_MKDIR:

@@ -57,7 +57,7 @@ jobs:
           PY
           xcrun clang -std=c17 -Wall -Wextra -Werror -I"${INC}" -F"${FRAMEWORKS}" -DMFMount=EDPAsyncMFMount -c "${RUNNER_TEMP}/direct.c" -o "${RUNNER_TEMP}/direct.o"
           xcrun clang -std=c17 -Wall -Wextra -Werror -I"${INC}" -F"${FRAMEWORKS}" -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c -o "${RUNNER_TEMP}/shim.o"
-          xcrun clang "${RUNNER_TEMP}/direct.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -Wl,-rpath,"${FRAMEWORKS}" -o "${RUNNER_TEMP}/direct-local"
+          xcrun clang "${RUNNER_TEMP}/direct.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -framework DiskArbitration -Wl,-rpath,"${FRAMEWORKS}" -o "${RUNNER_TEMP}/direct-local"
       - name: Prove live standard unmount is bounded and effective
         run: |
           set -euo pipefail

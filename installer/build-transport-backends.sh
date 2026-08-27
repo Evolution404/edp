@@ -71,7 +71,7 @@ xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
   "${BUILD_ROOT}/adapter.o" "${BUILD_ROOT}/async-shim.o" \
   -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${FRAMEWORKS}" \
-  -framework MFMount -framework CoreFoundation \
+  -framework MFMount -framework CoreFoundation -framework DiskArbitration \
   -o "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
 
 # Keep the runtime-facing filename stable while making backend selection an

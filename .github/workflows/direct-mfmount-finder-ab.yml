@@ -89,7 +89,7 @@ jobs:
             xcrun clang -std=c17 -Wall -Wextra -Werror -I"${INC}" -F"${FRAMEWORKS}" \
               -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c -o "${RUNNER_TEMP}/shim-${MODE}.o"
             xcrun clang "${RUNNER_TEMP}/${MODE}.o" "${RUNNER_TEMP}/shim-${MODE}.o" \
-              -F"${FRAMEWORKS}" -framework MFMount -framework CoreFoundation \
+              -F"${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -framework DiskArbitration \
               -Wl,-rpath,"${FRAMEWORKS}" -o "${RUNNER_TEMP}/direct-${MODE}"
             otool -L "${RUNNER_TEMP}/direct-${MODE}" | tee "${RUNNER_TEMP}/otool-${MODE}.txt"
             grep -Fq 'MFMount.framework' "${RUNNER_TEMP}/otool-${MODE}.txt"

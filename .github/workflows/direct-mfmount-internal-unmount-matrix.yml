@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: direct-mfmount-internal-unmount-v4-${{ github.ref }}
+  group: direct-mfmount-internal-unmount-v5-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -83,7 +83,7 @@ jobs:
             native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
             native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift
           )
-          xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors "${CORE[@]}" "${RUNNER_TEMP}/adapter.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -o "${RUNNER_TEMP}/bridge"
+          xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors "${CORE[@]}" "${RUNNER_TEMP}/adapter.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -framework DiskArbitration -o "${RUNNER_TEMP}/bridge"
       - name: Prove system-volume unmount and remount persistence
         run: |
           set -euo pipefail
@@ -102,25 +102,15 @@ jobs:
           }
           stop() {
             P="$(cat "${RUNNER_TEMP}/pid")"
-            : >"${RUNNER_TEMP}/diskutil.log"
-            /usr/sbin/diskutil unmount "${MP}" >"${RUNNER_TEMP}/diskutil.log" 2>&1 &
-            DPID=$!
+            kill -TERM "${P}"
             MOUNT_GONE=0
-            for _ in $(seq 1 20); do
+            EXITED=0
+            for _ in $(seq 1 40); do
               if ! mount | grep -Fq " on ${MP} "; then MOUNT_GONE=1; break; fi
-              if ! kill -0 "${DPID}" 2>/dev/null; then break; fi
+              if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; break; fi
               sleep 1
             done
-            wait "${DPID}" || DRC=$?; DRC="${DRC:-0}"
-            cat "${RUNNER_TEMP}/diskutil.log" || true
-            test "${DRC}" -eq 0
             test "${MOUNT_GONE}" -eq 1
-            echo "SYSTEM_VOLUME_UNMOUNT_OK=1"
-
-            if kill -0 "${P}" 2>/dev/null; then
-              kill -TERM "${P}"
-            fi
-            EXITED=0
             for _ in $(seq 1 10); do
               if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; break; fi
               sleep 1
@@ -129,7 +119,13 @@ jobs:
             wait "${P}" || PRC=$?; PRC="${PRC:-0}"
             test "${PRC}" -eq 0
             cat "${RUNNER_TEMP}/server.log" || true
+            grep -Eq 'DIRECT_MFMOUNT_SOURCE=/dev/disk[0-9]+' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_DA_UNMOUNT_REQUESTED=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_DA_UNMOUNT_STATUS=0' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=1 errno=0' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_MOUNT_TABLE_GONE=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_EXIT=0' "${RUNNER_TEMP}/server.log"
+            echo "SOURCE_DADISK_UNMOUNT_OK=1"
           }
           start
           MARKER="EDP-INTERNAL-${VERSION}-PERSIST"; OFFSET=1048579
