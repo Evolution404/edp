@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+ROOT="/Library/Application Support/EDP USB Vault"
+APP="/Applications/EDP USB Vault.app"
+/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
+/bin/chmod -R go-w "${ROOT}" "${APP}"
+/bin/chmod 0755 "${ROOT}" "${ROOT}/bin" "${ROOT}/bin/"*
+PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+if [[ -f "${PLIST}" ]]; then
+  /bin/launchctl bootstrap system "${PLIST}"
+  /bin/launchctl enable system/com.edp.usbvault.mountd || true
+  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
+elif /bin/launchctl print system/com.edp.usbvault.mountd >/dev/null 2>&1; then
+  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
+fi
+exit 0

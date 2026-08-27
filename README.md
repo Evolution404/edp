@@ -1,8 +1,65 @@
 # EDP USB Vault — macOS 26
 
-本分支 `feat/macos26-native-fskit` 维护 **macOS 26+** 产品方向。
+本分支维护 **macOS 26+ 原生菜单栏产品方向**。
 
-## 0.5.0 干净读写安装包
+## 0.6.0 原生菜单栏产品
+
+0.6.0 使用 SwiftUI、AppKit、XPC、Disk Arbitration 和 System Keychain，
+不依赖 Tauri 或 WebView。应用设置为 `LSUIElement`，常驻菜单栏且不显示
+Dock 图标；菜单栏可以打开完整的“设备 / 活动 / 设置”主界面。
+
+每个已识别设备按三个分区独立管理：
+
+- type 1 启动区：普通分区，无密码，默认自动挂载；
+- type 2 交换区：独立密码和自动挂载策略；
+- type 4 保密区：独立密码和自动挂载策略。
+
+交换区和保密区使用各自的 System Keychain 项目。旧版单设备密码会在
+首次启动 0.6 服务时迁移为两个分区级项目。设备名称和挂载策略为全机共享，
+保存在 root-only 的原子策略文件中。
+
+正式挂载链为：
+
+```text
+physical EDP USB
+  -> type 1: validated writable MBR/FAT slice
+  -> type 2/4: per-partition Swift SM4 block adapter
+  -> pinned FUSE-T 1.2.7 thin FSKit transport
+  -> hidden writable volume.raw
+  -> DiskImages2 writable virtual media
+  -> Apple native filesystem stack
+  -> Finder
+```
+
+ExFAT 由 Apple 原生读写。NTFS 可以按系统能力只读挂载，但虚拟磁盘介质
+保持可写，因此 Finder 自带的“抹掉”可以把交换区或保密区格式化为 ExFAT；
+应用本身不提供破坏性的格式化按钮。
+
+整盘以 `O_RDWR` 打开后，macOS 会撤掉实体启动分区的子设备节点，因此 type 1
+也由受限的明文 MBR 切片发布为虚拟 FAT 卷。这样启动区、交换区、保密区可以
+同时存在，且仍由同一会话生命周期统一卸载和安全推出。
+
+构建不捆绑第三方 FUSE-T 二进制的原生安装包：
+
+```bash
+./installer/build-native-installer.sh artifacts
+```
+
+运行时严格校验 `/Applications/fuse-t.app` 的 bundle ID、Team ID 和已验证
+1.2.7 可执行文件哈希。商业发布前必须取得适用的 FUSE-T commercial
+license；在此之前不得将其二进制随商业产品分发。
+
+原始磁盘访问不保存 `AuthorizationExternalForm`，也不修改 AuthorizationDB。
+root 后台服务只接受经过签名校验的 App XPC 客户端，只对设备发现层确认过的
+`/dev/rdiskN` 整盘执行 `O_RDWR`；root-owned `edp-console-exec` 将该文件描述符
+固定继承为 fd 3，然后降权到当前控制台用户并启动 FUSE-T 桥。桥会再次校验
+字符设备、设备大小、VID/PID、EDP 身份和分区元数据。安装及系统扩展批准完成
+后，重启或重新插盘不再需要管理员密码。
+
+正式发布前仍需在干净 macOS 26 机器完成“安装 → 系统批准 → 重启 → 无提示
+自动挂载”的实体盘 E2E，作为发布验收项；这不是通过持久化临时授权令牌实现。
+
+## 0.5.0 旧版 macFUSE/NTFS-3G 安装包
 
 当前产品包不再依赖 iBoysoft，也不包含任何 iBoysoft 文件、授权数据或
 提取组件。统一安装包包含：
@@ -170,7 +227,9 @@ real EDP USB
   -> Finder read
 ```
 
-真实盘只读闭环已完成；可写块路径已实现。真实 NTFS 写入仍受本机 iBoysoft 挂载状态和 privileged raw-device FD 交接约束。
+真实盘只读闭环已完成；可写块路径和 privileged raw-device fd 3 交接已经实现。
+真实 NTFS 文件写入仍取决于 Apple 当前提供的只读能力；产品通过保持虚拟介质
+可写来支持 Finder 将该分区抹掉并重新格式化为 ExFAT。
 
 ## 当前核心模块
 

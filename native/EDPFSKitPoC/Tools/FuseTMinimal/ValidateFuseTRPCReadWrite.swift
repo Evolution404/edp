@@ -308,8 +308,11 @@ private func exerciseReadOnly(path: String, socketPath: String) throws {
 private enum ValidateFuseTRPCReadWriteMain {
     static func main() {
         do {
-            let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-                .appendingPathComponent("edp-rpc-rw-\(UUID().uuidString)", isDirectory: true)
+            // sockaddr_un.sun_path is only 104 bytes on Darwin. CI and local
+            // TMPDIR paths can already consume most of that budget.
+            let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12)
+            let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+                .appendingPathComponent("edp-rpc-\(token)", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
             defer { try? FileManager.default.removeItem(at: directory) }
 

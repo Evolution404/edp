@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <grp.h>
 #include <limits.h>
 #include <pwd.h>
@@ -21,9 +22,9 @@ static int parse_id(const char *text, unsigned long *value) {
 
 static int allowed_executable(const char *path) {
     static const char *allowed[] = {
+        "/Library/Application Support/EDP USB Vault/bin/edp-fuset-readwrite",
         "/Library/Application Support/EDP USB Vault/bin/edp-readwrite-fuse",
         "/Library/Application Support/EDP USB Vault/bin/ntfs-3g",
-        "/Library/Application Support/EDP USB Vault/bin/ntfs-3g.probe",
         "/Library/Application Support/EDP USB Vault/bin/ntfs-3g.probe",
     };
     for (size_t index = 0; index < sizeof(allowed) / sizeof(allowed[0]); ++index) {
@@ -32,15 +33,38 @@ static int allowed_executable(const char *path) {
     return 0;
 }
 
+static int is_whole_raw_disk_path(const char *path) {
+    static const char prefix[] = "/dev/rdisk";
+    if (!path || strncmp(path, prefix, sizeof(prefix) - 1) != 0) return 0;
+    const char *suffix = path + sizeof(prefix) - 1;
+    if (*suffix == '\0') return 0;
+    for (; *suffix != '\0'; ++suffix) {
+        if (*suffix < '0' || *suffix > '9') return 0;
+    }
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 5) {
-        fprintf(stderr, "usage: edp-console-exec <uid> <gid> -- <executable> [args...]\n");
+        fprintf(stderr, "usage: edp-console-exec <uid> <gid> [--raw-device /dev/rdiskN] -- <executable> [args...]\n");
         return 64;
     }
-    if (geteuid() != 0 || strcmp(argv[3], "--") != 0) {
+    if (geteuid() != 0) {
         fprintf(stderr, "EDP_CONSOLE_EXEC_REQUIRES_ROOT\n");
         return 77;
     }
+
+    const char *raw_device = NULL;
+    int separator = 3;
+    if (argc >= 7 && strcmp(argv[3], "--raw-device") == 0) {
+        raw_device = argv[4];
+        separator = 5;
+    }
+    if (separator >= argc - 1 || strcmp(argv[separator], "--") != 0) {
+        fprintf(stderr, "EDP_CONSOLE_EXEC_INVALID_ARGUMENTS\n");
+        return 64;
+    }
+    int executable_index = separator + 1;
 
     unsigned long uid_value = 0;
     unsigned long gid_value = 0;
@@ -51,7 +75,7 @@ int main(int argc, char **argv) {
     }
 
     char resolved[PATH_MAX];
-    if (!realpath(argv[4], resolved) || !allowed_executable(resolved)) {
+    if (!realpath(argv[executable_index], resolved) || !allowed_executable(resolved)) {
         fprintf(stderr, "EDP_CONSOLE_EXEC_TARGET_REFUSED\n");
         return 77;
     }
@@ -60,6 +84,40 @@ int main(int argc, char **argv) {
         status.st_uid != 0 || (status.st_mode & 0022) != 0) {
         fprintf(stderr, "EDP_CONSOLE_EXEC_TARGET_UNTRUSTED\n");
         return 77;
+    }
+
+    int raw_fd = -1;
+    if (raw_device) {
+        static const char bridge[] =
+            "/Library/Application Support/EDP USB Vault/bin/edp-fuset-readwrite";
+        if (strcmp(resolved, bridge) != 0 || !is_whole_raw_disk_path(raw_device)) {
+            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_DEVICE_REFUSED\n");
+            return 77;
+        }
+        raw_fd = open(raw_device, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+        if (raw_fd < 0) {
+            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_OPEN_FAILED:%d\n", errno);
+            return 77;
+        }
+        struct stat raw_status;
+        if (fstat(raw_fd, &raw_status) != 0 || !S_ISCHR(raw_status.st_mode)) {
+            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_TYPE_REFUSED\n");
+            close(raw_fd);
+            return 77;
+        }
+        if (raw_fd != 3) {
+            if (dup2(raw_fd, 3) < 0) {
+                fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_DUP_FAILED:%d\n", errno);
+                close(raw_fd);
+                return 77;
+            }
+            close(raw_fd);
+            raw_fd = 3;
+        } else if (fcntl(raw_fd, F_SETFD, 0) != 0) {
+            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_INHERIT_FAILED:%d\n", errno);
+            close(raw_fd);
+            return 77;
+        }
     }
 
     uid_t uid = (uid_t)uid_value;
@@ -77,7 +135,7 @@ int main(int argc, char **argv) {
         return 77;
     }
 
-    execv(resolved, &argv[4]);
+    execv(resolved, &argv[executable_index]);
     fprintf(stderr, "EDP_CONSOLE_EXEC_EXEC_FAILED:%d\n", errno);
     return 71;
 }

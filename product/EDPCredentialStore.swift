@@ -10,7 +10,7 @@ struct EDPCredentialRecord: Codable, Hashable, Sendable {
 }
 
 struct EDPCredentialIndex: Codable, Sendable {
-    var schemaVersion = 3
+    var schemaVersion = 4
     var records = [EDPCredentialRecord]()
 }
 
@@ -33,7 +33,8 @@ private struct LegacyCredentialFile: Codable {
 }
 
 final class EDPCredentialStore {
-    static let serviceName = "com.edp.usbvault.device-password.v3"
+    static let serviceName = "com.edp.usbvault.partition-password.v4"
+    static let deviceServiceName = "com.edp.usbvault.device-password.v3"
     static let legacyServiceName = "com.edp.usbvault.device-password"
 
     private let indexPath: String
@@ -74,6 +75,7 @@ final class EDPCredentialStore {
             )
         }
 
+        try migrateDeviceCredentialsToPartitions()
         try pruneRecordsWithoutCurrentCredentials()
     }
 
@@ -87,22 +89,28 @@ final class EDPCredentialStore {
         )
     }
 
-    func password(for record: EDPCredentialRecord) throws -> [UInt8] {
-        var query = searchQuery(deviceID: record.deviceID)
+    func password(deviceID: String, partitionType: UInt32) throws -> [UInt8] {
+        var query = searchQuery(deviceID: deviceID, partitionType: partitionType)
         query[kSecReturnData] = true
         query[kSecMatchLimit] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else {
             throw EDPCredentialStoreError(
-                "Keychain password unavailable for \(record.deviceID): status=\(status)"
+                "Keychain password unavailable for \(deviceID) partition \(partitionType): status=\(status)"
             )
         }
         return [UInt8](data)
     }
 
     func put(deviceID: String, password: [UInt8], partitionTypes: [UInt32]) throws {
-        try upsertPassword(deviceID: deviceID, password: password)
+        for partitionType in partitionTypes {
+            try upsertPassword(
+                deviceID: deviceID,
+                partitionType: partitionType,
+                password: password
+            )
+        }
         var index = try load()
         index.records.removeAll { $0.deviceID == deviceID }
         index.records.append(EDPCredentialRecord(
@@ -114,33 +122,99 @@ final class EDPCredentialStore {
         try save(index)
     }
 
-    func remove(deviceID: String) throws {
-        let query = searchQuery(deviceID: deviceID)
-        let status = SecItemDelete(query as CFDictionary)
+    func put(deviceID: String, partitionType: UInt32, password: [UInt8]) throws {
+        guard [UInt32(2), 4].contains(partitionType) else {
+            throw EDPCredentialStoreError("credentials are only valid for partition 2 or 4")
+        }
+        try upsertPassword(
+            deviceID: deviceID,
+            partitionType: partitionType,
+            password: password
+        )
+        var index = try load()
+        var types = Set(index.records.first { $0.deviceID == deviceID }?.partitionTypes ?? [])
+        types.insert(partitionType)
+        index.records.removeAll { $0.deviceID == deviceID }
+        index.records.append(EDPCredentialRecord(
+            deviceID: deviceID,
+            partitionTypes: types.sorted(),
+            updatedAt: ISO8601DateFormatter().string(from: Date())
+        ))
+        index.records.sort { $0.deviceID < $1.deviceID }
+        try save(index)
+    }
+
+    func remove(deviceID: String, partitionType: UInt32) throws {
+        let status = SecItemDelete(
+            searchQuery(deviceID: deviceID, partitionType: partitionType) as CFDictionary
+        )
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw EDPCredentialStoreError("Keychain delete failed: status=\(status)")
         }
         var index = try load()
+        guard let record = index.records.first(where: { $0.deviceID == deviceID }) else { return }
+        let remaining = record.partitionTypes.filter { $0 != partitionType }
         index.records.removeAll { $0.deviceID == deviceID }
+        if !remaining.isEmpty {
+            index.records.append(EDPCredentialRecord(
+                deviceID: deviceID,
+                partitionTypes: remaining,
+                updatedAt: ISO8601DateFormatter().string(from: Date())
+            ))
+        }
+        index.records.sort { $0.deviceID < $1.deviceID }
         try save(index)
     }
 
-    private func itemIdentity(deviceID: String, serviceName: String = EDPCredentialStore.serviceName) -> [CFString: Any] {
+    func remove(deviceID: String) throws {
+        let index = try load()
+        for partitionType in index.records.first(where: { $0.deviceID == deviceID })?.partitionTypes ?? [] {
+            let status = SecItemDelete(
+                searchQuery(deviceID: deviceID, partitionType: partitionType) as CFDictionary
+            )
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw EDPCredentialStoreError("Keychain delete failed: status=\(status)")
+            }
+        }
+        _ = SecItemDelete(deviceSearchQuery(deviceID: deviceID) as CFDictionary)
+        var updated = index
+        updated.records.removeAll { $0.deviceID == deviceID }
+        try save(updated)
+    }
+
+    private func account(deviceID: String, partitionType: UInt32) -> String {
+        "\(deviceID):\(partitionType)"
+    }
+
+    private func itemIdentity(deviceID: String, partitionType: UInt32) -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: serviceName,
-            kSecAttrAccount: deviceID,
+            kSecAttrService: EDPCredentialStore.serviceName,
+            kSecAttrAccount: account(deviceID: deviceID, partitionType: partitionType),
         ]
     }
 
-    private func searchQuery(deviceID: String) -> [CFString: Any] {
-        var query = itemIdentity(deviceID: deviceID)
+    private func searchQuery(deviceID: String, partitionType: UInt32) -> [CFString: Any] {
+        var query = itemIdentity(deviceID: deviceID, partitionType: partitionType)
         query[kSecMatchSearchList] = [keychain]
         return query
     }
 
-    private func upsertPassword(deviceID: String, password: [UInt8]) throws {
-        let query = searchQuery(deviceID: deviceID)
+    private func deviceSearchQuery(deviceID: String) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: EDPCredentialStore.deviceServiceName,
+            kSecAttrAccount: deviceID,
+            kSecMatchSearchList: [keychain],
+        ]
+    }
+
+    private func upsertPassword(
+        deviceID: String,
+        partitionType: UInt32,
+        password: [UInt8]
+    ) throws {
+        let query = searchQuery(deviceID: deviceID, partitionType: partitionType)
         let secret = Data(password)
         let access = try rootOnlyAccess()
         let updateStatus = SecItemUpdate(
@@ -155,7 +229,7 @@ final class EDPCredentialStore {
             throw EDPCredentialStoreError("Keychain update failed: status=\(updateStatus)")
         }
 
-        var attributes = itemIdentity(deviceID: deviceID)
+        var attributes = itemIdentity(deviceID: deviceID, partitionType: partitionType)
         attributes[kSecUseKeychain] = keychain
         attributes[kSecValueData] = secret
         attributes[kSecAttrAccess] = access
@@ -173,8 +247,8 @@ final class EDPCredentialStore {
         return access
     }
 
-    private func currentCredentialExists(deviceID: String) -> Bool {
-        var query = searchQuery(deviceID: deviceID)
+    private func currentCredentialExists(deviceID: String, partitionType: UInt32) -> Bool {
+        var query = searchQuery(deviceID: deviceID, partitionType: partitionType)
         query[kSecReturnAttributes] = true
         query[kSecMatchLimit] = kSecMatchLimitOne
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
@@ -182,12 +256,50 @@ final class EDPCredentialStore {
 
     private func pruneRecordsWithoutCurrentCredentials() throws {
         var index = try load()
-        let originalCount = index.records.count
-        index.records.removeAll { !currentCredentialExists(deviceID: $0.deviceID) }
-        if index.records.count != originalCount || index.schemaVersion != 3 {
-            index.schemaVersion = 3
+        let original = index.records
+        index.records = index.records.compactMap { record in
+            let available = record.partitionTypes.filter {
+                currentCredentialExists(deviceID: record.deviceID, partitionType: $0)
+            }
+            guard !available.isEmpty else { return nil }
+            return EDPCredentialRecord(
+                deviceID: record.deviceID,
+                partitionTypes: available,
+                updatedAt: record.updatedAt
+            )
+        }
+        if index.records != original || index.schemaVersion != 4 {
+            index.schemaVersion = 4
             try save(index)
         }
+    }
+
+    private func migrateDeviceCredentialsToPartitions() throws {
+        guard FileManager.default.fileExists(atPath: indexPath) else { return }
+        var index = try load()
+        guard index.schemaVersion < 4 else { return }
+        for record in index.records {
+            var legacyQuery = deviceSearchQuery(deviceID: record.deviceID)
+            legacyQuery[kSecReturnData] = true
+            legacyQuery[kSecMatchLimit] = kSecMatchLimitOne
+            var result: CFTypeRef?
+            guard SecItemCopyMatching(legacyQuery as CFDictionary, &result) == errSecSuccess,
+                  let secret = result as? Data else {
+                continue
+            }
+            var password = [UInt8](secret)
+            defer { credentialSecureZero(&password) }
+            for partitionType in record.partitionTypes where [UInt32(2), 4].contains(partitionType) {
+                try upsertPassword(
+                    deviceID: record.deviceID,
+                    partitionType: partitionType,
+                    password: password
+                )
+            }
+            _ = SecItemDelete(deviceSearchQuery(deviceID: record.deviceID) as CFDictionary)
+        }
+        index.schemaVersion = 4
+        try save(index)
     }
 
     private func save(_ index: EDPCredentialIndex) throws {
@@ -220,13 +332,20 @@ final class EDPCredentialStore {
             )
             var password = [UInt8](clear)
             defer { credentialSecureZero(&password) }
-            try upsertPassword(deviceID: record.deviceID, password: password)
+            for partitionType in record.partitionTypes where [UInt32(2), 4].contains(partitionType) {
+                try upsertPassword(
+                    deviceID: record.deviceID,
+                    partitionType: partitionType,
+                    password: password
+                )
+            }
             migrated.records.append(EDPCredentialRecord(
                 deviceID: record.deviceID,
                 partitionTypes: record.partitionTypes.sorted(),
                 updatedAt: record.updatedAt
             ))
         }
+        migrated.schemaVersion = 4
         migrated.records.sort { $0.deviceID < $1.deviceID }
         try save(migrated)
         try FileManager.default.removeItem(atPath: credentialPath)

@@ -358,9 +358,10 @@ enum EDPNativeMountTable {
         return (entry.flags & UInt32(MNT_RDONLY)) != 0
     }
 
-    static func unmountPath(_ path: String) throws {
+    static func unmountPath(_ path: String, force: Bool = false) throws {
         guard isMountpoint(path) else { return }
-        guard Darwin.unmount(path, 0) == 0 else {
+        let flags = force ? MNT_FORCE : 0
+        guard Darwin.unmount(path, flags) == 0 else {
             throw RuntimeNativeError("unmount(2) failed for \(path): errno=\(errno)")
         }
     }

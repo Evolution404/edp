@@ -165,12 +165,16 @@ private enum ValidateEDPReadWriteMatrixMain {
             // Exercise the shared crypto RMW lock under concurrent callers. All
             // ranges are intentionally disjoint but unaligned to SM4 boundaries,
             // so corruption would expose an unsafe read-modify-encrypt-write path.
-            let concurrentCases = (0..<8).map { index in
-                ConcurrentWriteCase(
-                    offset: 1_310_725 + index * 24_576,
-                    length: 16_385 + (index % 3) * 17,
-                    seed: 0xC000_0000 + UInt64(index)
-                )
+            var concurrentCases = [ConcurrentWriteCase]()
+            for index in 0..<8 {
+                let offset = 1_310_725 + index * 24_576
+                let length = 16_385 + (index % 3) * 17
+                let seed = UInt64(0xC000_0000) + UInt64(index)
+                concurrentCases.append(ConcurrentWriteCase(
+                    offset: offset,
+                    length: length,
+                    seed: seed
+                ))
             }
             let group = DispatchGroup()
             let queue = DispatchQueue(label: "edp.crypto.rw.matrix", attributes: .concurrent)

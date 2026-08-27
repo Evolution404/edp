@@ -36,6 +36,10 @@ enum EDPCrypto {
         Array(Insecure.MD5.hash(data: Data(bytes)))
     }
 
+    static func sha256(_ bytes: [UInt8]) -> [UInt8] {
+        Array(SHA256.hash(data: Data(bytes)))
+    }
+
     static func littleEndianBytes(_ value: UInt32) -> [UInt8] {
         [
             UInt8(truncatingIfNeeded: value),

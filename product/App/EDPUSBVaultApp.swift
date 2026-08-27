@@ -2,52 +2,7 @@ import AppKit
 import Darwin
 import Foundation
 import ServiceManagement
-import Security
 import SwiftUI
-
-private func createAuthorizationRef() throws -> AuthorizationRef {
-    var created: AuthorizationRef?
-    let status = AuthorizationCreate(nil, nil, [], &created)
-    guard status == errAuthorizationSuccess, let created else {
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-    }
-    return created
-}
-
-private func authorizationData(
-    for rightName: String,
-    using authorization: AuthorizationRef
-) throws -> Data {
-    let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
-    let status = rightName.withCString { name in
-        var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
-        return withUnsafeMutablePointer(to: &item) { itemPointer in
-            var rights = AuthorizationRights(count: 1, items: itemPointer)
-            return AuthorizationCopyRights(authorization, &rights, nil, flags, nil)
-        }
-    }
-    guard status == errAuthorizationSuccess else {
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-    }
-
-    var external = AuthorizationExternalForm()
-    let externalStatus = AuthorizationMakeExternalForm(authorization, &external)
-    guard externalStatus == errAuthorizationSuccess else {
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(externalStatus))
-    }
-    return withUnsafeBytes(of: external) { Data($0) }
-}
-
-private func makeRawDeviceAuthorization() throws -> (AuthorizationRef, Data) {
-    let authorization = try createAuthorizationRef()
-    do {
-        let data = try authorizationData(for: "system.privilege.admin", using: authorization)
-        return (authorization, data)
-    } catch {
-        AuthorizationFree(authorization, [])
-        throw error
-    }
-}
 
 @MainActor
 final class EDPVaultViewModel: ObservableObject {
@@ -56,13 +11,16 @@ final class EDPVaultViewModel: ObservableObject {
     @Published var lastError: String?
     @Published var diagnostics = ""
     @Published var isBusy = false
-    @Published var macFUSEFSKitReady: Bool?
+    @Published var fuseTFSKitReady: Bool?
 
     private let serviceMode: String
     private let daemonService: SMAppService?
-    private var rawAuthorizationRef: AuthorizationRef?
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
     private var connection: NSXPCConnection?
+
+    var setupReady: Bool {
+        currentServiceStatus() == .enabled && fuseTFSKitReady == true
+    }
 
     init() {
         serviceMode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
@@ -72,6 +30,12 @@ final class EDPVaultViewModel: ObservableObject {
         ensureServiceRegistration()
         refreshFSKitState()
         refresh()
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                self?.refresh()
+            }
+        }
     }
 
     private func currentServiceStatus() -> SMAppService.Status {
@@ -109,7 +73,9 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func ensureServiceRegistration() {
-        if let daemonService, daemonService.status == .notRegistered {
+        if let daemonService,
+           daemonService.status != .enabled,
+           daemonService.status != .requiresApproval {
             do {
                 try daemonService.register()
             } catch {
@@ -134,15 +100,15 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func refreshFSKitState() {
-        let appExtension = "/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
-        let framework = "/Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework"
-        macFUSEFSKitReady = FileManager.default.fileExists(atPath: appExtension)
-            && FileManager.default.fileExists(atPath: framework)
+        let app = "/Applications/fuse-t.app"
+        let extensionPath = app + "/Contents/Extensions/FskitSrvModule.appex"
+        fuseTFSKitReady = FileManager.default.fileExists(atPath: app)
+            && FileManager.default.fileExists(atPath: extensionPath)
     }
 
-    private func requireMacFUSEFSKit() -> Bool {
-        guard macFUSEFSKitReady == true else {
-            lastError = "macFUSE 运行组件未安装完整，请重新安装 macFUSE 后再试。"
+    private func requireFuseTFSKit() -> Bool {
+        guard fuseTFSKitReady == true else {
+            lastError = "FUSE-T FSKit 运行组件未安装或尚未批准，请完成首次安装设置后再试。"
             return false
         }
         return true
@@ -154,7 +120,9 @@ final class EDPVaultViewModel: ObservableObject {
         guard let proxy = proxy() else {
             let status = currentServiceStatus()
             if status == .requiresApproval {
-                lastError = "请在系统设置中批准 EDP USB Vault 后台服务"
+                // Settings already presents the required approval state and
+                // action. Avoid recreating a modal alert on every poll.
+                lastError = nil
             } else if status != .enabled {
                 lastError = serviceMode == "smappservice"
                     ? "后台服务尚未启用"
@@ -176,39 +144,13 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    private func rawAuthorizationData(deviceID: String) throws -> Data {
-        guard let device = snapshot.devices.first(where: { $0.deviceID == deviceID }) else {
-            throw NSError(
-                domain: "com.edp.usbvault.authorization",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "EDP 设备已断开或尚未刷新"]
-            )
-        }
-        if rawAuthorizationRef == nil {
-            rawAuthorizationRef = try createAuthorizationRef()
-        }
-        guard let rawAuthorizationRef else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(errAuthorizationInvalidRef))
-        }
-        let rawPath = "/dev/r\(device.bsdName)"
-        let rightName = "sys.openfile.readwrite.\(rawPath)"
-        return try authorizationData(for: rightName, using: rawAuthorizationRef)
-    }
-
-    func authorize(deviceID: String, password: String) {
-        guard requireMacFUSEFSKit(), !password.isEmpty, let proxy = proxy() else { return }
-        let rawAuthorization: Data
-        do {
-            rawAuthorization = try rawAuthorizationData(deviceID: deviceID)
-        } catch {
-            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
-            return
-        }
+    func saveCredential(deviceID: String, partitionType: UInt32, password: String) {
+        guard requireFuseTFSKit(), !password.isEmpty, let proxy = proxy() else { return }
         isBusy = true
-        proxy.authorize(
+        proxy.saveCredential(
             deviceID: deviceID,
-            password: Data(password.utf8),
-            rawAuthorization: rawAuthorization
+            partitionType: partitionType,
+            password: Data(password.utf8)
         ) { [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
@@ -219,72 +161,10 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    func grantRawAccess(deviceID: String) {
-        guard requireMacFUSEFSKit(), let proxy = proxy() else { return }
-        let authorization: Data
-        do {
-            authorization = try rawAuthorizationData(deviceID: deviceID)
-        } catch {
-            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
-            return
-        }
+    func mountPartition(deviceID: String, partitionType: UInt32) {
+        guard requireFuseTFSKit(), let proxy = proxy() else { return }
         isBusy = true
-        proxy.grantRawAccess(authorization: authorization) { [weak self] grantError in
-            guard grantError == nil else {
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.isBusy = false
-                    self.lastError = grantError
-                    self.refresh()
-                }
-                return
-            }
-            proxy.retryMount(deviceID: deviceID) { [weak self] mountError in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.isBusy = false
-                    self.lastError = mountError
-                    self.refresh()
-                }
-            }
-        }
-    }
-
-    func retryMount(deviceID: String) {
-        guard requireMacFUSEFSKit(), let proxy = proxy() else { return }
-        let authorization: Data
-        do {
-            authorization = try rawAuthorizationData(deviceID: deviceID)
-        } catch {
-            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
-            return
-        }
-        isBusy = true
-        proxy.grantRawAccess(authorization: authorization) { [weak self] grantError in
-            guard grantError == nil else {
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.isBusy = false
-                    self.lastError = grantError
-                    self.refresh()
-                }
-                return
-            }
-            proxy.retryMount(deviceID: deviceID) { [weak self] mountError in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.isBusy = false
-                    self.lastError = mountError
-                    self.refresh()
-                }
-            }
-        }
-    }
-
-    func revoke(deviceID: String) {
-        guard let proxy = proxy() else { return }
-        isBusy = true
-        proxy.revoke(deviceID: deviceID) { [weak self] errorMessage in
+        proxy.mountPartition(deviceID: deviceID, partitionType: partitionType) { [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -292,6 +172,71 @@ final class EDPVaultViewModel: ObservableObject {
                 self.refresh()
             }
         }
+    }
+
+    func unmountPartition(deviceID: String, partitionType: UInt32) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.unmountPartition(deviceID: deviceID, partitionType: partitionType) { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func deleteCredential(deviceID: String, partitionType: UInt32) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.deleteCredential(deviceID: deviceID, partitionType: partitionType) { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func setAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool) {
+        guard let proxy = proxy() else { return }
+        proxy.setPartitionAutoMount(
+            deviceID: deviceID,
+            partitionType: partitionType,
+            enabled: enabled
+        ) { [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func setGlobalAutoMount(_ enabled: Bool) {
+        guard let proxy = proxy() else { return }
+        proxy.setGlobalAutoMount(enabled: enabled) { [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func rename(deviceID: String, displayName: String) {
+        guard let proxy = proxy() else { return }
+        proxy.setDeviceDisplayName(deviceID: deviceID, displayName: displayName) { [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func openInFinder(_ partition: EDPXPCPartition) {
+        guard let mountPoint = partition.mountPoint, !mountPoint.isEmpty else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: mountPoint, isDirectory: true))
     }
 
     func eject(deviceID: String) {
@@ -344,16 +289,23 @@ struct EDPDeviceCard: View {
 
             if device.authorized {
                 HStack {
-                    if !device.rawAccessReady {
-                        Button("启用磁盘访问") { model.grantRawAccess(deviceID: device.deviceID) }
-                            .disabled(model.isBusy)
-                    } else if !device.mounted {
-                        Button("挂载交换区") { model.retryMount(deviceID: device.deviceID) }
+                    if !device.mounted {
+                        Button("挂载交换区") {
+                            model.mountPartition(
+                                deviceID: device.deviceID,
+                                partitionType: EDPPartitionKind.exchange.rawValue
+                            )
+                        }
                             .disabled(model.isBusy)
                     }
                     Button("安全弹出") { model.eject(deviceID: device.deviceID) }
                         .disabled(!device.mounted || model.isBusy)
-                    Button("撤销授权", role: .destructive) { model.revoke(deviceID: device.deviceID) }
+                    Button("删除交换区密码", role: .destructive) {
+                        model.deleteCredential(
+                            deviceID: device.deviceID,
+                            partitionType: EDPPartitionKind.exchange.rawValue
+                        )
+                    }
                         .disabled(model.isBusy)
                     Spacer()
                     if !device.partitionTypes.isEmpty {
@@ -367,7 +319,11 @@ struct EDPDeviceCard: View {
                     SecureField("EDP 密码", text: $password)
                         .textFieldStyle(.roundedBorder)
                     Button("记住并挂载") {
-                        model.authorize(deviceID: device.deviceID, password: password)
+                        model.saveCredential(
+                            deviceID: device.deviceID,
+                            partitionType: EDPPartitionKind.exchange.rawValue,
+                            password: password
+                        )
                         password = ""
                     }
                     .keyboardShortcut(.defaultAction)
@@ -400,9 +356,9 @@ struct ContentView: View {
                 Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
             }
 
-            if model.macFUSEFSKitReady == false {
+            if model.fuseTFSKitReady == false {
                 HStack {
-                    Label("macFUSE 运行组件未安装完整，挂载操作已暂停", systemImage: "puzzlepiece.extension")
+                    Label("FUSE-T FSKit 运行组件未安装或尚未批准，挂载操作已暂停", systemImage: "puzzlepiece.extension")
                         .foregroundStyle(.orange)
                     Spacer()
                 }
@@ -466,6 +422,556 @@ struct ContentView: View {
     }
 }
 
+private enum EDPMainSection: String, CaseIterable, Identifiable {
+    case devices = "设备"
+    case activity = "活动"
+    case settings = "设置"
+
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .devices: return "externaldrive"
+        case .activity: return "clock.arrow.circlepath"
+        case .settings: return "gearshape"
+        }
+    }
+}
+
+struct EDPCredentialTarget: Identifiable {
+    let deviceID: String
+    let partitionType: UInt32
+    let partitionName: String
+    var id: String { "\(deviceID):\(partitionType)" }
+}
+
+struct EDPMainView: View {
+    @ObservedObject var model: EDPVaultViewModel
+    @State private var section: EDPMainSection? = .devices
+
+    var body: some View {
+        NavigationSplitView {
+            List(EDPMainSection.allCases, selection: $section) { item in
+                Label(item.rawValue, systemImage: item.icon).tag(item)
+            }
+            .navigationTitle("EDP USB Vault")
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 220)
+        } detail: {
+            switch section ?? .devices {
+            case .devices: EDPDevicesView(model: model)
+            case .activity: EDPActivityView(model: model)
+            case .settings: EDPSettingsView(model: model)
+            }
+        }
+        .frame(minWidth: 900, minHeight: 620)
+        .alert("操作失败", isPresented: Binding(
+            get: { model.lastError != nil },
+            set: { if !$0 { model.lastError = nil } }
+        )) {
+            Button("好") { model.lastError = nil }
+        } message: {
+            Text(model.lastError ?? "未知错误")
+        }
+    }
+}
+
+struct EDPDevicesView: View {
+    @ObservedObject var model: EDPVaultViewModel
+    @State private var selectedDeviceID: String?
+
+    private var selectedDevice: EDPXPCDevice? {
+        if let selectedDeviceID,
+           let selected = model.snapshot.devices.first(where: { $0.deviceID == selectedDeviceID }) {
+            return selected
+        }
+        return model.snapshot.devices.first
+    }
+
+    var body: some View {
+        HSplitView {
+            List(selection: $selectedDeviceID) {
+                Section("已连接") {
+                    ForEach(model.snapshot.devices.filter(\.connected)) { device in
+                        deviceLabel(device).tag(device.deviceID)
+                    }
+                }
+                let offline = model.snapshot.devices.filter { !$0.connected }
+                if !offline.isEmpty {
+                    Section("已保存") {
+                        ForEach(offline) { device in
+                            deviceLabel(device).tag(device.deviceID)
+                        }
+                    }
+                }
+            }
+            .frame(minWidth: 220, idealWidth: 250, maxWidth: 300)
+
+            Group {
+                if let selectedDevice {
+                    EDPDeviceDetailView(device: selectedDevice, model: model)
+                        .id(selectedDevice.deviceID)
+                } else {
+                    ContentUnavailableView(
+                        "未发现 EDP U 盘",
+                        systemImage: "externaldrive",
+                        description: Text("插入设备后会自动识别，也可以查看此前保存的设备。")
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationTitle("设备")
+        .toolbar {
+            ToolbarItem {
+                Button { model.refresh() } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+            }
+        }
+        .onAppear {
+            if selectedDeviceID == nil { selectedDeviceID = model.snapshot.devices.first?.deviceID }
+        }
+        .onChange(of: model.snapshot.devices.map(\.deviceID)) { _, ids in
+            if selectedDeviceID == nil || !ids.contains(selectedDeviceID ?? "") {
+                selectedDeviceID = ids.first
+            }
+        }
+    }
+
+    private func deviceLabel(_ device: EDPXPCDevice) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
+                .foregroundStyle(device.connected ? Color.accentColor : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.displayName).lineLimit(1)
+                Text(device.connected ? "已连接" : "未连接")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+struct EDPDeviceDetailView: View {
+    let device: EDPXPCDevice
+    @ObservedObject var model: EDPVaultViewModel
+    @State private var credentialTarget: EDPCredentialTarget?
+    @State private var displayName = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        TextField("设备名称", text: $displayName)
+                            .font(.title2.bold())
+                            .textFieldStyle(.plain)
+                            .onSubmit {
+                                model.rename(deviceID: device.deviceID, displayName: displayName)
+                            }
+                        Text("\(device.vidPID) · \(ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file))")
+                            .foregroundStyle(.secondary)
+                        Text(device.deviceID)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Label(device.connected ? "已连接" : "未连接",
+                          systemImage: device.connected ? "checkmark.circle.fill" : "circle.dashed")
+                        .foregroundStyle(device.connected ? .green : .secondary)
+                }
+
+                ForEach(device.partitions) { partition in
+                    EDPPartitionCard(
+                        device: device,
+                        partition: partition,
+                        model: model,
+                        onSetPassword: {
+                            credentialTarget = EDPCredentialTarget(
+                                deviceID: device.deviceID,
+                                partitionType: partition.partitionType,
+                                partitionName: partition.displayName
+                            )
+                        }
+                    )
+                }
+
+                HStack {
+                    Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
+                        .disabled(!device.connected || model.isBusy)
+                    Spacer()
+                    Text("关闭窗口不会停止自动挂载服务")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(24)
+        }
+        .onAppear { displayName = device.displayName }
+        .onChange(of: device.displayName) { _, value in displayName = value }
+        .sheet(item: $credentialTarget) { target in
+            EDPCredentialSheet(target: target, model: model)
+        }
+    }
+}
+
+struct EDPPartitionCard: View {
+    let device: EDPXPCDevice
+    let partition: EDPXPCPartition
+    @ObservedObject var model: EDPVaultViewModel
+    let onSetPassword: () -> Void
+
+    private var mounted: Bool { partition.mountState == .mounted }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .frame(width: 30)
+                    .foregroundStyle(mounted ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(partition.displayName).font(.headline)
+                    Text(description).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                statusBadge
+            }
+
+            Divider()
+
+            HStack {
+                Toggle("插入后自动挂载", isOn: Binding(
+                    get: { partition.autoMount },
+                    set: {
+                        model.setAutoMount(
+                            deviceID: device.deviceID,
+                            partitionType: partition.partitionType,
+                            enabled: $0
+                        )
+                    }
+                ))
+                .toggleStyle(.switch)
+                .disabled(!device.connected && partition.partitionType == EDPPartitionKind.boot.rawValue)
+                Spacer()
+                if let filesystem = partition.filesystem {
+                    Text(filesystem).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if let error = partition.lastError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+
+            HStack {
+                if partition.encrypted {
+                    Button(partition.credentialStatus == .saved ? "更新密码" : "设置密码") {
+                        onSetPassword()
+                    }
+                    if partition.credentialStatus == .saved {
+                        Button("删除密码", role: .destructive) {
+                            model.deleteCredential(
+                                deviceID: device.deviceID,
+                                partitionType: partition.partitionType
+                            )
+                        }
+                    }
+                }
+                Spacer()
+                if mounted {
+                    if partition.mountPoint != nil {
+                        Button("在 Finder 中显示") { model.openInFinder(partition) }
+                    }
+                    Button("卸载") {
+                        model.unmountPartition(
+                            deviceID: device.deviceID,
+                            partitionType: partition.partitionType
+                        )
+                    }
+                } else {
+                    Button("挂载") {
+                        model.mountPartition(
+                            deviceID: device.deviceID,
+                            partitionType: partition.partitionType
+                        )
+                    }
+                    .disabled(
+                        !device.connected || model.isBusy
+                            || (partition.encrypted && partition.credentialStatus != .saved)
+                    )
+                }
+            }
+
+            if partition.encrypted && mounted {
+                Text("该分区以可写磁盘介质发布，可使用 Finder 自带的“抹掉”功能格式化为 ExFAT。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.35)))
+    }
+
+    private var icon: String {
+        switch EDPPartitionKind(rawValue: partition.partitionType) {
+        case .boot: return "shippingbox"
+        case .exchange: return "arrow.left.arrow.right"
+        case .secure: return "lock.shield"
+        case nil: return "externaldrive"
+        }
+    }
+
+    private var description: String {
+        switch EDPPartitionKind(rawValue: partition.partitionType) {
+        case .boot: return "普通启动分区，无需密码"
+        case .exchange: return "用于受控交换的加密分区"
+        case .secure: return "用于保密资料的加密分区"
+        case nil: return "EDP 分区"
+        }
+    }
+
+    @ViewBuilder private var statusBadge: some View {
+        let title = mounted ? (partition.readOnly == true ? "只读" : "已挂载")
+            : (partition.credentialStatus == .saved ? "密码已保存" : "未挂载")
+        Text(title)
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background((mounted ? Color.green : Color.secondary).opacity(0.13), in: Capsule())
+            .foregroundStyle(mounted ? .green : .secondary)
+    }
+}
+
+struct EDPCredentialSheet: View {
+    let target: EDPCredentialTarget
+    @ObservedObject var model: EDPVaultViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var password = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("设置\(target.partitionName)密码").font(.title3.bold())
+            Text("密码会先在当前 U 盘上验证，成功后才保存到系统钥匙串。应用不会修改盘上的密码。")
+                .foregroundStyle(.secondary)
+            SecureField("现有分区密码", text: $password)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("验证并保存") {
+                    model.saveCredential(
+                        deviceID: target.deviceID,
+                        partitionType: target.partitionType,
+                        password: password
+                    )
+                    password = ""
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(password.isEmpty || model.isBusy)
+            }
+        }
+        .padding(24)
+        .frame(width: 460)
+    }
+}
+
+struct EDPActivityView: View {
+    @ObservedObject var model: EDPVaultViewModel
+
+    var body: some View {
+        Group {
+            if model.snapshot.activities.isEmpty {
+                ContentUnavailableView(
+                    "暂无活动记录",
+                    systemImage: "clock",
+                    description: Text("设备插入、挂载和凭据变更会显示在这里。")
+                )
+            } else {
+                List(model.snapshot.activities) { activity in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: activity.level == "error"
+                              ? "exclamationmark.triangle.fill" : "checkmark.circle")
+                            .foregroundStyle(activity.level == "error" ? .red : .secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(activity.message)
+                            HStack {
+                                Text(activity.timestamp)
+                                if let type = activity.partitionType,
+                                   let kind = EDPPartitionKind(rawValue: type) {
+                                    Text("· \(kind.displayName)")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .navigationTitle("活动")
+    }
+}
+
+struct EDPSettingsView: View {
+    @ObservedObject var model: EDPVaultViewModel
+    @State private var showingDiagnostics = false
+    @State private var loginItemEnabled = SMAppService.mainApp.status == .enabled
+
+    var body: some View {
+        Form {
+            Section("首次设置") {
+                LabeledContent {
+                    Label(
+                        model.serviceStatus,
+                        systemImage: model.serviceStatus == "已启用"
+                            ? "checkmark.circle.fill" : "exclamationmark.circle"
+                    )
+                    .foregroundStyle(model.serviceStatus == "已启用" ? .green : .orange)
+                } label: {
+                    Text("特权后台服务")
+                }
+                LabeledContent {
+                    Label(
+                        model.fuseTFSKitReady == true ? "已就绪" : "需要安装或批准",
+                        systemImage: model.fuseTFSKitReady == true
+                            ? "checkmark.circle.fill" : "exclamationmark.circle"
+                    )
+                    .foregroundStyle(model.fuseTFSKitReady == true ? .green : .orange)
+                } label: {
+                    Text("FUSE-T FSKit")
+                }
+                Text(model.setupReady
+                     ? "首次设置已完成。后台服务会按需打开经校验的 EDP 整盘并把文件描述符交给降权桥进程；重启或重新插盘不再请求管理员密码。"
+                     : "请完成后台服务与 FUSE-T 的一次系统批准。完成后，日常挂载不需要再次输入管理员密码。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if model.serviceStatus != "已启用" {
+                    Button("打开登录项与扩展设置") { model.openServiceSettings() }
+                }
+            }
+            Section("自动挂载") {
+                Toggle("启用全局自动挂载", isOn: Binding(
+                    get: { model.snapshot.globalAutoMountEnabled },
+                    set: { model.setGlobalAutoMount($0) }
+                ))
+                Toggle("登录时启动菜单栏应用", isOn: Binding(
+                    get: { loginItemEnabled },
+                    set: { updateLoginItem($0) }
+                ))
+            }
+            Section("后台服务") {
+                LabeledContent("状态", value: model.serviceStatus)
+                LabeledContent("版本", value: model.snapshot.serviceVersion)
+                LabeledContent("磁盘访问", value: "特权服务按需提供")
+                LabeledContent(
+                    "文件系统运行组件",
+                    value: model.fuseTFSKitReady == true ? "已就绪" : "需要安装或批准"
+                )
+                if model.serviceStatus == "需要系统批准" {
+                    Button("打开登录项与扩展设置") { model.openServiceSettings() }
+                }
+            }
+            Section("诊断") {
+                Button("查看诊断信息") {
+                    model.loadDiagnostics()
+                    showingDiagnostics = true
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("设置")
+        .sheet(isPresented: $showingDiagnostics) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("诊断信息").font(.headline)
+                ScrollView {
+                    Text(model.diagnostics.isEmpty ? "正在读取…" : model.diagnostics)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack { Spacer(); Button("关闭") { showingDiagnostics = false } }
+            }
+            .padding(20)
+            .frame(width: 680, height: 460)
+        }
+    }
+
+    private func updateLoginItem(_ enabled: Bool) {
+        do {
+            if enabled { try SMAppService.mainApp.register() }
+            else { try SMAppService.mainApp.unregister() }
+            loginItemEnabled = enabled
+        } catch {
+            model.lastError = "登录项更新失败：\(error.localizedDescription)"
+            loginItemEnabled = SMAppService.mainApp.status == .enabled
+        }
+    }
+}
+
+struct EDPMenuBarView: View {
+    @ObservedObject var model: EDPVaultViewModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("打开 EDP USB Vault") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        .keyboardShortcut("o")
+
+        Divider()
+        Label(model.serviceStatus, systemImage: "gearshape.2")
+        Button(model.snapshot.globalAutoMountEnabled ? "暂停自动挂载" : "恢复自动挂载") {
+            model.setGlobalAutoMount(!model.snapshot.globalAutoMountEnabled)
+        }
+
+        ForEach(model.snapshot.devices.filter(\.connected)) { device in
+            Menu(device.displayName) {
+                ForEach(device.partitions) { partition in
+                    Menu(partition.displayName) {
+                        if partition.mountState == .mounted {
+                            if partition.mountPoint != nil {
+                                Button("在 Finder 中显示") { model.openInFinder(partition) }
+                            }
+                            Button("卸载") {
+                                model.unmountPartition(
+                                    deviceID: device.deviceID,
+                                    partitionType: partition.partitionType
+                                )
+                            }
+                        } else {
+                            Button("挂载") {
+                                model.mountPartition(
+                                    deviceID: device.deviceID,
+                                    partitionType: partition.partitionType
+                                )
+                            }
+                            .disabled(partition.encrypted && partition.credentialStatus != .saved)
+                        }
+                    }
+                }
+                Divider()
+                Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
+            }
+        }
+
+        if model.snapshot.devices.filter(\.connected).isEmpty {
+            Text("未连接 EDP U 盘").foregroundStyle(.secondary)
+        }
+
+        Divider()
+        Button("刷新") { model.refresh() }
+        Button("退出菜单栏应用") { NSApplication.shared.terminate(nil) }
+    }
+}
+
 private final class EDPXPCSmokeResult: @unchecked Sendable {
     private let lock = NSLock()
     private var passed = false
@@ -511,107 +1017,39 @@ private final class EDPXPCDataResult: @unchecked Sendable {
 
 @main
 struct EDPUSBVaultApp: App {
+    @StateObject private var model = EDPVaultViewModel()
+
     init() {
         if let index = CommandLine.arguments.firstIndex(of: "--xpc-mount-smoke"),
            CommandLine.arguments.count > index + 2 {
-            let bsdName = CommandLine.arguments[index + 1]
             let deviceID = CommandLine.arguments[index + 2]
-            do {
-                let authorization = try createAuthorizationRef()
-                defer { AuthorizationFree(authorization, []) }
-                let rawPath = "/dev/r\(bsdName)"
-                let external = try authorizationData(
-                    for: "sys.openfile.readwrite.\(rawPath)",
-                    using: authorization
-                )
-
-                let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
-                connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-                connection.resume()
-                defer { connection.invalidate() }
-                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    fputs("XPC_MOUNT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
-                }) as? EDPVaultXPCProtocol else {
-                    print("RESULT=XPC_MOUNT_SMOKE_PROXY_UNAVAILABLE")
-                    exit(1)
-                }
-
-                let grantResult = EDPXPCSmokeResult()
-                let grantSemaphore = DispatchSemaphore(value: 0)
-                proxy.grantRawAccess(authorization: external) { errorMessage in
-                    grantResult.set(passed: errorMessage == nil, detail: errorMessage ?? "raw authorization accepted")
-                    grantSemaphore.signal()
-                }
-                guard grantSemaphore.wait(timeout: .now() + 15) == .success else {
-                    print("RESULT=XPC_MOUNT_SMOKE_GRANT_TIMEOUT")
-                    exit(1)
-                }
-                let grant = grantResult.snapshot()
-                guard grant.0 else {
-                    print("XPC_MOUNT_SMOKE_DETAIL=\(grant.1)")
-                    print("RESULT=XPC_MOUNT_SMOKE_GRANT_FAILED")
-                    exit(1)
-                }
-
-                let mountResult = EDPXPCSmokeResult()
-                let mountSemaphore = DispatchSemaphore(value: 0)
-                proxy.retryMount(deviceID: deviceID) { errorMessage in
-                    mountResult.set(passed: errorMessage == nil, detail: errorMessage ?? "mount completed")
-                    mountSemaphore.signal()
-                }
-                guard mountSemaphore.wait(timeout: .now() + 90) == .success else {
-                    print("RESULT=XPC_MOUNT_SMOKE_MOUNT_TIMEOUT")
-                    exit(1)
-                }
-                let mounted = mountResult.snapshot()
-                print("XPC_MOUNT_SMOKE_DETAIL=\(mounted.1)")
-                print(mounted.0 ? "RESULT=XPC_MOUNT_SMOKE_OK" : "RESULT=XPC_MOUNT_SMOKE_FAILED")
-                exit(mounted.0 ? 0 : 1)
-            } catch {
-                print("XPC_MOUNT_SMOKE_AUTH_ERROR=\(error.localizedDescription)")
-                print("RESULT=XPC_MOUNT_SMOKE_FAILED")
+            let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            connection.resume()
+            defer { connection.invalidate() }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                fputs("XPC_MOUNT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_MOUNT_SMOKE_PROXY_UNAVAILABLE")
                 exit(1)
             }
-        }
-
-        if CommandLine.arguments.contains("--grant-raw-access-smoke") {
-            do {
-                let authorization = try makeRawDeviceAuthorization()
-                defer { AuthorizationFree(authorization.0, []) }
-                let result = EDPXPCSmokeResult()
-                let semaphore = DispatchSemaphore(value: 0)
-                let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
-                connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    result.set(passed: false, detail: error.localizedDescription)
-                    semaphore.signal()
-                }) as? EDPVaultXPCProtocol else {
-                    print("RESULT=RAW_ACCESS_XPC_PROXY_UNAVAILABLE")
-                    exit(1)
-                }
-                connection.resume()
-                proxy.grantRawAccess(authorization: authorization.1) { errorMessage in
-                    result.set(
-                        passed: errorMessage == nil,
-                        detail: errorMessage ?? "raw authorization accepted"
-                    )
-                    semaphore.signal()
-                }
-                guard semaphore.wait(timeout: .now() + 10) == .success else {
-                    connection.invalidate()
-                    print("RESULT=RAW_ACCESS_XPC_TIMEOUT")
-                    exit(1)
-                }
-                connection.invalidate()
-                let captured = result.snapshot()
-                print("RAW_ACCESS_XPC_DETAIL=\(captured.1)")
-                print(captured.0 ? "RESULT=RAW_ACCESS_XPC_OK" : "RESULT=RAW_ACCESS_XPC_FAILED")
-                exit(captured.0 ? 0 : 1)
-            } catch {
-                print("RAW_ACCESS_AUTH_ERROR=\(error.localizedDescription)")
-                print("RESULT=RAW_ACCESS_XPC_FAILED")
+            let mountResult = EDPXPCSmokeResult()
+            let mountSemaphore = DispatchSemaphore(value: 0)
+            proxy.mountPartition(
+                deviceID: deviceID,
+                partitionType: EDPPartitionKind.exchange.rawValue
+            ) { errorMessage in
+                mountResult.set(passed: errorMessage == nil, detail: errorMessage ?? "mount completed")
+                mountSemaphore.signal()
+            }
+            guard mountSemaphore.wait(timeout: .now() + 90) == .success else {
+                print("RESULT=XPC_MOUNT_SMOKE_MOUNT_TIMEOUT")
                 exit(1)
             }
+            let mounted = mountResult.snapshot()
+            print("XPC_MOUNT_SMOKE_DETAIL=\(mounted.1)")
+            print(mounted.0 ? "RESULT=XPC_MOUNT_SMOKE_OK" : "RESULT=XPC_MOUNT_SMOKE_FAILED")
+            exit(mounted.0 ? 0 : 1)
         }
 
         if CommandLine.arguments.contains("--xpc-diagnostics") {
@@ -689,7 +1127,7 @@ struct EDPUSBVaultApp: App {
             print("SNAPSHOT_SERVICE_VERSION=\(snapshot.serviceVersion)")
             print("SNAPSHOT_DEVICE_COUNT=\(snapshot.devices.count)")
             for device in snapshot.devices {
-                print("SNAPSHOT_DEVICE=\(device.bsdName)|\(device.deviceID)|\(device.vidPID)|\(device.sizeBytes)|authorized=\(device.authorized)|mounted=\(device.mounted)|rawAccessReady=\(device.rawAccessReady)|partitions=\(device.partitionTypes.map(String.init).joined(separator: ","))")
+                print("SNAPSHOT_DEVICE=\(device.bsdName)|\(device.deviceID)|\(device.vidPID)|\(device.sizeBytes)|authorized=\(device.authorized)|mounted=\(device.mounted)|privilegedAccessReady=\(device.privilegedAccessReady)|partitions=\(device.partitionTypes.map(String.init).joined(separator: ","))")
             }
             print("RESULT=PRIVILEGED_XPC_SNAPSHOT_OK")
             exit(0)
@@ -736,7 +1174,7 @@ struct EDPUSBVaultApp: App {
             if mode == "smappservice" {
                 let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
                 do {
-                    if service.status == .notRegistered {
+                    if service.status != .enabled && service.status != .requiresApproval {
                         try service.register()
                     }
                     switch service.status {
@@ -781,12 +1219,58 @@ struct EDPUSBVaultApp: App {
                 }
             }
         }
+
+        if CommandLine.arguments.contains("--reregister-service") {
+            let mode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
+            guard mode == "smappservice" else {
+                print("RESULT=SERVICE_REREGISTER_NOT_APPLICABLE")
+                exit(1)
+            }
+            let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
+            do {
+                try service.unregister()
+                try service.register()
+                switch service.status {
+                case .enabled:
+                    print("RESULT=SERVICE_REREGISTERED_ENABLED")
+                    exit(0)
+                case .requiresApproval:
+                    print("RESULT=SERVICE_REREGISTERED_REQUIRES_APPROVAL")
+                    exit(0)
+                case .notRegistered:
+                    print("RESULT=SERVICE_REREGISTER_NOT_REGISTERED")
+                    exit(1)
+                case .notFound:
+                    print("RESULT=SERVICE_REREGISTER_NOT_FOUND")
+                    exit(1)
+                @unknown default:
+                    print("RESULT=SERVICE_REREGISTER_UNKNOWN")
+                    exit(1)
+                }
+            } catch {
+                print("SERVICE_REREGISTER_ERROR=\(error)")
+                print("RESULT=SERVICE_REREGISTER_FAILED")
+                exit(1)
+            }
+        }
     }
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        Window("EDP USB Vault", id: "main") {
+            EDPMainView(model: model)
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 980, height: 680)
+
+        MenuBarExtra {
+            EDPMenuBarView(model: model)
+        } label: {
+            Label(
+                "EDP USB Vault",
+                systemImage: model.snapshot.devices.contains(where: { $0.connected })
+                    ? "externaldrive.fill.badge.checkmark"
+                    : "externaldrive"
+            )
+        }
+        .menuBarExtraStyle(.menu)
     }
 }

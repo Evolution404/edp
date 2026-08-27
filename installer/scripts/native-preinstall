@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e
+PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+if [[ -f "${PLIST}" ]]; then
+  /bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
+  /bin/rm -f "${PLIST}"
+fi
+exit 0
