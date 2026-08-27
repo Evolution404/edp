@@ -1,0 +1,101 @@
+name: macFUSE 5.3.2 Direct Local Unmount Probe
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - ".github/workflows/macfuse-532-unmount-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unmount:
+    runs-on: macos-26
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install and enable 5.3.2 FSKit modules
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse.dmg"
+          curl -fsSL --retry 3 https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.2/macfuse-5.3.2.dmg -o "${DMG}"
+          test "$(shasum -a 256 "${DMG}" | awk '{print $1}')" = 9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936
+          ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
+          VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
+          PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach "${VOL}" >/dev/null
+          APP=/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app
+          LS=/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister
+          "${LS}" -f -R -trusted "${APP}"
+          while IFS= read -r EXT; do pluginkit -a "${EXT}" || true; done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
+          pluginkit -a "${APP}" || true
+          for ID in io.macfuse.app.fsmodule.macfuse io.macfuse.app.fsmodule.macfuse-local; do pluginkit -e use -i "${ID}" || true; done
+          SETTINGS="${HOME}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
+          mkdir -p "$(dirname "${SETTINGS}")"
+          python3 - "${SETTINGS}" <<'PY'
+          import plistlib, sys
+          with open(sys.argv[1], 'wb') as f:
+              plistlib.dump(['io.macfuse.app.fsmodule.macfuse','io.macfuse.app.fsmodule.macfuse-local'], f)
+          PY
+          killall -9 fskit_agent extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+      - name: Build Direct Local raw transport
+        run: |
+          set -euo pipefail
+          FRAMEWORKS=/Library/Filesystems/macfuse.fs/Contents/Frameworks
+          INC="${RUNNER_TEMP}/include"; mkdir -p "${INC}/MFMount"
+          curl -fsSL https://raw.githubusercontent.com/macfuse/mount/313b9c68d04cd779bffc9f8bd9f32a4e1f5baf70/Mount/MFMount.h -o "${INC}/MFMount/MFMount.h"
+          curl -fsSL https://raw.githubusercontent.com/macfuse/library/9a3db24bf7e3896d69a514a70e91dc41eefb948b/include/fuse_kernel.h -o "${INC}/fuse_kernel.h"
+          cp native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c "${RUNNER_TEMP}/direct.c"
+          python3 - "${RUNNER_TEMP}/direct.c" <<'PY'
+          import pathlib, sys
+          p=pathlib.Path(sys.argv[1]); s=p.read_text(); p.write_text(s.replace('"nobrowse,volname=%s"','"local,nobrowse,volname=%s"',1))
+          PY
+          xcrun clang -std=c17 -Wall -Wextra -Werror -I"${INC}" -F"${FRAMEWORKS}" -DMFMount=EDPAsyncMFMount -c "${RUNNER_TEMP}/direct.c" -o "${RUNNER_TEMP}/direct.o"
+          xcrun clang -std=c17 -Wall -Wextra -Werror -I"${INC}" -F"${FRAMEWORKS}" -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c -o "${RUNNER_TEMP}/shim.o"
+          xcrun clang "${RUNNER_TEMP}/direct.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -Wl,-rpath,"${FRAMEWORKS}" -o "${RUNNER_TEMP}/direct-local"
+      - name: Prove live standard unmount is bounded and effective
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/raw.img"; dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
+          MP="/Volumes/EDP-532-Unmount-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          sudo mkdir -p "${MP}"; sudo chown "$(id -u):$(id -g)" "${MP}"
+          echo "${MP}" >"${RUNNER_TEMP}/mp"
+          "${RUNNER_TEMP}/direct-local" "${RAW}" "${MP}" "EDP 532 Unmount" >"${RUNNER_TEMP}/server.log" 2>&1 & S=$!
+          echo "${S}" >"${RUNNER_TEMP}/server.pid"
+          for _ in $(seq 1 30); do mount | grep -Fq " on ${MP} " && break; sleep 1; done
+          mount | grep -F " on ${MP} "
+          printf X | dd of="${MP}/volume.raw" bs=1 seek=4097 conv=notrunc status=none
+          test "$(dd if="${RAW}" bs=1 skip=4097 count=1 status=none)" = X
+
+          /sbin/umount "${MP}" >"${RUNNER_TEMP}/umount.log" 2>&1 & U=$!
+          DONE=0
+          for _ in $(seq 1 10); do
+            if ! kill -0 "${U}" 2>/dev/null; then DONE=1; break; fi
+            sleep 1
+          done
+          if [[ "${DONE}" = 0 ]]; then
+            echo 'UMOUNT_PROCESS_STUCK=1'
+            kill -9 "${U}" 2>/dev/null || true
+          fi
+          wait "${U}" 2>/dev/null || URC=$?; URC="${URC:-0}"
+          cat "${RUNNER_TEMP}/umount.log" || true
+          echo "UMOUNT_RC=${URC}"
+          if mount | grep -Fq " on ${MP} "; then MOUNT_REMAINS=1; else MOUNT_REMAINS=0; fi
+          echo "MOUNT_REMAINS=${MOUNT_REMAINS}"
+          cat "${RUNNER_TEMP}/server.log" || true
+          test "${DONE}" = 1
+          test "${URC}" -eq 0
+          test "${MOUNT_REMAINS}" = 0
+          echo 'RESULT=MACFUSE_532_DIRECT_LOCAL_STANDARD_UNMOUNT_OK'
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          [[ -f "${RUNNER_TEMP}/server.pid" ]] && kill -9 "$(cat "${RUNNER_TEMP}/server.pid")" 2>/dev/null || true
+          if [[ -f "${RUNNER_TEMP}/mp" ]]; then MP="$(cat "${RUNNER_TEMP}/mp")"; /sbin/umount -f "${MP}" >/dev/null 2>&1 & sleep 2; sudo rmdir "${MP}" 2>/dev/null || true; fi
+          exit 0
