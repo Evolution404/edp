@@ -95,7 +95,7 @@ jobs:
           echo "${MP}" >"${RUNNER_TEMP}/mp"
           start() {
             : >"${RUNNER_TEMP}/server.log"
-            "${RUNNER_TEMP}/bridge" "${CIPHER}" "${KEY}" "${MP}" "EDP Internal ${VERSION}" >"${RUNNER_TEMP}/server.log" 2>&1 &
+            sudo -E "${RUNNER_TEMP}/bridge" "${CIPHER}" "${KEY}" "${MP}" "EDP Internal ${VERSION}" >"${RUNNER_TEMP}/server.log" 2>&1 &
             echo $! >"${RUNNER_TEMP}/pid"
             for _ in $(seq 1 30); do mount | grep -Fq " on ${MP} " && return 0; kill -0 "$(cat "${RUNNER_TEMP}/pid")" 2>/dev/null || break; sleep 1; done
             cat "${RUNNER_TEMP}/server.log" >&2 || true; return 1
@@ -131,11 +131,11 @@ jobs:
             grep -Eq 'DIRECT_MFMOUNT_SOURCE=/dev/disk[0-9]+' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_DA_VOLUME_MATCH=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_DA_UNMOUNT_REQUESTED=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_POSIX_FORCE_UNMOUNT_RESULT=0 errno=0 euid=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_DA_DEACTIVATION_STATUS=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=1 errno=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_SERVER_TRANSPORT_RELEASED=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_TRANSPORT_RELEASED=1' "${RUNNER_TEMP}/server.log"
-            grep -Fq 'DIRECT_MFMOUNT_MACFUSE_DEACTIVATION_STATUS=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_MOUNT_TABLE_GONE=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_TEARDOWN_COMPLETE=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_EXIT=0' "${RUNNER_TEMP}/server.log"
@@ -143,12 +143,12 @@ jobs:
           }
           start
           MARKER="EDP-INTERNAL-${VERSION}-PERSIST"; OFFSET=1048579
-          printf '%s' "${MARKER}" | dd of="${MP}/volume.raw" bs=1 seek="${OFFSET}" conv=notrunc status=none
+          printf '%s' "${MARKER}" | sudo dd of="${MP}/volume.raw" bs=1 seek="${OFFSET}" conv=notrunc status=none
           sync
-          test "$(dd if="${MP}/volume.raw" bs=1 skip="${OFFSET}" count="${#MARKER}" status=none)" = "${MARKER}"
+          test "$(sudo dd if="${MP}/volume.raw" bs=1 skip="${OFFSET}" count="${#MARKER}" status=none)" = "${MARKER}"
           stop
           start
-          test "$(dd if="${MP}/volume.raw" bs=1 skip="${OFFSET}" count="${#MARKER}" status=none)" = "${MARKER}"
+          test "$(sudo dd if="${MP}/volume.raw" bs=1 skip="${OFFSET}" count="${#MARKER}" status=none)" = "${MARKER}"
           stop
           echo "RESULT=DIRECT_SYSTEM_UNMOUNT_REMOUNT_${VERSION//./_}_PASS"
       - name: Cleanup

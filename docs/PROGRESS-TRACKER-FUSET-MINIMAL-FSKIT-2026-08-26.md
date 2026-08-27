@@ -77,6 +77,8 @@ matrix run `33040455206`（commit `bcfa918`）：两版本在 whole-unmount succ
 
 matrix run `33040658959`（commit `cc7187b`）：两版本都证明 retained/original 两个 channel owner 已完全 release，worker 也在 eject 前观察到 `TRANSPORT_RELEASED=1`，但 eject 仍一致返回 `unix_err(EBUSY)`；bridge ownership 因此已排除。进一步检查官方 5.3.3 `Mount` source 与发布包 binary：`XPCTransport.deactivate()` 仅 cancel listener/peer；Local extension 的 `FSVolume.deactivate(options:)` 会另行调用 mount daemon 的 typed XPC method `device/deactivate`（input field `bsdName`），daemon 对应执行 “Deactivating virtual device” → “Detach virtual device” → remove disk image。这是真正持有 virtual `/dev/diskN` resource 的 deactivation path，且没有公开 MFMount C export。下一版在 source DADisk whole-unmount acknowledgement 和 transport release 后，按 Local extension 的同一 protocol 对精确 BSD name 请求 mount-service deactivation；DA eject 只保留为失败诊断 fallback。
 
+matrix run `33041227135`（commit `ffdd4ec`）：两版本对 daemon 私有 service 和公开 mount service 的 `device/deactivate` 请求均立即得到 XPC `Connection interrupted`；daemon 的 client code-signing requirement 只允许已签名 Local extension 使用该 typed method，因此 Direct bridge 不能也不应把私有 XPC 当作产品 API。真实链路必须由 VFS unmount 触发 Local `FSVolume.deactivate()`，再由 extension 以自身签名调用 daemon。下一轮用产品同类的 privileged process 直接执行 `unmount(2, MNT_FORCE)`，保持 channel/server 活跃以完成 FSKit deactivate；这与已排除的非特权普通 `unmount(2)` 和 shell 命令不是同一路径。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**

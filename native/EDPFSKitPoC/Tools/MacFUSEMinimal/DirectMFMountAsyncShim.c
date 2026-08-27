@@ -322,6 +322,18 @@ static int unmount_source_with_disk_arbitration(const char *source,
             (unsigned int)context.status,
             source);
 
+    errno = 0;
+    int force_unmount_result = unmount(mountpoint, MNT_FORCE);
+    int force_unmount_errno = errno;
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_POSIX_FORCE_UNMOUNT_RESULT=%d errno=%d "
+            "euid=%u source=%s mountpoint=%s\n",
+            force_unmount_result,
+            force_unmount_errno,
+            (unsigned int)geteuid(),
+            source,
+            mountpoint);
+
     if (context.status != kDAReturnSuccess &&
         context.status != kDAReturnNotMounted) {
         DASessionUnscheduleFromRunLoop(session, run_loop,
