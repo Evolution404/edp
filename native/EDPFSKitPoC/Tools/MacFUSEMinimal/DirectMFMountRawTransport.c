@@ -536,13 +536,21 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
             break;
         case FUSE_DESTROY:
             fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_RECEIVED=1\n");
-            if (EDPDirectMFMountTeardownActive != NULL &&
-                EDPDirectMFMountTeardownActive()) {
-                fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_DEFERRED=1\n");
-            } else {
-                state->running = false;
+            /* macFUSE Local's FSVolume.deactivate() sends Request.destroy via
+             * Channel.process(..., timeout: .zero) and awaits a reply before
+             * it closes the channel and asks the mount daemon to deactivate
+             * the virtual device.  Returning from dispatch without a FUSE
+             * reply deadlocks VFS unmount against Local deactivation. */
+            result = send_payload(state->channel, in->unique, NULL, 0);
+            if (result == 0) {
+                fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_REPLIED=1\n");
+                if (EDPDirectMFMountTeardownActive != NULL &&
+                    EDPDirectMFMountTeardownActive()) {
+                    fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_DEFERRED=1\n");
+                } else {
+                    state->running = false;
+                }
             }
-            result = 0;
             break;
         case FUSE_MKDIR:
         case FUSE_MKNOD:
