@@ -120,6 +120,7 @@ jobs:
             printf "EDP-AB-${MODE}" | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
             sudo mkdir -p "${MP}" && sudo chown "$(id -u):$(id -g)" "${MP}"
             echo -n "${MP}" > "${RUNNER_TEMP}/mp-${MODE}"
+            basename "${MP}" > "${RUNNER_TEMP}/finder-name-${MODE}"
             "${RUNNER_TEMP}/direct-${MODE}" "${RAW}" "${MP}" "${NAME}" >"${RUNNER_TEMP}/${MODE}.log" 2>&1 &
             echo $! > "${RUNNER_TEMP}/pid-${MODE}"
             OK=0
@@ -149,13 +150,18 @@ jobs:
       - name: Finder visibility A-B hard comparison
         run: |
           set -euo pipefail
+          GENERIC_FINDER_NAME="$(cat "${RUNNER_TEMP}/finder-name-Generic")"
+          LOCAL_FINDER_NAME="$(cat "${RUNNER_TEMP}/finder-name-Local")"
+          echo "GENERIC_FINDER_EXPECTED=${GENERIC_FINDER_NAME}"
+          echo "LOCAL_FINDER_EXPECTED=${LOCAL_FINDER_NAME}"
+
           check_finder() {
             local LABEL="$1"
             local OUT
             OUT="$(osascript -e 'tell application "Finder" to get name of every disk' 2>/dev/null || true)"
             echo "FINDER_${LABEL}=${OUT}"
-            if printf '%s\n' "${OUT}" | grep -Fq 'EDP AB Generic'; then G=1; else G=0; fi
-            if printf '%s\n' "${OUT}" | grep -Fq 'EDP AB Local'; then L=1; else L=0; fi
+            if printf '%s\n' "${OUT}" | grep -Fq "${GENERIC_FINDER_NAME}"; then G=1; else G=0; fi
+            if printf '%s\n' "${OUT}" | grep -Fq "${LOCAL_FINDER_NAME}"; then L=1; else L=0; fi
             echo "FINDER_${LABEL}_GENERIC_VISIBLE=${G}"
             echo "FINDER_${LABEL}_LOCAL_VISIBLE=${L}"
             printf '%s %s' "${G}" "${L}" > "${RUNNER_TEMP}/finder-${LABEL}.flags"
