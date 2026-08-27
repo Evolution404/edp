@@ -110,15 +110,24 @@ jobs:
               if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; break; fi
               sleep 1
             done
-            test "${MOUNT_GONE}" -eq 1
+            if [[ "${MOUNT_GONE}" -ne 1 ]]; then
+              echo "MOUNT_TABLE_STILL_PRESENT=1"
+              mount | grep -F " on ${MP} " || true
+              cat "${RUNNER_TEMP}/server.log" || true
+              return 1
+            fi
             for _ in $(seq 1 10); do
               if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; break; fi
               sleep 1
             done
-            test "${EXITED}" = 1
+            if [[ "${EXITED}" != 1 ]]; then
+              echo "SERVER_STILL_RUNNING_AFTER_UNMOUNT=1"
+              cat "${RUNNER_TEMP}/server.log" || true
+              return 1
+            fi
             wait "${P}" || PRC=$?; PRC="${PRC:-0}"
-            test "${PRC}" -eq 0
             cat "${RUNNER_TEMP}/server.log" || true
+            test "${PRC}" -eq 0
             grep -Eq 'DIRECT_MFMOUNT_SOURCE=/dev/disk[0-9]+' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_DA_UNMOUNT_REQUESTED=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_DA_UNMOUNT_STATUS=0' "${RUNNER_TEMP}/server.log"

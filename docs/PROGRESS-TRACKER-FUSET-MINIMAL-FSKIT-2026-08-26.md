@@ -60,6 +60,8 @@ mountpoint
 
 停止条件：一旦 5.3.2 或 5.3.3 稳定通过 L7，立即停止版本诊断实验、固定该版本并进入 L9/L10。
 
+matrix run `33039249865`（commit `a07f654`）：5.3.2/5.3.3 均成功安装、构建、首轮 encrypted mount 和 marker RW，但都未在 40 秒 gate 内移除 mount table 条目。首版 stop 函数在输出 `server.log` 前执行断言，因而该 run 不能判断是 DADiskRef 创建失败、callback timeout 还是 dissenter；已改为所有失败分支先输出真实 source、DA callback 状态和残留 mount entry，再做下一轮判别。此轮不构成版本行为差异结论。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**
