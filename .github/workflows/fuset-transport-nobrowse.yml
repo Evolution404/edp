@@ -18,7 +18,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  post-mount-nobrowse:
+  option-delivery:
+    name: ${{ matrix.scenario }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: baseline-cli-nobrowse
+            bridge_option: nobrowse
+            config_scope: none
+            expect_hidden: "0"
+          - scenario: candidate-cli-dontbrowse
+            bridge_option: dontbrowse
+            config_scope: none
+            expect_hidden: "1"
+          - scenario: candidate-user-ini-nobrowse
+            bridge_option: nobrowse
+            config_scope: user
+            expect_hidden: "1"
+          - scenario: candidate-system-ini-nobrowse
+            bridge_option: nobrowse
+            config_scope: system
+            expect_hidden: "1"
     runs-on: macos-26
     timeout-minutes: 15
     env:
@@ -57,6 +78,9 @@ jobs:
           pluginkit -a /Applications/fuse-t.app || true
           pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
 
+          echo 'PACKAGE_CONFIG_FILES:'
+          find "${EXPANDED}" -type f -name 'fuse-t.ini' -print -exec cat {} \; || true
+
       - name: Enable FSKit module on disposable runner
         run: |
           set -euo pipefail
@@ -88,15 +112,60 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build writable raw fixture and mount flag probes
+      - name: Configure candidate option path
+        env:
+          CONFIG_SCOPE: ${{ matrix.config_scope }}
+        run: |
+          set -euo pipefail
+          case "${CONFIG_SCOPE}" in
+            none)
+              ;;
+            user)
+              mkdir -p "${HOME}/.fuse-t"
+              cat >"${HOME}/.fuse-t/fuse-t.ini" <<'EOF'
+          [Default]
+          nobrowse=true
+          EOF
+              cat "${HOME}/.fuse-t/fuse-t.ini"
+              ;;
+            system)
+              sudo mkdir -p "/Library/Application Support/fuse-t/cfg"
+              printf '[Default]\nnobrowse=true\n' | sudo tee "/Library/Application Support/fuse-t/cfg/fuse-t.ini"
+              ;;
+            *)
+              echo "unknown config scope: ${CONFIG_SCOPE}" >&2
+              exit 64
+              ;;
+          esac
+
+      - name: Build writable fixture and bridge variant
+        env:
+          BRIDGE_OPTION: ${{ matrix.bridge_option }}
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/nobrowse.raw"
+          SOURCE="${RUNNER_TEMP}/FuseTMinimalBridge.swift"
+          cp native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift "${SOURCE}"
+          if [[ "${BRIDGE_OPTION}" = "dontbrowse" ]]; then
+            python3 - "${SOURCE}" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          old = 'readOnly ? "nobrowse,rdonly" : "nobrowse"'
+          new = 'readOnly ? "dontbrowse,rdonly" : "dontbrowse"'
+          if text.count(old) != 1:
+              raise SystemExit(f"expected exactly one bridge mount option expression, found {text.count(old)}")
+          path.write_text(text.replace(old, new))
+          PY
+          fi
+          grep -F "readOnly ? \"${BRIDGE_OPTION},rdonly\" : \"${BRIDGE_OPTION}\"" "${SOURCE}"
+
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
           printf 'EDP-NOBROWSE-PROBE' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
-            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
-            -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+            "${SOURCE}" -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+
           cat >"${RUNNER_TEMP}/check-nobrowse.c" <<'EOF'
           #include <errno.h>
           #include <stdio.h>
@@ -115,40 +184,13 @@ jobs:
               return hidden ? 0 : 1;
           }
           EOF
-          cat >"${RUNNER_TEMP}/update-nobrowse.c" <<'EOF'
-          #include <errno.h>
-          #include <stdio.h>
-          #include <string.h>
-          #include <sys/mount.h>
-
-          int main(int argc, char **argv) {
-              if (argc != 2) return 64;
-              struct statfs before;
-              if (statfs(argv[1], &before) != 0) {
-                  fprintf(stderr, "statfs before: %s\n", strerror(errno));
-                  return 65;
-              }
-              const int flags = (int)before.f_flags | MNT_UPDATE | MNT_DONTBROWSE;
-              printf("MOUNT2_FSTYPE=%s FLAGS=0x%08x\n", before.f_fstypename, flags);
-              if (mount(before.f_fstypename, argv[1], flags, NULL) != 0) {
-                  fprintf(stderr, "mount(2): errno=%d %s\n", errno, strerror(errno));
-                  return 66;
-              }
-              struct statfs after;
-              if (statfs(argv[1], &after) != 0) {
-                  fprintf(stderr, "statfs after: %s\n", strerror(errno));
-                  return 67;
-              }
-              printf("MOUNT2_AFTER_FLAGS=0x%08x\n", after.f_flags);
-              if ((after.f_flags & MNT_DONTBROWSE) == 0) return 68;
-              return 0;
-          }
-          EOF
           xcrun clang -Wall -Wextra -Werror "${RUNNER_TEMP}/check-nobrowse.c" -o "${RUNNER_TEMP}/check-nobrowse"
-          xcrun clang -Wall -Wextra -Werror "${RUNNER_TEMP}/update-nobrowse.c" -o "${RUNNER_TEMP}/update-nobrowse"
           echo "RAW=${RAW}" >> "${GITHUB_ENV}"
 
-      - name: Prove direct root MNT_UPDATE no-browse
+      - name: Verify kernel no-browse flag and writable transport
+        env:
+          EXPECT_HIDDEN: ${{ matrix.expect_hidden }}
+          SCENARIO: ${{ matrix.scenario }}
         run: |
           set -euo pipefail
           HIDDEN="${RUNNER_TEMP}/.edp-nobrowse-$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -178,29 +220,27 @@ jobs:
           done
           cat "${LOG}" || true
           test "${mounted}" = true
+          echo "MOUNT=$(mount | grep -F " on ${HIDDEN} ")"
 
-          echo "MOUNT_BEFORE=$(mount | grep -F " on ${HIDDEN} ")"
-          if "${RUNNER_TEMP}/check-nobrowse" "${HIDDEN}"; then
-            echo 'NOBROWSE_BEFORE=1'
-          else
-            before_status=$?
-            test "${before_status}" -eq 1
-            echo 'NOBROWSE_BEFORE=0'
-            sudo "${RUNNER_TEMP}/update-nobrowse" "${HIDDEN}"
-          fi
-
-          echo "MOUNT_AFTER=$(mount | grep -F " on ${HIDDEN} ")"
+          set +e
           "${RUNNER_TEMP}/check-nobrowse" "${HIDDEN}"
-          echo 'NOBROWSE_AFTER=1'
+          hidden_status=$?
+          set -e
+          case "${hidden_status}" in
+            0) actual_hidden=1 ;;
+            1) actual_hidden=0 ;;
+            *) exit "${hidden_status}" ;;
+          esac
+          echo "SCENARIO=${SCENARIO} EXPECT_HIDDEN=${EXPECT_HIDDEN} ACTUAL_HIDDEN=${actual_hidden}"
+          test "${actual_hidden}" = "${EXPECT_HIDDEN}"
 
           EXPOSED="${HIDDEN}/volume.raw"
           test -f "${EXPOSED}"
           cmp <(dd if="${RAW}" bs=1 skip=4096 count=18 status=none) \
               <(dd if="${EXPOSED}" bs=1 skip=4096 count=18 status=none)
-
           printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
           cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
-          echo 'RESULT=FUSET_TRANSPORT_NOBROWSE_MOUNT2_OK'
+          echo "RESULT=FUSET_TRANSPORT_OPTION_DELIVERY_${SCENARIO}_OK"
 
       - name: Cleanup
         if: always()
@@ -209,4 +249,6 @@ jobs:
           if [[ -n "${HIDDEN:-}" ]]; then /sbin/umount "${HIDDEN}" 2>/dev/null || sudo /sbin/umount "${HIDDEN}" 2>/dev/null; fi
           if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null; fi
           sudo rm -rf /Applications/fuse-t.app
+          sudo rm -f "/Library/Application Support/fuse-t/cfg/fuse-t.ini"
+          rm -f "${HOME}/.fuse-t/fuse-t.ini"
           exit 0
