@@ -37,7 +37,7 @@ jobs:
       GOLDEN_NAME: "disk4_real_lexar"
       REAL_LBA11: "fixtures/real_disks/disk4/LBA11.bin"
       REAL_LBA12: "fixtures/real_disks/disk4/LBA12.bin"
-      VOLNAME: "EDP-PRODUCT-E2E"
+      VOLNAME: "EDPPRODUCT"
 
     steps:
       - uses: actions/checkout@v6
