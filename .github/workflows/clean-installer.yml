@@ -28,6 +28,71 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Create ephemeral team signing identity for CI
+        run: |
+          set -euo pipefail
+          KEYCHAIN="${RUNNER_TEMP}/edp-ci-signing.keychain-db"
+          KEYCHAIN_PASSWORD="edp-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          CERT="${RUNNER_TEMP}/edp-ci-codesign.pem"
+          KEY="${RUNNER_TEMP}/edp-ci-codesign.key"
+          P12="${RUNNER_TEMP}/edp-ci-codesign.p12"
+          OPENSSL_CONFIG="${RUNNER_TEMP}/edp-ci-openssl.cnf"
+          PROBE="${RUNNER_TEMP}/edp-ci-team-probe"
+
+          cat > "${OPENSSL_CONFIG}" <<'EOF'
+          [ req ]
+          distinguished_name = dn
+          x509_extensions = v3
+          prompt = no
+          [ dn ]
+          CN = EDP CI Code Signing
+          OU = EDPCI00001
+          O = EDP CI
+          [ v3 ]
+          basicConstraints = critical,CA:TRUE
+          keyUsage = critical,digitalSignature,keyCertSign
+          extendedKeyUsage = codeSigning
+          subjectKeyIdentifier = hash
+          authorityKeyIdentifier = keyid:always,issuer
+          EOF
+
+          /usr/bin/openssl req -new -x509 -newkey rsa:2048 -nodes -days 1 \
+            -config "${OPENSSL_CONFIG}" \
+            -keyout "${KEY}" -out "${CERT}"
+          /usr/bin/openssl pkcs12 -export \
+            -inkey "${KEY}" -in "${CERT}" -out "${P12}" \
+            -passout "pass:${KEYCHAIN_PASSWORD}"
+
+          /usr/bin/security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          /usr/bin/security set-keychain-settings -lut 3600 "${KEYCHAIN}"
+          /usr/bin/security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          /usr/bin/security import "${P12}" -k "${KEYCHAIN}" \
+            -P "${KEYCHAIN_PASSWORD}" -T /usr/bin/codesign
+          /usr/bin/security add-trusted-cert -r trustRoot -p codeSign \
+            -k "${KEYCHAIN}" "${CERT}"
+          /usr/bin/security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s \
+            -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          /usr/bin/security list-keychains -d user -s "${KEYCHAIN}"
+          /usr/bin/security default-keychain -d user -s "${KEYCHAIN}"
+
+          IDENTITY="$(/usr/bin/security find-identity -v -p codesigning "${KEYCHAIN}" \
+            | /usr/bin/awk '/EDP CI Code Signing/{print $2; exit}')"
+          [[ -n "${IDENTITY}" ]]
+
+          printf 'int main(void) { return 0; }\n' \
+            | /usr/bin/cc -x c - -o "${PROBE}"
+          /usr/bin/codesign --force --sign "${IDENTITY}" \
+            --identifier com.edp.ci.team-probe "${PROBE}"
+          /usr/bin/codesign -dv --verbose=4 "${PROBE}" 2>&1 \
+            | tee "${RUNNER_TEMP}/edp-ci-team-probe.txt"
+          /usr/bin/grep -F 'TeamIdentifier=EDPCI00001' \
+            "${RUNNER_TEMP}/edp-ci-team-probe.txt"
+
+          echo "EDP_APP_SIGN_IDENTITY=${IDENTITY}" >> "${GITHUB_ENV}"
+          echo 'EDP_SERVICE_MODE=legacy' >> "${GITHUB_ENV}"
+          echo 'RESULT=CI_TEAM_SIGNING_IDENTITY_READY'
+
       - name: Download and install pinned macFUSE
         run: |
           set -euo pipefail
@@ -86,8 +151,19 @@ jobs:
             exit "${INSTALL_RC}"
           fi
           APP='/Applications/EDP USB Vault.app'
+          DAEMON='/Library/Application Support/EDP USB Vault/bin/edp-vaultctl'
           test -x "${APP}/Contents/MacOS/EDP USB Vault"
+          test -x "${DAEMON}"
           test "$(stat -f '%u' "${APP}")" -eq 0
+          APP_TEAM="$(/usr/bin/codesign -dv --verbose=4 "${APP}" 2>&1 \
+            | /usr/bin/awk -F= '/^TeamIdentifier=/{print $2; exit}')"
+          DAEMON_TEAM="$(/usr/bin/codesign -dv --verbose=4 "${DAEMON}" 2>&1 \
+            | /usr/bin/awk -F= '/^TeamIdentifier=/{print $2; exit}')"
+          [[ "${APP_TEAM}" == 'EDPCI00001' ]]
+          [[ "${DAEMON_TEAM}" == "${APP_TEAM}" ]]
+          echo "EDP_INSTALLED_TEAM_IDENTIFIER=${APP_TEAM}"
+          echo 'RESULT=CLEAN_INSTALL_TEAM_IDENTITY_MATCH'
+
           "${APP}/Contents/MacOS/EDP USB Vault" --register-service \
             | tee "${RUNNER_TEMP}/service-registration.txt"
           MODE="$(awk -F= '/^EDP_SERVICE_MODE=/{print $2}' "${RUNNER_TEMP}/service-registration.txt" | tail -1)"
