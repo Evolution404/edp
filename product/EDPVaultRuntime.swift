@@ -711,6 +711,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     private var failedMounts = [String: String]()
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
+    private var connectedDisks = [PhysicalDisk]()
 
     init() throws {
         store = try makeCredentialStore()
@@ -785,6 +786,7 @@ private final class EDPDaemonController: @unchecked Sendable {
         autoreleasepool {
             do {
                 let disks = try discoverEDPDisks()
+                connectedDisks = disks
                 let availableDisks = Dictionary(
                     uniqueKeysWithValues: disks.map { ($0.deviceID, $0.bsdName) }
                 )
@@ -866,7 +868,12 @@ private final class EDPDaemonController: @unchecked Sendable {
     func snapshotData() -> Data {
         queue.sync {
             do {
-                let disks = try discoverEDPDisks()
+                // Physical discovery owns raw-device access and is driven by
+                // Disk Arbitration.  The UI polls snapshots every two seconds;
+                // rescanning here would fork a privileged metadata helper for
+                // every poll and can create an unbounded failure loop when the
+                // current service context cannot open /dev/rdiskN.
+                let disks = connectedDisks
                 try observe(disks)
                 let records = try store.load().records
                 let policyDocument = try policies.load()
@@ -932,7 +939,7 @@ private final class EDPDaemonController: @unchecked Sendable {
         var password = [UInt8](passwordData)
         defer { secureZero(&password) }
         try queue.sync {
-            guard let disk = try discoverEDPDisks().first(where: { $0.deviceID == deviceID }) else {
+            guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 throw fail("EDP device is no longer connected")
             }
             try verifyPartitionType(
@@ -954,7 +961,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     func mountPartition(deviceID: String, partitionType: UInt32) throws {
         try queue.sync {
             failedMounts.removeValue(forKey: key(deviceID, partitionType))
-            guard let disk = try discoverEDPDisks().first(where: { $0.deviceID == deviceID }) else {
+            guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 throw fail("EDP device is no longer connected")
             }
             if partitionType == EDPPartitionKind.boot.rawValue {
@@ -992,7 +999,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     func unmountPartition(deviceID: String, partitionType: UInt32) throws {
         try queue.sync {
             if partitionType == EDPPartitionKind.boot.rawValue {
-                guard let disk = try discoverEDPDisks().first(where: { $0.deviceID == deviceID }) else {
+                guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                     throw fail("EDP device is no longer connected")
                 }
                 try setBootMounted(false, disk: disk)
@@ -1042,7 +1049,7 @@ private final class EDPDaemonController: @unchecked Sendable {
 
     func eject(deviceID: String) throws {
         try queue.sync {
-            guard let disk = try discoverEDPDisks().first(where: { $0.deviceID == deviceID }) else {
+            guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 throw fail("EDP device is no longer connected")
             }
             manager.eject(deviceID: deviceID)

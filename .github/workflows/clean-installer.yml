@@ -90,6 +90,7 @@ jobs:
 
           echo "EDP_APP_SIGN_IDENTITY=${IDENTITY}" >> "${GITHUB_ENV}"
           echo 'EDP_SERVICE_MODE=legacy' >> "${GITHUB_ENV}"
+          echo 'EDP_LEGACY_DIAGNOSTIC=1' >> "${GITHUB_ENV}"
           echo 'RESULT=CI_CERTIFICATE_SIGNING_IDENTITY_READY'
 
       - name: Download and install pinned macFUSE
@@ -115,6 +116,7 @@ jobs:
           set -euo pipefail
           ./installer/build-clean-installer.sh artifacts | tee "${RUNNER_TEMP}/build.txt"
           grep -F 'RESULT=EDP_CLEAN_COMBINED_INSTALLER_BUILT' "${RUNNER_TEMP}/build.txt"
+          grep -F 'RESULT=CI_ONLY_LEGACY_DIAGNOSTIC_PACKAGE' "${RUNNER_TEMP}/build.txt"
 
       - name: Verify package and writable DiskImages2 mode
         env:
@@ -186,10 +188,25 @@ jobs:
             echo 'RESULT=SMAPPSERVICE_REGISTRATION_ACCEPTED'
           fi
 
+      - name: Label legacy package as CI contract only
+        run: |
+          set -euo pipefail
+          mv artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg \
+            artifacts/EDP-USB-Vault-0.5.0-arm64-CI-Legacy-Contract-Only.pkg
+          shasum -a 256 \
+            artifacts/EDP-USB-Vault-0.5.0-arm64-CI-Legacy-Contract-Only.pkg \
+            > artifacts/EDP-USB-Vault-0.5.0-arm64-CI-Legacy-Contract-Only.pkg.sha256
+          printf '%s\n' \
+            'This package exercises legacy XPC packaging on hosted CI only.' \
+            'It cannot access physical raw USB media on macOS 26.' \
+            'Build the SMAppService product with an Apple signing identity for physical-device use.' \
+            > artifacts/CI-LEGACY-CONTRACT-ONLY.txt
+
       - uses: actions/upload-artifact@v4
         with:
-          name: EDP-USB-Vault-0.5.0-arm64-Clean
+          name: EDP-USB-Vault-0.5.0-arm64-CI-Legacy-Contract-Only
           path: |
-            artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg
-            artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg.sha256
+            artifacts/EDP-USB-Vault-0.5.0-arm64-CI-Legacy-Contract-Only.pkg
+            artifacts/EDP-USB-Vault-0.5.0-arm64-CI-Legacy-Contract-Only.pkg.sha256
+            artifacts/CI-LEGACY-CONTRACT-ONLY.txt
           if-no-files-found: error

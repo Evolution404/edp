@@ -241,6 +241,23 @@ Clean Installer run `33047939672` @ `116e77067bd200e9dc4d681a26f1fa3af21eaaca`�
 
 ## 已通过的产品化回归
 
+## 2026-08-27 真机安装回归：legacy CI 包不能识别物理 U 盘
+
+在 latest fetched head `c3c0280bdf7db09407a43440ac6bee1dbb72ad3c` 安装 GitHub Actions 上传的 Clean artifact 后，真机复现：
+
+- `/dev/disk4s1` 被 Apple `msdos` FSKit 挂载为 `/Volumes/启动区`，但 App snapshot 始终为 `[]`；
+- 安装包的 `EDPServiceMode=legacy`，实际进程为 root `/Library/Application Support/EDP USB Vault/bin/edp-vaultctl daemon`；此前成功真机路径则是 App 内嵌 `edp-usbvaultd` / `SMAppService`；
+- legacy daemon 启动 `edp-raw-metadata /dev/rdisk4 501` 后，即使 helper 降权到 console uid + `operator` gid，raw open 仍稳定返回 `EPERM`；因此 LBA4/LBA7/LBA11/LBA12 无法读取，设备识别被跳过；
+- UI 每两秒 snapshot 曾再次执行 physical discovery，叠加未合并的 Disk Arbitration burst，使 launchd child `forks` 上升到 3207，并持续刷 metadata failure 日志。
+
+修复边界：
+
+- 正式 Clean installer 默认且必须使用 `smappservice`；legacy 仅允许显式 `EDP_LEGACY_DIAGNOSTIC=1` 的 CI contract，artifact 名明确标记 `CI-Legacy-Contract-Only`；
+- snapshot 改为读取 event-driven discovery cache，不再因 UI polling 访问 raw device；
+- Disk Arbitration appeared/disappeared burst 以 250 ms 合并；
+- legacy → SMAppService 原地升级会被 macOS 26 后台项目数据库中的同名旧 label 阻塞；内嵌 daemon 升级为 `com.edp.usbvault.mountd.v2`，旧 `com.edp.usbvault.mountd` 只用于 bootout/删除 legacy plist，避免要求用户全局 reset background task database；
+- 本机正式修复包必须用有效 Apple Development/Developer ID 身份构建 `smappservice`，不能安装 CI legacy contract artifact。
+
 在 `5275b45` 基线上已通过：
 
 - Native Production Path `33044776714`

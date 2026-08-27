@@ -11,17 +11,19 @@ MACFUSE_URL="https://github.com/macfuse/macfuse/releases/download/macfuse-${MACF
 MACFUSE_DMG="${MACFUSE_DMG:-}"
 APP_SIGN_IDENTITY="${EDP_APP_SIGN_IDENTITY:--}"
 SERVICE_MODE="${EDP_SERVICE_MODE:-}"
+LEGACY_DIAGNOSTIC="${EDP_LEGACY_DIAGNOSTIC:-0}"
 if [[ -z "${SERVICE_MODE}" ]]; then
-  if [[ "${APP_SIGN_IDENTITY}" == "-" ]]; then
-    SERVICE_MODE="legacy"
-  else
-    SERVICE_MODE="smappservice"
-  fi
+  SERVICE_MODE="smappservice"
 fi
 [[ "${SERVICE_MODE}" == "legacy" || "${SERVICE_MODE}" == "smappservice" ]] || {
   echo "invalid EDP_SERVICE_MODE: ${SERVICE_MODE}" >&2
   exit 2
 }
+if [[ "${SERVICE_MODE}" == "legacy" && "${LEGACY_DIAGNOSTIC}" != "1" ]]; then
+  echo "legacy LaunchDaemon mode cannot access physical raw USB media on macOS 26" >&2
+  echo "use smappservice for installable products, or set EDP_LEGACY_DIAGNOSTIC=1 for CI-only contract tests" >&2
+  exit 2
+fi
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/edp-clean-installer.XXXXXX")"
 MACFUSE_MOUNT="${BUILD_ROOT}/macfuse"
 
@@ -54,7 +56,19 @@ if [[ -n "${NTFS3G_RUNTIME:-}" ]]; then
     exit 2
   }
   mkdir -p "${BUILD_ROOT}/third-party/ntfs-3g"
-  cp -R "${NTFS3G_RUNTIME}/." "${BUILD_ROOT}/third-party/ntfs-3g/"
+  if [[ -d "${NTFS3G_RUNTIME}/licenses/ntfs-3g" ]]; then
+    # Accept an installed EDP product root as a reusable NTFS runtime. Its
+    # notices live below licenses/ntfs-3g, unlike the builder's staging root.
+    mkdir -p "${BUILD_ROOT}/third-party/ntfs-3g/licenses"
+    cp -R "${NTFS3G_RUNTIME}/bin" "${NTFS3G_RUNTIME}/lib" \
+      "${BUILD_ROOT}/third-party/ntfs-3g/"
+    cp -R "${NTFS3G_RUNTIME}/licenses/ntfs-3g/." \
+      "${BUILD_ROOT}/third-party/ntfs-3g/licenses/"
+    cp -R "${NTFS3G_RUNTIME}/source" \
+      "${BUILD_ROOT}/third-party/ntfs-3g/"
+  else
+    cp -R "${NTFS3G_RUNTIME}/." "${BUILD_ROOT}/third-party/ntfs-3g/"
+  fi
 else
   /bin/bash "${REPO_ROOT}/scripts/build-ntfs3g-runtime.sh" "${BUILD_ROOT}/third-party"
 fi
@@ -153,13 +167,13 @@ xcrun swiftc -O \
 cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
 if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
-cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" <<'PLIST'
+cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.edp.usbvault.mountd</string>
+  <string>com.edp.usbvault.mountd.v2</string>
   <key>BundleProgram</key>
   <string>Contents/Library/LaunchServices/edp-usbvaultd</string>
   <key>ProgramArguments</key>
@@ -184,9 +198,10 @@ cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist
 </dict>
 </plist>
 PLIST
-/bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+/bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
 fi
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
+  --identifier com.edp.usbvault.mountd.v2 \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
@@ -358,3 +373,8 @@ echo "OUTPUT=${OUTPUT_PKG}"
 echo "MACFUSE_VERSION=${MACFUSE_VERSION}"
 echo "NTFS3G_VERSION=2026.7.7"
 echo "RESULT=EDP_CLEAN_COMBINED_INSTALLER_BUILT"
+if [[ "${SERVICE_MODE}" == "legacy" ]]; then
+  echo "RESULT=CI_ONLY_LEGACY_DIAGNOSTIC_PACKAGE"
+else
+  echo "RESULT=PHYSICAL_USB_SERVICE_CONTEXT_PACKAGED"
+fi

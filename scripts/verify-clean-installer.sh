@@ -26,7 +26,7 @@ done
 PAYLOAD="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Payload"
 ROOT="${PAYLOAD}/Library/Application Support/EDP USB Vault"
 APP="${PAYLOAD}/Applications/EDP USB Vault.app"
-DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
 LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 for path in \
   "bin/edp-vaultctl" \
@@ -66,6 +66,9 @@ case "${SERVICE_MODE}" in
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${DAEMON_PLIST}")" == "true" ]]
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "${DAEMON_PLIST}")" == "Contents/Library/LaunchServices/edp-usbvaultd" ]]
     [[ ! -e "${LEGACY_DAEMON_PLIST}" ]]
+    /usr/bin/codesign -dv --verbose=4 \
+      "${APP}/Contents/Library/LaunchServices/edp-usbvaultd" 2>&1 \
+      | /usr/bin/grep -F 'Identifier=com.edp.usbvault.mountd.v2' >/dev/null
     echo "RESULT=SMAPPSERVICE_DAEMON_EMBEDDED"
     ;;
   legacy)

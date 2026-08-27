@@ -15,6 +15,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     private let serviceMode: String
     private let daemonService: SMAppService?
+    private let daemonPlistName = "com.edp.usbvault.mountd.v2.plist"
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
     private var connection: NSXPCConnection?
 
@@ -25,7 +26,7 @@ final class EDPVaultViewModel: ObservableObject {
     init() {
         serviceMode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
         daemonService = serviceMode == "smappservice"
-            ? SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
+            ? SMAppService.daemon(plistName: daemonPlistName)
             : nil
         ensureServiceRegistration()
         refreshFSKitState()
@@ -1172,7 +1173,7 @@ struct EDPUSBVaultApp: App {
             let mode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
             print("EDP_SERVICE_MODE=\(mode)")
             if mode == "smappservice" {
-                let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
+                let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.v2.plist")
                 do {
                     if service.status != .enabled && service.status != .requiresApproval {
                         try service.register()
@@ -1226,7 +1227,7 @@ struct EDPUSBVaultApp: App {
                 print("RESULT=SERVICE_REREGISTER_NOT_APPLICABLE")
                 exit(1)
             }
-            let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.plist")
+            let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.v2.plist")
             do {
                 try service.unregister()
                 try service.register()

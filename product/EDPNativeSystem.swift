@@ -377,6 +377,7 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
     private let session: DASession
     private let queue = DispatchQueue(label: "com.edp.usbvault.disk-events")
     private var reconciliationTimer: DispatchSourceTimer?
+    private var pendingEventReconciliation: DispatchWorkItem?
     private var onChange: (@Sendable () -> Void)?
 
     init() throws {
@@ -402,10 +403,17 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
     }
 
     fileprivate func handleDiskEvent() {
-        onChange?()
+        // One physical attach can emit callbacks for the whole disk, its
+        // partitions, and the filesystem mount. Coalesce that burst so raw
+        // metadata discovery runs once after the device graph settles.
+        pendingEventReconciliation?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.onChange?() }
+        pendingEventReconciliation = work
+        queue.asyncAfter(deadline: .now() + .milliseconds(250), execute: work)
     }
 
     deinit {
+        pendingEventReconciliation?.cancel()
         reconciliationTimer?.cancel()
         DASessionSetDispatchQueue(session, nil)
     }

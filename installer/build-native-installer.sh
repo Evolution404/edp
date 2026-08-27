@@ -85,11 +85,11 @@ cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
 
 if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
-  cp "${REPO_ROOT}/product/App/com.edp.usbvault.mountd.plist" \
-    "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+  cp "${REPO_ROOT}/product/App/com.edp.usbvault.mountd.v2.plist" \
+    "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
 fi
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
-  --identifier com.edp.usbvault.mountd \
+  --identifier com.edp.usbvault.mountd.v2 \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
   --identifier com.edp.usbvault.app "${APP_STAGE}"
