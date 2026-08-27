@@ -23,7 +23,8 @@ jobs:
       MACFUSE_VERSION: "5.3.3"
       MACFUSE_DMG_SHA256: "7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
       MACFUSE_DMG_URL: "https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg"
-      MACFUSE_FSKIT_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse-local"
+      MACFUSE_FSKIT_GENERIC_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse"
+      MACFUSE_FSKIT_LOCAL_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse-local"
 
     steps:
       - uses: actions/checkout@v6
@@ -52,7 +53,7 @@ jobs:
           hdiutil detach "${VOL}" >/dev/null
           test -f /usr/local/lib/pkgconfig/fuse3.pc
 
-      - name: Enable local FSKit module
+      - name: Enable generic and local FSKit modules
         run: |
           set -euo pipefail
           APP="$(find /Applications /Library/Filesystems -type d -iname 'macfuse.app' -print -quit 2>/dev/null || true)"
@@ -61,14 +62,16 @@ jobs:
           /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
           while IFS= read -r ext; do pluginkit -a "${ext}" || true; done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
           pluginkit -a "${APP}" || true
-          pluginkit -e use -i "${MACFUSE_FSKIT_BUNDLE_ID}" || true
+          pluginkit -e use -i "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" || true
+          pluginkit -e use -i "${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" || true
 
           SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
           ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
           mkdir -p "${SETTINGS_DIR}"
-          python3 - "${ENABLED_PLIST}" "${MACFUSE_FSKIT_BUNDLE_ID}" <<'PY'
+          python3 - "${ENABLED_PLIST}" "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" <<'PY'
           import os, plistlib, sys
-          path, bundle_id = sys.argv[1:]
+          path = sys.argv[1]
+          bundle_ids = sys.argv[2:]
           enabled = []
           if os.path.exists(path):
               try:
@@ -78,8 +81,9 @@ jobs:
                       enabled = [x for x in value if isinstance(x, str)]
               except Exception:
                   pass
-          if bundle_id not in enabled:
-              enabled.append(bundle_id)
+          for bundle_id in bundle_ids:
+              if bundle_id not in enabled:
+                  enabled.append(bundle_id)
           with open(path, "wb") as f:
               plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
           PY
@@ -89,7 +93,8 @@ jobs:
           sudo killall -9 fskitd 2>/dev/null || true
           sleep 3
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
-          grep -Fq "+    ${MACFUSE_FSKIT_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+          grep -Fq "+    ${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+          grep -Fq "+    ${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
       - name: Build Darwin-compatible one-file RW transport
         run: |
