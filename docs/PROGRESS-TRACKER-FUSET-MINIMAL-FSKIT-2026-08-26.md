@@ -79,6 +79,8 @@ matrix run `33040658959`（commit `cc7187b`）：两版本都证明 retained/ori
 
 matrix run `33041227135`（commit `ffdd4ec`）：两版本对 daemon 私有 service 和公开 mount service 的 `device/deactivate` 请求均立即得到 XPC `Connection interrupted`；daemon 的 client code-signing requirement 只允许已签名 Local extension 使用该 typed method，因此 Direct bridge 不能也不应把私有 XPC 当作产品 API。真实链路必须由 VFS unmount 触发 Local `FSVolume.deactivate()`，再由 extension 以自身签名调用 daemon。下一轮用产品同类的 privileged process 直接执行 `unmount(2, MNT_FORCE)`，保持 channel/server 活跃以完成 FSKit deactivate；这与已排除的非特权普通 `unmount(2)` 和 shell 命令不是同一路径。
 
+matrix run `33041457229`（commit `7ae160d`）：把整个 MFMount bridge 放到 root session 会在 mount 前失败为 `File system extension not found`，因为 FSKit module approval/registration 属于 runner 用户 session；该轮没有产生任何 teardown 行为，不能用于版本比较。责任边界调整为：MFMount 和 encrypted RW server 仍运行在用户 session；独立最小 privileged helper 先从 mount table 验证 source 为 `/dev/diskN`，只执行 `unmount(2, MNT_FORCE)`；随后由系统调用 Local `FSVolume.deactivate()`，channel invalidation/FUSE_DESTROY 和 daemon virtual-device detach 都作为系统 teardown 的结果发生。这与产品 privileged mountd 的边界一致。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**

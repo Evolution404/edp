@@ -535,6 +535,7 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
             result = 0;
             break;
         case FUSE_DESTROY:
+            fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_RECEIVED=1\n");
             if (EDPDirectMFMountTeardownActive != NULL &&
                 EDPDirectMFMountTeardownActive()) {
                 fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_DEFERRED=1\n");
