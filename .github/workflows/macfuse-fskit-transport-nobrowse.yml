@@ -1,0 +1,300 @@
+name: macFUSE Generic FSKit Hidden RW Transport
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - ".github/workflows/macfuse-fskit-transport-nobrowse.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macfuse-fskit-hidden-transport-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hidden-rw-transport:
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      MACFUSE_VERSION: "5.3.3"
+      MACFUSE_DMG_SHA256: "7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
+      MACFUSE_DMG_URL: "https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg"
+      MACFUSE_FSKIT_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify hosted runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+
+      - name: Install exact official macFUSE 5.3.3
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse-${MACFUSE_VERSION}.dmg"
+          curl --fail --location --retry 3 --silent --show-error "${MACFUSE_DMG_URL}" -o "${DMG}"
+          test "$(shasum -a 256 "${DMG}" | awk '{print $1}')" = "${MACFUSE_DMG_SHA256}"
+          ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
+          printf '%s\n' "${ATTACH}"
+          VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
+          test -n "${VOL}"
+          PKG="$(find "${VOL}" -maxdepth 2 -type f -name '*.pkg' -print -quit)"
+          if [[ -z "${PKG}" ]]; then
+            PKG="$(find "${VOL}" -maxdepth 2 -type d -name '*.pkg' -print -quit)"
+          fi
+          echo "MACFUSE_INSTALL_PKG=${PKG}"
+          test -n "${PKG}"
+          pkgutil --check-signature "${PKG}"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach "${VOL}" >/dev/null
+          pkgutil --pkgs | grep -i macfuse
+          find /Applications /Library /usr/local -maxdepth 5 \( -iname '*macfuse*' -o -iname 'fuse3*' \) -print 2>/dev/null | head -n 200
+
+      - name: Enable Generic FSKit module
+        run: |
+          set -euo pipefail
+          APP="/Applications/macFUSE.app"
+          test -d "${APP}"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
+          find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print
+          while IFS= read -r ext; do pluginkit -a "${ext}" || true; done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
+          pluginkit -a "${APP}" || true
+          pluginkit -e use -i "${MACFUSE_FSKIT_BUNDLE_ID}" || true
+
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${ENABLED_PLIST}" "${MACFUSE_FSKIT_BUNDLE_ID}" <<'PY'
+          import os, plistlib, sys
+          path, bundle_id = sys.argv[1:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, "rb") as f:
+                      value = plistlib.load(f)
+                  if isinstance(value, list):
+                      enabled = [x for x in value if isinstance(x, str)]
+              except Exception:
+                  pass
+          if bundle_id not in enabled:
+              enabled.append(bundle_id)
+          with open(path, "wb") as f:
+              plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          PY
+          chmod 600 "${ENABLED_PLIST}"
+          killall -9 fskit_agent 2>/dev/null || true
+          killall -9 extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
+          grep -Fq "${MACFUSE_FSKIT_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+
+      - name: Build one-file libfuse3 RW transport
+        run: |
+          set -euo pipefail
+          cat >"${RUNNER_TEMP}/raw_transport.c" <<'EOF'
+          #define FUSE_USE_VERSION 31
+          #include <fuse3/fuse.h>
+          #include <errno.h>
+          #include <fcntl.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <sys/stat.h>
+          #include <sys/statvfs.h>
+          #include <unistd.h>
+
+          static const char *backing_path;
+          static int backing_fd = -1;
+          static off_t backing_size;
+
+          static int rt_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
+              (void)fi;
+              memset(st, 0, sizeof(*st));
+              if (strcmp(path, "/") == 0) {
+                  st->st_mode = S_IFDIR | 0755;
+                  st->st_nlink = 2;
+                  st->st_ino = 1;
+                  return 0;
+              }
+              if (strcmp(path, "/volume.raw") == 0) {
+                  st->st_mode = S_IFREG | 0600;
+                  st->st_nlink = 1;
+                  st->st_size = backing_size;
+                  st->st_ino = 2;
+                  return 0;
+              }
+              return -ENOENT;
+          }
+
+          static int rt_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+                                off_t off, struct fuse_file_info *fi,
+                                enum fuse_readdir_flags flags) {
+              (void)off; (void)fi; (void)flags;
+              if (strcmp(path, "/") != 0) return -ENOENT;
+              filler(buf, ".", NULL, 0, 0);
+              filler(buf, "..", NULL, 0, 0);
+              filler(buf, "volume.raw", NULL, 0, 0);
+              return 0;
+          }
+
+          static int rt_open(const char *path, struct fuse_file_info *fi) {
+              (void)fi;
+              return strcmp(path, "/volume.raw") == 0 ? 0 : -ENOENT;
+          }
+
+          static int rt_read(const char *path, char *buf, size_t size, off_t off,
+                             struct fuse_file_info *fi) {
+              (void)fi;
+              if (strcmp(path, "/volume.raw") != 0) return -ENOENT;
+              ssize_t n = pread(backing_fd, buf, size, off);
+              return n < 0 ? -errno : (int)n;
+          }
+
+          static int rt_write(const char *path, const char *buf, size_t size, off_t off,
+                              struct fuse_file_info *fi) {
+              (void)fi;
+              if (strcmp(path, "/volume.raw") != 0) return -ENOENT;
+              ssize_t n = pwrite(backing_fd, buf, size, off);
+              return n < 0 ? -errno : (int)n;
+          }
+
+          static int rt_fsync(const char *path, int datasync, struct fuse_file_info *fi) {
+              (void)path; (void)datasync; (void)fi;
+              return fsync(backing_fd) == 0 ? 0 : -errno;
+          }
+
+          static int rt_statfs(const char *path, struct statvfs *st) {
+              (void)path;
+              memset(st, 0, sizeof(*st));
+              st->f_bsize = 4096;
+              st->f_frsize = 4096;
+              st->f_blocks = (backing_size + 4095) / 4096;
+              st->f_bfree = st->f_bavail = st->f_blocks;
+              st->f_files = 2;
+              st->f_ffree = 1;
+              return 0;
+          }
+
+          static struct fuse_operations ops = {
+              .getattr = rt_getattr,
+              .readdir = rt_readdir,
+              .open = rt_open,
+              .read = rt_read,
+              .write = rt_write,
+              .fsync = rt_fsync,
+              .statfs = rt_statfs,
+          };
+
+          int main(int argc, char **argv) {
+              if (argc < 3) return 64;
+              backing_path = argv[1];
+              backing_fd = open(backing_path, O_RDWR | O_CLOEXEC);
+              if (backing_fd < 0) { perror("open backing"); return 65; }
+              struct stat st;
+              if (fstat(backing_fd, &st) != 0) { perror("fstat"); return 66; }
+              backing_size = st.st_size;
+              argv[1] = argv[0];
+              return fuse_main(argc - 1, argv + 1, &ops, NULL);
+          }
+          EOF
+
+          PC="$(find /usr/local /Library -type f -name 'fuse3.pc' -print -quit 2>/dev/null || true)"
+          echo "FUSE3_PC=${PC}"
+          test -n "${PC}"
+          export PKG_CONFIG_PATH="$(dirname "${PC}"):${PKG_CONFIG_PATH:-}"
+          pkg-config --modversion fuse3
+          pkg-config --cflags --libs fuse3
+          xcrun clang -std=c17 -Wall -Wextra -Werror \
+            "${RUNNER_TEMP}/raw_transport.c" \
+            $(pkg-config --cflags --libs fuse3) \
+            -o "${RUNNER_TEMP}/raw_transport"
+
+          cat >"${RUNNER_TEMP}/inspect.c" <<'EOF'
+          #include <stdio.h>
+          #include <sys/mount.h>
+          int main(int argc, char **argv) {
+              if (argc != 2) return 64;
+              struct statfs st;
+              if (statfs(argv[1], &st) != 0) return 65;
+              printf("FSTYPE=%s FLAGS=0x%08x MNT_DONTBROWSE=%d\n",
+                     st.f_fstypename, st.f_flags, (st.f_flags & MNT_DONTBROWSE) != 0);
+              return 0;
+          }
+          EOF
+          xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/inspect.c" -o "${RUNNER_TEMP}/inspect"
+
+      - name: Prove Generic FSKit nobrowse transport
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/macfuse-hidden.raw"
+          MOUNTPOINT="/Volumes/.edp-macfuse-hidden-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          FINDER_DISK_NAME="$(basename "${MOUNTPOINT}")"
+          dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
+          printf 'EDP-MACFUSE-HIDDEN' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
+          sudo mkdir -p "${MOUNTPOINT}"
+          sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
+          echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
+
+          "${RUNNER_TEMP}/raw_transport" "${RAW}" \
+            -f -o backend=fskit,nobrowse,volname='EDP macFUSE Hidden Transport' \
+            "${MOUNTPOINT}" >"${RUNNER_TEMP}/transport.log" 2>&1 &
+          TRANSPORT_PID=$!
+          echo "TRANSPORT_PID=${TRANSPORT_PID}" >> "${GITHUB_ENV}"
+
+          mounted=false
+          for attempt in $(seq 1 30); do
+            if mount | grep -Fq " on ${MOUNTPOINT} "; then mounted=true; break; fi
+            if ! kill -0 "${TRANSPORT_PID}" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          cat "${RUNNER_TEMP}/transport.log"
+          mount | grep -F " on ${MOUNTPOINT} " || true
+          test "${mounted}" = true
+
+          FLAGS="$(${RUNNER_TEMP}/inspect "${MOUNTPOINT}")"
+          printf '%s\n' "${FLAGS}"
+          printf '%s\n' "${FLAGS}" | grep -Fq 'MNT_DONTBROWSE=1'
+
+          open -a Finder
+          for attempt in $(seq 1 15); do
+            if osascript -e 'tell application "Finder" to get name of every disk' >"${RUNNER_TEMP}/finder.txt" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          cat "${RUNNER_TEMP}/finder.txt"
+          if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder.txt"; then
+            echo 'FINDER_TRANSPORT_VISIBLE=1'
+            exit 1
+          fi
+          echo 'FINDER_TRANSPORT_VISIBLE=0'
+
+          EXPOSED="${MOUNTPOINT}/volume.raw"
+          test -f "${EXPOSED}"
+          cmp <(dd if="${RAW}" bs=1 skip=4096 count=18 status=none) \
+              <(dd if="${EXPOSED}" bs=1 skip=4096 count=18 status=none)
+          printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
+          cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
+          echo 'RW_OK=1'
+
+          OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"
+          printf '%s\n' "${OUT}"
+          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${DISK}"
+          hdiutil detach "${DISK}" -force >/dev/null
+          echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
+          echo 'RESULT=MACFUSE_GENERIC_FSKIT_HIDDEN_RW_TRANSPORT_OK'
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          if [[ -n "${MOUNTPOINT:-}" ]]; then /sbin/umount "${MOUNTPOINT}" 2>/dev/null || sudo /sbin/umount "${MOUNTPOINT}" 2>/dev/null; fi
+          if [[ -n "${TRANSPORT_PID:-}" ]]; then kill "${TRANSPORT_PID}" 2>/dev/null || true; fi
+          sudo find /Volumes -maxdepth 1 -type d -name '.edp-macfuse-hidden-*' -exec rmdir {} \; 2>/dev/null || true
+          exit 0
