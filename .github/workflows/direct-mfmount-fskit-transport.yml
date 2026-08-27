@@ -24,6 +24,7 @@ jobs:
       MACFUSE_DMG_SHA256: "7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
       MACFUSE_DMG_URL: "https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg"
       MACFUSE_FSKIT_GENERIC_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse"
+      MACFUSE_FSKIT_LOCAL_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse-local"
       MACFUSE_MOUNT_COMMIT: "313b9c68d04cd779bffc9f8bd9f32a4e1f5baf70"
       MACFUSE_LIBRARY3_COMMIT: "9a3db24bf7e3896d69a514a70e91dc41eefb948b"
 
@@ -55,35 +56,47 @@ jobs:
           hdiutil detach "${VOL}" >/dev/null
 
           FRAMEWORK="/Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework"
-          echo "MFMount framework payload:"
-          find "${FRAMEWORK}" -maxdepth 3 -print 2>/dev/null || true
-          echo "Installed FUSE headers:"
-          find /usr/local/include -maxdepth 3 -iname '*fuse*' -print 2>/dev/null || true
           test -f "${FRAMEWORK}/Versions/A/MFMount"
           echo 'MFMOUNT_FRAMEWORK_INSTALLED=1'
 
-      - name: Enable Generic FSKit module
+      - name: Enable generic and local FSKit modules
         run: |
           set -euo pipefail
           APP="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app"
           test -d "${APP}"
           GENERIC_APPEX="${APP}/Contents/Extensions/${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}.appex"
+          LOCAL_APPEX="${APP}/Contents/Extensions/${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}.appex"
           test -d "${GENERIC_APPEX}"
+          test -d "${LOCAL_APPEX}"
 
           LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
           "${LSREGISTER}" -f -R -trusted "${APP}"
-          pluginkit -a "${GENERIC_APPEX}" || true
+          while IFS= read -r ext; do pluginkit -a "${ext}" || true; done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
           pluginkit -a "${APP}" || true
           pluginkit -e use -i "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" || true
+          pluginkit -e use -i "${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" || true
 
           SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
           ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
           mkdir -p "${SETTINGS_DIR}"
-          python3 - "${ENABLED_PLIST}" "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" <<'PY'
-          import plistlib, sys
-          path, bundle_id = sys.argv[1:]
+          python3 - "${ENABLED_PLIST}" "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" <<'PY'
+          import os, plistlib, sys
+          path = sys.argv[1]
+          ids = sys.argv[2:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, "rb") as f:
+                      value = plistlib.load(f)
+                  if isinstance(value, list):
+                      enabled = [x for x in value if isinstance(x, str)]
+              except Exception:
+                  pass
+          for bundle_id in ids:
+              if bundle_id not in enabled:
+                  enabled.append(bundle_id)
           with open(path, "wb") as f:
-              plistlib.dump([bundle_id], f, fmt=plistlib.FMT_XML, sort_keys=False)
+              plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
           PY
           chmod 600 "${ENABLED_PLIST}"
 
@@ -93,7 +106,8 @@ jobs:
           sleep 3
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "+    ${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
-          echo "GENERIC_FSKIT_ENABLED=1"
+          grep -Fq "+    ${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+          echo "GENERIC_AND_LOCAL_FSKIT_ENABLED=1"
 
       - name: Build direct MFMount server and probes
         run: |
