@@ -5,6 +5,7 @@ on:
     branches: ["test/fuset-minimal-fskit-bridge"]
     paths:
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPFixtureAdapter.c"
+      - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c"
       - ".github/workflows/direct-mfmount-internal-unmount-matrix.yml"
   workflow_dispatch:
 
@@ -83,7 +84,7 @@ jobs:
             native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift
           )
           xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors "${CORE[@]}" "${RUNNER_TEMP}/adapter.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -o "${RUNNER_TEMP}/bridge"
-      - name: Prove signal-driven internal unmount and remount persistence
+      - name: Prove channel-owned unmount and remount persistence
         run: |
           set -euo pipefail
           VERSION='${{ matrix.runtime.version }}'
@@ -106,12 +107,19 @@ jobs:
               if ! mount | grep -Fq " on ${MP} "; then echo "MOUNT_GONE=1"; break; fi
               sleep 1
             done
-            cat "${RUNNER_TEMP}/server.log" || true
             ! mount | grep -Fq " on ${MP} "
-            grep -Fq 'DIRECT_INTERNAL_UNMOUNT_RESULT=0' "${RUNNER_TEMP}/server.log"
-            for _ in $(seq 1 10); do kill -0 "${P}" 2>/dev/null || return 0; sleep 1; done
-            kill -9 "${P}" 2>/dev/null || true
-            return 0
+            EXITED=0
+            for _ in $(seq 1 10); do
+              if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; break; fi
+              sleep 1
+            done
+            test "${EXITED}" = 1
+            wait "${P}" || PRC=$?; PRC="${PRC:-0}"
+            test "${PRC}" -eq 0
+            cat "${RUNNER_TEMP}/server.log" || true
+            grep -Fq 'DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_TERMINATION_INTERRUPT_OBSERVED=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_EXIT=0' "${RUNNER_TEMP}/server.log"
           }
           start
           MARKER="EDP-INTERNAL-${VERSION}-PERSIST"; OFFSET=1048579
@@ -122,7 +130,7 @@ jobs:
           start
           test "$(dd if="${MP}/volume.raw" bs=1 skip="${OFFSET}" count="${#MARKER}" status=none)" = "${MARKER}"
           stop
-          echo "RESULT=DIRECT_INTERNAL_UNMOUNT_${VERSION//./_}_PASS"
+          echo "RESULT=DIRECT_CHANNEL_OWNED_UNMOUNT_${VERSION//./_}_PASS"
       - name: Cleanup
         if: always()
         run: |

@@ -1,12 +1,10 @@
 #include <MFMount/MFMount.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -67,38 +65,18 @@ static int fixture_close(int fd) {
     return close(fd);
 }
 
-static void termination_signal_handler(int signal_number) {
-    (void)signal_number;
-}
-
-static int install_termination_handlers(void) {
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = termination_signal_handler;
-    sigemptyset(&action.sa_mask);
-    if (sigaction(SIGTERM, &action, NULL) != 0) return -1;
-    if (sigaction(SIGINT, &action, NULL) != 0) return -1;
-    return 0;
-}
-
-/* The official Darwin libfuse compatibility path calls unmount(mountpoint, 0).
- * Direct MFMount owns the server loop itself, so do the same after a termination
- * signal interrupts the blocking receive. This avoids the Disk Arbitration
- * unmount path implicated in macFUSE 5.3.3 issue #1180. */
+/* EDPAsyncMFMount owns SIGTERM/SIGINT through a sigwait thread and wakes this
+ * receive with MFChannelInterrupt(). Translate that one interruption into
+ * ENODEV so the shared server loop exits and performs its single documented
+ * MFChannelClose() teardown. Do not call unmount(2): Direct MFMount owns the
+ * channel lifecycle. */
 static MFMessageRef fixture_next_message(MFChannelRef channel) {
     MFMessageRef message = MFChannelCopyNextMessage(channel);
     if (message == NULL && errno == EINTR) {
-        int saved = errno;
-        if (g_mountpoint != NULL) {
-            errno = 0;
-            int result = unmount(g_mountpoint, 0);
-            fprintf(stderr,
-                    "DIRECT_INTERNAL_UNMOUNT_RESULT=%d errno=%d mountpoint=%s\n",
-                    result,
-                    errno,
-                    g_mountpoint);
-        }
-        errno = saved == EINTR ? ENODEV : saved;
+        fprintf(stderr,
+                "DIRECT_TERMINATION_INTERRUPT_OBSERVED=1 mountpoint=%s\n",
+                g_mountpoint == NULL ? "<unset>" : g_mountpoint);
+        errno = ENODEV;
     }
     return message;
 }
@@ -125,10 +103,6 @@ int main(int argc, char **argv) {
     if (argc != 5) {
         fprintf(stderr, "usage: %s <cipher.img> <32-hex-key> <mountpoint> <volume-name>\n", argv[0]);
         return 64;
-    }
-    if (install_termination_handlers() != 0) {
-        perror("install termination handlers");
-        return 70;
     }
     g_mountpoint = argv[3];
     g_edp_handle = edp_rw_open(argv[1], argv[2]);
