@@ -5,7 +5,8 @@ on:
     branches: ["test/fuset-minimal-fskit-bridge"]
     paths:
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
-      - "native/EDPFSKitPoC/Tools/FuseTMinimal/DADiskNobrowseProbe.c"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTTwoConnectionHarness.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/DADiskRemountNobrowseProbe.c"
       - "product/EDPNativeSystem.swift"
       - "product/EDPVaultRuntime.swift"
       - ".github/workflows/fuset-transport-nobrowse.yml"
@@ -19,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  disk-arbitration-nobrowse-contract:
+  disk-arbitration-remount-nobrowse-contract:
     runs-on: macos-26
     timeout-minutes: 20
     env:
@@ -88,15 +89,13 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build bridge, Finder-browsability and Disk Arbitration probes
+      - name: Build reconnectable bridge and DA remount probe
         run: |
           set -euo pipefail
-          RAW="${RUNNER_TEMP}/finder-visibility.raw"
-          dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
-          printf 'EDP-FINDER-VISIBILITY' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
-          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors -DFUSET_BRIDGE_LIBRARY \
             native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
-            -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTTwoConnectionHarness.swift \
+            -o "${RUNNER_TEMP}/FuseTTwoConnectionHarness"
 
           cat >"${RUNNER_TEMP}/InspectVolume.swift" <<'SWIFT'
           import Foundation
@@ -115,10 +114,7 @@ jobs:
                       .volumeMountFromLocationKey,
                       .volumeTypeNameKey,
                   ])
-                  guard let browsable = values.volumeIsBrowsable else {
-                      fputs("volumeIsBrowsable unavailable\n", stderr)
-                      exit(65)
-                  }
+                  guard let browsable = values.volumeIsBrowsable else { exit(65) }
                   print("BROWSABLE=\(browsable ? 1 : 0)")
                   print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
                   print("LOCALIZED_NAME=\(values.volumeLocalizedName ?? "<nil>")")
@@ -132,117 +128,85 @@ jobs:
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
             "${RUNNER_TEMP}/InspectVolume.swift" -o "${RUNNER_TEMP}/InspectVolume"
 
-          cat >"${RUNNER_TEMP}/DASetPrivate.c" <<'EOF'
-          #include <CoreFoundation/CoreFoundation.h>
-          #include <DiskArbitration/DiskArbitration.h>
+          cat >"${RUNNER_TEMP}/check-nobrowse.c" <<'EOF'
           #include <stdio.h>
-          #include <string.h>
-
-          /* kDADiskOptionPrivate was removed from the macOS 26.5 SDK headers.
-             Historical public value: 0x00000100. Keep this diagnostic-local. */
-          static const DADiskOptions kEDPLegacyDADiskOptionPrivate = 0x00000100u;
-
+          #include <sys/mount.h>
           int main(int argc, char **argv) {
               if (argc != 2) return 64;
-              DASessionRef session = DASessionCreate(kCFAllocatorDefault);
-              if (!session) return 65;
-              CFURLRef url = CFURLCreateFromFileSystemRepresentation(
-                  kCFAllocatorDefault,
-                  (const UInt8 *)argv[1],
-                  (CFIndex)strlen(argv[1]),
-                  true
-              );
-              if (!url) return 66;
-              DADiskRef disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url);
-              if (!disk) {
-                  puts("DA_DISK_FROM_VOLUME_PATH=0");
-                  return 2;
-              }
-              puts("DA_DISK_FROM_VOLUME_PATH=1");
-              const char *bsd = DADiskGetBSDName(disk);
-              printf("DA_BSD_NAME=%s\n", bsd ? bsd : "<nil>");
-              DADiskOptions before = DADiskGetOptions(disk);
-              printf("DA_OPTIONS_BEFORE=0x%08x PRIVATE=%d\n",
-                     (unsigned int)before,
-                     (before & kEDPLegacyDADiskOptionPrivate) != 0);
-              DAReturn status = DADiskSetOptions(disk, kEDPLegacyDADiskOptionPrivate, true);
-              printf("DA_SET_PRIVATE_STATUS=0x%08x\n", (unsigned int)status);
-              DADiskOptions after = DADiskGetOptions(disk);
-              printf("DA_OPTIONS_AFTER=0x%08x PRIVATE=%d\n",
-                     (unsigned int)after,
-                     (after & kEDPLegacyDADiskOptionPrivate) != 0);
-              CFRelease(disk);
-              CFRelease(url);
-              CFRelease(session);
-              if (status != kDAReturnSuccess) return 3;
-              if ((after & kEDPLegacyDADiskOptionPrivate) == 0) return 4;
+              struct statfs info;
+              if (statfs(argv[1], &info) != 0) return 65;
+              printf("MNT_DONTBROWSE=%d FLAGS=0x%08x FSTYPE=%s\n",
+                     (info.f_flags & MNT_DONTBROWSE) != 0,
+                     info.f_flags,
+                     info.f_fstypename);
               return 0;
           }
           EOF
           xcrun clang -std=c17 -Wall -Wextra -Werror \
-            "${RUNNER_TEMP}/DASetPrivate.c" \
-            -framework CoreFoundation -framework DiskArbitration \
-            -o "${RUNNER_TEMP}/DASetPrivate"
+            "${RUNNER_TEMP}/check-nobrowse.c" -o "${RUNNER_TEMP}/check-nobrowse"
 
           xcrun clang -std=c17 -Wall -Wextra -Werror \
-            native/EDPFSKitPoC/Tools/FuseTMinimal/DADiskNobrowseProbe.c \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/DADiskRemountNobrowseProbe.c \
             -framework CoreFoundation -framework DiskArbitration \
-            -o "${RUNNER_TEMP}/DADiskNobrowseProbe"
-          echo "RAW=${RAW}" >> "${GITHUB_ENV}"
+            -o "${RUNNER_TEMP}/DADiskRemountNobrowseProbe"
 
-      - name: Probe Disk Arbitration nobrowse on live FSKit transport
+      - name: DA unmount and remount transport with nobrowse
         run: |
           set -euo pipefail
-          HIDDEN="/Volumes/.edp-p0-da-nobrowse-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          RAW="${RUNNER_TEMP}/finder-visibility.raw"
+          MOUNTPOINT="/Volumes/.edp-p0-da-remount-$(uuidgen | tr '[:upper:]' '[:lower:]')"
           LOG="${RUNNER_TEMP}/bridge.log"
-          sudo mkdir -p "${HIDDEN}"
-          sudo chown "$(id -u):$(id -g)" "${HIDDEN}"
-          echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"
+          dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
+          printf 'EDP-FINDER-VISIBILITY' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
+          sudo mkdir -p "${MOUNTPOINT}"
+          sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
+          echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
 
-          "${RUNNER_TEMP}/FuseTMinimalBridge" \
-            --writable \
-            --backing "${RAW}" \
-            --mountpoint "${HIDDEN}" \
-            --volume-name 'EDP P0 DA Nobrowse Transport' \
+          "${RUNNER_TEMP}/FuseTTwoConnectionHarness" \
+            "${RAW}" "${MOUNTPOINT}" 'EDP P0 DA Remount Transport' \
             >"${LOG}" 2>&1 &
           BRIDGE_PID=$!
           echo "BRIDGE_PID=${BRIDGE_PID}" >> "${GITHUB_ENV}"
 
           mounted=false
           for attempt in $(seq 1 30); do
-            if mount | grep -Fq " on ${HIDDEN} "; then mounted=true; break; fi
+            if mount | grep -Fq " on ${MOUNTPOINT} "; then mounted=true; break; fi
             if ! kill -0 "${BRIDGE_PID}" 2>/dev/null; then break; fi
             sleep 1
           done
           cat "${LOG}"
           test "${mounted}" = true
 
-          BEFORE="$(${RUNNER_TEMP}/InspectVolume "${HIDDEN}")"
+          BEFORE="$(${RUNNER_TEMP}/InspectVolume "${MOUNTPOINT}")"
           printf '%s\n' "${BEFORE}"
+          "${RUNNER_TEMP}/check-nobrowse" "${MOUNTPOINT}"
           test "$(printf '%s\n' "${BEFORE}" | sed -n 's/^BROWSABLE=//p')" = 1
 
-          # Historical DA private bit still sets successfully on macOS 26, but is
-          # intentionally asserted NOT to solve Finder browsability.
-          sudo "${RUNNER_TEMP}/DASetPrivate" "${HIDDEN}" | tee "${RUNNER_TEMP}/da-private.log"
-          AFTER_PRIVATE="$(${RUNNER_TEMP}/InspectVolume "${HIDDEN}")"
-          printf '%s\n' "${AFTER_PRIVATE}"
-          test "$(printf '%s\n' "${AFTER_PRIVATE}" | sed -n 's/^BROWSABLE=//p')" = 1
-          echo 'DA_PRIVATE_CONFIRMED_NOT_A_FIX=1'
-
           set +e
-          sudo "${RUNNER_TEMP}/DADiskNobrowseProbe" "${HIDDEN}" 2>&1 | tee "${RUNNER_TEMP}/da-nobrowse.log"
+          sudo "${RUNNER_TEMP}/DADiskRemountNobrowseProbe" "${MOUNTPOINT}" 2>&1 | tee "${RUNNER_TEMP}/da-remount.log"
           DA_STATUS=${PIPESTATUS[0]}
           set -e
-          echo "DA_NOBROWSE_EXIT=${DA_STATUS}"
+          echo "DA_REMOUNT_EXIT=${DA_STATUS}"
           test "${DA_STATUS}" -eq 0
 
-          sleep 1
-          AFTER_NOBROWSE="$(${RUNNER_TEMP}/InspectVolume "${HIDDEN}")"
-          printf '%s\n' "${AFTER_NOBROWSE}"
-          test "$(printf '%s\n' "${AFTER_NOBROWSE}" | sed -n 's/^BROWSABLE=//p')" = 0
+          remounted=false
+          for attempt in $(seq 1 20); do
+            if mount | grep -Fq " on ${MOUNTPOINT} "; then remounted=true; break; fi
+            sleep 1
+          done
+          test "${remounted}" = true
 
-          EXPOSED="${HIDDEN}/volume.raw"
+          AFTER="$(${RUNNER_TEMP}/InspectVolume "${MOUNTPOINT}")"
+          printf '%s\n' "${AFTER}"
+          FLAGS="$(${RUNNER_TEMP}/check-nobrowse "${MOUNTPOINT}")"
+          printf '%s\n' "${FLAGS}"
+          test "$(printf '%s\n' "${AFTER}" | sed -n 's/^BROWSABLE=//p')" = 0
+          printf '%s\n' "${FLAGS}" | grep -Fq 'MNT_DONTBROWSE=1'
+
+          EXPOSED="${MOUNTPOINT}/volume.raw"
           test -f "${EXPOSED}"
+          cmp <(dd if="${RAW}" bs=1 skip=4096 count=21 status=none) \
+              <(dd if="${EXPOSED}" bs=1 skip=4096 count=21 status=none)
           printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
           cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
           echo 'RW_OK=1'
@@ -253,14 +217,14 @@ jobs:
           test -n "${DISK}"
           hdiutil detach "${DISK}" -force >/dev/null
           echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
-          echo 'RESULT=P0_DA_NOBROWSE_NONBROWSABLE_RW_DISKIMAGES2_OK'
+          echo 'RESULT=P0_DA_REMOUNT_NOBROWSE_NONBROWSABLE_RW_DISKIMAGES2_OK'
 
       - name: Cleanup
         if: always()
         run: |
           set +e
-          if [[ -n "${HIDDEN:-}" ]]; then /sbin/umount "${HIDDEN}" 2>/dev/null || sudo /sbin/umount "${HIDDEN}" 2>/dev/null; fi
+          if [[ -n "${MOUNTPOINT:-}" ]]; then /sbin/umount "${MOUNTPOINT}" 2>/dev/null || sudo /sbin/umount "${MOUNTPOINT}" 2>/dev/null; fi
           if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null || true; fi
-          sudo find /Volumes -maxdepth 1 -type d -name '.edp-p0-da-nobrowse-*' -exec rmdir {} \; 2>/dev/null || true
+          sudo find /Volumes -maxdepth 1 -type d -name '.edp-p0-da-remount-*' -exec rmdir {} \; 2>/dev/null || true
           sudo rm -rf /Applications/fuse-t.app
           exit 0
