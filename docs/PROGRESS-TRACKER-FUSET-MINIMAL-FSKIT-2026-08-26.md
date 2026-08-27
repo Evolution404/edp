@@ -3,8 +3,54 @@
 日期：2026-08-26  
 分支：`test/fuset-minimal-fskit-bridge`  
 基线：`6c44c1d`  
+当前远端基线：`c35bb268`（2026-08-27 `git fetch` 后的 `origin/test/fuset-minimal-fskit-bridge` HEAD）
 配套计划：`docs/PLAN-2026-08-26-fuset-minimal-fskit-bridge.md`  
 架构决策：`docs/DECISION-2026-08-26-fuset-minimal-fskit-bridge.md`
+
+## 2026-08-27 — Direct MFMount + macFUSE Local 生命周期 P0
+
+当前目标已从 FUSE-T/macFUSE 基础可行性实验切换为 **Direct MFMount + macFUSE Local 的正式 unmount/remount 生命周期**；不再重复已有基础实验，也不再枚举不同 shell 卸载命令。
+
+已确认的硬结论：
+
+- Direct MFMount encrypted RW adapter 已打通，直接链接 `MFMount.framework`，不依赖 libfuse。
+- Local FSKit transport 已同时证明 encrypted random-access RW、DiskImages2 raw attach 和 Finder 隐藏能力。
+- `MFChannelClose()` 只关闭 transport channel，**不能卸载仍由 Local FSKit 暴露的系统 volume**；把 channel close 当作 volume teardown 会留下 mount table 条目并阻塞同路径 remount。
+- `diskutil unmount <mountpoint>` 与普通 `unmount(2)` 对该 Direct Local volume 均失败；后续不再继续尝试 shell 命令排列组合。
+- macFUSE 5.3.2 不导出 `_MFChannelInterrupt`，5.3.3 导出该符号；该符号差异目前只证明 ABI/实现差异，**没有解决实际 volume unmount**，不能据此宣称 5.3.3 生命周期行为更正确。
+- 当前尚未证明 5.3.2 与 5.3.3 在正确 Disk Arbitration teardown 下存在真实行为差异；必须在相同 source-DADisk 流程中完成 A/B 才能下结论。
+- 相关证据 runs：`33035729103`、`33035940110`、`33036981246`、`33037233968`。
+- 相关提交：`a6bd237`、`d84092c`、`85fc98b`、`c35bb268`。
+
+当前唯一诊断主线：
+
+```text
+mountpoint
+  -> 读取 mount table 中真实 source /dev/diskN
+  -> DASession + DADiskCreateFromBSDName(source)
+  -> 对对应 DADiskRef 执行正确 unmount/deactivation 并等待 callback
+  -> 再收口 MF transport/channel
+  -> 确认 mount table 条目消失
+  -> 同路径第二轮 Direct MFMount
+  -> 验证第一轮 encrypted marker 仍存在
+```
+
+验收矩阵：
+
+| ID | 状态 | 任务 | 当前结论 |
+|---|---|---|---|
+| L1 | ✅ | encrypted Direct MFMount RW，无 libfuse | 已通过 |
+| L2 | ✅ | Local FSKit + DiskImages2 + Finder 隐藏 | 已通过 |
+| L3 | ✅ | 排除 `MFChannelClose()` 作为 volume unmount | 只关闭 channel，不移除 Local volume |
+| L4 | ✅ | 排除 mountpoint shell unmount 路径 | `diskutil unmount` / 普通 `unmount(2)` 均失败，不再重复 |
+| L5 | 🟡 | 解析真实 mount source `/dev/diskN` 并对 source `DADiskRef` teardown | 当前最高优先级 |
+| L6 | ⏳ | mount table 消失后同路径 remount | 等待 L5 |
+| L7 | ⏳ | 两轮 mount → RW → unmount → remount → encrypted marker persistence | 任一版本稳定通过即停止诊断并固定该版本 |
+| L8 | 🟡 | macFUSE 5.3.2 / 5.3.3 真实行为差异 | 仅确认 `_MFChannelInterrupt` 符号差异；尚无 lifecycle 行为差异证据 |
+| L9 | ⏳ | 产品 transport provider 接入 `macfuse-local` | L7 后把 `EDPVaultRuntime.swift` 从硬编码 `edp-fuset-readwrite` / `EDPFuseTRuntimePolicy` 迁移到正式 provider |
+| L10 | ⏳ | 完整产品 E2E | encrypted mount → RW → DiskImages2 → Apple FS/Finder → unmount → remount → persistence |
+
+停止条件：一旦 5.3.2 或 5.3.3 稳定通过 L7，立即停止版本诊断实验、固定该版本并进入 L9/L10。
 
 ## 当前总状态
 
