@@ -44,22 +44,22 @@ jobs:
           printf '%s\n' "${ATTACH}"
           VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
           test -n "${VOL}"
-          PKG="$(find "${VOL}" -maxdepth 2 -type f -name '*.pkg' -print -quit)"
-          if [[ -z "${PKG}" ]]; then
-            PKG="$(find "${VOL}" -maxdepth 2 -type d -name '*.pkg' -print -quit)"
-          fi
+          PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
           echo "MACFUSE_INSTALL_PKG=${PKG}"
           test -n "${PKG}"
           pkgutil --check-signature "${PKG}"
           sudo installer -pkg "${PKG}" -target /
           hdiutil detach "${VOL}" >/dev/null
           pkgutil --pkgs | grep -i macfuse
-          find /Applications /Library /usr/local -maxdepth 5 \( -iname '*macfuse*' -o -iname 'fuse3*' \) -print 2>/dev/null | head -n 200
+          find /Applications /Library /usr/local -maxdepth 6 \( -iname '*macfuse*' -o -iname 'fuse3*' \) -print 2>/dev/null || true
+          test -f /usr/local/lib/pkgconfig/fuse3.pc
 
       - name: Enable Generic FSKit module
         run: |
           set -euo pipefail
-          APP="/Applications/macFUSE.app"
+          APP="$(find /Applications /Library/Filesystems -type d -iname 'macfuse.app' -print -quit 2>/dev/null || true)"
+          echo "MACFUSE_APP=${APP}"
+          test -n "${APP}"
           test -d "${APP}"
           /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "${APP}"
           find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print
@@ -104,13 +104,11 @@ jobs:
           #include <errno.h>
           #include <fcntl.h>
           #include <stdio.h>
-          #include <stdlib.h>
           #include <string.h>
           #include <sys/stat.h>
           #include <sys/statvfs.h>
           #include <unistd.h>
 
-          static const char *backing_path;
           static int backing_fd = -1;
           static off_t backing_size;
 
@@ -118,84 +116,50 @@ jobs:
               (void)fi;
               memset(st, 0, sizeof(*st));
               if (strcmp(path, "/") == 0) {
-                  st->st_mode = S_IFDIR | 0755;
-                  st->st_nlink = 2;
-                  st->st_ino = 1;
-                  return 0;
+                  st->st_mode = S_IFDIR | 0755; st->st_nlink = 2; st->st_ino = 1; return 0;
               }
               if (strcmp(path, "/volume.raw") == 0) {
-                  st->st_mode = S_IFREG | 0600;
-                  st->st_nlink = 1;
-                  st->st_size = backing_size;
-                  st->st_ino = 2;
-                  return 0;
+                  st->st_mode = S_IFREG | 0600; st->st_nlink = 1; st->st_size = backing_size; st->st_ino = 2; return 0;
               }
               return -ENOENT;
           }
 
           static int rt_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-                                off_t off, struct fuse_file_info *fi,
-                                enum fuse_readdir_flags flags) {
+                                off_t off, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
               (void)off; (void)fi; (void)flags;
               if (strcmp(path, "/") != 0) return -ENOENT;
-              filler(buf, ".", NULL, 0, 0);
-              filler(buf, "..", NULL, 0, 0);
-              filler(buf, "volume.raw", NULL, 0, 0);
-              return 0;
+              filler(buf, ".", NULL, 0, 0); filler(buf, "..", NULL, 0, 0);
+              filler(buf, "volume.raw", NULL, 0, 0); return 0;
           }
 
           static int rt_open(const char *path, struct fuse_file_info *fi) {
-              (void)fi;
-              return strcmp(path, "/volume.raw") == 0 ? 0 : -ENOENT;
+              (void)fi; return strcmp(path, "/volume.raw") == 0 ? 0 : -ENOENT;
           }
-
-          static int rt_read(const char *path, char *buf, size_t size, off_t off,
-                             struct fuse_file_info *fi) {
-              (void)fi;
-              if (strcmp(path, "/volume.raw") != 0) return -ENOENT;
-              ssize_t n = pread(backing_fd, buf, size, off);
-              return n < 0 ? -errno : (int)n;
+          static int rt_read(const char *path, char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
+              (void)fi; if (strcmp(path, "/volume.raw") != 0) return -ENOENT;
+              ssize_t n = pread(backing_fd, buf, size, off); return n < 0 ? -errno : (int)n;
           }
-
-          static int rt_write(const char *path, const char *buf, size_t size, off_t off,
-                              struct fuse_file_info *fi) {
-              (void)fi;
-              if (strcmp(path, "/volume.raw") != 0) return -ENOENT;
-              ssize_t n = pwrite(backing_fd, buf, size, off);
-              return n < 0 ? -errno : (int)n;
+          static int rt_write(const char *path, const char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
+              (void)fi; if (strcmp(path, "/volume.raw") != 0) return -ENOENT;
+              ssize_t n = pwrite(backing_fd, buf, size, off); return n < 0 ? -errno : (int)n;
           }
-
           static int rt_fsync(const char *path, int datasync, struct fuse_file_info *fi) {
-              (void)path; (void)datasync; (void)fi;
-              return fsync(backing_fd) == 0 ? 0 : -errno;
+              (void)path; (void)datasync; (void)fi; return fsync(backing_fd) == 0 ? 0 : -errno;
           }
-
           static int rt_statfs(const char *path, struct statvfs *st) {
-              (void)path;
-              memset(st, 0, sizeof(*st));
-              st->f_bsize = 4096;
-              st->f_frsize = 4096;
-              st->f_blocks = (backing_size + 4095) / 4096;
-              st->f_bfree = st->f_bavail = st->f_blocks;
-              st->f_files = 2;
-              st->f_ffree = 1;
-              return 0;
+              (void)path; memset(st, 0, sizeof(*st)); st->f_bsize = st->f_frsize = 4096;
+              st->f_blocks = (backing_size + 4095) / 4096; st->f_bfree = st->f_bavail = st->f_blocks;
+              st->f_files = 2; st->f_ffree = 1; return 0;
           }
 
           static struct fuse_operations ops = {
-              .getattr = rt_getattr,
-              .readdir = rt_readdir,
-              .open = rt_open,
-              .read = rt_read,
-              .write = rt_write,
-              .fsync = rt_fsync,
-              .statfs = rt_statfs,
+              .getattr = rt_getattr, .readdir = rt_readdir, .open = rt_open,
+              .read = rt_read, .write = rt_write, .fsync = rt_fsync, .statfs = rt_statfs,
           };
 
           int main(int argc, char **argv) {
               if (argc < 3) return 64;
-              backing_path = argv[1];
-              backing_fd = open(backing_path, O_RDWR | O_CLOEXEC);
+              backing_fd = open(argv[1], O_RDWR | O_CLOEXEC);
               if (backing_fd < 0) { perror("open backing"); return 65; }
               struct stat st;
               if (fstat(backing_fd, &st) != 0) { perror("fstat"); return 66; }
@@ -205,27 +169,20 @@ jobs:
           }
           EOF
 
-          PC="$(find /usr/local /Library -type f -name 'fuse3.pc' -print -quit 2>/dev/null || true)"
-          echo "FUSE3_PC=${PC}"
-          test -n "${PC}"
-          export PKG_CONFIG_PATH="$(dirname "${PC}"):${PKG_CONFIG_PATH:-}"
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           pkg-config --modversion fuse3
           pkg-config --cflags --libs fuse3
           xcrun clang -std=c17 -Wall -Wextra -Werror \
-            "${RUNNER_TEMP}/raw_transport.c" \
-            $(pkg-config --cflags --libs fuse3) \
+            "${RUNNER_TEMP}/raw_transport.c" $(pkg-config --cflags --libs fuse3) \
             -o "${RUNNER_TEMP}/raw_transport"
 
           cat >"${RUNNER_TEMP}/inspect.c" <<'EOF'
           #include <stdio.h>
           #include <sys/mount.h>
           int main(int argc, char **argv) {
-              if (argc != 2) return 64;
-              struct statfs st;
-              if (statfs(argv[1], &st) != 0) return 65;
-              printf("FSTYPE=%s FLAGS=0x%08x MNT_DONTBROWSE=%d\n",
-                     st.f_fstypename, st.f_flags, (st.f_flags & MNT_DONTBROWSE) != 0);
-              return 0;
+              if (argc != 2) return 64; struct statfs st; if (statfs(argv[1], &st) != 0) return 65;
+              printf("FSTYPE=%s FLAGS=0x%08x MNT_DONTBROWSE=%d\n", st.f_fstypename, st.f_flags,
+                     (st.f_flags & MNT_DONTBROWSE) != 0); return 0;
           }
           EOF
           xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/inspect.c" -o "${RUNNER_TEMP}/inspect"
@@ -242,8 +199,8 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
           echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
 
-          "${RUNNER_TEMP}/raw_transport" "${RAW}" \
-            -f -o backend=fskit,nobrowse,volname='EDP macFUSE Hidden Transport' \
+          "${RUNNER_TEMP}/raw_transport" "${RAW}" -f \
+            -o "backend=fskit,nobrowse,volname=EDP macFUSE Hidden Transport" \
             "${MOUNTPOINT}" >"${RUNNER_TEMP}/transport.log" 2>&1 &
           TRANSPORT_PID=$!
           echo "TRANSPORT_PID=${TRANSPORT_PID}" >> "${GITHUB_ENV}"
@@ -263,14 +220,15 @@ jobs:
           printf '%s\n' "${FLAGS}" | grep -Fq 'MNT_DONTBROWSE=1'
 
           open -a Finder
+          finder_ok=false
           for attempt in $(seq 1 15); do
-            if osascript -e 'tell application "Finder" to get name of every disk' >"${RUNNER_TEMP}/finder.txt" 2>/dev/null; then break; fi
+            if osascript -e 'tell application "Finder" to get name of every disk' >"${RUNNER_TEMP}/finder.txt" 2>/dev/null; then finder_ok=true; break; fi
             sleep 1
           done
+          test "${finder_ok}" = true
           cat "${RUNNER_TEMP}/finder.txt"
           if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder.txt"; then
-            echo 'FINDER_TRANSPORT_VISIBLE=1'
-            exit 1
+            echo 'FINDER_TRANSPORT_VISIBLE=1'; exit 1
           fi
           echo 'FINDER_TRANSPORT_VISIBLE=0'
 
