@@ -220,7 +220,8 @@ static int unmount_source_with_disk_arbitration(const char *source,
             (unsigned int)context.status,
             source);
 
-    if (context.status == kDAReturnNotMounted &&
+    if ((context.status == kDAReturnSuccess ||
+         context.status == kDAReturnNotMounted) &&
         mount_source_is_present(mountpoint, source)) {
         context.completed = false;
         context.status = kDAReturnError;

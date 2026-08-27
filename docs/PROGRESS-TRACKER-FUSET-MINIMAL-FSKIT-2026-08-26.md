@@ -69,6 +69,8 @@ matrix run `33039579738`（commit `a5c240b`）：`DADiskCreateFromVolumePath()` 
 
 matrix run `33039845053`（commit `0418e0c`）：两版本的 `DADiskUnmount(..., kDADiskUnmountOptionWhole, ...)` callback 都返回 success，随后 `MFChannelClose()` 也都返回 success，server 正常走到 `DIRECT_MFMOUNT_EXIT=0`。失败来自 harness 在看到 server 已退出时提前中止 mount-table 轮询，且 detached teardown worker 随进程终止，未能完成 `MOUNT_TABLE_GONE` 日志；这不是 runtime teardown 失败或版本差异。已增加 server 端 teardown-complete barrier，并让 CI 在进程先退出时仍继续等待 mount table 消失。
 
+matrix run `33039997642`（commit `69bb5cc`）：server-side barrier 证明两版本在 whole-unmount success + channel-close success 后等待 10 秒、外部等待 40 秒，mount entry 仍不会消失；因此上轮并非单纯 harness 时序问题。macFUSE Local source 是 mount service 创建的 virtual disk，whole-unmount callback 成功并不等价于 virtual resource deactivation。正式顺序改为：whole unmount → 若 source mount entry 仍存在则 `DADiskEject` 同一 DADisk → callback success → channel close → mount-table gate。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**
