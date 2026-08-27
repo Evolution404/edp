@@ -119,8 +119,10 @@ jobs:
           set -euo pipefail
           RAW="${RUNNER_TEMP}/finder-private.raw"
           MOUNTPOINT="/Volumes/.edp-p0-private-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          FINDER_DISK_NAME="$(basename "${MOUNTPOINT}")"
           VOLUME_NAME='EDP P0 Private Transport'
           LOG="${RUNNER_TEMP}/bridge.log"
+          echo "FINDER_MATCH_NAME=${FINDER_DISK_NAME}"
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
           printf 'EDP-FINDER-PRIVATE' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
           sudo mkdir -p "${MOUNTPOINT}"
@@ -163,7 +165,7 @@ jobs:
           baseline_seen=false
           for attempt in $(seq 1 10); do
             finder_disks | tee "${RUNNER_TEMP}/finder-baseline.txt"
-            if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/finder-baseline.txt"; then baseline_seen=true; break; fi
+            if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder-baseline.txt"; then baseline_seen=true; break; fi
             sleep 1
           done
           test "${baseline_seen}" = true
@@ -174,7 +176,7 @@ jobs:
 
           sleep 2
           finder_disks | tee "${RUNNER_TEMP}/finder-after-private-live.txt"
-          if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/finder-after-private-live.txt"; then
+          if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder-after-private-live.txt"; then
             echo 'FINDER_LIVE_AFTER_PRIVATE_VISIBLE=1'
           else
             echo 'FINDER_LIVE_AFTER_PRIVATE_VISIBLE=0'
@@ -190,7 +192,7 @@ jobs:
           done
           test "${restarted}" = true
           cat "${RUNNER_TEMP}/finder-after-restart.txt"
-          if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/finder-after-restart.txt"; then
+          if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder-after-restart.txt"; then
             echo 'FINDER_RESTART_AFTER_PRIVATE_VISIBLE=1'
             exit 1
           fi
