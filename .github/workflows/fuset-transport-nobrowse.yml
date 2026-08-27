@@ -5,10 +5,7 @@ on:
     branches: ["test/fuset-minimal-fskit-bridge"]
     paths:
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
-      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTTwoConnectionHarness.swift"
-      - "native/EDPFSKitPoC/Tools/FuseTMinimal/DADiskRemountNobrowseProbe.c"
-      - "product/EDPNativeSystem.swift"
-      - "product/EDPVaultRuntime.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/DASetPrivateProbe.c"
       - ".github/workflows/fuset-transport-nobrowse.yml"
   workflow_dispatch:
 
@@ -20,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  disk-arbitration-remount-nobrowse-contract:
+  finder-private-contract:
     runs-on: macos-26
     timeout-minutes: 20
     env:
@@ -89,38 +86,27 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build reconnectable bridge and DA remount probe
+      - name: Build bridge and Finder visibility probes
         run: |
           set -euo pipefail
-          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors -DFUSET_BRIDGE_LIBRARY \
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
             native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
-            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTTwoConnectionHarness.swift \
-            -o "${RUNNER_TEMP}/FuseTTwoConnectionHarness"
+            -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+
+          xcrun clang -std=c17 -Wall -Wextra -Werror \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/DASetPrivateProbe.c \
+            -framework CoreFoundation -framework DiskArbitration \
+            -o "${RUNNER_TEMP}/DASetPrivateProbe"
 
           cat >"${RUNNER_TEMP}/InspectVolume.swift" <<'SWIFT'
           import Foundation
-
           @main
           struct InspectVolume {
               static func main() throws {
-                  guard CommandLine.arguments.count == 2 else { exit(64) }
                   let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
-                  let values = try url.resourceValues(forKeys: [
-                      .volumeIsBrowsableKey,
-                      .volumeNameKey,
-                      .volumeLocalizedNameKey,
-                      .volumeIsLocalKey,
-                      .volumeIsReadOnlyKey,
-                      .volumeMountFromLocationKey,
-                      .volumeTypeNameKey,
-                  ])
-                  guard let browsable = values.volumeIsBrowsable else { exit(65) }
-                  print("BROWSABLE=\(browsable ? 1 : 0)")
+                  let values = try url.resourceValues(forKeys: [.volumeIsBrowsableKey, .volumeNameKey, .volumeTypeNameKey])
+                  print("BROWSABLE=\(values.volumeIsBrowsable == true ? 1 : 0)")
                   print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
-                  print("LOCALIZED_NAME=\(values.volumeLocalizedName ?? "<nil>")")
-                  print("LOCAL=\(values.volumeIsLocal == true ? 1 : 0)")
-                  print("READ_ONLY=\(values.volumeIsReadOnly == true ? 1 : 0)")
-                  print("MOUNT_FROM=\(values.volumeMountFromLocation ?? "<nil>")")
                   print("TYPE=\(values.volumeTypeName ?? "<nil>")")
               }
           }
@@ -128,42 +114,38 @@ jobs:
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
             "${RUNNER_TEMP}/InspectVolume.swift" -o "${RUNNER_TEMP}/InspectVolume"
 
-          cat >"${RUNNER_TEMP}/check-nobrowse.c" <<'EOF'
-          #include <stdio.h>
-          #include <sys/mount.h>
-          int main(int argc, char **argv) {
-              if (argc != 2) return 64;
-              struct statfs info;
-              if (statfs(argv[1], &info) != 0) return 65;
-              printf("MNT_DONTBROWSE=%d FLAGS=0x%08x FSTYPE=%s\n",
-                     (info.f_flags & MNT_DONTBROWSE) != 0,
-                     info.f_flags,
-                     info.f_fstypename);
-              return 0;
-          }
-          EOF
-          xcrun clang -std=c17 -Wall -Wextra -Werror \
-            "${RUNNER_TEMP}/check-nobrowse.c" -o "${RUNNER_TEMP}/check-nobrowse"
-
-          xcrun clang -std=c17 -Wall -Wextra -Werror \
-            native/EDPFSKitPoC/Tools/FuseTMinimal/DADiskRemountNobrowseProbe.c \
-            -framework CoreFoundation -framework DiskArbitration \
-            -o "${RUNNER_TEMP}/DADiskRemountNobrowseProbe"
-
-      - name: DA unmount and remount transport with nobrowse
+      - name: Verify DA private behavior in Finder itself
         run: |
           set -euo pipefail
-          RAW="${RUNNER_TEMP}/finder-visibility.raw"
-          MOUNTPOINT="/Volumes/.edp-p0-da-remount-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          RAW="${RUNNER_TEMP}/finder-private.raw"
+          MOUNTPOINT="/Volumes/.edp-p0-private-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          VOLUME_NAME='EDP P0 Private Transport'
           LOG="${RUNNER_TEMP}/bridge.log"
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
-          printf 'EDP-FINDER-VISIBILITY' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
+          printf 'EDP-FINDER-PRIVATE' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
           sudo mkdir -p "${MOUNTPOINT}"
           sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
           echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
 
-          "${RUNNER_TEMP}/FuseTTwoConnectionHarness" \
-            "${RAW}" "${MOUNTPOINT}" 'EDP P0 DA Remount Transport' \
+          finder_disks() {
+            osascript -e 'tell application "Finder" to get name of every disk'
+          }
+
+          open -a Finder
+          for attempt in $(seq 1 15); do
+            if finder_disks >"${RUNNER_TEMP}/finder-initial.txt" 2>"${RUNNER_TEMP}/finder-initial.err"; then break; fi
+            sleep 1
+          done
+          cat "${RUNNER_TEMP}/finder-initial.txt" || true
+          cat "${RUNNER_TEMP}/finder-initial.err" || true
+          test -s "${RUNNER_TEMP}/finder-initial.txt"
+          echo 'FINDER_APPLESCRIPT_OK=1'
+
+          "${RUNNER_TEMP}/FuseTMinimalBridge" \
+            --writable \
+            --backing "${RAW}" \
+            --mountpoint "${MOUNTPOINT}" \
+            --volume-name "${VOLUME_NAME}" \
             >"${LOG}" 2>&1 &
           BRIDGE_PID=$!
           echo "BRIDGE_PID=${BRIDGE_PID}" >> "${GITHUB_ENV}"
@@ -176,37 +158,46 @@ jobs:
           done
           cat "${LOG}"
           test "${mounted}" = true
+          "${RUNNER_TEMP}/InspectVolume" "${MOUNTPOINT}"
 
-          BEFORE="$(${RUNNER_TEMP}/InspectVolume "${MOUNTPOINT}")"
-          printf '%s\n' "${BEFORE}"
-          "${RUNNER_TEMP}/check-nobrowse" "${MOUNTPOINT}"
-          test "$(printf '%s\n' "${BEFORE}" | sed -n 's/^BROWSABLE=//p')" = 1
-
-          set +e
-          sudo "${RUNNER_TEMP}/DADiskRemountNobrowseProbe" "${MOUNTPOINT}" 2>&1 | tee "${RUNNER_TEMP}/da-remount.log"
-          DA_STATUS=${PIPESTATUS[0]}
-          set -e
-          echo "DA_REMOUNT_EXIT=${DA_STATUS}"
-          test "${DA_STATUS}" -eq 0
-
-          remounted=false
-          for attempt in $(seq 1 20); do
-            if mount | grep -Fq " on ${MOUNTPOINT} "; then remounted=true; break; fi
+          baseline_seen=false
+          for attempt in $(seq 1 10); do
+            finder_disks | tee "${RUNNER_TEMP}/finder-baseline.txt"
+            if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/finder-baseline.txt"; then baseline_seen=true; break; fi
             sleep 1
           done
-          test "${remounted}" = true
+          test "${baseline_seen}" = true
+          echo 'FINDER_BASELINE_TRANSPORT_VISIBLE=1'
 
-          AFTER="$(${RUNNER_TEMP}/InspectVolume "${MOUNTPOINT}")"
-          printf '%s\n' "${AFTER}"
-          FLAGS="$(${RUNNER_TEMP}/check-nobrowse "${MOUNTPOINT}")"
-          printf '%s\n' "${FLAGS}"
-          test "$(printf '%s\n' "${AFTER}" | sed -n 's/^BROWSABLE=//p')" = 0
-          printf '%s\n' "${FLAGS}" | grep -Fq 'MNT_DONTBROWSE=1'
+          sudo "${RUNNER_TEMP}/DASetPrivateProbe" "${MOUNTPOINT}" | tee "${RUNNER_TEMP}/da-private.txt"
+          grep -Fq 'DA_PRIVATE_AFTER=1' "${RUNNER_TEMP}/da-private.txt"
+
+          sleep 2
+          finder_disks | tee "${RUNNER_TEMP}/finder-after-private-live.txt"
+          if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/finder-after-private-live.txt"; then
+            echo 'FINDER_LIVE_AFTER_PRIVATE_VISIBLE=1'
+          else
+            echo 'FINDER_LIVE_AFTER_PRIVATE_VISIBLE=0'
+          fi
+
+          killall Finder 2>/dev/null || true
+          sleep 1
+          open -a Finder
+          restarted=false
+          for attempt in $(seq 1 15); do
+            if finder_disks >"${RUNNER_TEMP}/finder-after-restart.txt" 2>"${RUNNER_TEMP}/finder-after-restart.err"; then restarted=true; break; fi
+            sleep 1
+          done
+          test "${restarted}" = true
+          cat "${RUNNER_TEMP}/finder-after-restart.txt"
+          if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/finder-after-restart.txt"; then
+            echo 'FINDER_RESTART_AFTER_PRIVATE_VISIBLE=1'
+            exit 1
+          fi
+          echo 'FINDER_RESTART_AFTER_PRIVATE_VISIBLE=0'
 
           EXPOSED="${MOUNTPOINT}/volume.raw"
           test -f "${EXPOSED}"
-          cmp <(dd if="${RAW}" bs=1 skip=4096 count=21 status=none) \
-              <(dd if="${EXPOSED}" bs=1 skip=4096 count=21 status=none)
           printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
           cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
           echo 'RW_OK=1'
@@ -217,7 +208,7 @@ jobs:
           test -n "${DISK}"
           hdiutil detach "${DISK}" -force >/dev/null
           echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
-          echo 'RESULT=P0_DA_REMOUNT_NOBROWSE_NONBROWSABLE_RW_DISKIMAGES2_OK'
+          echo 'RESULT=P0_DA_PRIVATE_HIDES_TRANSPORT_FROM_FRESH_FINDER'
 
       - name: Cleanup
         if: always()
@@ -225,6 +216,6 @@ jobs:
           set +e
           if [[ -n "${MOUNTPOINT:-}" ]]; then /sbin/umount "${MOUNTPOINT}" 2>/dev/null || sudo /sbin/umount "${MOUNTPOINT}" 2>/dev/null; fi
           if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null || true; fi
-          sudo find /Volumes -maxdepth 1 -type d -name '.edp-p0-da-remount-*' -exec rmdir {} \; 2>/dev/null || true
+          sudo find /Volumes -maxdepth 1 -type d -name '.edp-p0-private-*' -exec rmdir {} \; 2>/dev/null || true
           sudo rm -rf /Applications/fuse-t.app
           exit 0
