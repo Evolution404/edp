@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -12,12 +13,13 @@
 
 static int g_backing_fd = -1;
 static off_t g_backing_size = 0;
+static int g_expose_invisible_finder_info = 0;
 static const char kFinderInfoXattr[] = "com.apple.FinderInfo";
 
 /*
  * FinderInfo is 32 bytes. For folders/volume roots, Finder flags occupy bytes
- * 8-9 in big-endian order. kIsInvisible is 0x4000. This diagnostic exposes
- * the attribute only on the transport root; volume.raw remains unmodified.
+ * 8-9 in big-endian order. kIsInvisible is 0x4000. When enabled, expose the
+ * attribute only on the transport root; volume.raw remains unmodified.
  */
 static const unsigned char kInvisibleFinderInfo[32] = {
     0, 0, 0, 0, 0, 0, 0, 0,
@@ -114,7 +116,10 @@ static int raw_statfs(const char *path, struct statvfs *st) {
 }
 
 static int raw_getxattr(const char *path, const char *name, char *value, size_t size) {
-    if (strcmp(path, "/") != 0 || strcmp(name, kFinderInfoXattr) != 0) return -ENOATTR;
+    if (!g_expose_invisible_finder_info || strcmp(path, "/") != 0 ||
+        strcmp(name, kFinderInfoXattr) != 0) {
+        return -ENOATTR;
+    }
     if (value == NULL || size == 0) return (int)sizeof(kInvisibleFinderInfo);
     if (size < sizeof(kInvisibleFinderInfo)) return -ERANGE;
     memcpy(value, kInvisibleFinderInfo, sizeof(kInvisibleFinderInfo));
@@ -122,7 +127,7 @@ static int raw_getxattr(const char *path, const char *name, char *value, size_t 
 }
 
 static int raw_listxattr(const char *path, char *list, size_t size) {
-    if (strcmp(path, "/") != 0) return 0;
+    if (!g_expose_invisible_finder_info || strcmp(path, "/") != 0) return 0;
     const size_t required = sizeof(kFinderInfoXattr);
     if (list == NULL || size == 0) return (int)required;
     if (size < required) return -ERANGE;
@@ -147,6 +152,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s <backing> [fuse options] <mountpoint>\n", argv[0]);
         return 64;
     }
+
+    const char *finder_info_env = getenv("EDP_INVISIBLE_FINDERINFO");
+    g_expose_invisible_finder_info = finder_info_env != NULL && strcmp(finder_info_env, "1") == 0;
+    fprintf(stderr, "EDP_INVISIBLE_FINDERINFO=%d\n", g_expose_invisible_finder_info);
 
     const char *backing_path = argv[1];
     g_backing_fd = open(backing_path, O_RDWR | O_CLOEXEC);
