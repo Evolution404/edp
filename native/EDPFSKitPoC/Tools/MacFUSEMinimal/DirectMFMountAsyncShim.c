@@ -113,9 +113,9 @@ static bool mount_source_is_present(const char *mountpoint,
     return false;
 }
 
-static void da_unmount_callback(DADiskRef disk,
-                                DADissenterRef dissenter,
-                                void *opaque) {
+static void da_operation_callback(DADiskRef disk,
+                                  DADissenterRef dissenter,
+                                  void *opaque) {
     (void)disk;
     struct da_unmount_context *context = opaque;
     context->status = dissenter == NULL
@@ -123,6 +123,20 @@ static void da_unmount_callback(DADiskRef disk,
         : DADissenterGetStatus(dissenter);
     context->completed = true;
     CFRunLoopStop(CFRunLoopGetCurrent());
+}
+
+static bool wait_for_da_operation(struct da_unmount_context *context) {
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 30.0;
+    while (!context->completed) {
+        CFTimeInterval remaining = deadline - CFAbsoluteTimeGetCurrent();
+        if (remaining <= 0.0) {
+            break;
+        }
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode,
+                           remaining < 1.0 ? remaining : 1.0,
+                           true);
+    }
+    return context->completed;
 }
 
 static int unmount_source_with_disk_arbitration(const char *source,
@@ -183,36 +197,53 @@ static int unmount_source_with_disk_arbitration(const char *source,
         .status = kDAReturnError,
     };
     fprintf(stderr,
-            "DIRECT_MFMOUNT_DA_UNMOUNT_REQUESTED=1 source=%s\n",
+            "DIRECT_MFMOUNT_DA_UNMOUNT_REQUESTED=1 source=%s whole=1\n",
             source);
     DADiskUnmount(disk,
-                  kDADiskUnmountOptionDefault,
-                  da_unmount_callback,
+                  kDADiskUnmountOptionWhole,
+                  da_operation_callback,
                   &context);
 
-    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 30.0;
-    while (!context.completed) {
-        CFTimeInterval remaining = deadline - CFAbsoluteTimeGetCurrent();
-        if (remaining <= 0.0) {
-            break;
+    if (!wait_for_da_operation(&context)) {
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_DA_UNMOUNT_TIMEOUT=1 source=%s\n",
+                source);
+        context.status = kDAReturnError;
+    }
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_DA_UNMOUNT_STATUS=%#x source=%s\n",
+            (unsigned int)context.status,
+            source);
+
+    if (context.status == kDAReturnNotMounted &&
+        mount_source_is_present(mountpoint, source)) {
+        context.completed = false;
+        context.status = kDAReturnError;
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_DA_EJECT_REQUESTED=1 source=%s\n",
+                source);
+        DADiskEject(disk,
+                    kDADiskEjectOptionDefault,
+                    da_operation_callback,
+                    &context);
+        if (!wait_for_da_operation(&context)) {
+            fprintf(stderr,
+                    "DIRECT_MFMOUNT_DA_EJECT_TIMEOUT=1 source=%s\n",
+                    source);
+            context.status = kDAReturnError;
         }
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode,
-                           remaining < 1.0 ? remaining : 1.0,
-                           true);
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_DA_EJECT_STATUS=%#x source=%s\n",
+                (unsigned int)context.status,
+                source);
     }
 
     DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
     CFRelease(disk);
     CFRelease(session);
 
-    if (!context.completed) {
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_DA_UNMOUNT_TIMEOUT=1 source=%s\n",
-                source);
-        return ETIMEDOUT;
-    }
     fprintf(stderr,
-            "DIRECT_MFMOUNT_DA_UNMOUNT_STATUS=%#x source=%s\n",
+            "DIRECT_MFMOUNT_DA_DEACTIVATION_STATUS=%#x source=%s\n",
             (unsigned int)context.status,
             source);
     return context.status == kDAReturnSuccess ? 0 : EBUSY;

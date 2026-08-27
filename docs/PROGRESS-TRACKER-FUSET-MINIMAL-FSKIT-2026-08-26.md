@@ -65,6 +65,8 @@ matrix run `33039249865`（commit `a07f654`）：5.3.2/5.3.3 均成功安装、�
 
 matrix run `33039433969`（commit `ed39089`）：两版本都把 Local mount source 解析为 `/dev/disk8`，`DADiskCreateFromBSDName("disk8")` 也都成功，但 `DADiskUnmount` callback 一致返回 `0xF8DA0007 = kDAReturnNotMounted`，mount table 条目保持不变。这证明 source block-device DADisk 不是 Disk Arbitration 记录的 mounted-volume DADisk；两版本在该错误对象路径上没有行为差异。下一版改为官方 library 使用的 `DADiskCreateFromVolumePath()`，同时要求 `DADiskGetBSDName()` 必须匹配先前解析的 source，避免只凭 mountpoint 取到错误 volume。
 
+matrix run `33039579738`（commit `a5c240b`）：`DADiskCreateFromVolumePath()` 在两版本都返回 BSD name `disk8`，与 mount source `/dev/disk8` 精确匹配，但 default `DADiskUnmount` 仍一致返回 `kDAReturnNotMounted`。因此不是 DADisk 构造错误，而是 DA 不把 macFUSE Local 创建的 virtual whole disk 记录为普通 mounted volume；这也解释了官方 5.3.3 library 的 `failed to unmount DADiskRef`。下一版对该 whole source 使用 `kDADiskUnmountOptionWhole`，如果仍为 `NotMounted`，则对同一个 DADisk 执行 `DADiskEject` 以触发 virtual-device deactivation；只接受最终 callback success。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**
