@@ -135,6 +135,11 @@ jobs:
           #include <CoreFoundation/CoreFoundation.h>
           #include <DiskArbitration/DiskArbitration.h>
           #include <stdio.h>
+          #include <string.h>
+
+          /* kDADiskOptionPrivate was removed from the macOS 26.5 SDK headers.
+             Historical public value: 0x00000100. Keep this diagnostic-local. */
+          static const DADiskOptions kEDPLegacyDADiskOptionPrivate = 0x00000100u;
 
           int main(int argc, char **argv) {
               if (argc != 2) return 64;
@@ -167,7 +172,7 @@ jobs:
               DADiskOptions before = DADiskGetOptions(disk);
               printf("DA_OPTIONS_BEFORE=0x%08x PRIVATE=%d\n",
                      (unsigned int)before,
-                     (before & kDADiskOptionPrivate) != 0);
+                     (before & kEDPLegacyDADiskOptionPrivate) != 0);
               CFDictionaryRef description = DADiskCopyDescription(disk);
               if (description) {
                   puts("DA_DESCRIPTION_BEGIN");
@@ -175,21 +180,21 @@ jobs:
                   puts("DA_DESCRIPTION_END");
                   CFRelease(description);
               }
-              DAReturn status = DADiskSetOptions(disk, kDADiskOptionPrivate, true);
+              DAReturn status = DADiskSetOptions(disk, kEDPLegacyDADiskOptionPrivate, true);
               printf("DA_SET_PRIVATE_STATUS=0x%08x\n", (unsigned int)status);
               DADiskOptions after = DADiskGetOptions(disk);
               printf("DA_OPTIONS_AFTER=0x%08x PRIVATE=%d\n",
                      (unsigned int)after,
-                     (after & kDADiskOptionPrivate) != 0);
+                     (after & kEDPLegacyDADiskOptionPrivate) != 0);
               CFRelease(disk);
               CFRelease(url);
               CFRelease(session);
               if (status != kDAReturnSuccess) return 3;
-              if ((after & kDADiskOptionPrivate) == 0) return 4;
+              if ((after & kEDPLegacyDADiskOptionPrivate) == 0) return 4;
               return 0;
           }
           EOF
-          xcrun clang -std=c17 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+          xcrun clang -std=c17 -Wall -Wextra -Werror \
             "${RUNNER_TEMP}/DASetPrivate.c" \
             -framework CoreFoundation -framework DiskArbitration \
             -o "${RUNNER_TEMP}/DASetPrivate"
