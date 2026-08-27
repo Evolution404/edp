@@ -293,7 +293,7 @@ jobs:
             "${BLOCK_LIFECYCLE}" unpublish "${PRODUCT_BIN}" "${PUBLISHED_BSD}"
             SOURCE="$(mount | awk -v mp="${HIDDEN}" '$0 ~ " on " mp " " {print $1; exit}')"
             test -n "${SOURCE}"
-            sudo "${UNMOUNT_HELPER}" "${HIDDEN}" |& tee "${RUNNER_TEMP}/transport-unmount.txt"
+            sudo "${UNMOUNT_HELPER}" "${HIDDEN}" 2>&1 | tee "${RUNNER_TEMP}/transport-unmount.txt"
             grep -Fq 'DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_RESULT=0 errno=0' "${RUNNER_TEMP}/transport-unmount.txt"
             for _ in $(seq 1 30); do
               ! mount | grep -Fq " on ${HIDDEN} " && [[ ! -e "${SOURCE}" ]] && break
