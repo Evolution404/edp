@@ -6,8 +6,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 static int g_backing_fd = -1;
@@ -88,12 +88,12 @@ static int raw_fsync(const char *path, int datasync, struct fuse_file_info *fi) 
     return fsync(g_backing_fd) == 0 ? 0 : -errno;
 }
 
-static int raw_statfs(const char *path, struct statfs *st) {
+static int raw_statfs(const char *path, struct statvfs *st) {
     (void)path;
     memset(st, 0, sizeof(*st));
     st->f_bsize = 4096;
-    st->f_iosize = 1024 * 1024;
-    st->f_blocks = (uint64_t)((g_backing_size + 4095) / 4096);
+    st->f_frsize = 4096;
+    st->f_blocks = (fsblkcnt_t)((g_backing_size + 4095) / 4096);
     st->f_bfree = st->f_blocks;
     st->f_bavail = st->f_blocks;
     st->f_files = 2;
