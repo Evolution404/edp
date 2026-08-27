@@ -1,5 +1,7 @@
+#include <MFMount/MFMount.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,15 +112,37 @@ static int edp_backing_close(int fd) {
     return close(fd);
 }
 
+static void termination_signal_handler(int signal_number) {
+    (void)signal_number;
+}
+
+static int install_termination_handlers(void) {
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = termination_signal_handler;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGTERM, &action, NULL) != 0) return -1;
+    if (sigaction(SIGINT, &action, NULL) != 0) return -1;
+    return 0;
+}
+
+static MFMessageRef edp_next_message(MFChannelRef channel) {
+    MFMessageRef message = MFChannelCopyNextMessage(channel);
+    if (message == NULL && errno == EINTR) errno = ENODEV;
+    return message;
+}
+
 #define open edp_backing_open
 #define fstat edp_backing_fstat
 #define pread edp_backing_pread
 #define pwrite edp_backing_pwrite
 #define fsync edp_backing_fsync
 #define close edp_backing_close
+#define MFChannelCopyNextMessage edp_next_message
 #define main edp_direct_raw_main
 #include "DirectMFMountRawTransport.c"
 #undef main
+#undef MFChannelCopyNextMessage
 #undef close
 #undef fsync
 #undef pwrite
@@ -176,6 +200,11 @@ int main(int argc, char **argv) {
     if (fcntl(raw_fd, F_GETFD) < 0 || fstat(raw_fd, &raw_stat) != 0 || !S_ISCHR(raw_stat.st_mode)) {
         fprintf(stderr, "EDP_DIRECT_INVALID_INHERITED_RAW_FD\n");
         return 65;
+    }
+
+    if (install_termination_handlers() != 0) {
+        perror("install termination handlers");
+        return 70;
     }
 
     unsigned char password[4096];
