@@ -83,6 +83,8 @@ matrix run `33041457229`（commit `7ae160d`）：把整个 MFMount bridge 放到
 
 matrix run `33041744912`（commit `3b0fbdf`）：5.3.2/5.3.3 两个 matrix job 都实际取得 macOS 26 runner，macFUSE 安装、Direct encrypted Local fixture 构建和首轮 mount/RW 都成功。两边 helper 均明确记录 `euid=0`、mount source `/dev/disk8`，随后都在 `unmount(2, MNT_FORCE)` 内阻塞直到 workflow timeout；没有返回 result/errno。该轮因此证明 privileged helper 的身份和 source 校验正确，但 syscall 本身未返回；不是 runner/cancelled 假失败，也没有 5.3.2/5.3.3 行为差异证据。下一轮不改 teardown 架构，只给同一 syscall 加 30 秒有界诊断并采集 Local `FSVolume.deactivate` / mount daemon `Deactivating virtual device`、`Detach virtual device`、mount table 和 `/dev/diskN` 存在性，以确认阻塞发生在 VFS→FSKit deactivation 链的哪一段。
 
+matrix run `33042429204`（commit `c5e6460`）：5.3.2/5.3.3 再次都实际取得 runner，并在同一 privileged helper 路径复现：`euid=0`、source `/dev/disk8`、`DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_CALL=1` 后超过 30 秒仍不返回，快照时 `/dev/disk8` 仍存在；两版本无差异。诊断窗口内还能看到 `fskitd` 的 `spontaneous unmount done with error (null)`、Local extension 的 `deactivateVolume...:start`，并在稍后 server log 中看到 `FUSE_DESTROY`/正常退出，但本轮 `log show --last 3m` 会混入 helper 启动前约 1 秒的事件，不能据此严格证明这些 FSKit 日志由本次 syscall 触发。下一轮仅收紧时间关联：记录 helper 发起前 UTC 秒级起点，并使用 `log show --start <起点>`；同时记录 sudo/helper child PID。架构和 syscall 均不变。`Transport Backend Builder Contract` 同 HEAD run `33042429253` 已绿。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**
