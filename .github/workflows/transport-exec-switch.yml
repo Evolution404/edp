@@ -1,0 +1,49 @@
+name: Runtime Transport Exec Switch
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "product/EDPTransportExec.c"
+      - ".github/workflows/transport-exec-switch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  switch:
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compile shim and fake backends
+        run: |
+          set -euo pipefail
+          BIN="${RUNNER_TEMP}/bin"
+          mkdir -p "${BIN}"
+          xcrun clang -std=c17 -Wall -Wextra -Werror product/EDPTransportExec.c -o "${BIN}/edp-fuset-readwrite"
+          cat >"${RUNNER_TEMP}/fake.c" <<'C'
+          #include <stdio.h>
+          #include <string.h>
+          int main(int argc, char **argv) { printf("FAKE_BACKEND=%s ARGC=%d ARG1=%s\n", argv[0], argc, argc > 1 ? argv[1] : "<none>"); return 0; }
+          C
+          xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/fake.c" -o "${BIN}/edp-fuset-readwrite-backend"
+          cp "${BIN}/edp-fuset-readwrite-backend" "${BIN}/edp-mfmount-local-readwrite"
+      - name: Switch FUSE-T and macFUSE Local with identical argv
+        run: |
+          set -euo pipefail
+          BIN="${RUNNER_TEMP}/bin"
+          EDP_TRANSPORT=fuset "${BIN}/edp-fuset-readwrite" --raw-device /dev/rdisk9 --partition-type 2 | tee "${RUNNER_TEMP}/fuset.txt"
+          EDP_TRANSPORT=macfuse-local "${BIN}/edp-fuset-readwrite" --raw-device /dev/rdisk9 --partition-type 2 | tee "${RUNNER_TEMP}/local.txt"
+          grep -Fq 'edp-fuset-readwrite-backend' "${RUNNER_TEMP}/fuset.txt"
+          grep -Fq 'edp-mfmount-local-readwrite' "${RUNNER_TEMP}/local.txt"
+          grep -Fq 'ARG1=--raw-device' "${RUNNER_TEMP}/fuset.txt"
+          grep -Fq 'ARG1=--raw-device' "${RUNNER_TEMP}/local.txt"
+          set +e
+          EDP_TRANSPORT=invalid "${BIN}/edp-fuset-readwrite" >/dev/null 2>"${RUNNER_TEMP}/invalid.txt"
+          RC=$?
+          set -e
+          test "${RC}" -eq 64
+          grep -Fq 'EDP_TRANSPORT_EXEC_INVALID_BACKEND=invalid' "${RUNNER_TEMP}/invalid.txt"
+          echo 'RESULT=RUNTIME_TRANSPORT_EXEC_SWITCH_OK'
