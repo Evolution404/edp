@@ -88,7 +88,7 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build writable raw fixture and flag verifier
+      - name: Build writable raw fixture and mount flag probes
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/nobrowse.raw"
@@ -104,10 +104,7 @@ jobs:
           #include <sys/mount.h>
 
           int main(int argc, char **argv) {
-              if (argc != 2) {
-                  fprintf(stderr, "usage: check-nobrowse <mountpoint>\n");
-                  return 64;
-              }
+              if (argc != 2) return 64;
               struct statfs info;
               if (statfs(argv[1], &info) != 0) {
                   fprintf(stderr, "statfs: %s\n", strerror(errno));
@@ -118,10 +115,40 @@ jobs:
               return hidden ? 0 : 1;
           }
           EOF
+          cat >"${RUNNER_TEMP}/update-nobrowse.c" <<'EOF'
+          #include <errno.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <sys/mount.h>
+
+          int main(int argc, char **argv) {
+              if (argc != 2) return 64;
+              struct statfs before;
+              if (statfs(argv[1], &before) != 0) {
+                  fprintf(stderr, "statfs before: %s\n", strerror(errno));
+                  return 65;
+              }
+              const int flags = (int)before.f_flags | MNT_UPDATE | MNT_DONTBROWSE;
+              printf("MOUNT2_FSTYPE=%s FLAGS=0x%08x\n", before.f_fstypename, flags);
+              if (mount(before.f_fstypename, argv[1], flags, NULL) != 0) {
+                  fprintf(stderr, "mount(2): errno=%d %s\n", errno, strerror(errno));
+                  return 66;
+              }
+              struct statfs after;
+              if (statfs(argv[1], &after) != 0) {
+                  fprintf(stderr, "statfs after: %s\n", strerror(errno));
+                  return 67;
+              }
+              printf("MOUNT2_AFTER_FLAGS=0x%08x\n", after.f_flags);
+              if ((after.f_flags & MNT_DONTBROWSE) == 0) return 68;
+              return 0;
+          }
+          EOF
           xcrun clang -Wall -Wextra -Werror "${RUNNER_TEMP}/check-nobrowse.c" -o "${RUNNER_TEMP}/check-nobrowse"
+          xcrun clang -Wall -Wextra -Werror "${RUNNER_TEMP}/update-nobrowse.c" -o "${RUNNER_TEMP}/update-nobrowse"
           echo "RAW=${RAW}" >> "${GITHUB_ENV}"
 
-      - name: Prove root post-mount nobrowse update
+      - name: Prove direct root MNT_UPDATE no-browse
         run: |
           set -euo pipefail
           HIDDEN="${RUNNER_TEMP}/.edp-nobrowse-$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -159,7 +186,7 @@ jobs:
             before_status=$?
             test "${before_status}" -eq 1
             echo 'NOBROWSE_BEFORE=0'
-            sudo /sbin/mount -u -o nobrowse "${HIDDEN}"
+            sudo "${RUNNER_TEMP}/update-nobrowse" "${HIDDEN}"
           fi
 
           echo "MOUNT_AFTER=$(mount | grep -F " on ${HIDDEN} ")"
@@ -173,7 +200,7 @@ jobs:
 
           printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
           cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
-          echo 'RESULT=FUSET_TRANSPORT_NOBROWSE_UPDATE_OK'
+          echo 'RESULT=FUSET_TRANSPORT_NOBROWSE_MOUNT2_OK'
 
       - name: Cleanup
         if: always()
