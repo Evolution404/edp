@@ -1,0 +1,76 @@
+name: Direct MFMount Physical Product Adapter Contract
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
+      - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c"
+      - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPAdapter.c"
+      - "native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift"
+      - "native/EDPFSKitPoC/Extension/**"
+      - ".github/workflows/direct-mfmount-product-adapter-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  strict-build:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install headers and framework from official macFUSE pkg
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse.dmg"
+          curl -fsSL --retry 3 https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg -o "${DMG}"
+          test "$(shasum -a 256 "${DMG}" | awk '{print $1}')" = 7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15
+          ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
+          VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
+          PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach "${VOL}" >/dev/null
+      - name: Strict-build physical encrypted adapter
+        run: |
+          set -euo pipefail
+          FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks"
+          INC="${RUNNER_TEMP}/include"
+          mkdir -p "${INC}/MFMount"
+          curl -fsSL https://raw.githubusercontent.com/macfuse/mount/313b9c68d04cd779bffc9f8bd9f32a4e1f5baf70/Mount/MFMount.h -o "${INC}/MFMount/MFMount.h"
+          curl -fsSL https://raw.githubusercontent.com/macfuse/library/9a3db24bf7e3896d69a514a70e91dc41eefb948b/include/fuse_kernel.h -o "${INC}/fuse_kernel.h"
+          xcrun clang -std=c17 -Wall -Wextra -Werror -I"${INC}" -I native/EDPFSKitPoC/Tools/MacFUSEMinimal -F"${FRAMEWORKS}" \
+            -DMFMount=EDPAsyncMFMount -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPAdapter.c -o "${RUNNER_TEMP}/adapter.o"
+          xcrun clang -std=c17 -Wall -Wextra -Werror -I"${INC}" -F"${FRAMEWORKS}" \
+            -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c -o "${RUNNER_TEMP}/shim.o"
+          CORE=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+            native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift
+          )
+          xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors "${CORE[@]}" \
+            "${RUNNER_TEMP}/adapter.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" \
+            -Xlinker -rpath -Xlinker "${FRAMEWORKS}" -framework MFMount -framework CoreFoundation \
+            -o "${RUNNER_TEMP}/edp-mfmount-local-readwrite"
+          otool -L "${RUNNER_TEMP}/edp-mfmount-local-readwrite" | tee "${RUNNER_TEMP}/otool.txt"
+          grep -Fq 'MFMount.framework' "${RUNNER_TEMP}/otool.txt"
+          ! grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${RUNNER_TEMP}/otool.txt"
+          SRC=native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPAdapter.c
+          grep -Fq 'strncmp(raw_device, "/dev/rdisk", 10)' "${SRC}"
+          grep -Fq 'raw_fd_long < 3' "${SRC}"
+          grep -Fq 'F_GETFD' "${SRC}"
+          grep -Fq 'S_ISCHR' "${SRC}"
+          grep -Fq 'read_all_fd' "${SRC}"
+          grep -Fq 'secure_zero(password' "${SRC}"
+          grep -Fq 'edp_rw_open_device_fd' "${SRC}"
+          grep -Fq 'edp_rw_read' "${SRC}"
+          grep -Fq 'edp_rw_write' "${SRC}"
+          grep -Fq 'edp_rw_sync' "${SRC}"
+          ! grep -Eiq 'NTFS|ExFAT|APFS|HFS' "${SRC}"
+          echo 'RESULT=DIRECT_MFMOUNT_PHYSICAL_PRODUCT_ADAPTER_STRICT_BUILD_OK'
