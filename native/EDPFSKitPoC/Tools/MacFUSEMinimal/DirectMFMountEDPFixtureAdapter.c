@@ -1,6 +1,7 @@
 #include <MFMount/MFMount.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,10 +65,23 @@ static int fixture_close(int fd) {
     return close(fd);
 }
 
-/* macFUSE 5.3.3 deliberately returns EINTR from blocking channel receives on
- * SIGTERM/SIGINT. The generic PoC retries EINTR, but product-style adapters
- * must treat a termination signal as teardown so the shared cleanup path can
- * fsync and close the MFChannel instead of leaving an orphaned FSKit mount. */
+static void termination_signal_handler(int signal_number) {
+    (void)signal_number;
+}
+
+static int install_termination_handlers(void) {
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = termination_signal_handler;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGTERM, &action, NULL) != 0) return -1;
+    if (sigaction(SIGINT, &action, NULL) != 0) return -1;
+    return 0;
+}
+
+/* macFUSE 5.3.3 returns EINTR from blocking channel receives when one of the
+ * termination signals above arrives. Convert that interrupt into the generic
+ * server's existing ENODEV teardown branch so it reaches fsync/MFChannelClose. */
 static MFMessageRef fixture_next_message(MFChannelRef channel) {
     MFMessageRef message = MFChannelCopyNextMessage(channel);
     if (message == NULL && errno == EINTR) errno = ENODEV;
@@ -96,6 +110,10 @@ int main(int argc, char **argv) {
     if (argc != 5) {
         fprintf(stderr, "usage: %s <cipher.img> <32-hex-key> <mountpoint> <volume-name>\n", argv[0]);
         return 64;
+    }
+    if (install_termination_handlers() != 0) {
+        perror("install termination handlers");
+        return 70;
     }
     g_edp_handle = edp_rw_open(argv[1], argv[2]);
     if (g_edp_handle == NULL) {
