@@ -3,10 +3,13 @@ name: Clean ExFAT + NTFS Installer
 on:
   workflow_dispatch:
   push:
-    branches: ["feat/macos26-native-fskit"]
+    branches:
+      - "feat/macos26-native-fskit"
+      - "test/fuset-minimal-fskit-bridge"
     paths:
       - "product/**"
       - "installer/build-clean-installer.sh"
+      - "installer/build-transport-backends.sh"
       - "scripts/build-ntfs3g-runtime.sh"
       - "scripts/verify-clean-installer.sh"
       - "native/EDPFSKitPoC/Extension/**"
