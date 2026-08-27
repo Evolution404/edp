@@ -1,3 +1,4 @@
+#include <MFMount/MFMount.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -63,15 +64,27 @@ static int fixture_close(int fd) {
     return close(fd);
 }
 
+/* macFUSE 5.3.3 deliberately returns EINTR from blocking channel receives on
+ * SIGTERM/SIGINT. The generic PoC retries EINTR, but product-style adapters
+ * must treat a termination signal as teardown so the shared cleanup path can
+ * fsync and close the MFChannel instead of leaving an orphaned FSKit mount. */
+static MFMessageRef fixture_next_message(MFChannelRef channel) {
+    MFMessageRef message = MFChannelCopyNextMessage(channel);
+    if (message == NULL && errno == EINTR) errno = ENODEV;
+    return message;
+}
+
 #define open fixture_open
 #define fstat fixture_fstat
 #define pread fixture_pread
 #define pwrite fixture_pwrite
 #define fsync fixture_fsync
 #define close fixture_close
+#define MFChannelCopyNextMessage fixture_next_message
 #define main edp_direct_raw_main
 #include "DirectMFMountRawTransport.c"
 #undef main
+#undef MFChannelCopyNextMessage
 #undef close
 #undef fsync
 #undef pwrite
