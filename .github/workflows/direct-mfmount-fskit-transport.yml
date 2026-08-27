@@ -1,0 +1,259 @@
+name: Direct MFMount Generic FSKit Raw Transport
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
+      - ".github/workflows/direct-mfmount-fskit-transport.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: direct-mfmount-fskit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  direct-mfmount:
+    runs-on: macos-26
+    timeout-minutes: 20
+    env:
+      MACFUSE_VERSION: "5.3.3"
+      MACFUSE_DMG_SHA256: "7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
+      MACFUSE_DMG_URL: "https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg"
+      MACFUSE_FSKIT_GENERIC_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify hosted runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+
+      - name: Install exact official macFUSE 5.3.3
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse-${MACFUSE_VERSION}.dmg"
+          curl --fail --location --retry 3 --silent --show-error "${MACFUSE_DMG_URL}" -o "${DMG}"
+          ACTUAL_SHA="$(shasum -a 256 "${DMG}" | awk '{print $1}')"
+          echo "MACFUSE_DMG_SHA256_ACTUAL=${ACTUAL_SHA}"
+          test "${ACTUAL_SHA}" = "${MACFUSE_DMG_SHA256}"
+          ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
+          VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
+          test -n "${VOL}"
+          PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
+          test -n "${PKG}"
+          pkgutil --check-signature "${PKG}"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach "${VOL}" >/dev/null
+          test -f /usr/local/include/fuse3/fuse_kernel.h
+          test -d /Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework
+
+      - name: Enable Generic FSKit module
+        run: |
+          set -euo pipefail
+          APP="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app"
+          test -d "${APP}"
+          GENERIC_APPEX="${APP}/Contents/Extensions/${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}.appex"
+          test -d "${GENERIC_APPEX}"
+
+          LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
+          "${LSREGISTER}" -f -R -trusted "${APP}"
+          pluginkit -a "${GENERIC_APPEX}" || true
+          pluginkit -a "${APP}" || true
+          pluginkit -e use -i "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" || true
+
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${ENABLED_PLIST}" "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" <<'PY'
+          import plistlib, sys
+          path, bundle_id = sys.argv[1:]
+          with open(path, "wb") as f:
+              plistlib.dump([bundle_id], f, fmt=plistlib.FMT_XML, sort_keys=False)
+          PY
+          chmod 600 "${ENABLED_PLIST}"
+
+          killall -9 fskit_agent 2>/dev/null || true
+          killall -9 extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
+          grep -Fq "+    ${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+          echo "GENERIC_FSKIT_ENABLED=1"
+
+      - name: Build direct MFMount server and probes
+        run: |
+          set -euo pipefail
+          FRAMEWORK_DIR="/Library/Filesystems/macfuse.fs/Contents/Frameworks"
+          HEADER="${FRAMEWORK_DIR}/MFMount.framework/Headers/MFMount.h"
+          test -f "${HEADER}"
+          test -f /usr/local/include/fuse3/fuse_kernel.h
+
+          xcrun clang -std=c17 -Wall -Wextra -Werror \
+            -I/usr/local/include/fuse3 \
+            -F"${FRAMEWORK_DIR}" \
+            native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c \
+            -framework MFMount \
+            -framework CoreFoundation \
+            -Wl,-rpath,"${FRAMEWORK_DIR}" \
+            -o "${RUNNER_TEMP}/direct_mfmount_raw"
+
+          otool -L "${RUNNER_TEMP}/direct_mfmount_raw" | tee "${RUNNER_TEMP}/direct-otool.txt"
+          if grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${RUNNER_TEMP}/direct-otool.txt"; then
+            echo 'DIRECT_MFMOUNT_UNEXPECTED_LIBFUSE_DEPENDENCY=1'
+            exit 1
+          fi
+          echo 'DIRECT_MFMOUNT_NO_LIBFUSE_DEPENDENCY=1'
+
+          cat >"${RUNNER_TEMP}/StatFSFlags.c" <<'C'
+          #include <sys/mount.h>
+          #include <stdio.h>
+          int main(int argc, char **argv) {
+              if (argc != 2) return 64;
+              struct statfs st;
+              if (statfs(argv[1], &st) != 0) return 1;
+              printf("FSTYPE=%s\n", st.f_fstypename);
+              printf("FLAGS=0x%08x\n", (unsigned)st.f_flags);
+              printf("MNT_DONTBROWSE=%d\n", (st.f_flags & MNT_DONTBROWSE) ? 1 : 0);
+              printf("MNT_LOCAL=%d\n", (st.f_flags & MNT_LOCAL) ? 1 : 0);
+              return 0;
+          }
+          C
+          xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/StatFSFlags.c" -o "${RUNNER_TEMP}/StatFSFlags"
+
+          cat >"${RUNNER_TEMP}/InspectPath.swift" <<'SWIFT'
+          import Foundation
+          @main
+          struct InspectPath {
+              static func main() throws {
+                  guard CommandLine.arguments.count == 2 else { exit(64) }
+                  let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+                  let values = try url.resourceValues(forKeys: [
+                      .volumeIsBrowsableKey,
+                      .volumeNameKey,
+                      .volumeIsLocalKey,
+                      .volumeTypeNameKey,
+                  ])
+                  print("BROWSABLE=\(values.volumeIsBrowsable == true ? 1 : 0)")
+                  print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
+                  print("LOCAL=\(values.volumeIsLocal == true ? 1 : 0)")
+                  print("TYPE=\(values.volumeTypeName ?? "<nil>")")
+              }
+          }
+          SWIFT
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
+            "${RUNNER_TEMP}/InspectPath.swift" -o "${RUNNER_TEMP}/InspectPath"
+
+      - name: Mount direct MFMount transport and validate P0 contract
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/direct-mfmount.raw"
+          VOLUME_NAME="EDP Direct MFMount"
+          MOUNTPOINT="/Volumes/EDP-Direct-MFMount-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          LOG="${RUNNER_TEMP}/direct-mfmount.log"
+          PIDFILE="${RUNNER_TEMP}/direct-mfmount.pid"
+          DISKFILE="${RUNNER_TEMP}/direct-mfmount-disk"
+          printf '%s' "${MOUNTPOINT}" >"${RUNNER_TEMP}/direct-mfmount-mountpoint"
+
+          dd if=/dev/zero of="${RAW}" bs=1m count=16 status=none
+          printf 'EDP-DIRECT-MFMOUNT' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
+          sudo mkdir -p "${MOUNTPOINT}"
+          sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
+
+          "${RUNNER_TEMP}/direct_mfmount_raw" "${RAW}" "${MOUNTPOINT}" "${VOLUME_NAME}" >"${LOG}" 2>&1 &
+          PID=$!
+          printf '%s' "${PID}" >"${PIDFILE}"
+
+          MOUNTED=0
+          for attempt in $(seq 1 30); do
+            if mount | grep -Fq " on ${MOUNTPOINT} "; then
+              MOUNTED=1
+              break
+            fi
+            if ! kill -0 "${PID}" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat "${LOG}" || true
+          if [[ "${MOUNTED}" != 1 ]]; then
+            echo 'DIRECT_MFMOUNT_MOUNTED=0'
+            exit 1
+          fi
+          echo 'DIRECT_MFMOUNT_MOUNTED=1'
+          mount | grep -F " on ${MOUNTPOINT} "
+
+          STATFS_OUT="$(${RUNNER_TEMP}/StatFSFlags "${MOUNTPOINT}")"
+          printf '%s\n' "${STATFS_OUT}"
+          DONTBROWSE="$(printf '%s\n' "${STATFS_OUT}" | sed -n 's/^MNT_DONTBROWSE=//p')"
+
+          INSPECT_OUT="$(${RUNNER_TEMP}/InspectPath "${MOUNTPOINT}")"
+          printf '%s\n' "${INSPECT_OUT}"
+          BROWSABLE="$(printf '%s\n' "${INSPECT_OUT}" | sed -n 's/^BROWSABLE=//p')"
+
+          EXPOSED="${MOUNTPOINT}/volume.raw"
+          test -f "${EXPOSED}"
+          MARKER="$(dd if="${EXPOSED}" bs=1 skip=4096 count=18 status=none)"
+          test "${MARKER}" = 'EDP-DIRECT-MFMOUNT'
+          echo 'DIRECT_READ_OK=1'
+
+          printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
+          cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
+          echo 'DIRECT_RW_OK=1'
+
+          ATTACH_OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"
+          printf '%s\n' "${ATTACH_OUT}"
+          DISK="$(printf '%s\n' "${ATTACH_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          test -n "${DISK}"
+          printf '%s' "${DISK}" >"${DISKFILE}"
+          hdiutil detach "${DISK}" -force >/dev/null
+          rm -f "${DISKFILE}"
+          echo 'DIRECT_DISKIMAGES2_RAW_ATTACH_OK=1'
+          echo 'DIRECT_MFMOUNT_FUNCTIONAL_OK=1'
+
+          killall Finder 2>/dev/null || true
+          open -a Finder
+          sleep 2
+          osascript -e 'tell application "Finder" to get name of every disk' | tee "${RUNNER_TEMP}/direct-finder.txt" || true
+          if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/direct-finder.txt"; then
+            echo 'DIRECT_FINDER_VISIBLE=1'
+          else
+            echo 'DIRECT_FINDER_VISIBLE=0'
+          fi
+
+          if [[ "${DONTBROWSE}" = 1 && "${BROWSABLE}" = 0 ]]; then
+            echo 'DIRECT_MFMOUNT_NOBROWSE_OK=1'
+            echo 'RESULT=DIRECT_MFMOUNT_P0_PASS'
+          else
+            echo 'DIRECT_MFMOUNT_NOBROWSE_OK=0'
+            echo "RESULT=DIRECT_MFMOUNT_FUNCTIONAL_ONLY DONTBROWSE=${DONTBROWSE:-missing} BROWSABLE=${BROWSABLE:-missing}"
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          DISKFILE="${RUNNER_TEMP}/direct-mfmount-disk"
+          if [[ -f "${DISKFILE}" ]]; then
+            DISK="$(cat "${DISKFILE}")"
+            [[ -n "${DISK}" ]] && hdiutil detach "${DISK}" -force >/dev/null 2>&1 || true
+          fi
+          MPFILE="${RUNNER_TEMP}/direct-mfmount-mountpoint"
+          if [[ -f "${MPFILE}" ]]; then
+            MP="$(cat "${MPFILE}")"
+            [[ -n "${MP}" ]] && /sbin/umount "${MP}" 2>/dev/null || true
+            [[ -n "${MP}" ]] && sudo /sbin/umount "${MP}" 2>/dev/null || true
+            [[ -n "${MP}" ]] && sudo rmdir "${MP}" 2>/dev/null || true
+          fi
+          PIDFILE="${RUNNER_TEMP}/direct-mfmount.pid"
+          if [[ -f "${PIDFILE}" ]]; then
+            kill "$(cat "${PIDFILE}")" 2>/dev/null || true
+          fi
+          exit 0
