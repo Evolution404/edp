@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -21,6 +22,7 @@ extern void edp_rw_close(void *handle);
 
 static void *g_edp_handle = NULL;
 static const int g_virtual_fd = 0x4d46;
+static const char *g_mountpoint = NULL;
 
 static int fixture_open(const char *path, int flags, ...) {
     (void)flags;
@@ -79,12 +81,25 @@ static int install_termination_handlers(void) {
     return 0;
 }
 
-/* macFUSE 5.3.3 returns EINTR from blocking channel receives when one of the
- * termination signals above arrives. Convert that interrupt into the generic
- * server's existing ENODEV teardown branch so it reaches fsync/MFChannelClose. */
+/* The official Darwin libfuse compatibility path calls unmount(mountpoint, 0).
+ * Direct MFMount owns the server loop itself, so do the same after a termination
+ * signal interrupts the blocking receive. This avoids the Disk Arbitration
+ * unmount path implicated in macFUSE 5.3.3 issue #1180. */
 static MFMessageRef fixture_next_message(MFChannelRef channel) {
     MFMessageRef message = MFChannelCopyNextMessage(channel);
-    if (message == NULL && errno == EINTR) errno = ENODEV;
+    if (message == NULL && errno == EINTR) {
+        int saved = errno;
+        if (g_mountpoint != NULL) {
+            errno = 0;
+            int result = unmount(g_mountpoint, 0);
+            fprintf(stderr,
+                    "DIRECT_INTERNAL_UNMOUNT_RESULT=%d errno=%d mountpoint=%s\n",
+                    result,
+                    errno,
+                    g_mountpoint);
+        }
+        errno = saved == EINTR ? ENODEV : saved;
+    }
     return message;
 }
 
@@ -115,6 +130,7 @@ int main(int argc, char **argv) {
         perror("install termination handlers");
         return 70;
     }
+    g_mountpoint = argv[3];
     g_edp_handle = edp_rw_open(argv[1], argv[2]);
     if (g_edp_handle == NULL) {
         fprintf(stderr, "EDP_DIRECT_FIXTURE_OPEN_FAILED\n");
@@ -125,5 +141,6 @@ int main(int argc, char **argv) {
     (void)edp_rw_sync(g_edp_handle);
     edp_rw_close(g_edp_handle);
     g_edp_handle = NULL;
+    g_mountpoint = NULL;
     return result;
 }
