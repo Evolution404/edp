@@ -134,9 +134,20 @@ jobs:
             return 1
           }
           stop_bridge() {
-            sudo /sbin/umount -f "${MP}" >/dev/null 2>&1 || true
-            if [[ -f "${RUNNER_TEMP}/pid" ]]; then kill "$(cat "${RUNNER_TEMP}/pid")" 2>/dev/null || true; fi
-            sleep 1
+            if [[ -f "${RUNNER_TEMP}/pid" ]]; then
+              P="$(cat "${RUNNER_TEMP}/pid")"
+              kill "${P}" 2>/dev/null || true
+              for _ in $(seq 1 5); do kill -0 "${P}" 2>/dev/null || break; sleep 1; done
+              kill -9 "${P}" 2>/dev/null || true
+            fi
+            if mount | grep -Fq " on ${MP} "; then
+              sudo /sbin/umount -f "${MP}" >/dev/null 2>&1 & U=$!
+              for _ in $(seq 1 5); do kill -0 "${U}" 2>/dev/null || break; sleep 1; done
+              kill -9 "${U}" 2>/dev/null || true
+            fi
+            for _ in $(seq 1 10); do mount | grep -Fq " on ${MP} " || return 0; sleep 1; done
+            echo "transport remained mounted after bounded cleanup" >&2
+            return 1
           }
 
           start_bridge
@@ -156,10 +167,10 @@ jobs:
           test "${CIPHER_HEX}" != "${PLAIN_HEX}"
           echo 'RESULT=DIRECT_ENCRYPTED_WRITE_THROUGH_CIPHERTEXT_DIFFERS=1'
 
-          ATTACH="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${MP}/volume.raw")"
+          ATTACH="$(perl -e 'alarm shift; exec @ARGV' 30 hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${MP}/volume.raw")"
           DISK="$(printf '%s\n' "${ATTACH}" | awk '/^\/dev\/disk/ {print $1; exit}')"
           test -n "${DISK}"
-          hdiutil detach "${DISK}" -force >/dev/null
+          perl -e 'alarm shift; exec @ARGV' 20 hdiutil detach "${DISK}" -force >/dev/null
           echo 'RESULT=DIRECT_ENCRYPTED_DISKIMAGES2_ATTACH_OK=1'
 
           stop_bridge
@@ -174,6 +185,14 @@ jobs:
         run: |
           set +e
           cat "${RUNNER_TEMP}/bridge.log" 2>/dev/null || true
-          if [[ -f "${RUNNER_TEMP}/mp" ]]; then sudo /sbin/umount -f "$(cat "${RUNNER_TEMP}/mp")" >/dev/null 2>&1 || true; sudo rmdir "$(cat "${RUNNER_TEMP}/mp")" 2>/dev/null || true; fi
-          if [[ -f "${RUNNER_TEMP}/pid" ]]; then kill -9 "$(cat "${RUNNER_TEMP}/pid")" 2>/dev/null || true; fi
+          if [[ -f "${RUNNER_TEMP}/pid" ]]; then P="$(cat "${RUNNER_TEMP}/pid")"; kill "${P}" 2>/dev/null; sleep 1; kill -9 "${P}" 2>/dev/null; fi
+          if [[ -f "${RUNNER_TEMP}/mp" ]]; then
+            MP="$(cat "${RUNNER_TEMP}/mp")"
+            if mount | grep -Fq " on ${MP} "; then
+              sudo /sbin/umount -f "${MP}" >/dev/null 2>&1 & U=$!
+              for _ in $(seq 1 5); do kill -0 "${U}" 2>/dev/null || break; sleep 1; done
+              kill -9 "${U}" 2>/dev/null || true
+            fi
+            sudo rmdir "${MP}" 2>/dev/null || true
+          fi
           exit 0
