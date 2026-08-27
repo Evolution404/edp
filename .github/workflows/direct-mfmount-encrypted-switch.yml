@@ -140,7 +140,7 @@ jobs:
             if mount | grep -Fq " on ${MP} "; then
               echo 'DIRECT_LIFECYCLE_UNMOUNT_REQUESTED=1'
               set +e
-              perl -e 'alarm shift; exec @ARGV' 20 diskutil unmount force "${MP}" \
+              perl -e 'alarm shift; exec @ARGV' 20 /sbin/umount "${MP}" \
                 >"${RUNNER_TEMP}/unmount.txt" 2>&1
               URC=$?
               set -e
@@ -202,7 +202,7 @@ jobs:
           if [[ -f "${RUNNER_TEMP}/mp" ]]; then
             MP="$(cat "${RUNNER_TEMP}/mp")"
             if mount | grep -Fq " on ${MP} "; then
-              perl -e 'alarm shift; exec @ARGV' 10 diskutil unmount force "${MP}" >/dev/null 2>&1 || true
+              perl -e 'alarm shift; exec @ARGV' 10 /sbin/umount "${MP}" >/dev/null 2>&1 || true
             fi
             sudo rmdir "${MP}" 2>/dev/null || true
           fi
