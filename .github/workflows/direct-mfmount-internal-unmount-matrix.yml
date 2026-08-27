@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: direct-mfmount-internal-unmount-v3-${{ github.ref }}
+  group: direct-mfmount-internal-unmount-v4-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -84,7 +84,7 @@ jobs:
             native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift
           )
           xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors "${CORE[@]}" "${RUNNER_TEMP}/adapter.o" "${RUNNER_TEMP}/shim.o" -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${FRAMEWORKS}" -framework MFMount -framework CoreFoundation -o "${RUNNER_TEMP}/bridge"
-      - name: Prove channel-owned unmount and remount persistence
+      - name: Prove system-volume unmount and remount persistence
         run: |
           set -euo pipefail
           VERSION='${{ matrix.runtime.version }}'
@@ -102,12 +102,24 @@ jobs:
           }
           stop() {
             P="$(cat "${RUNNER_TEMP}/pid")"
-            kill -TERM "${P}"
+            : >"${RUNNER_TEMP}/diskutil.log"
+            /usr/sbin/diskutil unmount "${MP}" >"${RUNNER_TEMP}/diskutil.log" 2>&1 &
+            DPID=$!
+            MOUNT_GONE=0
             for _ in $(seq 1 20); do
-              if ! mount | grep -Fq " on ${MP} "; then echo "MOUNT_GONE=1"; break; fi
+              if ! mount | grep -Fq " on ${MP} "; then MOUNT_GONE=1; break; fi
+              if ! kill -0 "${DPID}" 2>/dev/null; then break; fi
               sleep 1
             done
-            ! mount | grep -Fq " on ${MP} "
+            wait "${DPID}" || DRC=$?; DRC="${DRC:-0}"
+            cat "${RUNNER_TEMP}/diskutil.log" || true
+            test "${DRC}" -eq 0
+            test "${MOUNT_GONE}" -eq 1
+            echo "SYSTEM_VOLUME_UNMOUNT_OK=1"
+
+            if kill -0 "${P}" 2>/dev/null; then
+              kill -TERM "${P}"
+            fi
             EXITED=0
             for _ in $(seq 1 10); do
               if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; break; fi
@@ -117,8 +129,6 @@ jobs:
             wait "${P}" || PRC=$?; PRC="${PRC:-0}"
             test "${PRC}" -eq 0
             cat "${RUNNER_TEMP}/server.log" || true
-            grep -Fq 'DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=1' "${RUNNER_TEMP}/server.log"
-            grep -Fq 'DIRECT_MFMOUNT_CHANNEL_ALREADY_CLOSED=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_EXIT=0' "${RUNNER_TEMP}/server.log"
           }
           start
@@ -130,7 +140,7 @@ jobs:
           start
           test "$(dd if="${MP}/volume.raw" bs=1 skip="${OFFSET}" count="${#MARKER}" status=none)" = "${MARKER}"
           stop
-          echo "RESULT=DIRECT_CHANNEL_OWNED_UNMOUNT_${VERSION//./_}_PASS"
+          echo "RESULT=DIRECT_SYSTEM_UNMOUNT_REMOUNT_${VERSION//./_}_PASS"
       - name: Cleanup
         if: always()
         run: |
