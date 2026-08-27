@@ -112,20 +112,20 @@ static int edp_backing_close(int fd) {
     return close(fd);
 }
 
-/* EDPAsyncMFMount owns SIGTERM/SIGINT through a sigwait thread and wakes this
- * receive with MFChannelInterrupt(). Translate that one interruption into
- * ENODEV so the shared server loop exits and performs its single documented
- * MFChannelClose() teardown. Do not call unmount(2): Direct MFMount owns the
- * channel lifecycle. */
-static MFMessageRef edp_next_message(MFChannelRef channel) {
-    MFMessageRef message = MFChannelCopyNextMessage(channel);
-    if (message == NULL && errno == EINTR) {
+/* A SIGTERM/SIGINT close is performed by EDPAsyncMFMount's sigwait thread.
+ * The shared server loop then observes ENODEV. Its normal tail still calls
+ * MFChannelClose(), so suppress that second close because MFMount explicitly
+ * treats closing an already-closed channel as a programming error. */
+static bool edp_channel_close(MFChannelRef channel) {
+    MFChannelFlags flags = 0;
+    errno = 0;
+    if (!MFChannelGetFlags(channel, &flags) && errno == ENODEV) {
         fprintf(stderr,
-                "DIRECT_TERMINATION_INTERRUPT_OBSERVED=1 mountpoint=%s\n",
+                "DIRECT_MFMOUNT_CHANNEL_ALREADY_CLOSED=1 mountpoint=%s\n",
                 g_mountpoint == NULL ? "<unset>" : g_mountpoint);
-        errno = ENODEV;
+        return true;
     }
-    return message;
+    return MFChannelClose(channel);
 }
 
 #define open edp_backing_open
@@ -134,11 +134,11 @@ static MFMessageRef edp_next_message(MFChannelRef channel) {
 #define pwrite edp_backing_pwrite
 #define fsync edp_backing_fsync
 #define close edp_backing_close
-#define MFChannelCopyNextMessage edp_next_message
+#define MFChannelClose edp_channel_close
 #define main edp_direct_raw_main
 #include "DirectMFMountRawTransport.c"
 #undef main
-#undef MFChannelCopyNextMessage
+#undef MFChannelClose
 #undef close
 #undef fsync
 #undef pwrite

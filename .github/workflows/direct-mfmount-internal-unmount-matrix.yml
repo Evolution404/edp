@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: direct-mfmount-internal-unmount-v2-${{ github.ref }}
+  group: direct-mfmount-internal-unmount-v3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -117,8 +117,8 @@ jobs:
             wait "${P}" || PRC=$?; PRC="${PRC:-0}"
             test "${PRC}" -eq 0
             cat "${RUNNER_TEMP}/server.log" || true
-            grep -Fq 'DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=1' "${RUNNER_TEMP}/server.log"
-            grep -Fq 'DIRECT_TERMINATION_INTERRUPT_OBSERVED=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_CHANNEL_ALREADY_CLOSED=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_EXIT=0' "${RUNNER_TEMP}/server.log"
           }
           start
@@ -136,5 +136,5 @@ jobs:
         run: |
           set +e
           [[ -f "${RUNNER_TEMP}/pid" ]] && kill -9 "$(cat "${RUNNER_TEMP}/pid")" 2>/dev/null || true
-          if [[ -f "${RUNNER_TEMP}/mp" ]]; then MP="$(cat "${RUNNER_TEMP}/mp")"; /sbin/umount -f "${MP}" >/dev/null 2>&1 & sleep 2; sudo rmdir "${MP}" 2>/dev/null || true; fi
+          if [[ -f "${RUNNER_TEMP}/mp" ]]; then MP="$(cat "${RUNNER_TEMP}/mp")"; sudo rmdir "${MP}" 2>/dev/null || true; fi
           exit 0

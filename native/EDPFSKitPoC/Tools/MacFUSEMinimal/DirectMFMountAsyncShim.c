@@ -63,14 +63,18 @@ static void *termination_wait_worker(void *opaque) {
         return NULL;
     }
 
+    /* MFMount owns the FSKit volume lifecycle. The documented teardown entry
+     * point is MFChannelClose(), not unmount(2). Closing from this ordinary
+     * sigwait thread is signal-safe at the application level and causes any
+     * blocked MFChannelCopyNextMessage() call to return ENODEV. */
     errno = 0;
-    bool interrupted = MFChannelInterrupt(args->channel);
+    bool closed = MFChannelClose(args->channel);
     int saved_errno = errno;
     fprintf(stderr,
             "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d\n"
-            "DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=%d errno=%d\n",
+            "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d\n",
             signal_number,
-            interrupted ? 1 : 0,
+            closed ? 1 : 0,
             saved_errno);
 
     destroy_termination_args(args);
