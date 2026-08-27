@@ -88,7 +88,7 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build writable raw fixture and bridge
+      - name: Build writable raw fixture and flag verifier
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/nobrowse.raw"
@@ -97,6 +97,28 @@ jobs:
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
             native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
             -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+          cat >"${RUNNER_TEMP}/check-nobrowse.c" <<'EOF'
+          #include <errno.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <sys/mount.h>
+
+          int main(int argc, char **argv) {
+              if (argc != 2) {
+                  fprintf(stderr, "usage: check-nobrowse <mountpoint>\n");
+                  return 64;
+              }
+              struct statfs info;
+              if (statfs(argv[1], &info) != 0) {
+                  fprintf(stderr, "statfs: %s\n", strerror(errno));
+                  return 65;
+              }
+              const int hidden = (info.f_flags & MNT_DONTBROWSE) != 0;
+              printf("STATFS_FLAGS=0x%08x MNT_DONTBROWSE=%d\n", info.f_flags, hidden);
+              return hidden ? 0 : 1;
+          }
+          EOF
+          xcrun clang -Wall -Wextra -Werror "${RUNNER_TEMP}/check-nobrowse.c" -o "${RUNNER_TEMP}/check-nobrowse"
           echo "RAW=${RAW}" >> "${GITHUB_ENV}"
 
       - name: Prove root post-mount nobrowse update
@@ -130,18 +152,19 @@ jobs:
           cat "${LOG}" || true
           test "${mounted}" = true
 
-          BEFORE="$(mount | grep -F " on ${HIDDEN} ")"
-          echo "MOUNT_BEFORE=${BEFORE}"
-
-          # The initial FUSE-T 1.2.7 FSKit mount currently drops nobrowse.
-          # Test the generic VFS update path from the privileged supervisor.
-          if ! printf '%s\n' "${BEFORE}" | grep -Eq '\bnobrowse\b'; then
+          echo "MOUNT_BEFORE=$(mount | grep -F " on ${HIDDEN} ")"
+          if "${RUNNER_TEMP}/check-nobrowse" "${HIDDEN}"; then
+            echo 'NOBROWSE_BEFORE=1'
+          else
+            before_status=$?
+            test "${before_status}" -eq 1
+            echo 'NOBROWSE_BEFORE=0'
             sudo /sbin/mount -u -o nobrowse "${HIDDEN}"
           fi
 
-          AFTER="$(mount | grep -F " on ${HIDDEN} ")"
-          echo "MOUNT_AFTER=${AFTER}"
-          printf '%s\n' "${AFTER}" | grep -Eq '\bnobrowse\b'
+          echo "MOUNT_AFTER=$(mount | grep -F " on ${HIDDEN} ")"
+          "${RUNNER_TEMP}/check-nobrowse" "${HIDDEN}"
+          echo 'NOBROWSE_AFTER=1'
 
           EXPOSED="${HIDDEN}/volume.raw"
           test -f "${EXPOSED}"
