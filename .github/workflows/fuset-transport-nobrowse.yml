@@ -108,7 +108,7 @@ jobs:
           echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"
 
           "${RUNNER_TEMP}/FuseTMinimalBridge" \
-            --read-write \
+            --writable \
             --backing "${RAW}" \
             --mountpoint "${HIDDEN}" \
             --volume-name 'EDP NoBrowse Transport' \
