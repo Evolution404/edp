@@ -9,6 +9,8 @@ private enum FuseTTwoConnectionHarness {
                 fputs("usage: FuseTTwoConnectionHarness <backing> <mountpoint> <volume-name>\n", stderr)
                 exit(64)
             }
+            dumpFSKitOptionEvidence()
+
             let backingPath = CommandLine.arguments[1]
             let mountpoint = CommandLine.arguments[2]
             let volumeName = CommandLine.arguments[3]
@@ -80,5 +82,45 @@ private enum FuseTTwoConnectionHarness {
             fputs("FuseTTwoConnectionHarness: \(error)\n", stderr)
             exit(1)
         }
+    }
+
+    private static func dumpFSKitOptionEvidence() {
+        let binary = "/Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex/Contents/MacOS/FskitSrvModule"
+        let keywords = [
+            "nobrowse", "dontbrowse", "browse", "mount option", "mountoption",
+            "requestedmount", "session", "volume_name", "readonly", "config",
+        ]
+
+        print("FSKIT_OPTION_EVIDENCE_BEGIN")
+        for (label, executable, arguments) in [
+            ("STRINGS", "/usr/bin/strings", ["-a", binary]),
+            ("GO_NM", "/usr/bin/env", ["go", "tool", "nm", binary]),
+            ("OTOOL", "/usr/bin/otool", ["-ov", binary]),
+        ] {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                guard let text = String(data: data, encoding: .utf8) else { continue }
+                let matching = text.split(separator: "\n").filter { line in
+                    let lower = line.lowercased()
+                    return keywords.contains { lower.contains($0) }
+                }
+                print("FSKIT_OPTION_EVIDENCE_\(label)_STATUS=\(process.terminationStatus)")
+                for line in matching.prefix(500) {
+                    print("[\(label)] \(line)")
+                }
+            } catch {
+                print("FSKIT_OPTION_EVIDENCE_\(label)_ERROR=\(error)")
+            }
+        }
+        print("FSKIT_OPTION_EVIDENCE_END")
+        fflush(stdout)
     }
 }
