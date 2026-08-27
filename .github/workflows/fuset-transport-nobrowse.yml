@@ -94,7 +94,7 @@ jobs:
           RAW="${RUNNER_TEMP}/nobrowse.raw"
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
           printf 'EDP-NOBROWSE-PROBE' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
-          xcrun swiftc -swift-version 6 -warnings-as-errors \
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
             native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
             -o "${RUNNER_TEMP}/FuseTMinimalBridge"
           echo "RAW=${RAW}" >> "${GITHUB_ENV}"
