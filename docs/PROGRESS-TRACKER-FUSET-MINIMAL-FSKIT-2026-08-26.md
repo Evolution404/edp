@@ -71,6 +71,8 @@ matrix run `33039845053`（commit `0418e0c`）：两版本的 `DADiskUnmount(...
 
 matrix run `33039997642`（commit `69bb5cc`）：server-side barrier 证明两版本在 whole-unmount success + channel-close success 后等待 10 秒、外部等待 40 秒，mount entry 仍不会消失；因此上轮并非单纯 harness 时序问题。macFUSE Local source 是 mount service 创建的 virtual disk，whole-unmount callback 成功并不等价于 virtual resource deactivation。正式顺序改为：whole unmount → 若 source mount entry 仍存在则 `DADiskEject` 同一 DADisk → callback success → channel close → mount-table gate。
 
+matrix run `33040192662`（commit `cb7591f`）：两版本 whole-unmount callback 仍一致 success；对同一 `/dev/disk8` 立即执行 `DADiskEject` 时，两版本都返回 `0xC010 = unix_err(EBUSY)`，mount entry 保持不变。由 Darwin error 编码（`err_sub(3) | 16`）可知这不是 5.3.2/5.3.3 API 差异，而是 Local virtual disk 仍被活跃 MFMount transport 占用。下一版保留 scheduled `DASession`/精确 `DADiskRef`，调整为 whole-unmount acknowledgement → `MFChannelClose()` 收口 XPC transport → `DADiskEject()` deactivation → mount-table gate；server teardown barrier 保证 eject callback 完成前进程不退出。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**

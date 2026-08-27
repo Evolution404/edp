@@ -145,7 +145,8 @@ static bool wait_for_da_operation(struct da_unmount_context *context) {
 }
 
 static int unmount_source_with_disk_arbitration(const char *source,
-                                                const char *mountpoint) {
+                                                const char *mountpoint,
+                                                MFChannelRef channel) {
     const char *expected_bsd_name = source + strlen("/dev/");
     DASessionRef session = DASessionCreate(kCFAllocatorDefault);
     if (session == NULL) {
@@ -220,9 +221,39 @@ static int unmount_source_with_disk_arbitration(const char *source,
             (unsigned int)context.status,
             source);
 
-    if ((context.status == kDAReturnSuccess ||
-         context.status == kDAReturnNotMounted) &&
-        mount_source_is_present(mountpoint, source)) {
+    if (context.status != kDAReturnSuccess &&
+        context.status != kDAReturnNotMounted) {
+        DASessionUnscheduleFromRunLoop(session, run_loop,
+                                       kCFRunLoopDefaultMode);
+        CFRelease(disk);
+        CFRelease(session);
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_DA_DEACTIVATION_STATUS=%#x source=%s\n",
+                (unsigned int)context.status,
+                source);
+        return EBUSY;
+    }
+
+    /* A Local FSKit virtual disk remains busy while the MFMount XPC transport
+     * is live.  Keep the DADiskRef/session alive, close the transport after
+     * the whole-disk unmount acknowledgement, then deactivate that same
+     * virtual disk with DADiskEject. */
+    errno = 0;
+    bool closed = MFChannelClose(channel);
+    int saved_errno = errno;
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d\n",
+            closed ? 1 : 0,
+            saved_errno);
+    if (!closed) {
+        DASessionUnscheduleFromRunLoop(session, run_loop,
+                                       kCFRunLoopDefaultMode);
+        CFRelease(disk);
+        CFRelease(session);
+        return saved_errno == 0 ? EIO : saved_errno;
+    }
+
+    if (mount_source_is_present(mountpoint, source)) {
         context.completed = false;
         context.status = kDAReturnError;
         fprintf(stderr,
@@ -252,7 +283,8 @@ static int unmount_source_with_disk_arbitration(const char *source,
             "DIRECT_MFMOUNT_DA_DEACTIVATION_STATUS=%#x source=%s\n",
             (unsigned int)context.status,
             source);
-    return context.status == kDAReturnSuccess ? 0 : EBUSY;
+    return context.status == kDAReturnSuccess ||
+           context.status == kDAReturnNotMounted ? 0 : EBUSY;
 }
 
 static bool wait_for_mount_table_removal(const char *mountpoint,
@@ -301,14 +333,17 @@ static void *termination_wait_worker(void *opaque) {
             source,
             args->mountpoint);
 
-    /* Match macFUSE 5.3.3's libfuse teardown ownership: keep the server loop
-     * alive while Disk Arbitration deactivates the exact Local FSKit source,
-     * wait for its completion callback, and only then close the transport. */
+    /* Keep the server process alive while Disk Arbitration acknowledges the
+     * whole source, close its transport, and deactivate that exact source. */
     atomic_store_explicit(&g_teardown_active, true, memory_order_release);
     atomic_store_explicit(&g_teardown_complete, false, memory_order_release);
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d\n",
+            signal_number);
     int unmount_result = unmount_source_with_disk_arbitration(
         source,
-        args->mountpoint
+        args->mountpoint,
+        args->channel
     );
     if (unmount_result != 0) {
         atomic_store_explicit(&g_teardown_active, false, memory_order_release);
@@ -319,16 +354,6 @@ static void *termination_wait_worker(void *opaque) {
         destroy_termination_args(args);
         return NULL;
     }
-
-    errno = 0;
-    bool closed = MFChannelClose(args->channel);
-    int saved_errno = errno;
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d\n"
-            "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d\n",
-            signal_number,
-            closed ? 1 : 0,
-            saved_errno);
 
     bool mount_gone = wait_for_mount_table_removal(args->mountpoint, source);
     fprintf(stderr,
