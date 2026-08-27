@@ -1,0 +1,66 @@
+name: macFUSE 5.3.2 Runtime Policy
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "product/EDPMacFUSERuntimePolicy.swift"
+      - ".github/workflows/macfuse-532-runtime-policy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: macos-26
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install official 5.3.2
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse.dmg"
+          curl -fsSL --retry 3 https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.2/macfuse-5.3.2.dmg -o "${DMG}"
+          test "$(shasum -a 256 "${DMG}" | awk '{print $1}')" = 9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936
+          ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
+          VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
+          PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach "${VOL}" >/dev/null
+          APP=/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app
+          LS=/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister
+          "${LS}" -f -R -trusted "${APP}"
+          while IFS= read -r EXT; do pluginkit -a "${EXT}" || true; done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
+          pluginkit -a "${APP}" || true
+      - name: Compile and verify exact runtime policy
+        run: |
+          set -euo pipefail
+          cat >"${RUNNER_TEMP}/Probe.swift" <<'SWIFT'
+          import Foundation
+          @main enum Probe {
+              static func main() {
+                  do {
+                      let status = try EDPMacFUSERuntimePolicy.verifyInstalled()
+                      print("HOST=\(status.hostBundleID)")
+                      print("GENERIC=\(status.genericModuleBundleID)")
+                      print("LOCAL=\(status.localModuleBundleID)")
+                      print("TEAM=\(status.teamID)")
+                      print("LOCAL_REGISTERED=\(status.localRegisteredWithPluginKit)")
+                      print("MFMOUNT_PRESENT=\(status.mfMountFrameworkPresent)")
+                      print("RESULT=MACFUSE_532_RUNTIME_POLICY_ACCEPTED")
+                  } catch {
+                      fputs("policy: \(error)\n", stderr)
+                      exit(1)
+                  }
+              }
+          }
+          SWIFT
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
+            product/EDPMacFUSERuntimePolicy.swift "${RUNNER_TEMP}/Probe.swift" -o "${RUNNER_TEMP}/probe"
+          "${RUNNER_TEMP}/probe" | tee "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'HOST=io.macfuse.app' "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'LOCAL=io.macfuse.app.fsmodule.macfuse-local' "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'TEAM=3T5GSNBU6W' "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'MFMOUNT_PRESENT=true' "${RUNNER_TEMP}/out.txt"
+          grep -Fq 'RESULT=MACFUSE_532_RUNTIME_POLICY_ACCEPTED' "${RUNNER_TEMP}/out.txt"
