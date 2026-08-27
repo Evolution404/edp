@@ -25,6 +25,7 @@ jobs:
       MACFUSE_DMG_URL: "https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg"
       MACFUSE_FSKIT_GENERIC_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse"
       MACFUSE_FSKIT_LOCAL_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse-local"
+      TRANSPORT_VOLUME_NAME: "EDP macFUSE Hidden Transport"
 
     steps:
       - uses: actions/checkout@v6
@@ -96,7 +97,7 @@ jobs:
           grep -Fq "+    ${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
           grep -Fq "+    ${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build Darwin-compatible one-file RW transport
+      - name: Build transport and visibility probes
         run: |
           set -euo pipefail
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -120,12 +121,40 @@ jobs:
           EOF
           xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/inspect.c" -o "${RUNNER_TEMP}/inspect"
 
-      - name: Prove local FSKit nobrowse transport
+          cat >"${RUNNER_TEMP}/InspectVolume.swift" <<'SWIFT'
+          import Foundation
+
+          @main
+          struct InspectVolume {
+              static func main() throws {
+                  guard CommandLine.arguments.count == 2 else { exit(64) }
+                  let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+                  let values = try url.resourceValues(forKeys: [
+                      .volumeIsBrowsableKey,
+                      .volumeNameKey,
+                      .volumeLocalizedNameKey,
+                      .volumeIsLocalKey,
+                      .volumeIsReadOnlyKey,
+                      .volumeTypeNameKey,
+                  ])
+                  guard let browsable = values.volumeIsBrowsable else { exit(65) }
+                  print("BROWSABLE=\(browsable ? 1 : 0)")
+                  print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
+                  print("LOCALIZED_NAME=\(values.volumeLocalizedName ?? "<nil>")")
+                  print("LOCAL=\(values.volumeIsLocal == true ? 1 : 0)")
+                  print("READ_ONLY=\(values.volumeIsReadOnly == true ? 1 : 0)")
+                  print("TYPE=\(values.volumeTypeName ?? "<nil>")")
+              }
+          }
+          SWIFT
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
+            "${RUNNER_TEMP}/InspectVolume.swift" -o "${RUNNER_TEMP}/InspectVolume"
+
+      - name: Collect local FSKit nobrowse contract
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/macfuse-hidden.raw"
           MOUNTPOINT="/Volumes/.edp-macfuse-hidden-$(uuidgen | tr '[:upper:]' '[:lower:]')"
-          FINDER_DISK_NAME="$(basename "${MOUNTPOINT}")"
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
           printf 'EDP-MACFUSE-HIDDEN' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
           sudo mkdir -p "${MOUNTPOINT}"
@@ -133,7 +162,7 @@ jobs:
           echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
 
           "${RUNNER_TEMP}/raw_transport" "${RAW}" -f -d \
-            -o "backend=fskit,local,nobrowse,volname=EDP macFUSE Hidden Transport" \
+            -o "backend=fskit,local,nobrowse,volname=${TRANSPORT_VOLUME_NAME}" \
             "${MOUNTPOINT}" >"${RUNNER_TEMP}/transport.log" 2>&1 &
           TRANSPORT_PID=$!
           echo "TRANSPORT_PID=${TRANSPORT_PID}" >> "${GITHUB_ENV}"
@@ -164,7 +193,21 @@ jobs:
 
           FLAGS="$(${RUNNER_TEMP}/inspect "${MOUNTPOINT}")"
           printf '%s\n' "${FLAGS}"
-          printf '%s\n' "${FLAGS}" | grep -Fq 'MNT_DONTBROWSE=1'
+          if printf '%s\n' "${FLAGS}" | grep -Fq 'MNT_DONTBROWSE=1'; then
+            FLAG_OK=1
+          else
+            FLAG_OK=0
+          fi
+          echo "MNT_DONTBROWSE_OK=${FLAG_OK}"
+
+          FOUNDATION="$(${RUNNER_TEMP}/InspectVolume "${MOUNTPOINT}")"
+          printf '%s\n' "${FOUNDATION}"
+          if [[ "$(printf '%s\n' "${FOUNDATION}" | sed -n 's/^BROWSABLE=//p')" = 0 ]]; then
+            FOUNDATION_HIDDEN=1
+          else
+            FOUNDATION_HIDDEN=0
+          fi
+          echo "FOUNDATION_HIDDEN=${FOUNDATION_HIDDEN}"
 
           open -a Finder
           finder_ok=false
@@ -174,11 +217,13 @@ jobs:
           done
           test "${finder_ok}" = true
           cat "${RUNNER_TEMP}/finder.txt"
-          if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder.txt"; then
+          if grep -Fq "${TRANSPORT_VOLUME_NAME}" "${RUNNER_TEMP}/finder.txt"; then
+            FINDER_HIDDEN=0
             echo 'FINDER_TRANSPORT_VISIBLE=1'
-            exit 1
+          else
+            FINDER_HIDDEN=1
+            echo 'FINDER_TRANSPORT_VISIBLE=0'
           fi
-          echo 'FINDER_TRANSPORT_VISIBLE=0'
 
           EXPOSED="${MOUNTPOINT}/volume.raw"
           test -f "${EXPOSED}"
@@ -194,7 +239,13 @@ jobs:
           test -n "${DISK}"
           hdiutil detach "${DISK}" -force >/dev/null
           echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
-          echo 'RESULT=MACFUSE_LOCAL_FSKIT_HIDDEN_RW_TRANSPORT_OK'
+
+          if [[ "${FLAG_OK}" = 1 && "${FOUNDATION_HIDDEN}" = 1 && "${FINDER_HIDDEN}" = 1 ]]; then
+            echo 'RESULT=MACFUSE_LOCAL_FSKIT_HIDDEN_RW_TRANSPORT_OK'
+            exit 0
+          fi
+          echo "RESULT=MACFUSE_LOCAL_FSKIT_NOBROWSE_NOT_IMPLEMENTED flag=${FLAG_OK} foundation=${FOUNDATION_HIDDEN} finder=${FINDER_HIDDEN}"
+          exit 1
 
       - name: Cleanup
         if: always()
