@@ -18,8 +18,10 @@
 
 #if defined(__APPLE__)
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
+extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak_import));
 #else
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
+extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak));
 #endif
 
 #ifndef ENOATTR
@@ -650,6 +652,24 @@ int main(int argc, char **argv) {
             break;
         }
         MFRelease(message);
+    }
+
+    if (EDPDirectMFMountTeardownActive != NULL &&
+        EDPDirectMFMountTeardownComplete != NULL &&
+        EDPDirectMFMountTeardownActive()) {
+        struct timespec delay = {
+            .tv_sec = 0,
+            .tv_nsec = 100 * 1000 * 1000,
+        };
+        for (int attempt = 0; attempt < 150; attempt++) {
+            if (EDPDirectMFMountTeardownComplete()) {
+                break;
+            }
+            nanosleep(&delay, NULL);
+        }
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_TEARDOWN_COMPLETE=%d\n",
+                EDPDirectMFMountTeardownComplete() ? 1 : 0);
     }
 
     if (fsync(backing_fd) != 0) {

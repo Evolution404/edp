@@ -34,9 +34,14 @@ struct da_unmount_context {
 };
 
 static atomic_bool g_teardown_active = false;
+static atomic_bool g_teardown_complete = false;
 
 bool EDPDirectMFMountTeardownActive(void) {
     return atomic_load_explicit(&g_teardown_active, memory_order_acquire);
+}
+
+bool EDPDirectMFMountTeardownComplete(void) {
+    return atomic_load_explicit(&g_teardown_complete, memory_order_acquire);
 }
 
 static char *copy_string(const char *source) {
@@ -299,6 +304,7 @@ static void *termination_wait_worker(void *opaque) {
      * alive while Disk Arbitration deactivates the exact Local FSKit source,
      * wait for its completion callback, and only then close the transport. */
     atomic_store_explicit(&g_teardown_active, true, memory_order_release);
+    atomic_store_explicit(&g_teardown_complete, false, memory_order_release);
     int unmount_result = unmount_source_with_disk_arbitration(
         source,
         args->mountpoint
@@ -329,6 +335,7 @@ static void *termination_wait_worker(void *opaque) {
             mount_gone ? 1 : 0,
             source,
             args->mountpoint);
+    atomic_store_explicit(&g_teardown_complete, true, memory_order_release);
 
     destroy_termination_args(args);
     return NULL;

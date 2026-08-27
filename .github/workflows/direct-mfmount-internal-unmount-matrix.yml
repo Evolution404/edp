@@ -107,7 +107,7 @@ jobs:
             EXITED=0
             for _ in $(seq 1 40); do
               if ! mount | grep -Fq " on ${MP} "; then MOUNT_GONE=1; break; fi
-              if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; break; fi
+              if ! kill -0 "${P}" 2>/dev/null; then EXITED=1; fi
               sleep 1
             done
             if [[ "${MOUNT_GONE}" -ne 1 ]]; then
@@ -134,6 +134,7 @@ jobs:
             grep -Fq 'DIRECT_MFMOUNT_DA_DEACTIVATION_STATUS=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=1 errno=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_MOUNT_TABLE_GONE=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_TEARDOWN_COMPLETE=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_EXIT=0' "${RUNNER_TEMP}/server.log"
             echo "SOURCE_DADISK_UNMOUNT_OK=1"
           }
