@@ -1,0 +1,162 @@
+name: FUSE-T FSKit Transport No-Browse
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
+      - "product/EDPNativeSystem.swift"
+      - "product/EDPVaultRuntime.swift"
+      - ".github/workflows/fuset-transport-nobrowse.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuset-transport-nobrowse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  post-mount-nobrowse:
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      FUSET_VERSION: "1.2.7"
+      FUSET_PKG_SHA256: "6a29c747e61a86a405a189efc3de42812d73147135f93a1bb0624c1e7b90e654"
+      FUSET_PKG_URL: "https://github.com/macos-fuse-t/fuse-t/releases/download/1.2.7/fuse-t-macos-installer-1.2.7.pkg"
+      FUSET_BUNDLE_ID: "org.fuset.fskit-srv.module"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify hosted runtime
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+
+      - name: Stage official FUSE-T FSKit app
+        run: |
+          set -euo pipefail
+          PKG="${RUNNER_TEMP}/fuse-t-${FUSET_VERSION}.pkg"
+          EXPANDED="${RUNNER_TEMP}/fuse-t-expanded"
+          curl --fail --location --retry 3 --silent --show-error "${FUSET_PKG_URL}" -o "${PKG}"
+          ACTUAL="$(shasum -a 256 "${PKG}" | awk '{print $1}')"
+          test "${ACTUAL}" = "${FUSET_PKG_SHA256}"
+          pkgutil --expand-full "${PKG}" "${EXPANDED}"
+          SOURCE_APP="$(find "${EXPANDED}" -type d -path '*fuse-t-fskit.pkg/Payload/Applications/fuse-t.app' -print -quit)"
+          test -n "${SOURCE_APP}"
+          codesign --verify --deep --strict --verbose=2 "${SOURCE_APP}"
+          sudo rm -rf /Applications/fuse-t.app
+          sudo ditto "${SOURCE_APP}" /Applications/fuse-t.app
+          EXT="/Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex"
+          /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted /Applications/fuse-t.app
+          pluginkit -a "${EXT}" || true
+          pluginkit -a /Applications/fuse-t.app || true
+          pluginkit -e use -i "${FUSET_BUNDLE_ID}" || true
+
+      - name: Enable FSKit module on disposable runner
+        run: |
+          set -euo pipefail
+          SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
+          ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
+          mkdir -p "${SETTINGS_DIR}"
+          python3 - "${ENABLED_PLIST}" "${FUSET_BUNDLE_ID}" <<'PY'
+          import os, plistlib, sys
+          path, bundle_id = sys.argv[1:]
+          enabled = []
+          if os.path.exists(path):
+              try:
+                  with open(path, "rb") as f:
+                      value = plistlib.load(f)
+                  if isinstance(value, list):
+                      enabled = [x for x in value if isinstance(x, str)]
+              except Exception:
+                  pass
+          if bundle_id not in enabled:
+              enabled.append(bundle_id)
+          with open(path, "wb") as f:
+              plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
+          PY
+          chmod 600 "${ENABLED_PLIST}"
+          killall -9 fskit_agent 2>/dev/null || true
+          killall -9 extensionkitservice 2>/dev/null || true
+          sudo killall -9 fskitd 2>/dev/null || true
+          sleep 3
+          pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
+          grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+
+      - name: Build writable raw fixture and bridge
+        run: |
+          set -euo pipefail
+          RAW="${RUNNER_TEMP}/nobrowse.raw"
+          dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
+          printf 'EDP-NOBROWSE-PROBE' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
+          xcrun swiftc -swift-version 6 -warnings-as-errors \
+            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
+            -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+          echo "RAW=${RAW}" >> "${GITHUB_ENV}"
+
+      - name: Prove root post-mount nobrowse update
+        run: |
+          set -euo pipefail
+          HIDDEN="${RUNNER_TEMP}/.edp-nobrowse-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          LOG="${RUNNER_TEMP}/bridge.log"
+          mkdir -p "${HIDDEN}"
+          echo "HIDDEN=${HIDDEN}" >> "${GITHUB_ENV}"
+
+          "${RUNNER_TEMP}/FuseTMinimalBridge" \
+            --read-write \
+            --backing "${RAW}" \
+            --mountpoint "${HIDDEN}" \
+            --volume-name 'EDP NoBrowse Transport' \
+            >"${LOG}" 2>&1 &
+          BRIDGE_PID=$!
+          echo "BRIDGE_PID=${BRIDGE_PID}" >> "${GITHUB_ENV}"
+
+          mounted=false
+          for attempt in $(seq 1 30); do
+            if mount | grep -Fq " on ${HIDDEN} "; then
+              mounted=true
+              break
+            fi
+            if ! kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat "${LOG}" || true
+          test "${mounted}" = true
+
+          BEFORE="$(mount | grep -F " on ${HIDDEN} ")"
+          echo "MOUNT_BEFORE=${BEFORE}"
+
+          # The initial FUSE-T 1.2.7 FSKit mount currently drops nobrowse.
+          # Test the generic VFS update path from the privileged supervisor.
+          if ! printf '%s\n' "${BEFORE}" | grep -Eq '\bnobrowse\b'; then
+            sudo /sbin/mount -u -o nobrowse "${HIDDEN}"
+          fi
+
+          AFTER="$(mount | grep -F " on ${HIDDEN} ")"
+          echo "MOUNT_AFTER=${AFTER}"
+          printf '%s\n' "${AFTER}" | grep -Eq '\bnobrowse\b'
+
+          EXPOSED="${HIDDEN}/volume.raw"
+          test -f "${EXPOSED}"
+          cmp <(dd if="${RAW}" bs=1 skip=4096 count=18 status=none) \
+              <(dd if="${EXPOSED}" bs=1 skip=4096 count=18 status=none)
+
+          printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
+          cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
+          echo 'RESULT=FUSET_TRANSPORT_NOBROWSE_UPDATE_OK'
+
+      - name: Cleanup
+        if: always()
+        run: |
+          set +e
+          if [[ -n "${HIDDEN:-}" ]]; then /sbin/umount "${HIDDEN}" 2>/dev/null || sudo /sbin/umount "${HIDDEN}" 2>/dev/null; fi
+          if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null; fi
+          sudo rm -rf /Applications/fuse-t.app
+          exit 0
