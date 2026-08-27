@@ -29,6 +29,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Create ephemeral team signing identity for CI
+        timeout-minutes: 2
         run: |
           set -euo pipefail
           KEYCHAIN="${RUNNER_TEMP}/edp-ci-signing.keychain-db"
@@ -38,6 +39,7 @@ jobs:
           P12="${RUNNER_TEMP}/edp-ci-codesign.p12"
           OPENSSL_CONFIG="${RUNNER_TEMP}/edp-ci-openssl.cnf"
           PROBE="${RUNNER_TEMP}/edp-ci-team-probe"
+          IDENTITY='EDP CI Code Signing'
 
           cat > "${OPENSSL_CONFIG}" <<'EOF'
           [ req ]
@@ -68,17 +70,12 @@ jobs:
           /usr/bin/security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
           /usr/bin/security import "${P12}" -k "${KEYCHAIN}" \
             -P "${KEYCHAIN_PASSWORD}" -T /usr/bin/codesign
-          /usr/bin/security add-trusted-cert -r trustRoot -p codeSign \
-            -k "${KEYCHAIN}" "${CERT}"
           /usr/bin/security set-key-partition-list \
             -S apple-tool:,apple:,codesign: -s \
             -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
           /usr/bin/security list-keychains -d user -s "${KEYCHAIN}"
           /usr/bin/security default-keychain -d user -s "${KEYCHAIN}"
-
-          IDENTITY="$(/usr/bin/security find-identity -v -p codesigning "${KEYCHAIN}" \
-            | /usr/bin/awk '/EDP CI Code Signing/{print $2; exit}')"
-          [[ -n "${IDENTITY}" ]]
+          /usr/bin/security find-certificate -c "${IDENTITY}" "${KEYCHAIN}" >/dev/null
 
           printf 'int main(void) { return 0; }\n' \
             | /usr/bin/cc -x c - -o "${PROBE}"
