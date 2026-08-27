@@ -105,7 +105,36 @@ jobs:
           }
           stop() {
             P="$(cat "${RUNNER_TEMP}/pid")"
-            sudo "${RUNNER_TEMP}/unmount-helper" "${MP}" 2>&1 | tee "${RUNNER_TEMP}/unmount.log"
+            : >"${RUNNER_TEMP}/unmount.log"
+            sudo "${RUNNER_TEMP}/unmount-helper" "${MP}" >"${RUNNER_TEMP}/unmount.log" 2>&1 &
+            HELPER_PID=$!
+            HELPER_DONE=0
+            for _ in $(seq 1 30); do
+              if ! kill -0 "${HELPER_PID}" 2>/dev/null; then HELPER_DONE=1; break; fi
+              sleep 1
+            done
+            if [[ "${HELPER_DONE}" -ne 1 ]]; then
+              echo "PRIVILEGED_UNMOUNT_SYSCALL_BLOCKED=1 helper_pid=${HELPER_PID}"
+              cat "${RUNNER_TEMP}/unmount.log" || true
+              SOURCE="$(awk -F'[ =]' '/DIRECT_MFMOUNT_PRIVILEGED_SOURCE=/{print $2; exit}' "${RUNNER_TEMP}/unmount.log")"
+              echo "BLOCKED_SOURCE=${SOURCE:-<unknown>}"
+              ps -o pid=,ppid=,euid=,state=,etime=,command= -p "${HELPER_PID}" || true
+              mount | grep -F " on ${MP} " || true
+              if [[ -n "${SOURCE}" ]]; then
+                test -e "${SOURCE}" && echo "SOURCE_DEVICE_PRESENT=1 ${SOURCE}" || echo "SOURCE_DEVICE_PRESENT=0 ${SOURCE}"
+              fi
+              sudo /usr/bin/log show --last 3m --style compact --info --debug \
+                --predicate '(eventMessage CONTAINS[c] "deactivat") OR (eventMessage CONTAINS[c] "detach virtual") OR (eventMessage CONTAINS[c] "macfuse") OR (process CONTAINS[c] "fskit")' \
+                2>/dev/null | tail -n 400 || true
+              cat "${RUNNER_TEMP}/server.log" || true
+              sudo kill -9 "${HELPER_PID}" 2>/dev/null || true
+              sudo pkill -9 -f "${RUNNER_TEMP}/unmount-helper ${MP}" 2>/dev/null || true
+              wait "${HELPER_PID}" 2>/dev/null || true
+              return 1
+            fi
+            if wait "${HELPER_PID}"; then HELPER_RC=0; else HELPER_RC=$?; fi
+            cat "${RUNNER_TEMP}/unmount.log" || true
+            test "${HELPER_RC}" -eq 0
             MOUNT_GONE=0
             EXITED=0
             for _ in $(seq 1 40); do

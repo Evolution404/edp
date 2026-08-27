@@ -52,6 +52,11 @@ int main(int argc, char **argv) {
             argv[1],
             (unsigned int)geteuid());
 
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_CALL=1 source=%s mountpoint=%s\n",
+            source,
+            argv[1]);
+    fflush(stderr);
     errno = 0;
     int result = unmount(argv[1], MNT_FORCE);
     int saved_errno = errno;
