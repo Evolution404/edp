@@ -1,4 +1,4 @@
-name: macFUSE Generic FSKit Hidden RW Transport
+name: macFUSE Local FSKit Hidden RW Transport
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
       MACFUSE_VERSION: "5.3.3"
       MACFUSE_DMG_SHA256: "7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
       MACFUSE_DMG_URL: "https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg"
-      MACFUSE_FSKIT_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse"
+      MACFUSE_FSKIT_BUNDLE_ID: "io.macfuse.app.fsmodule.macfuse-local"
 
     steps:
       - uses: actions/checkout@v6
@@ -52,7 +52,7 @@ jobs:
           hdiutil detach "${VOL}" >/dev/null
           test -f /usr/local/lib/pkgconfig/fuse3.pc
 
-      - name: Enable Generic FSKit module
+      - name: Enable local FSKit module
         run: |
           set -euo pipefail
           APP="$(find /Applications /Library/Filesystems -type d -iname 'macfuse.app' -print -quit 2>/dev/null || true)"
@@ -89,7 +89,7 @@ jobs:
           sudo killall -9 fskitd 2>/dev/null || true
           sleep 3
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
-          grep -Fq "${MACFUSE_FSKIT_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
+          grep -Fq "+    ${MACFUSE_FSKIT_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
       - name: Build Darwin-compatible one-file RW transport
         run: |
@@ -115,7 +115,7 @@ jobs:
           EOF
           xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/inspect.c" -o "${RUNNER_TEMP}/inspect"
 
-      - name: Prove Generic FSKit nobrowse transport
+      - name: Prove local FSKit nobrowse transport
         run: |
           set -euo pipefail
           RAW="${RUNNER_TEMP}/macfuse-hidden.raw"
@@ -127,8 +127,8 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
           echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
 
-          "${RUNNER_TEMP}/raw_transport" "${RAW}" -f \
-            -o "backend=fskit,nobrowse,volname=EDP macFUSE Hidden Transport" \
+          "${RUNNER_TEMP}/raw_transport" "${RAW}" -f -d \
+            -o "backend=fskit,local,nobrowse,volname=EDP macFUSE Hidden Transport" \
             "${MOUNTPOINT}" >"${RUNNER_TEMP}/transport.log" 2>&1 &
           TRANSPORT_PID=$!
           echo "TRANSPORT_PID=${TRANSPORT_PID}" >> "${GITHUB_ENV}"
@@ -139,9 +139,23 @@ jobs:
             if ! kill -0 "${TRANSPORT_PID}" 2>/dev/null; then break; fi
             sleep 1
           done
-          cat "${RUNNER_TEMP}/transport.log"
-          mount | grep -F " on ${MOUNTPOINT} " || true
-          test "${mounted}" = true
+
+          echo '=== transport log ==='
+          cat "${RUNNER_TEMP}/transport.log" || true
+          echo '=== process state ==='
+          ps aux | grep -Ei 'raw_transport|fskit|macfuse|MFMount' | grep -v grep || true
+          echo '=== matching mounts ==='
+          mount | grep -Ei 'macfuse|fskit|edp-macfuse' || true
+
+          if [[ "${mounted}" != true ]]; then
+            echo 'MOUNTED=0'
+            echo '=== FSKit/macFUSE unified log ==='
+            log show --last 3m --style compact \
+              --predicate '(process == "fskitd") OR (process CONTAINS[c] "macfuse") OR (subsystem CONTAINS[c] "fskit") OR (subsystem CONTAINS[c] "macfuse")' \
+              2>/dev/null | tail -n 400 || true
+            exit 2
+          fi
+          echo 'MOUNTED=1'
 
           FLAGS="$(${RUNNER_TEMP}/inspect "${MOUNTPOINT}")"
           printf '%s\n' "${FLAGS}"
@@ -175,7 +189,7 @@ jobs:
           test -n "${DISK}"
           hdiutil detach "${DISK}" -force >/dev/null
           echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
-          echo 'RESULT=MACFUSE_GENERIC_FSKIT_HIDDEN_RW_TRANSPORT_OK'
+          echo 'RESULT=MACFUSE_LOCAL_FSKIT_HIDDEN_RW_TRANSPORT_OK'
 
       - name: Cleanup
         if: always()
