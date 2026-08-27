@@ -1,0 +1,44 @@
+name: Transport Backend Builder Contract
+
+on:
+  push:
+    branches: ["test/fuset-minimal-fskit-bridge"]
+    paths:
+      - "installer/build-transport-backends.sh"
+      - "product/EDPTransportExec.c"
+      - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/**"
+      - "native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift"
+      - "native/EDPFSKitPoC/Tools/FuseTMinimal/**"
+      - ".github/workflows/transport-backend-builder.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install official macFUSE 5.3.3 runtime
+        run: |
+          set -euo pipefail
+          DMG="${RUNNER_TEMP}/macfuse.dmg"
+          curl -fsSL --retry 3 https://github.com/macfuse/macfuse/releases/download/macfuse-5.3.3/macfuse-5.3.3.dmg -o "${DMG}"
+          test "$(shasum -a 256 "${DMG}" | awk '{print $1}')" = 7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15
+          ATTACH="$(hdiutil attach -nobrowse -readonly "${DMG}")"
+          VOL="$(printf '%s\n' "${ATTACH}" | awk -F '\t' '/\/Volumes\// {print $NF; exit}')"
+          PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
+          sudo installer -pkg "${PKG}" -target /
+          hdiutil detach "${VOL}" >/dev/null
+      - name: Build all switchable transport binaries
+        run: |
+          set -euo pipefail
+          chmod +x installer/build-transport-backends.sh
+          installer/build-transport-backends.sh "${RUNNER_TEMP}/bin" | tee "${RUNNER_TEMP}/builder.txt"
+          grep -Fq 'RESULT=EDP_TRANSPORT_BACKENDS_BUILT' "${RUNNER_TEMP}/builder.txt"
+          for n in edp-fuset-readwrite edp-fuset-readwrite-backend edp-mfmount-local-readwrite; do test -x "${RUNNER_TEMP}/bin/${n}"; done
+          EDP_TRANSPORT=invalid "${RUNNER_TEMP}/bin/edp-fuset-readwrite" >/dev/null 2>"${RUNNER_TEMP}/invalid.txt" && exit 1 || RC=$?
+          test "${RC}" -eq 64
+          echo 'RESULT=TRANSPORT_BACKEND_BUILDER_CONTRACT_OK'
