@@ -75,6 +75,8 @@ matrix run `33040192662`（commit `cb7591f`）：两版本 whole-unmount callbac
 
 matrix run `33040455206`（commit `bcfa918`）：两版本在 whole-unmount success 后先调用 `MFChannelClose()`，但随后 eject 仍一致返回 `0xC010 = unix_err(EBUSY)`。日志与 ownership 检查确认 close 后 signal worker 的 retained channel 和 server 主线程的 original channel 尚未 `MFRelease()`；旧 barrier 又把主线程 release 放在 eject 之后，形成确定的 teardown 依赖倒置。下一版增加双向 barrier：worker close 并释放 retained channel → server 离开 receive loop、fsync 并释放 original channel → 通知 `TRANSPORT_RELEASED` → worker 对原 scheduled `DADiskRef` eject → mount-table gate → 通知 teardown complete，server 才退出。
 
+matrix run `33040658959`（commit `cc7187b`）：两版本都证明 retained/original 两个 channel owner 已完全 release，worker 也在 eject 前观察到 `TRANSPORT_RELEASED=1`，但 eject 仍一致返回 `unix_err(EBUSY)`；bridge ownership 因此已排除。进一步检查官方 5.3.3 `Mount` source 与发布包 binary：`XPCTransport.deactivate()` 仅 cancel listener/peer；Local extension 的 `FSVolume.deactivate(options:)` 会另行调用 mount daemon 的 typed XPC method `device/deactivate`（input field `bsdName`），daemon 对应执行 “Deactivating virtual device” → “Detach virtual device” → remove disk image。这是真正持有 virtual `/dev/diskN` resource 的 deactivation path，且没有公开 MFMount C export。下一版在 source DADisk whole-unmount acknowledgement 和 transport release 后，按 Local extension 的同一 protocol 对精确 BSD name 请求 mount-service deactivation；DA eject 只保留为失败诊断 fallback。
+
 ## 当前总状态
 
 **状态：Phase A/B 已完成；原生 Swift 最小 bridge 与 Phase D 核心已通过；Phase E/F 已完整通过；Phase G 的 synthetic SM4 G1-G3 已通过，且 G4a/G5a/G6a“真实捕获 metadata + 正式 EDPReadOnlyUnlock + hosted macOS 26”子里程碑已通过。Phase H hosted H1-H4、H5a、H6 已通过，H7-H10 已完成许可核对、macFUSE 对照与最终架构决策。最终选择：`A. 推荐 FUSE-T thin bridge`，限定 macOS 26+ 只读产品路径。物理 `/dev/rdiskN` 的 G4/G5/G6 与 sleep/wake/真实拔盘 H5b 仍保留为 release gate；商业发布还必须先取得适用 FUSE-T commercial license。**

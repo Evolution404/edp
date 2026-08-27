@@ -1,6 +1,7 @@
 #include <MFMount/MFMount.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <DiskArbitration/DiskArbitration.h>
+#include <xpc/xpc.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -164,6 +165,86 @@ static bool wait_for_transport_release(void) {
     return false;
 }
 
+static int deactivate_source_with_macfuse_daemon(const char *bsd_name) {
+    static const char *service_names[] = {
+        "3T5GSNBU6W.io.macfuse.app.launchservice.daemon.xpc",
+        "io.macfuse.mount",
+    };
+
+    for (size_t index = 0;
+         index < sizeof(service_names) / sizeof(service_names[0]);
+         index++) {
+        const char *service_name = service_names[index];
+        xpc_connection_t connection = xpc_connection_create_mach_service(
+            service_name,
+            NULL,
+            XPC_CONNECTION_MACH_SERVICE_PRIVILEGED
+        );
+        if (connection == NULL) {
+            continue;
+        }
+        xpc_connection_set_event_handler(
+            connection,
+            ^(xpc_object_t event) { (void)event; }
+        );
+        xpc_connection_activate(connection);
+
+        xpc_object_t message = xpc_dictionary_create(NULL, NULL, 0);
+        xpc_object_t input = xpc_dictionary_create(NULL, NULL, 0);
+        xpc_dictionary_set_string(message, "method", "device/deactivate");
+        xpc_dictionary_set_string(input, "bsdName", bsd_name);
+        xpc_dictionary_set_value(message, "input", input);
+
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_MACFUSE_DEACTIVATE_REQUESTED=1 "
+                "service=%s bsd=%s\n",
+                service_name,
+                bsd_name);
+        xpc_object_t reply = xpc_connection_send_message_with_reply_sync(
+            connection,
+            message
+        );
+        char *description = reply == NULL
+            ? NULL
+            : xpc_copy_description(reply);
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_MACFUSE_DEACTIVATE_REPLY=%s "
+                "service=%s bsd=%s\n",
+                description == NULL ? "<null>" : description,
+                service_name,
+                bsd_name);
+
+        bool succeeded = reply != NULL &&
+            xpc_get_type(reply) == XPC_TYPE_DICTIONARY &&
+            xpc_dictionary_get_value(reply, "output") != NULL &&
+            xpc_dictionary_get_value(reply, "error") == NULL;
+
+        free(description);
+        if (reply != NULL) {
+            xpc_release(reply);
+        }
+        xpc_release(input);
+        xpc_release(message);
+        xpc_connection_cancel(connection);
+        xpc_release(connection);
+
+        if (succeeded) {
+            fprintf(stderr,
+                    "DIRECT_MFMOUNT_MACFUSE_DEACTIVATION_STATUS=0 "
+                    "service=%s bsd=%s\n",
+                    service_name,
+                    bsd_name);
+            return 0;
+        }
+    }
+
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_MACFUSE_DEACTIVATION_STATUS=%d bsd=%s\n",
+            EIO,
+            bsd_name);
+    return EIO;
+}
+
 static int unmount_source_with_disk_arbitration(const char *source,
                                                 const char *mountpoint,
                                                 MFChannelRef *channel) {
@@ -286,6 +367,12 @@ static int unmount_source_with_disk_arbitration(const char *source,
         CFRelease(disk);
         CFRelease(session);
         return ETIMEDOUT;
+    }
+
+    if (mount_source_is_present(mountpoint, source) &&
+        deactivate_source_with_macfuse_daemon(expected_bsd_name) == 0) {
+        context.completed = true;
+        context.status = kDAReturnSuccess;
     }
 
     if (mount_source_is_present(mountpoint, source)) {

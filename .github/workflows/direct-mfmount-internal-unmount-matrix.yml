@@ -135,6 +135,7 @@ jobs:
             grep -Fq 'DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=1 errno=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_SERVER_TRANSPORT_RELEASED=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_TRANSPORT_RELEASED=1' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_MACFUSE_DEACTIVATION_STATUS=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_MOUNT_TABLE_GONE=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_TEARDOWN_COMPLETE=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_EXIT=0' "${RUNNER_TEMP}/server.log"
