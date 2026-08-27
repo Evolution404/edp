@@ -125,8 +125,9 @@ static void da_unmount_callback(DADiskRef disk,
     CFRunLoopStop(CFRunLoopGetCurrent());
 }
 
-static int unmount_source_with_disk_arbitration(const char *source) {
-    const char *bsd_name = source + strlen("/dev/");
+static int unmount_source_with_disk_arbitration(const char *source,
+                                                const char *mountpoint) {
+    const char *expected_bsd_name = source + strlen("/dev/");
     DASessionRef session = DASessionCreate(kCFAllocatorDefault);
     if (session == NULL) {
         return ENOMEM;
@@ -134,17 +135,48 @@ static int unmount_source_with_disk_arbitration(const char *source) {
 
     CFRunLoopRef run_loop = CFRunLoopGetCurrent();
     DASessionScheduleWithRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-    DADiskRef disk = DADiskCreateFromBSDName(
+    CFURLRef volume_url = CFURLCreateFromFileSystemRepresentation(
+        kCFAllocatorDefault,
+        (const UInt8 *)mountpoint,
+        strlen(mountpoint),
+        true
+    );
+    if (volume_url == NULL) {
+        DASessionUnscheduleFromRunLoop(session, run_loop,
+                                       kCFRunLoopDefaultMode);
+        CFRelease(session);
+        return ENOMEM;
+    }
+    DADiskRef disk = DADiskCreateFromVolumePath(
         kCFAllocatorDefault,
         session,
-        bsd_name
+        volume_url
     );
+    CFRelease(volume_url);
     if (disk == NULL) {
         DASessionUnscheduleFromRunLoop(session, run_loop,
                                        kCFRunLoopDefaultMode);
         CFRelease(session);
         return ENODEV;
     }
+    const char *actual_bsd_name = DADiskGetBSDName(disk);
+    if (actual_bsd_name == NULL ||
+        strcmp(actual_bsd_name, expected_bsd_name) != 0) {
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_DA_SOURCE_MISMATCH=1 expected=%s actual=%s\n",
+                expected_bsd_name,
+                actual_bsd_name == NULL ? "<null>" : actual_bsd_name);
+        DASessionUnscheduleFromRunLoop(session, run_loop,
+                                       kCFRunLoopDefaultMode);
+        CFRelease(disk);
+        CFRelease(session);
+        return EXDEV;
+    }
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_DA_VOLUME_MATCH=1 source=%s bsd=%s mountpoint=%s\n",
+            source,
+            actual_bsd_name,
+            mountpoint);
 
     struct da_unmount_context context = {
         .completed = false,
@@ -236,7 +268,10 @@ static void *termination_wait_worker(void *opaque) {
      * alive while Disk Arbitration deactivates the exact Local FSKit source,
      * wait for its completion callback, and only then close the transport. */
     atomic_store_explicit(&g_teardown_active, true, memory_order_release);
-    int unmount_result = unmount_source_with_disk_arbitration(source);
+    int unmount_result = unmount_source_with_disk_arbitration(
+        source,
+        args->mountpoint
+    );
     if (unmount_result != 0) {
         atomic_store_explicit(&g_teardown_active, false, memory_order_release);
         fprintf(stderr,

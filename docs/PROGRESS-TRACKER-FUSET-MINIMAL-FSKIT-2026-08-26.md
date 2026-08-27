@@ -27,7 +27,7 @@
 - macFUSE `5.3.2` 的 Library-3 gitlink 为 `afdd74cf`；`fuse_session_mount_callback()` 用 `DADiskCreateFromVolumePath()` 保存 `DADiskRef`，但 `fuse_session_unmount()` 只是调用无 callback 的 `DADiskUnmount()` 后立即 `CFRelease`，没有等待 Disk Arbitration 完成，也没有在 graceful 路径随后关闭 channel。
 - macFUSE `5.3.3` 的 Library-3 gitlink 为 `9a3db24b`；新增完整 mount state machine。unmount 在独立线程调度 DASession/run loop，等待 `DADiskUnmount` callback，成功后才 `fuse_session_close()`；失败时恢复 DADisk ownership 和 mounted 状态。
 - 因此 5.3.2 → 5.3.3 **确实存在 libfuse teardown 实现差异**，但 Direct MFMount adapter 绕过 libfuse，不会自动获得 5.3.3 的 state machine；`_MFChannelInterrupt` 也不是上述正确 teardown 的决定性步骤。
-- Direct adapter 当前按同一所有权顺序实现：从 mount table 解析 `/dev/diskN` source → `DADiskCreateFromBSDName()` → 调度并等待 `DADiskUnmount` callback → 关闭 MFChannel → 验证 source/mountpoint 均从 mount table 消失。这样可以用完全相同的代码验证 5.3.2/5.3.3 runtime，而不会把 library 版本自身的不同 teardown 实现混入结果。
+- Direct adapter 当前按同一所有权顺序实现：从 mount table 解析 `/dev/diskN` source → `DADiskCreateFromVolumePath()` 并校验 `DADiskGetBSDName()` 匹配 source → 调度并等待 `DADiskUnmount` callback → 关闭 MFChannel → 验证 source/mountpoint 均从 mount table 消失。这样可以用完全相同的代码验证 5.3.2/5.3.3 runtime，而不会把 library 版本自身的不同 teardown 实现混入结果。
 - 官方源码：`https://github.com/macfuse/library`；版本 gitlink 来自 `macfuse/macfuse` 的 `macfuse-5.3.2` / `macfuse-5.3.3` tag。
 
 当前唯一诊断主线：
@@ -35,7 +35,8 @@
 ```text
 mountpoint
   -> 读取 mount table 中真实 source /dev/diskN
-  -> DASession + DADiskCreateFromBSDName(source)
+  -> DASession + DADiskCreateFromVolumePath(mountpoint)
+  -> DADiskGetBSDName() == source 的硬校验
   -> 对对应 DADiskRef 执行正确 unmount/deactivation 并等待 callback
   -> 再收口 MF transport/channel
   -> 确认 mount table 条目消失
@@ -61,6 +62,8 @@ mountpoint
 停止条件：一旦 5.3.2 或 5.3.3 稳定通过 L7，立即停止版本诊断实验、固定该版本并进入 L9/L10。
 
 matrix run `33039249865`（commit `a07f654`）：5.3.2/5.3.3 均成功安装、构建、首轮 encrypted mount 和 marker RW，但都未在 40 秒 gate 内移除 mount table 条目。首版 stop 函数在输出 `server.log` 前执行断言，因而该 run 不能判断是 DADiskRef 创建失败、callback timeout 还是 dissenter；已改为所有失败分支先输出真实 source、DA callback 状态和残留 mount entry，再做下一轮判别。此轮不构成版本行为差异结论。
+
+matrix run `33039433969`（commit `ed39089`）：两版本都把 Local mount source 解析为 `/dev/disk8`，`DADiskCreateFromBSDName("disk8")` 也都成功，但 `DADiskUnmount` callback 一致返回 `0xF8DA0007 = kDAReturnNotMounted`，mount table 条目保持不变。这证明 source block-device DADisk 不是 Disk Arbitration 记录的 mounted-volume DADisk；两版本在该错误对象路径上没有行为差异。下一版改为官方 library 使用的 `DADiskCreateFromVolumePath()`，同时要求 `DADiskGetBSDName()` 必须匹配先前解析的 source，避免只凭 mountpoint 取到错误 volume。
 
 ## 当前总状态
 

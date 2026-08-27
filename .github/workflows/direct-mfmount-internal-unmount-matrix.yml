@@ -129,6 +129,7 @@ jobs:
             cat "${RUNNER_TEMP}/server.log" || true
             test "${PRC}" -eq 0
             grep -Eq 'DIRECT_MFMOUNT_SOURCE=/dev/disk[0-9]+' "${RUNNER_TEMP}/server.log"
+            grep -Fq 'DIRECT_MFMOUNT_DA_VOLUME_MATCH=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_DA_UNMOUNT_REQUESTED=1' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_DA_UNMOUNT_STATUS=0' "${RUNNER_TEMP}/server.log"
             grep -Fq 'DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=1 errno=0' "${RUNNER_TEMP}/server.log"
