@@ -132,10 +132,6 @@ xcrun swiftc -parse-as-library -O -framework CryptoKit -framework Security \
   "${BUILD_ROOT}/EDPRawReadAuthorization.o" \
   -o "${RUNTIME_STAGE}/bin/edp-raw-sparse"
 
-# Keep the runtime daemon and the App in the same signing team.  The current
-# XPC peer validator intentionally rejects clients whose TeamIdentifier differs
-# from the privileged service.  Ad-hoc remains available for non-functional
-# archive inspection, while signed builds use one identity across the runtime.
 for item in "${RUNTIME_STAGE}/bin/"* "${RUNTIME_STAGE}/lib/"*; do
   /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" "${item}"
 done
@@ -191,7 +187,6 @@ PLIST
 /bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 fi
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
-  --identifier com.edp.usbvault.mountd \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
@@ -323,41 +318,43 @@ done < <(find "${MACFUSE_EXPANDED}" -maxdepth 2 -name '*.pkg' -print0)
 
 COMPONENT_COUNT="$(find "${BUILD_ROOT}/components" -maxdepth 1 -name '*.pkg' | wc -l | tr -d ' ')"
 [[ "${COMPONENT_COUNT}" -gt 1 ]] || {
-  echo "macFUSE installer components were not embedded" >&2
-  exit 3
+  echo "macFUSE component packages were not extracted" >&2
+  exit 4
 }
 
-DISTRIBUTION="${BUILD_ROOT}/Distribution.xml"
-/usr/bin/productbuild --synthesize --package-path "${BUILD_ROOT}/components" "${DISTRIBUTION}"
-python3 - "${DISTRIBUTION}" <<'PY'
+DIST="${BUILD_ROOT}/Distribution.xml"
+PRODUCTBUILD_ARGS=(--synthesize)
+while IFS= read -r -d '' package; do
+  PRODUCTBUILD_ARGS+=(--package "${package}")
+done < <(find "${BUILD_ROOT}/components" -maxdepth 1 -name '*.pkg' -print0 | sort -z)
+/usr/bin/productbuild "${PRODUCTBUILD_ARGS[@]}" "${DIST}"
+
+/usr/bin/python3 - "${DIST}" <<'PY'
 from pathlib import Path
 import sys
-path = Path(sys.argv[1])
-text = path.read_text()
-insert = """\n    <title>EDP USB Vault</title>\n    <welcome file=\"welcome.html\" mime-type=\"text/html\"/>\n    <license file=\"license.html\" mime-type=\"text/html\"/>\n"""
-text = text.replace("<installer-gui-script minSpecVersion=\"1\">", "<installer-gui-script minSpecVersion=\"1\">" + insert, 1)
-path.write_text(text)
+p = Path(sys.argv[1])
+s = p.read_text()
+needle = '<installer-gui-script minSpecVersion="1">'
+if '<title>' not in s:
+    s = s.replace(needle, needle + '\n    <title>EDP USB Vault + macFUSE FSKit</title>', 1)
+p.write_text(s)
 PY
 
-RESOURCES="${BUILD_ROOT}/resources"
-mkdir -p "${RESOURCES}"
-cat > "${RESOURCES}/welcome.html" <<'HTML'
-<html><body><h2>EDP USB Vault 0.5.0</h2><p>This package installs the EDP encrypted-volume runtime together with the original signed macFUSE 5.3.3 components.</p></body></html>
-HTML
-cat > "${RESOURCES}/license.html" <<'HTML'
-<html><body><h2>Third-party notices</h2><p>macFUSE and NTFS-3G are redistributed under their respective licenses. See the installed license files for details.</p></body></html>
-HTML
+OUTPUT_PKG="${OUTPUT_DIR}/EDP-USB-Vault-${VERSION}-${ARCH}-Clean.pkg"
+FINAL_ARGS=(
+  --distribution "${DIST}"
+  --package-path "${BUILD_ROOT}/components"
+)
+if [[ -n "${PRODUCT_SIGN_IDENTITY:-}" ]]; then
+  FINAL_ARGS+=(--sign "${PRODUCT_SIGN_IDENTITY}")
+fi
+/usr/bin/productbuild "${FINAL_ARGS[@]}" "${OUTPUT_PKG}"
 
-OUTPUT="${OUTPUT_DIR}/EDP-USB-Vault-${VERSION}-${ARCH}-Clean.pkg"
-/usr/bin/productbuild \
-  --distribution "${DISTRIBUTION}" \
-  --package-path "${BUILD_ROOT}/components" \
-  --resources "${RESOURCES}" \
-  "${OUTPUT}"
-/usr/bin/pkgutil --check-signature "${OUTPUT}" || true
-/usr/bin/shasum -a 256 "${OUTPUT}" > "${OUTPUT}.sha256"
+/usr/sbin/pkgutil --check-signature "${OUTPUT_PKG}" || true
+/usr/bin/shasum -a 256 "${OUTPUT_PKG}" \
+  > "${OUTPUT_DIR}/EDP-USB-Vault-${VERSION}-${ARCH}-Clean.pkg.sha256"
 
-echo "OUTPUT=${OUTPUT}"
+echo "OUTPUT=${OUTPUT_PKG}"
 echo "MACFUSE_VERSION=${MACFUSE_VERSION}"
 echo "NTFS3G_VERSION=2026.7.7"
 echo "RESULT=EDP_CLEAN_COMBINED_INSTALLER_BUILT"
