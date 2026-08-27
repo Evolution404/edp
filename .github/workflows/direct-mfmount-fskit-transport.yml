@@ -55,7 +55,6 @@ jobs:
           pkgutil --check-signature "${PKG}"
           sudo installer -pkg "${PKG}" -target /
           hdiutil detach "${VOL}" >/dev/null
-
           FRAMEWORK="/Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework"
           test -f "${FRAMEWORK}/Versions/A/MFMount"
           echo 'MFMOUNT_FRAMEWORK_INSTALLED=1'
@@ -69,14 +68,12 @@ jobs:
           LOCAL_APPEX="${APP}/Contents/Extensions/${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}.appex"
           test -d "${GENERIC_APPEX}"
           test -d "${LOCAL_APPEX}"
-
           LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
           "${LSREGISTER}" -f -R -trusted "${APP}"
           while IFS= read -r ext; do pluginkit -a "${ext}" || true; done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
           pluginkit -a "${APP}" || true
           pluginkit -e use -i "${MACFUSE_FSKIT_GENERIC_BUNDLE_ID}" || true
           pluginkit -e use -i "${MACFUSE_FSKIT_LOCAL_BUNDLE_ID}" || true
-
           SETTINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.fskit.settings"
           ENABLED_PLIST="${SETTINGS_DIR}/enabledModules.plist"
           mkdir -p "${SETTINGS_DIR}"
@@ -100,7 +97,6 @@ jobs:
               plistlib.dump(enabled, f, fmt=plistlib.FMT_XML, sort_keys=False)
           PY
           chmod 600 "${ENABLED_PLIST}"
-
           killall -9 fskit_agent 2>/dev/null || true
           killall -9 extensionkitservice 2>/dev/null || true
           sudo killall -9 fskitd 2>/dev/null || true
@@ -116,7 +112,6 @@ jobs:
           FRAMEWORK_DIR="/Library/Filesystems/macfuse.fs/Contents/Frameworks"
           INCLUDE_DIR="${RUNNER_TEMP}/direct-mfmount-include"
           mkdir -p "${INCLUDE_DIR}/MFMount"
-
           curl --fail --location --retry 3 --silent --show-error \
             "https://raw.githubusercontent.com/macfuse/mount/${MACFUSE_MOUNT_COMMIT}/Mount/MFMount.h" \
             -o "${INCLUDE_DIR}/MFMount/MFMount.h"
@@ -126,27 +121,18 @@ jobs:
           grep -Fq 'MFChannelCreate' "${INCLUDE_DIR}/MFMount/MFMount.h"
           grep -Fq 'FUSE_KERNEL_MINOR_VERSION 45' "${INCLUDE_DIR}/fuse_kernel.h"
           echo 'DIRECT_MFMOUNT_PINNED_HEADERS_OK=1'
-
           xcrun clang -std=c17 -Wall -Wextra -Werror \
-            -I"${INCLUDE_DIR}" \
-            -F"${FRAMEWORK_DIR}" \
+            -I"${INCLUDE_DIR}" -F"${FRAMEWORK_DIR}" \
             -DMFMount=EDPAsyncMFMount \
             -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c \
             -o "${RUNNER_TEMP}/direct-main.o"
           xcrun clang -std=c17 -Wall -Wextra -Werror \
-            -I"${INCLUDE_DIR}" \
-            -F"${FRAMEWORK_DIR}" \
+            -I"${INCLUDE_DIR}" -F"${FRAMEWORK_DIR}" \
             -c native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c \
             -o "${RUNNER_TEMP}/direct-mount-shim.o"
-          xcrun clang \
-            "${RUNNER_TEMP}/direct-main.o" \
-            "${RUNNER_TEMP}/direct-mount-shim.o" \
-            -F"${FRAMEWORK_DIR}" \
-            -framework MFMount \
-            -framework CoreFoundation \
-            -Wl,-rpath,"${FRAMEWORK_DIR}" \
-            -o "${RUNNER_TEMP}/direct_mfmount_raw"
-
+          xcrun clang "${RUNNER_TEMP}/direct-main.o" "${RUNNER_TEMP}/direct-mount-shim.o" \
+            -F"${FRAMEWORK_DIR}" -framework MFMount -framework CoreFoundation \
+            -Wl,-rpath,"${FRAMEWORK_DIR}" -o "${RUNNER_TEMP}/direct_mfmount_raw"
           otool -L "${RUNNER_TEMP}/direct_mfmount_raw" | tee "${RUNNER_TEMP}/direct-otool.txt"
           if grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${RUNNER_TEMP}/direct-otool.txt"; then
             echo 'DIRECT_MFMOUNT_UNEXPECTED_LIBFUSE_DEPENDENCY=1'
@@ -154,7 +140,6 @@ jobs:
           fi
           grep -Fq 'MFMount.framework' "${RUNNER_TEMP}/direct-otool.txt"
           echo 'DIRECT_MFMOUNT_NO_LIBFUSE_DEPENDENCY=1'
-
           cat >"${RUNNER_TEMP}/StatFSFlags.c" <<'C'
           #include <sys/mount.h>
           #include <stdio.h>
@@ -170,7 +155,6 @@ jobs:
           }
           C
           xcrun clang -std=c17 -Wall -Wextra -Werror "${RUNNER_TEMP}/StatFSFlags.c" -o "${RUNNER_TEMP}/StatFSFlags"
-
           cat >"${RUNNER_TEMP}/InspectPath.swift" <<'SWIFT'
           import Foundation
           @main
@@ -178,12 +162,7 @@ jobs:
               static func main() throws {
                   guard CommandLine.arguments.count == 2 else { exit(64) }
                   let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
-                  let values = try url.resourceValues(forKeys: [
-                      .volumeIsBrowsableKey,
-                      .volumeNameKey,
-                      .volumeIsLocalKey,
-                      .volumeTypeNameKey,
-                  ])
+                  let values = try url.resourceValues(forKeys: [.volumeIsBrowsableKey, .volumeNameKey, .volumeIsLocalKey, .volumeTypeNameKey])
                   print("BROWSABLE=\(values.volumeIsBrowsable == true ? 1 : 0)")
                   print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
                   print("LOCAL=\(values.volumeIsLocal == true ? 1 : 0)")
@@ -191,8 +170,7 @@ jobs:
               }
           }
           SWIFT
-          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
-            "${RUNNER_TEMP}/InspectPath.swift" -o "${RUNNER_TEMP}/InspectPath"
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors "${RUNNER_TEMP}/InspectPath.swift" -o "${RUNNER_TEMP}/InspectPath"
 
       - name: Mount direct MFMount transport and validate P0 contract
         run: |
@@ -204,53 +182,37 @@ jobs:
           PIDFILE="${RUNNER_TEMP}/direct-mfmount.pid"
           DISKFILE="${RUNNER_TEMP}/direct-mfmount-disk"
           printf '%s' "${MOUNTPOINT}" >"${RUNNER_TEMP}/direct-mfmount-mountpoint"
-
           dd if=/dev/zero of="${RAW}" bs=1m count=16 status=none
           printf 'EDP-DIRECT-MFMOUNT' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
           sudo mkdir -p "${MOUNTPOINT}"
           sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
-
           "${RUNNER_TEMP}/direct_mfmount_raw" "${RAW}" "${MOUNTPOINT}" "${VOLUME_NAME}" >"${LOG}" 2>&1 &
           PID=$!
           printf '%s' "${PID}" >"${PIDFILE}"
-
           MOUNTED=0
           for attempt in $(seq 1 30); do
-            if mount | grep -Fq " on ${MOUNTPOINT} "; then
-              MOUNTED=1
-              break
-            fi
-            if ! kill -0 "${PID}" 2>/dev/null; then
-              break
-            fi
+            if mount | grep -Fq " on ${MOUNTPOINT} "; then MOUNTED=1; break; fi
+            if ! kill -0 "${PID}" 2>/dev/null; then break; fi
             sleep 1
           done
           cat "${LOG}" || true
-          if [[ "${MOUNTED}" != 1 ]]; then
-            echo 'DIRECT_MFMOUNT_MOUNTED=0'
-            exit 1
-          fi
+          if [[ "${MOUNTED}" != 1 ]]; then echo 'DIRECT_MFMOUNT_MOUNTED=0'; exit 1; fi
           echo 'DIRECT_MFMOUNT_MOUNTED=1'
           mount | grep -F " on ${MOUNTPOINT} "
-
           STATFS_OUT="$(${RUNNER_TEMP}/StatFSFlags "${MOUNTPOINT}")"
           printf '%s\n' "${STATFS_OUT}"
           DONTBROWSE="$(printf '%s\n' "${STATFS_OUT}" | sed -n 's/^MNT_DONTBROWSE=//p')"
-
           INSPECT_OUT="$(${RUNNER_TEMP}/InspectPath "${MOUNTPOINT}")"
           printf '%s\n' "${INSPECT_OUT}"
           BROWSABLE="$(printf '%s\n' "${INSPECT_OUT}" | sed -n 's/^BROWSABLE=//p')"
-
           EXPOSED="${MOUNTPOINT}/volume.raw"
           test -f "${EXPOSED}"
           MARKER="$(dd if="${EXPOSED}" bs=1 skip=4096 count=18 status=none)"
           test "${MARKER}" = 'EDP-DIRECT-MFMOUNT'
           echo 'DIRECT_READ_OK=1'
-
           printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
           cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
           echo 'DIRECT_RW_OK=1'
-
           ATTACH_OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"
           printf '%s\n' "${ATTACH_OUT}"
           DISK="$(printf '%s\n' "${ATTACH_OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
@@ -260,17 +222,11 @@ jobs:
           rm -f "${DISKFILE}"
           echo 'DIRECT_DISKIMAGES2_RAW_ATTACH_OK=1'
           echo 'DIRECT_MFMOUNT_FUNCTIONAL_OK=1'
-
           killall Finder 2>/dev/null || true
           open -a Finder
           sleep 2
           osascript -e 'tell application "Finder" to get name of every disk' | tee "${RUNNER_TEMP}/direct-finder.txt" || true
-          if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/direct-finder.txt"; then
-            echo 'DIRECT_FINDER_VISIBLE=1'
-          else
-            echo 'DIRECT_FINDER_VISIBLE=0'
-          fi
-
+          if grep -Fq "${VOLUME_NAME}" "${RUNNER_TEMP}/direct-finder.txt"; then echo 'DIRECT_FINDER_VISIBLE=1'; else echo 'DIRECT_FINDER_VISIBLE=0'; fi
           if [[ "${DONTBROWSE}" = 1 && "${BROWSABLE}" = 0 ]]; then
             echo 'DIRECT_MFMOUNT_NOBROWSE_OK=1'
             echo 'RESULT=DIRECT_MFMOUNT_P0_PASS'
@@ -284,20 +240,33 @@ jobs:
         if: always()
         run: |
           set +e
+          LOG="${RUNNER_TEMP}/direct-mfmount.log"
+          echo '--- final direct transport log ---'
+          cat "${LOG}" 2>/dev/null || true
           DISKFILE="${RUNNER_TEMP}/direct-mfmount-disk"
           if [[ -f "${DISKFILE}" ]]; then
             DISK="$(cat "${DISKFILE}")"
             [[ -n "${DISK}" ]] && hdiutil detach "${DISK}" -force >/dev/null 2>&1 || true
           fi
+          PIDFILE="${RUNNER_TEMP}/direct-mfmount.pid"
+          if [[ -f "${PIDFILE}" ]]; then
+            PID="$(cat "${PIDFILE}")"
+            kill "${PID}" 2>/dev/null || true
+            sleep 1
+            kill -9 "${PID}" 2>/dev/null || true
+          fi
           MPFILE="${RUNNER_TEMP}/direct-mfmount-mountpoint"
           if [[ -f "${MPFILE}" ]]; then
             MP="$(cat "${MPFILE}")"
-            [[ -n "${MP}" ]] && /sbin/umount "${MP}" 2>/dev/null || true
-            [[ -n "${MP}" ]] && sudo /sbin/umount "${MP}" 2>/dev/null || true
+            if [[ -n "${MP}" ]] && mount | grep -Fq " on ${MP} "; then
+              sudo /sbin/umount -f "${MP}" >/dev/null 2>&1 &
+              UPID=$!
+              for _ in $(seq 1 10); do
+                kill -0 "${UPID}" 2>/dev/null || break
+                sleep 1
+              done
+              kill -9 "${UPID}" 2>/dev/null || true
+            fi
             [[ -n "${MP}" ]] && sudo rmdir "${MP}" 2>/dev/null || true
-          fi
-          PIDFILE="${RUNNER_TEMP}/direct-mfmount.pid"
-          if [[ -f "${PIDFILE}" ]]; then
-            kill "$(cat "${PIDFILE}")" 2>/dev/null || true
           fi
           exit 0
