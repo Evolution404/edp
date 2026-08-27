@@ -18,7 +18,7 @@ PREPARED_SECRET_OUTPUT=false
 RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY
 
 ## H4 hidden mount / Finder / Quick Look
-file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-b1362a11-5515-4b1d-93ab-c098fa457301/session.json on /Users/runner/work/_temp/edp-stability-normal-a5734232-2294-4a5f-98df-f4a16c2d2201 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-4cc6bc77-0da4-482c-91c5-00684d24f8d1/session.json on /Users/runner/work/_temp/edp-stability-normal-3ee96d6e-ce4f-42f8-aa99-2e40b7d17bb8 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 /dev/disk8          	                               	/Volumes/EDP_STABILITY_FINAL
 EDP_LARGE.binEDP_PREVIEW.txtEDP_SENTINEL.txt
 Testing Quick Look thumbnails with files:
@@ -28,11 +28,11 @@ Done producing thumbnails
 /Users/runner/work/_temp/h4-quicklook/EDP_PREVIEW.txt.png
 
 ## H5 crash path
-file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-58a5d3e1-832d-4b5a-94c5-4ddea996c92d/session.json on /Users/runner/work/_temp/edp-stability-crash-88ff958a-a3d2-43e3-9886-0a02f798cd22 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-4e7a3606-b57d-4a2e-aa53-87ffdcdd0a4a/session.json on /Users/runner/work/_temp/edp-stability-crash-64082409-e806-47f2-8c8b-2e9080b22b19 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 /dev/disk8          	                               	/Volumes/EDP_STABILITY_FINAL
-dd: /Users/runner/work/_temp/edp-stability-crash-88ff958a-a3d2-43e3-9886-0a02f798cd22/volume.raw: Connection reset by peer
+dd: /Users/runner/work/_temp/edp-stability-crash-64082409-e806-47f2-8c8b-2e9080b22b19/volume.raw: Connection reset by peer
 "disk8" ejected.
 
 ## H6 crash cleanup / leak scans
-CLEANED_SESSION_ID=edp-fuset-58a5d3e1-832d-4b5a-94c5-4ddea996c92d
+CLEANED_SESSION_ID=edp-fuset-4e7a3606-b57d-4a2e-aa53-87ffdcdd0a4a
 RESULT=FUSET_SESSION_CRASH_CLEANUP_COMPLETE
