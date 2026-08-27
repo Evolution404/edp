@@ -26,6 +26,17 @@ enum ValidateCredentialStore {
         guard createStatus == errSecSuccess, let keychain else {
             throw EDPCredentialStoreError("test keychain create failed: status=\(createStatus)")
         }
+        let unlockStatus = keychainPassword.withUnsafeBytes { raw in
+            SecKeychainUnlock(
+                keychain,
+                UInt32(raw.count),
+                raw.baseAddress,
+                true
+            )
+        }
+        guard unlockStatus == errSecSuccess else {
+            throw EDPCredentialStoreError("test keychain unlock failed: status=\(unlockStatus)")
+        }
         defer { _ = SecKeychainDelete(keychain) }
 
         let store = try EDPCredentialStore(
@@ -37,14 +48,15 @@ enum ValidateCredentialStore {
         try store.put(deviceID: deviceID, password: secret, partitionTypes: [4, 2])
 
         let index = try store.load()
-        guard index.schemaVersion == 2,
+        guard index.schemaVersion == 4,
               index.records.count == 1,
               index.records[0].deviceID == deviceID,
               index.records[0].partitionTypes == [2, 4] else {
             throw EDPCredentialStoreError("credential index round-trip mismatch")
         }
-        let loaded = try store.password(for: index.records[0])
-        guard loaded == secret else {
+        let loadedExchange = try store.password(deviceID: deviceID, partitionType: 2)
+        let loadedSecure = try store.password(deviceID: deviceID, partitionType: 4)
+        guard loadedExchange == secret, loadedSecure == secret else {
             throw EDPCredentialStoreError("Keychain password round-trip mismatch")
         }
 
@@ -65,15 +77,13 @@ enum ValidateCredentialStore {
         guard try store.load().records.isEmpty else {
             throw EDPCredentialStoreError("credential index revoke failed")
         }
-        do {
-            _ = try store.password(for: EDPCredentialRecord(
-                deviceID: deviceID,
-                partitionTypes: [2, 4],
-                updatedAt: "test"
-            ))
-            throw EDPCredentialStoreError("revoked Keychain password remained readable")
-        } catch let error as EDPCredentialStoreError {
-            guard error.message.contains("Keychain password unavailable") else { throw error }
+        for partitionType in [UInt32(2), 4] {
+            do {
+                _ = try store.password(deviceID: deviceID, partitionType: partitionType)
+                throw EDPCredentialStoreError("revoked Keychain password remained readable")
+            } catch let error as EDPCredentialStoreError {
+                guard error.message.contains("Keychain password unavailable") else { throw error }
+            }
         }
         print("RESULT=KEYCHAIN_REVOKE_OK")
         print("RESULT=KEYCHAIN_CREDENTIAL_STORE_E2E_OK")

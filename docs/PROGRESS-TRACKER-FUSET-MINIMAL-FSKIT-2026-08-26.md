@@ -30,18 +30,15 @@
 - Direct adapter 当前按同一所有权顺序实现：从 mount table 解析 `/dev/diskN` source → `DADiskCreateFromVolumePath()` 并校验 `DADiskGetBSDName()` 匹配 source → 调度并等待 `DADiskUnmount` callback → 关闭 MFChannel → 验证 source/mountpoint 均从 mount table 消失。这样可以用完全相同的代码验证 5.3.2/5.3.3 runtime，而不会把 library 版本自身的不同 teardown 实现混入结果。
 - 官方源码：`https://github.com/macfuse/library`；版本 gitlink 来自 `macfuse/macfuse` 的 `macfuse-5.3.2` / `macfuse-5.3.3` tag。
 
-当前唯一诊断主线：
+当前生命周期主线已闭环，**停止诊断，不再新增 teardown probe**。正式责任边界固定为：
 
 ```text
-mountpoint
-  -> 读取 mount table 中真实 source /dev/diskN
-  -> DASession + DADiskCreateFromVolumePath(mountpoint)
-  -> DADiskGetBSDName() == source 的硬校验
-  -> 对对应 DADiskRef 执行正确 unmount/deactivation 并等待 callback
-  -> 再收口 MF transport/channel
-  -> 确认 mount table 条目消失
-  -> 同路径第二轮 Direct MFMount
-  -> 验证第一轮 encrypted marker 仍存在
+logged-in user session: Direct MFMount + encrypted RW server
+  -> privileged daemon: unmount(2, MNT_FORCE) transport mountpoint
+  -> macOS VFS / FSKit: Local FSVolume.deactivate()
+  -> Direct server: FUSE_DESTROY success reply
+  -> signed Local extension: mount-daemon device/deactivate
+  -> virtual /dev/diskN detach + transport natural exit
 ```
 
 验收矩阵：
@@ -52,12 +49,14 @@ mountpoint
 | L2 | ✅ | Local FSKit + DiskImages2 + Finder 隐藏 | 已通过 |
 | L3 | ✅ | 排除 `MFChannelClose()` 作为 volume unmount | 只关闭 channel，不移除 Local volume |
 | L4 | ✅ | 排除 mountpoint shell unmount 路径 | `diskutil unmount` / 普通 `unmount(2)` 均失败，不再重复 |
-| L5 | 🟡 | 解析真实 mount source `/dev/diskN` 并对 source `DADiskRef` teardown | 已实现 source lookup、scheduled DASession、callback wait、channel close 和 mount-table gate；等待 matrix |
-| L6 | ⏳ | mount table 消失后同路径 remount | 等待 L5 |
-| L7 | ⏳ | 两轮 mount → RW → unmount → remount → encrypted marker persistence | 任一版本稳定通过即停止诊断并固定该版本 |
-| L8 | 🟡 | macFUSE 5.3.2 / 5.3.3 真实行为差异 | 已确认 libfuse teardown 源码存在实质差异；相同 Direct lifecycle 下的 runtime 行为差异等待 matrix |
-| L9 | ⏳ | 产品 transport provider 接入 `macfuse-local` | L7 后把 `EDPVaultRuntime.swift` 从硬编码 `edp-fuset-readwrite` / `EDPFuseTRuntimePolicy` 迁移到正式 provider |
-| L10 | ⏳ | 完整产品 E2E | encrypted mount → RW → DiskImages2 → Apple FS/Finder → unmount → remount → persistence |
+| L5 | ✅ | 收口正式 privileged VFS teardown 边界 | source-DADisk/eject/private-XPC 路径均已淘汰；最终为 root `unmount(2, MNT_FORCE)` → FSKit deactivate |
+| L6 | ✅ | mount table 消失后同路径 remount | 5.3.2 / 5.3.3 均连续两轮通过 |
+| L7 | ✅ | 两轮 mount → RW → unmount → remount → encrypted marker persistence | run `33043742188` 两版本全绿，生命周期诊断停止 |
+| L8 | ✅ | macFUSE 5.3.2 / 5.3.3 真实行为差异 | 相同 Direct lifecycle 下均通过；产品统一 pin 5.3.3，不再追版本差异 |
+| L9 | 🟡 | 产品 transport provider 接入 `macfuse-local` | 已实现 provider/session ownership、root policy/user-session launch 边界、5.3.3 pin 与 installer backend builder 接入；本地 production compile 通过，等待 CI |
+| L10 | ⏳ | 完整产品 E2E | 下一步验证 encrypted mount → RW → DiskImages2 → Apple FS/Finder → unmount → remount → persistence |
+
+L9 exact-head `9ad2261` 首轮 CI：`EDP Transport Provider Switch Contract` run `33044517909`、`Transport Runtime Policy Dispatch` run `33044517946`、`macFUSE 5.3.3 Runtime Policy` run `33044517942`、`FUSE-T Thin Product Read-Only Contract` run `33044517937` 均 success。手动 `Native Production Path` run `33044546373` 暴露旧 validator 漂移：测试仍假设 credential schema v2、调用已删除的 `password(for:)`，且以普通 runner 用户读取现在的 root-only partition Keychain ACL。正式产品代码没有失败。修复方向：validator 改为 current schema v4 + `password(deviceID:partitionType:)`，同时验证 partition 2/4；测试进程改用 `sudo`，与 privileged daemon 的真实 ACL 模型一致，不放宽生产 Keychain 权限。
 
 停止条件：一旦 5.3.2 或 5.3.3 稳定通过 L7，立即停止版本诊断实验、固定该版本并进入 L9/L10。
 

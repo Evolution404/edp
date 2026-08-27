@@ -125,7 +125,7 @@ jobs:
             product/EDPCredentialStore.swift \
             native/EDPFSKitPoC/Tools/ValidateCredentialStore.swift \
             -o "${RUNNER_TEMP}/validate-credential-store"
-          "${RUNNER_TEMP}/validate-credential-store" | tee "${RUNNER_TEMP}/credential-store.txt"
+          sudo "${RUNNER_TEMP}/validate-credential-store" | tee "${RUNNER_TEMP}/credential-store.txt"
           grep -F 'RESULT=KEYCHAIN_PASSWORD_ROUNDTRIP_OK' "${RUNNER_TEMP}/credential-store.txt"
           grep -F 'RESULT=CREDENTIAL_INDEX_CONTAINS_NO_SECRET_OK' "${RUNNER_TEMP}/credential-store.txt"
           grep -F 'RESULT=SELF_MANAGED_MASTER_KEY_ABSENT_OK' "${RUNNER_TEMP}/credential-store.txt"
