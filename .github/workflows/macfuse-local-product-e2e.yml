@@ -248,6 +248,11 @@ jobs:
           }
           SWIFT
           xcrun swiftc -swift-version 6 -parse-as-library -strict-concurrency=complete \
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift \
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift \
             product/EDPNativeSystem.swift product/EDPBlockDevicePublisher.swift \
             "${RUNNER_TEMP}/BlockLifecycle.swift" -o "${RUNNER_TEMP}/block-lifecycle"
           echo "BLOCK_LIFECYCLE=${RUNNER_TEMP}/block-lifecycle" >> "${GITHUB_ENV}"
