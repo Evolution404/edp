@@ -44,11 +44,16 @@ jobs:
             native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
             native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
           )
-          xcrun swiftc -swift-version 6 -strict-concurrency=complete -framework Security \
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete -framework CryptoKit -framework Security \
             "${CORE[@]}" \
             product/EDPNTFSWriteSafety.swift \
             product/EDPNTFSMountPolicy.swift \
             product/EDPCredentialStore.swift \
+            product/EDPDevicePolicyStore.swift \
+            product/EDPFuseTRuntimePolicy.swift \
+            product/EDPMacFUSERuntimePolicy.swift \
+            product/EDPTransportProvider.swift \
+            product/EDPTransportRuntimePolicy.swift \
             product/EDPNativeSystem.swift \
             product/EDPBlockDevicePublisher.swift \
             product/EDPXPCProtocol.swift \

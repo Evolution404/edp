@@ -33,18 +33,17 @@ enum EDPTransportRuntimePolicy {
 
         case .macFUSELocal:
             let status = try EDPMacFUSERuntimePolicy.verifyInstalled()
-            guard status.localRegisteredWithPluginKit else {
-                throw EDPMacFUSERuntimePolicyError(
-                    "macFUSE Local FSKit module is signed but is not registered with PluginKit"
-                )
-            }
+            /* FSKit module enablement/registration belongs to the logged-in
+             * user's session. The privileged daemon must validate only the
+             * signed runtime here; the console-user MFMount launch is the
+             * authoritative availability check for that session. */
             guard status.mfMountFrameworkPresent else {
                 throw EDPMacFUSERuntimePolicyError("MFMount.framework is missing")
             }
             return EDPTransportRuntimeStatus(
                 backend: backend,
                 finderHidden: capabilities.finderHidden,
-                runtimeDescription: "macFUSE Local \(status.localModuleBundleID) team=\(status.teamID)"
+                runtimeDescription: "macFUSE Local \(status.localModuleBundleID) team=\(status.teamID) userRegistered=\(status.localRegisteredWithPluginKit)"
             )
         }
     }

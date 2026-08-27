@@ -23,9 +23,21 @@ static int parse_id(const char *text, unsigned long *value) {
 static int allowed_executable(const char *path) {
     static const char *allowed[] = {
         "/Library/Application Support/EDP USB Vault/bin/edp-fuset-readwrite",
+        "/Library/Application Support/EDP USB Vault/bin/edp-mfmount-local-readwrite",
         "/Library/Application Support/EDP USB Vault/bin/edp-readwrite-fuse",
         "/Library/Application Support/EDP USB Vault/bin/ntfs-3g",
         "/Library/Application Support/EDP USB Vault/bin/ntfs-3g.probe",
+    };
+    for (size_t index = 0; index < sizeof(allowed) / sizeof(allowed[0]); ++index) {
+        if (strcmp(path, allowed[index]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int is_raw_bridge_executable(const char *path) {
+    static const char *allowed[] = {
+        "/Library/Application Support/EDP USB Vault/bin/edp-fuset-readwrite",
+        "/Library/Application Support/EDP USB Vault/bin/edp-mfmount-local-readwrite",
     };
     for (size_t index = 0; index < sizeof(allowed) / sizeof(allowed[0]); ++index) {
         if (strcmp(path, allowed[index]) == 0) return 1;
@@ -88,9 +100,7 @@ int main(int argc, char **argv) {
 
     int raw_fd = -1;
     if (raw_device) {
-        static const char bridge[] =
-            "/Library/Application Support/EDP USB Vault/bin/edp-fuset-readwrite";
-        if (strcmp(resolved, bridge) != 0 || !is_whole_raw_disk_path(raw_device)) {
+        if (!is_raw_bridge_executable(resolved) || !is_whole_raw_disk_path(raw_device)) {
             fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_DEVICE_REFUSED\n");
             return 77;
         }

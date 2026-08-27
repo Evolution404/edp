@@ -74,13 +74,16 @@ CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
 )
 
-xcrun swiftc -O -framework Security \
+xcrun swiftc -O -framework CryptoKit -framework Security \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/product/EDPNTFSWriteSafety.swift" \
   "${REPO_ROOT}/product/EDPNTFSMountPolicy.swift" \
   "${REPO_ROOT}/product/EDPCredentialStore.swift" \
   "${REPO_ROOT}/product/EDPDevicePolicyStore.swift" \
   "${REPO_ROOT}/product/EDPFuseTRuntimePolicy.swift" \
+  "${REPO_ROOT}/product/EDPMacFUSERuntimePolicy.swift" \
+  "${REPO_ROOT}/product/EDPTransportProvider.swift" \
+  "${REPO_ROOT}/product/EDPTransportRuntimePolicy.swift" \
   "${REPO_ROOT}/product/EDPNativeSystem.swift" \
   "${REPO_ROOT}/product/EDPBlockDevicePublisher.swift" \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
@@ -95,11 +98,9 @@ xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
   -o "${RUNTIME_STAGE}/bin/libEDPReadWriteBridge.dylib"
 
-xcrun swiftc -O -parse-as-library -D FUSET_BRIDGE_LIBRARY \
-  "${CORE_SOURCES[@]}" \
-  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift" \
-  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedReadWriteBridge.swift" \
-  -o "${RUNTIME_STAGE}/bin/edp-fuset-readwrite"
+echo "Building switchable transport backends (default macfuse-local)..."
+MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
+  "${REPO_ROOT}/installer/build-transport-backends.sh" "${RUNTIME_STAGE}/bin"
 
 FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"

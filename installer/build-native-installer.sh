@@ -36,6 +36,9 @@ PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPCredentialStore.swift"
   "${REPO_ROOT}/product/EDPDevicePolicyStore.swift"
   "${REPO_ROOT}/product/EDPFuseTRuntimePolicy.swift"
+  "${REPO_ROOT}/product/EDPMacFUSERuntimePolicy.swift"
+  "${REPO_ROOT}/product/EDPTransportProvider.swift"
+  "${REPO_ROOT}/product/EDPTransportRuntimePolicy.swift"
   "${REPO_ROOT}/product/EDPNativeSystem.swift"
   "${REPO_ROOT}/product/EDPBlockDevicePublisher.swift"
   "${REPO_ROOT}/product/EDPXPCProtocol.swift"
@@ -44,16 +47,13 @@ PRODUCT_SOURCES=(
 )
 
 echo "Building native privileged service..."
-xcrun swiftc -O -framework Security \
+xcrun swiftc -O -framework CryptoKit -framework Security \
   "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 
-echo "Building FUSE-T thin read/write bridge..."
-xcrun swiftc -O -parse-as-library -D FUSET_BRIDGE_LIBRARY \
-  "${CORE_SOURCES[@]}" \
-  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift" \
-  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedReadWriteBridge.swift" \
-  -o "${RUNTIME_STAGE}/bin/edp-fuset-readwrite"
+echo "Building switchable transport backends (default macfuse-local)..."
+MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
+  "${REPO_ROOT}/installer/build-transport-backends.sh" "${RUNTIME_STAGE}/bin"
 
 /usr/bin/clang -fobjc-arc -fblocks \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/DiskImages2Attach.m" \

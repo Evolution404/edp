@@ -19,6 +19,54 @@ struct EDPTransportLaunchSpec: Equatable, Sendable {
     let capabilities: EDPTransportCapabilities
 }
 
+struct EDPTransportSessionError: Error, CustomStringConvertible {
+    let description: String
+}
+
+final class EDPTransportSession {
+    let backend: EDPTransportBackend
+    let mountpoint: String
+    let capabilities: EDPTransportCapabilities
+    private let process: Process
+
+    init(
+        backend: EDPTransportBackend,
+        mountpoint: String,
+        capabilities: EDPTransportCapabilities,
+        process: Process
+    ) {
+        self.backend = backend
+        self.mountpoint = mountpoint
+        self.capabilities = capabilities
+        self.process = process
+    }
+
+    var isRunning: Bool { process.isRunning }
+
+    func stop(
+        unmount: (String) throws -> Void,
+        isMounted: (String) -> Bool,
+        gracefulExitSeconds: TimeInterval = 5
+    ) throws {
+        if isMounted(mountpoint) {
+            try unmount(mountpoint)
+        }
+        guard !isMounted(mountpoint) else {
+            throw EDPTransportSessionError(
+                description: "transport mount remained active after VFS unmount: \(mountpoint)"
+            )
+        }
+
+        let deadline = Date().addingTimeInterval(gracefulExitSeconds)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            process.terminate()
+        }
+    }
+}
+
 struct EDPTransportRequest: Sendable {
     let binaryRoot: String
     let rawDevice: String
@@ -80,6 +128,15 @@ enum EDPTransportProvider {
         }
     }
 
+    static func executableName(for backend: EDPTransportBackend, readOnly: Bool) -> String {
+        switch backend {
+        case .fuseT:
+            return readOnly ? "edp-fuset-readonly" : "edp-fuset-readwrite"
+        case .macFUSELocal:
+            return readOnly ? "edp-mfmount-local-readonly" : "edp-mfmount-local-readwrite"
+        }
+    }
+
     static func launchSpec(
         for backend: EDPTransportBackend,
         request: EDPTransportRequest,
@@ -105,17 +162,21 @@ enum EDPTransportProvider {
             "--volume-name", request.volumeName,
         ]
 
+        let executable = request.binaryRoot + "/" + executableName(
+            for: backend,
+            readOnly: request.readOnly
+        )
         switch backend {
         case .fuseT:
             return EDPTransportLaunchSpec(
-                executable: request.binaryRoot + (request.readOnly ? "/edp-fuset-readonly" : "/edp-fuset-readwrite"),
+                executable: executable,
                 arguments: commonArguments,
                 environment: [:],
                 capabilities: capabilities
             )
         case .macFUSELocal:
             return EDPTransportLaunchSpec(
-                executable: request.binaryRoot + (request.readOnly ? "/edp-mfmount-local-readonly" : "/edp-mfmount-local-readwrite"),
+                executable: executable,
                 arguments: commonArguments,
                 environment: ["EDP_MFMOUNT_OPTIONS": "local,nobrowse"],
                 capabilities: capabilities

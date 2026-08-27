@@ -235,7 +235,7 @@ private final class MountSession {
     let exposedBSD: String
     let filesystem: String
     let userMount: String?
-    let fuse: Process
+    let transport: EDPTransportSession
     let filesystemProcess: Process?
 
     init(
@@ -246,7 +246,7 @@ private final class MountSession {
         exposedBSD: String,
         filesystem: String,
         userMount: String?,
-        fuse: Process,
+        transport: EDPTransportSession,
         filesystemProcess: Process?
     ) {
         self.physicalBSD = physicalBSD
@@ -256,7 +256,7 @@ private final class MountSession {
         self.exposedBSD = exposedBSD
         self.filesystem = filesystem
         self.userMount = userMount
-        self.fuse = fuse
+        self.transport = transport
         self.filesystemProcess = filesystemProcess
     }
 }
@@ -369,7 +369,9 @@ private final class MountManager {
     }
 
     func mount(disk: PhysicalDisk, partitionType: UInt32, password: [UInt8]) throws {
-        _ = try EDPFuseTRuntimePolicy.verifyInstalled()
+        let runtimeStatus = try EDPTransportRuntimePolicy.verifySelectedRuntime(
+            requireFinderHidden: true
+        )
         let sessionKey = key(disk, partitionType)
         guard sessions[sessionKey] == nil else { return }
         let suffix = safeName(disk.deviceID) + "-\(partitionType)"
@@ -394,46 +396,65 @@ private final class MountManager {
             try diskArbitration.unmountWhole(disk.bsdName)
         }
 
+        let volumeName = "EDP \(partitionType == 1 ? "Boot" : (partitionType == 2 ? "Exchange" : "Secure")) Transport"
+        let transportRequest = EDPTransportRequest(
+            binaryRoot: binaryRoot,
+            rawDevice: disk.rawPath,
+            rawFD: 3,
+            vid: disk.vidHex,
+            pid: disk.pidHex,
+            deviceSize: disk.sizeBytes,
+            partitionType: partitionType,
+            controlFD: 0,
+            mountpoint: bridgeMount,
+            volumeName: volumeName,
+            readOnly: false
+        )
+        let launchSpec = try EDPTransportProvider.launchSpec(
+            for: runtimeStatus.backend,
+            request: transportRequest,
+            requireFinderHidden: true
+        )
         let passwordPipe = Pipe()
-        let fuse = Process()
+        let transportProcess = Process()
         configureConsoleProcess(
-            fuse,
+            transportProcess,
             binaryRoot: binaryRoot,
             identity: identity,
-            executable: binaryRoot + "/edp-fuset-readwrite",
-            arguments: [
-                "--raw-device", disk.rawPath,
-                "--raw-fd", "3",
-                "--vid", disk.vidHex,
-                "--pid", disk.pidHex,
-                "--device-size", String(disk.sizeBytes),
-                "--partition-type", String(partitionType),
-                "--control-fd", "0",
-                "--mountpoint", bridgeMount,
-                "--volume-name", "EDP \(partitionType == 1 ? "Boot" : (partitionType == 2 ? "Exchange" : "Secure")) Transport",
-            ],
+            executable: launchSpec.executable,
+            arguments: launchSpec.arguments,
             rawDevice: disk.rawPath
         )
-        fuse.standardInput = passwordPipe
+        transportProcess.standardInput = passwordPipe
         let logPath = sessionRoot + "/\(suffix).bridge.log"
         try FileManager.default.createDirectory(atPath: sessionRoot, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: logPath, contents: nil)
         let log = try FileHandle(forWritingTo: URL(fileURLWithPath: logPath))
-        fuse.standardOutput = log
-        fuse.standardError = log
+        transportProcess.standardOutput = log
+        transportProcess.standardError = log
         var environment = ProcessInfo.processInfo.environment
         environment["DYLD_LIBRARY_PATH"] = binaryRoot
-        fuse.environment = environment
-        try fuse.run()
+        for (key, value) in launchSpec.environment {
+            environment[key] = value
+        }
+        transportProcess.environment = environment
+        try transportProcess.run()
         passwordPipe.fileHandleForWriting.write(Data(password))
         try passwordPipe.fileHandleForWriting.close()
+
+        let transportSession = EDPTransportSession(
+            backend: runtimeStatus.backend,
+            mountpoint: bridgeMount,
+            capabilities: launchSpec.capabilities,
+            process: transportProcess
+        )
 
         var publishedDevice: EDPPublishedBlockDevice?
         do {
             try waitUntil(seconds: 20) {
-                EDPNativeMountTable.isMountpoint(bridgeMount) || !fuse.isRunning
+                EDPNativeMountTable.isMountpoint(bridgeMount) || !transportSession.isRunning
             }
-            guard fuse.isRunning, EDPNativeMountTable.isMountpoint(bridgeMount) else {
+            guard transportSession.isRunning, EDPNativeMountTable.isMountpoint(bridgeMount) else {
                 throw fail("encrypted block bridge failed; see \(logPath)")
             }
 
@@ -467,18 +488,17 @@ private final class MountManager {
                 exposedBSD: published.bsdName,
                 filesystem: mounted.0,
                 userMount: mounted.1,
-                fuse: fuse,
+                transport: transportSession,
                 filesystemProcess: mounted.2
             )
             persistSessions()
             NSLog("EDP mounted %@ partition %u as %@ at %@", disk.deviceID, partitionType, mounted.0, mounted.1 ?? "(unknown)")
         } catch {
             if let publishedDevice { try? blockPublisher.unpublish(publishedDevice) }
-            fuse.terminate()
-            try? EDPNativeMountTable.unmountPath(bridgeMount)
-            if EDPNativeMountTable.isMountpoint(bridgeMount) {
-                try? EDPNativeMountTable.unmountPath(bridgeMount, force: true)
-            }
+            try? transportSession.stop(
+                unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
+                isMounted: { EDPNativeMountTable.isMountpoint($0) }
+            )
             try? FileManager.default.removeItem(atPath: bridgeMount)
             throw error
         }
@@ -516,7 +536,7 @@ private final class MountManager {
     }
 
     private func unmount(key: String) {
-        guard let session = sessions.removeValue(forKey: key) else { return }
+        guard let session = sessions[key] else { return }
         missingSince.removeValue(forKey: key)
         if let userMount = session.userMount {
             try? EDPNativeMountTable.unmountPath(userMount)
@@ -525,11 +545,17 @@ private final class MountManager {
         if !session.exposedBSD.isEmpty {
             try? blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: session.exposedBSD))
         }
-        session.fuse.terminate()
-        try? EDPNativeMountTable.unmountPath(session.bridgeMount)
-        if EDPNativeMountTable.isMountpoint(session.bridgeMount) {
-            try? EDPNativeMountTable.unmountPath(session.bridgeMount, force: true)
+        do {
+            try session.transport.stop(
+                unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
+                isMounted: { EDPNativeMountTable.isMountpoint($0) }
+            )
+        } catch {
+            NSLog("EDP transport teardown failed for %@: %@", key, String(describing: error))
+            persistSessions()
+            return
         }
+        sessions.removeValue(forKey: key)
         try? FileManager.default.removeItem(atPath: session.bridgeMount)
         persistSessions()
     }
@@ -1206,11 +1232,19 @@ private func doctor() -> Int32 {
     let macOSOK = version.majorVersion >= 26
     print("MACOS_26_OR_NEWER=\(macOSOK ? "YES" : "NO")")
     ok = ok && macOSOK
-    let fuseTReady = (try? EDPFuseTRuntimePolicy.verifyInstalled()) != nil
-    print("FUSET_FSKIT_RUNTIME=\(fuseTReady ? "OK" : "MISSING_OR_UNSUPPORTED")")
-    ok = ok && fuseTReady
+    let runtimeStatus = try? EDPTransportRuntimePolicy.verifySelectedRuntime(
+        requireFinderHidden: true
+    )
+    print("TRANSPORT_RUNTIME=\(runtimeStatus?.runtimeDescription ?? "MISSING_OR_UNSUPPORTED")")
+    print("TRANSPORT_BACKEND=\(runtimeStatus?.backend.rawValue ?? "unavailable")")
+    ok = ok && runtimeStatus != nil
     let binaryRoot = runtimeBinaryRoot()
-    for tool in ["edp-fuset-readwrite", "edp-console-exec", "edp-raw-metadata", "diskimages2-attach"] {
+    let transportBackend = runtimeStatus?.backend ?? .macFUSELocal
+    let transportTool = EDPTransportProvider.executableName(
+        for: transportBackend,
+        readOnly: false
+    )
+    for tool in [transportTool, "edp-console-exec", "edp-raw-metadata", "diskimages2-attach"] {
         let path = binaryRoot + "/" + tool
         let present = FileManager.default.isExecutableFile(atPath: path)
         print("TOOL_\(tool.uppercased().replacingOccurrences(of: ".", with: "_"))=\(present ? "OK" : "MISSING")")

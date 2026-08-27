@@ -238,11 +238,13 @@ jobs:
           )
           # Match installer/build-clean-installer.sh for the pre-existing runtime.
           # Newly added thin targets above remain Swift 6 warnings-as-errors.
-          xcrun swiftc -O -framework Security \
+          xcrun swiftc -O -framework CryptoKit -framework Security \
             "${CORE_SOURCES[@]}" \
             product/EDPNTFSWriteSafety.swift product/EDPNTFSMountPolicy.swift \
-            product/EDPCredentialStore.swift product/EDPNativeSystem.swift \
-            product/EDPBlockDevicePublisher.swift product/EDPFuseTRuntimePolicy.swift \
+            product/EDPCredentialStore.swift product/EDPDevicePolicyStore.swift \
+            product/EDPFuseTRuntimePolicy.swift product/EDPMacFUSERuntimePolicy.swift \
+            product/EDPTransportProvider.swift product/EDPTransportRuntimePolicy.swift \
+            product/EDPNativeSystem.swift product/EDPBlockDevicePublisher.swift \
             product/EDPXPCProtocol.swift product/EDPXPCSecurity.swift product/EDPVaultRuntime.swift \
             -o "${RUNNER_TEMP}/edp-vaultctl"
           test -x "${RUNNER_TEMP}/edp-vaultctl"

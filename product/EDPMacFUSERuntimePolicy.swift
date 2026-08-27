@@ -19,11 +19,11 @@ struct EDPMacFUSERuntimePolicyError: Error, CustomStringConvertible, Sendable {
     }
 }
 
-/// Supply-chain policy for the exact macFUSE 5.3.2 FSKit runtime proven by the
-/// macOS 26 Direct MFMount experiments. The application bundle's marketing
-/// version is not the macFUSE package version, so the policy pins the signed
-/// executable hashes captured from the official 5.3.2 DMG in addition to
-/// bundle identifiers and Developer ID TeamIdentifier.
+/// Supply-chain policy for the exact macFUSE 5.3.3 FSKit runtime proven by the
+/// macOS 26 Direct MFMount lifecycle and product transport experiments. The
+/// application bundle's marketing version is not the macFUSE package version,
+/// so the policy pins signed executable hashes from the official 5.3.3 DMG in
+/// addition to bundle identifiers and Developer ID TeamIdentifier.
 enum EDPMacFUSERuntimePolicy {
     static let appPath = "/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app"
     static let frameworkPath = "/Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework"
@@ -32,12 +32,11 @@ enum EDPMacFUSERuntimePolicy {
     static let localModuleBundleID = "io.macfuse.app.fsmodule.macfuse-local"
     static let teamID = "3T5GSNBU6W"
 
-    // Official macFUSE 5.3.2 DMG SHA256:
-    // 9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936
-    // Runtime executable hashes captured by run 33035902893.
-    static let hostExecutableSHA256 = "d508ecad04802a382319378bc86e04fc7c2e9adab602e82a15fd29d1a7eef98e"
-    static let genericExecutableSHA256 = "073c51eea3fa3dcc7b3c7f789af86ecf7020029e2e1d1704007976e14192050f"
-    static let localExecutableSHA256 = "4888d6d1a029f813d4700cc4a0575a4407cf799b25268fcbe1e1264a00955f4a"
+    // Official macFUSE 5.3.3 DMG SHA256:
+    // 7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15
+    static let hostExecutableSHA256 = "edce4ab3187be038929488a053e0c8e9170dd1b042f41131cb08c190c412e189"
+    static let genericExecutableSHA256 = "534b421574c276ef98ef95f492d05adfb0210580d3fa663a6617794b56562822"
+    static let localExecutableSHA256 = "569a2a6eb649b584606e5eeae5d1ea37f842ed84624744255ec7e74ff130b16c"
 
     private static let extensionsRelativePath = "Contents/Extensions"
 
@@ -55,7 +54,7 @@ enum EDPMacFUSERuntimePolicy {
               fileManager.fileExists(atPath: localPath),
               fileManager.fileExists(atPath: frameworkPath) else {
             throw EDPMacFUSERuntimePolicyError(
-                "supported macFUSE 5.3.2 FSKit runtime is not installed"
+                "supported macFUSE 5.3.3 FSKit runtime is not installed"
             )
         }
 
