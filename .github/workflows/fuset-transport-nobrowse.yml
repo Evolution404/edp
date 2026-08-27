@@ -211,7 +211,7 @@ jobs:
             cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
             echo "RW_OK=1" | tee -a "${RESULTS}"
 
-            out="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${exposed}" 2>"${RUNNER_TEMP}/${case_id}.attach.err)"
+            out="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${exposed}" 2>"${RUNNER_TEMP}/${case_id}.attach.err")"
             printf '%s\n' "${out}" | tee -a "${RESULTS}"
             disk="$(printf '%s\n' "${out}" | awk '/^\/dev\/disk/ {print $1; exit}')"
             test -n "${disk}"
@@ -234,15 +234,10 @@ jobs:
             echo '---' | tee -a "${RESULTS}"
           }
 
-          # Current product shape: dot-prefixed mountpoint under /Volumes, visible transport label.
           run_case baseline-product-shape volumes 'EDP P0 Visible Transport' no
-          # Moving the internal mount outside /Volumes must be tested, not assumed to hide it.
           run_case internal-runtime-root runtime 'EDP P0 Runtime Transport' no
-          # Handoff's last-resort label strategy.
           run_case dot-prefixed-volume-name volumes '.EDP P0 Hidden Transport' no
-          # Filesystem hidden flag on the mountpoint directory before FSKit mount.
           run_case hidden-mountpoint-flag volumes 'EDP P0 Hidden Flag Transport' yes
-          # Combined isolation candidate if neither mechanism is sufficient alone.
           run_case runtime-dot-volume-name runtime '.EDP P0 Runtime Hidden Transport' no
 
           cat "${RESULTS}"
