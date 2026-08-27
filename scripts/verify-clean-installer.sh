@@ -32,6 +32,8 @@ for path in \
   "bin/edp-vaultctl" \
   "bin/edp-readwrite-fuse" \
   "bin/edp-console-exec" \
+  "bin/edp-fuset-readwrite" \
+  "bin/edp-mfmount-local-readwrite" \
   "bin/edp-raw-metadata" \
   "bin/edp-raw-sparse" \
   "bin/libEDPReadWriteBridge.dylib" \
@@ -84,16 +86,34 @@ echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
 [[ ! -e "${ROOT}/bin/ntfscp" ]]
 echo "RESULT=PRODUCTION_NTFS_RUNTIME_CONTAINS_NO_FIXTURE_TOOLS"
 
-/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
-  | /usr/bin/grep -F 'sys.openfile.readwrite.' >/dev/null
+# Current-only raw-device ownership: the signed App talks only to the privileged
+# XPC service. It must not resurrect the retired per-device AuthorizationDB /
+# AuthorizationExternalForm right. The root-owned console launcher opens only
+# whole /dev/rdiskN devices, pins the raw descriptor to fd 3, and then drops to
+# the console user before starting the selected transport backend.
+if /usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F 'sys.openfile.readwrite.' >/dev/null; then
+  echo "production app unexpectedly contains retired raw-device AuthorizationDB right" >&2
+  exit 5
+fi
 /usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
-  | /usr/bin/grep -F 'NTFS (read/write)' >/dev/null
+  | /usr/bin/grep -F 'edp-console-exec' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-console-exec" \
+  | /usr/bin/grep -F 'EDP_CONSOLE_EXEC_RAW_OPEN_FAILED' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-console-exec" \
+  | /usr/bin/grep -F '/dev/rdisk' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-console-exec" \
+  | /usr/bin/grep -F 'edp-mfmount-local-readwrite' >/dev/null
+echo "RESULT=CURRENT_RAW_FD3_TRANSPORT_PATH_ENFORCED"
+
+/usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
+  | /usr/bin/grep -F 'NTFS (read-only; Finder erasable)' >/dev/null
 if /usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
   | /usr/bin/grep -F -- '--device-auth-readonly' >/dev/null; then
   echo "production daemon unexpectedly references read-only encrypted bridge mode" >&2
-  exit 5
+  exit 6
 fi
-echo "RESULT=PRODUCTION_NTFS_READWRITE_PATH_ENFORCED"
+echo "RESULT=PRODUCTION_APPLE_NTFS_POLICY_ENFORCED"
 
 /usr/bin/otool -L "${ROOT}/bin/edp-readwrite-fuse" \
   | /usr/bin/grep -F '@rpath/libEDPReadWriteBridge.dylib' >/dev/null
