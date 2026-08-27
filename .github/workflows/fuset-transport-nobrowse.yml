@@ -1,11 +1,10 @@
-name: FUSE-T FSKit Transport Finder Visibility
+name: FUSE-T FSKit FinderInfo Visibility A/B
 
 on:
   push:
     branches: ["test/fuset-minimal-fskit-bridge"]
     paths:
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
-      - "native/EDPFSKitPoC/Tools/FuseTMinimal/DASetPrivateProbe.c"
       - ".github/workflows/fuset-transport-nobrowse.yml"
   workflow_dispatch:
 
@@ -13,11 +12,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: fuset-transport-finder-visibility-${{ github.ref }}
+  group: fuset-finderinfo-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  finder-private-contract:
+  finderinfo-xattr-contract:
     runs-on: macos-26
     timeout-minutes: 20
     env:
@@ -86,138 +85,215 @@ jobs:
           pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv | tee "${RUNNER_TEMP}/pluginkit.txt" || true
           grep -Fq "${FUSET_BUNDLE_ID}" "${RUNNER_TEMP}/pluginkit.txt"
 
-      - name: Build bridge and Finder visibility probes
+      - name: Build control and diagnostic FinderInfo bridges
         run: |
           set -euo pipefail
+          SOURCE="native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
+          PATCHED="${RUNNER_TEMP}/FuseTFinderInfoBridge.swift"
+
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
-            native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift \
-            -o "${RUNNER_TEMP}/FuseTMinimalBridge"
+            "${SOURCE}" -o "${RUNNER_TEMP}/FuseTControlBridge"
 
-          xcrun clang -std=c17 -Wall -Wextra -Werror \
-            native/EDPFSKitPoC/Tools/FuseTMinimal/DASetPrivateProbe.c \
-            -framework CoreFoundation -framework DiskArbitration \
-            -o "${RUNNER_TEMP}/DASetPrivateProbe"
+          python3 - "${SOURCE}" "${PATCHED}" <<'PY'
+          from pathlib import Path
+          import sys
 
-          cat >"${RUNNER_TEMP}/InspectVolume.swift" <<'SWIFT'
+          source_path, output_path = map(Path, sys.argv[1:])
+          text = source_path.read_text()
+
+          old_namedattr = '        "namedattr": false,'
+          new_namedattr = '        "namedattr": true,'
+          if text.count(old_namedattr) != 1:
+              raise SystemExit("unexpected namedattr source shape")
+          text = text.replace(old_namedattr, new_namedattr)
+
+          old_xattrs = '''        case "list_xattrs":
+              return okFrame(requestID: requestID, fields: ["xattr_names": []])
+          case "get_xattr":
+              return errorFrame(requestID: requestID, code: ENOATTR, message: "Attribute not found")'''
+          new_xattrs = '''        case "list_xattrs":
+              let nodeID = integer(frame.metadata["node_id"])
+              fputs("XATTR_RPC list node=\\(nodeID.map(String.init) ?? \"<nil>\") metadata=\\(String(describing: frame.metadata))\\n", stderr)
+              if nodeID == BridgeConstants.rootNodeID {
+                  return okFrame(requestID: requestID, fields: ["xattr_names": ["com.apple.FinderInfo"]])
+              }
+              return okFrame(requestID: requestID, fields: ["xattr_names": []])
+          case "get_xattr":
+              let nodeID = integer(frame.metadata["node_id"])
+              let name = frame.metadata["xattr_name"] as? String
+              fputs("XATTR_RPC get node=\\(nodeID.map(String.init) ?? \"<nil>\") name=\\(name ?? \"<nil>\") metadata=\\(String(describing: frame.metadata))\\n", stderr)
+              guard nodeID == BridgeConstants.rootNodeID, name == "com.apple.FinderInfo" else {
+                  return errorFrame(requestID: requestID, code: ENOATTR, message: "Attribute not found")
+              }
+              var bytes = [UInt8](repeating: 0, count: 32)
+              bytes[8] = 0x40
+              bytes[9] = 0x00
+              return Frame(metadata: ["request_id": requestID, "ok": true], payload: Data(bytes))'''
+          if text.count(old_xattrs) != 1:
+              raise SystemExit("unexpected xattr source shape")
+          text = text.replace(old_xattrs, new_xattrs)
+          output_path.write_text(text)
+          PY
+
+          grep -Fq '"namedattr": true' "${PATCHED}"
+          grep -Fq 'com.apple.FinderInfo' "${PATCHED}"
+          xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
+            "${PATCHED}" -o "${RUNNER_TEMP}/FuseTFinderInfoBridge"
+
+          cat >"${RUNNER_TEMP}/InspectPath.swift" <<'SWIFT'
           import Foundation
+
           @main
-          struct InspectVolume {
+          struct InspectPath {
               static func main() throws {
+                  guard CommandLine.arguments.count == 2 else { exit(64) }
                   let url = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
-                  let values = try url.resourceValues(forKeys: [.volumeIsBrowsableKey, .volumeNameKey, .volumeTypeNameKey])
+                  let values = try url.resourceValues(forKeys: [
+                      .isHiddenKey,
+                      .volumeIsBrowsableKey,
+                      .volumeNameKey,
+                      .volumeIsLocalKey,
+                      .volumeIsReadOnlyKey,
+                      .volumeTypeNameKey,
+                  ])
+                  print("ITEM_HIDDEN=\(values.isHidden == true ? 1 : 0)")
                   print("BROWSABLE=\(values.volumeIsBrowsable == true ? 1 : 0)")
                   print("VOLUME_NAME=\(values.volumeName ?? "<nil>")")
+                  print("LOCAL=\(values.volumeIsLocal == true ? 1 : 0)")
+                  print("READ_ONLY=\(values.volumeIsReadOnly == true ? 1 : 0)")
                   print("TYPE=\(values.volumeTypeName ?? "<nil>")")
               }
           }
           SWIFT
           xcrun swiftc -swift-version 6 -parse-as-library -warnings-as-errors \
-            "${RUNNER_TEMP}/InspectVolume.swift" -o "${RUNNER_TEMP}/InspectVolume"
+            "${RUNNER_TEMP}/InspectPath.swift" -o "${RUNNER_TEMP}/InspectPath"
 
-      - name: Verify DA private behavior in Finder itself
+      - name: Compare FUSE-T control against FinderInfo xattr transport
         run: |
           set -euo pipefail
-          RAW="${RUNNER_TEMP}/finder-private.raw"
-          MOUNTPOINT="/Volumes/.edp-p0-private-$(uuidgen | tr '[:upper:]' '[:lower:]')"
-          FINDER_DISK_NAME="$(basename "${MOUNTPOINT}")"
-          VOLUME_NAME='EDP P0 Private Transport'
-          LOG="${RUNNER_TEMP}/bridge.log"
-          echo "FINDER_MATCH_NAME=${FINDER_DISK_NAME}"
+          RAW="${RUNNER_TEMP}/fuset-finderinfo-ab.raw"
           dd if=/dev/zero of="${RAW}" bs=1m count=8 status=none
-          printf 'EDP-FINDER-PRIVATE' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
-          sudo mkdir -p "${MOUNTPOINT}"
-          sudo chown "$(id -u):$(id -g)" "${MOUNTPOINT}"
-          echo "MOUNTPOINT=${MOUNTPOINT}" >> "${GITHUB_ENV}"
+          printf 'EDP-FUSET-FINDERINFO' | dd of="${RAW}" bs=1 seek=4096 conv=notrunc status=none
 
-          finder_disks() {
-            osascript -e 'tell application "Finder" to get name of every disk'
+          run_variant() {
+            local tag="$1"
+            local binary="$2"
+            local volume_name="EDP P0 FUSE-T ${tag}"
+            local mountpoint="/Volumes/EDP-P0-FUSET-${tag}-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+            local log_file="${RUNNER_TEMP}/${tag}.bridge.log"
+
+            sudo mkdir -p "${mountpoint}"
+            sudo chown "$(id -u):$(id -g)" "${mountpoint}"
+
+            "${binary}" \
+              --writable \
+              --backing "${RAW}" \
+              --mountpoint "${mountpoint}" \
+              --volume-name "${volume_name}" \
+              >"${log_file}" 2>&1 &
+            local pid=$!
+
+            local mounted=false
+            for attempt in $(seq 1 30); do
+              if mount | grep -Fq " on ${mountpoint} "; then mounted=true; break; fi
+              if ! kill -0 "${pid}" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            cat "${log_file}" || true
+            test "${mounted}" = true
+            echo "${tag}_MOUNTED=1"
+
+            local inspect item_hidden browsable
+            inspect="$(${RUNNER_TEMP}/InspectPath "${mountpoint}")"
+            printf '%s\n' "${inspect}"
+            item_hidden="$(printf '%s\n' "${inspect}" | sed -n 's/^ITEM_HIDDEN=//p')"
+            browsable="$(printf '%s\n' "${inspect}" | sed -n 's/^BROWSABLE=//p')"
+            echo "${tag}_ITEM_HIDDEN=${item_hidden}"
+            echo "${tag}_BROWSABLE=${browsable}"
+
+            set +e
+            local finder_hex
+            finder_hex="$(xattr -px com.apple.FinderInfo "${mountpoint}" 2>/dev/null | tr -d '[:space:]')"
+            local xattr_status=$?
+            set -e
+            echo "${tag}_FINDERINFO_XATTR_STATUS=${xattr_status}"
+            echo "${tag}_FINDERINFO_HEX=${finder_hex:-<none>}"
+
+            if [[ "${tag}" = CONTROL ]]; then
+              test "${xattr_status}" -ne 0
+              test "${item_hidden}" = 0
+            else
+              cat "${log_file}" || true
+              test "${xattr_status}" -eq 0
+              test "${#finder_hex}" -eq 64
+              test "${finder_hex:16:4}" = "4000"
+              test "${item_hidden}" = 1
+              grep -Fq 'XATTR_RPC' "${log_file}"
+            fi
+
+            if xcrun --find GetFileInfo >/dev/null 2>&1; then
+              echo "${tag}_GETFILEINFO=$(xcrun GetFileInfo -a "${mountpoint}" 2>/dev/null || true)"
+            fi
+
+            killall Finder 2>/dev/null || true
+            open -a Finder
+            sleep 2
+            osascript -e 'tell application "Finder" to get name of every disk' >"${RUNNER_TEMP}/${tag}.finder.txt" || true
+            cat "${RUNNER_TEMP}/${tag}.finder.txt" || true
+            if grep -Fq "${volume_name}" "${RUNNER_TEMP}/${tag}.finder.txt" 2>/dev/null; then
+              echo "${tag}_FINDER_VISIBLE=1"
+              printf '1' >"${RUNNER_TEMP}/${tag}.finder-visible"
+            else
+              echo "${tag}_FINDER_VISIBLE=0"
+              printf '0' >"${RUNNER_TEMP}/${tag}.finder-visible"
+            fi
+            printf '%s' "${item_hidden}" >"${RUNNER_TEMP}/${tag}.item-hidden"
+
+            if [[ "${tag}" = FINDERINFO ]]; then
+              local exposed="${mountpoint}/volume.raw"
+              test -f "${exposed}"
+              printf 'RW' | dd of="${exposed}" bs=1 seek=8192 conv=notrunc status=none
+              cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
+              echo 'RW_OK=1'
+              local out disk
+              out="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${exposed}")"
+              printf '%s\n' "${out}"
+              disk="$(printf '%s\n' "${out}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+              test -n "${disk}"
+              hdiutil detach "${disk}" -force >/dev/null
+              echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
+            fi
+
+            /sbin/umount "${mountpoint}" 2>/dev/null || sudo /sbin/umount "${mountpoint}" || true
+            kill "${pid}" 2>/dev/null || true
+            rmdir "${mountpoint}" 2>/dev/null || sudo rmdir "${mountpoint}" 2>/dev/null || true
           }
 
-          open -a Finder
-          for attempt in $(seq 1 15); do
-            if finder_disks >"${RUNNER_TEMP}/finder-initial.txt" 2>"${RUNNER_TEMP}/finder-initial.err"; then break; fi
-            sleep 1
-          done
-          cat "${RUNNER_TEMP}/finder-initial.txt" || true
-          cat "${RUNNER_TEMP}/finder-initial.err" || true
-          test -s "${RUNNER_TEMP}/finder-initial.txt"
-          echo 'FINDER_APPLESCRIPT_OK=1'
+          run_variant CONTROL "${RUNNER_TEMP}/FuseTControlBridge"
+          run_variant FINDERINFO "${RUNNER_TEMP}/FuseTFinderInfoBridge"
 
-          "${RUNNER_TEMP}/FuseTMinimalBridge" \
-            --writable \
-            --backing "${RAW}" \
-            --mountpoint "${MOUNTPOINT}" \
-            --volume-name "${VOLUME_NAME}" \
-            >"${LOG}" 2>&1 &
-          BRIDGE_PID=$!
-          echo "BRIDGE_PID=${BRIDGE_PID}" >> "${GITHUB_ENV}"
+          CONTROL_HIDDEN="$(cat "${RUNNER_TEMP}/CONTROL.item-hidden")"
+          FINDERINFO_HIDDEN="$(cat "${RUNNER_TEMP}/FINDERINFO.item-hidden")"
+          CONTROL_FINDER="$(cat "${RUNNER_TEMP}/CONTROL.finder-visible")"
+          FINDERINFO_FINDER="$(cat "${RUNNER_TEMP}/FINDERINFO.finder-visible")"
+          echo "AB_CONTROL_ITEM_HIDDEN=${CONTROL_HIDDEN}"
+          echo "AB_FINDERINFO_ITEM_HIDDEN=${FINDERINFO_HIDDEN}"
+          echo "AB_CONTROL_FINDER_VISIBLE=${CONTROL_FINDER}"
+          echo "AB_FINDERINFO_FINDER_VISIBLE=${FINDERINFO_FINDER}"
 
-          mounted=false
-          for attempt in $(seq 1 30); do
-            if mount | grep -Fq " on ${MOUNTPOINT} "; then mounted=true; break; fi
-            if ! kill -0 "${BRIDGE_PID}" 2>/dev/null; then break; fi
-            sleep 1
-          done
-          cat "${LOG}"
-          test "${mounted}" = true
-          "${RUNNER_TEMP}/InspectVolume" "${MOUNTPOINT}"
-
-          baseline_seen=false
-          for attempt in $(seq 1 10); do
-            finder_disks | tee "${RUNNER_TEMP}/finder-baseline.txt"
-            if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder-baseline.txt"; then baseline_seen=true; break; fi
-            sleep 1
-          done
-          test "${baseline_seen}" = true
-          echo 'FINDER_BASELINE_TRANSPORT_VISIBLE=1'
-
-          sudo "${RUNNER_TEMP}/DASetPrivateProbe" "${MOUNTPOINT}" | tee "${RUNNER_TEMP}/da-private.txt"
-          grep -Fq 'DA_PRIVATE_AFTER=1' "${RUNNER_TEMP}/da-private.txt"
-
-          sleep 2
-          finder_disks | tee "${RUNNER_TEMP}/finder-after-private-live.txt"
-          if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder-after-private-live.txt"; then
-            echo 'FINDER_LIVE_AFTER_PRIVATE_VISIBLE=1'
-          else
-            echo 'FINDER_LIVE_AFTER_PRIVATE_VISIBLE=0'
-          fi
-
-          killall Finder 2>/dev/null || true
-          sleep 1
-          open -a Finder
-          restarted=false
-          for attempt in $(seq 1 15); do
-            if finder_disks >"${RUNNER_TEMP}/finder-after-restart.txt" 2>"${RUNNER_TEMP}/finder-after-restart.err"; then restarted=true; break; fi
-            sleep 1
-          done
-          test "${restarted}" = true
-          cat "${RUNNER_TEMP}/finder-after-restart.txt"
-          if grep -Fq "${FINDER_DISK_NAME}" "${RUNNER_TEMP}/finder-after-restart.txt"; then
-            echo 'FINDER_RESTART_AFTER_PRIVATE_VISIBLE=1'
-            exit 1
-          fi
-          echo 'FINDER_RESTART_AFTER_PRIVATE_VISIBLE=0'
-
-          EXPOSED="${MOUNTPOINT}/volume.raw"
-          test -f "${EXPOSED}"
-          printf 'RW' | dd of="${EXPOSED}" bs=1 seek=8192 conv=notrunc status=none
-          cmp <(dd if="${RAW}" bs=1 skip=8192 count=2 status=none) <(printf 'RW')
-          echo 'RW_OK=1'
-
-          OUT="$(hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "${EXPOSED}")"
-          printf '%s\n' "${OUT}"
-          DISK="$(printf '%s\n' "${OUT}" | awk '/^\/dev\/disk/ {print $1; exit}')"
-          test -n "${DISK}"
-          hdiutil detach "${DISK}" -force >/dev/null
-          echo 'DISKIMAGES2_RAW_ATTACH_OK=1'
-          echo 'RESULT=P0_DA_PRIVATE_HIDES_TRANSPORT_FROM_FRESH_FINDER'
+          test "${CONTROL_HIDDEN}" = 0
+          test "${FINDERINFO_HIDDEN}" = 1
+          echo 'RESULT=FUSET_FINDERINFO_XATTR_RECOGNIZED_RW_DISKIMAGES2_OK'
 
       - name: Cleanup
         if: always()
         run: |
           set +e
-          if [[ -n "${MOUNTPOINT:-}" ]]; then /sbin/umount "${MOUNTPOINT}" 2>/dev/null || sudo /sbin/umount "${MOUNTPOINT}" 2>/dev/null; fi
-          if [[ -n "${BRIDGE_PID:-}" ]]; then kill "${BRIDGE_PID}" 2>/dev/null || true; fi
-          sudo find /Volumes -maxdepth 1 -type d -name '.edp-p0-private-*' -exec rmdir {} \; 2>/dev/null || true
+          pkill -f "${RUNNER_TEMP}/FuseTControlBridge" 2>/dev/null || true
+          pkill -f "${RUNNER_TEMP}/FuseTFinderInfoBridge" 2>/dev/null || true
+          mount | awk '/\/Volumes\/EDP-P0-FUSET-/ {print $3}' | while read -r mp; do
+            /sbin/umount "${mp}" 2>/dev/null || sudo /sbin/umount "${mp}" 2>/dev/null || true
+            sudo rmdir "${mp}" 2>/dev/null || true
+          done
           sudo rm -rf /Applications/fuse-t.app
           exit 0
