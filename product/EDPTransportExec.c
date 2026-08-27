@@ -52,6 +52,7 @@ int main(int argc, char **argv) {
         return 69;
     }
     fprintf(stderr, "EDP_TRANSPORT_EXEC_SELECTED=%s\n", backend);
+    argv[0] = target;
     execv(target, argv);
     perror("EDPTransportExec execv");
     return 71;
