@@ -137,6 +137,111 @@ pub struct SectorView {
 
 fn hexs(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
 
+// ── 盘地图(全盘区域 + LBA0-13 方格) ───────────────────────────────────────
+#[derive(Serialize)]
+pub struct RegionRow {
+    pub name: String,
+    pub start_lba: u64,
+    pub end_lba: u64,        // 含
+    pub size_gb: String,
+    pub color: String,       // meta/data/encrypt/free/tail/zero
+    pub desc: String,
+}
+
+#[derive(Serialize)]
+pub struct MetaCell {
+    pub lba: u64,
+    pub name: String,
+    pub color: String,
+    pub desc: String,        // hover 释义(含义+加密方法+关键值)
+}
+
+#[derive(Serialize)]
+pub struct DiskMap {
+    pub disk: u32,
+    pub total_sectors: u64,
+    pub size_gb: String,
+    pub regions: Vec<RegionRow>,
+    pub meta: Vec<MetaCell>,
+    pub tail: Vec<RegionRow>,
+}
+
+#[tauri::command]
+pub fn disk_map(disk_no: u32) -> Result<DiskMap, String> {
+    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no)
+        .ok_or("未找到该 USB 盘")?;
+    let total = usb.size_bytes / 512;
+    let chs_base = total / 16065 * 16065;
+
+    // LBA12 布局
+    let raw12 = disk::read_lba(disk_no, 12).map_err(|e| format!("读 LBA12: {e}"))?;
+    let mut entries = Vec::new();
+    if let Some(id) = disk::identify(disk_no) {
+        let dec = crypto::a6b0_full(&raw12[..0x170], &id.crc.to_le_bytes(), 0);
+        if dec.starts_with(b"EDPF") { entries = parser::parse_edpf(&dec, 0x60); }
+    }
+    let mut regions = Vec::new();
+    regions.push(RegionRow { name: "元数据区".into(), start_lba: 0, end_lba: 62,
+        size_gb: parser::fmt_gb(63 * 512), color: "meta".into(),
+        desc: "LBA0-13 cems 元数据(MBR/标签/EDPF/密钥), 其后保留".into() });
+    for e in &entries {
+        if e.ptype == 4 && e.size == 3072 { continue; }   // LBA12 的 IIR 指针不是分区
+        let sectors = e.size / 512;
+        regions.push(RegionRow {
+            name: parser::edpf_type_name(e.ptype),
+            start_lba: e.start, end_lba: e.start + sectors.saturating_sub(1),
+            size_gb: parser::fmt_gb(e.size),
+            color: if e.ptype == 2 { "data".into() } else { "boot".into() },
+            desc: match e.ptype {
+                2 => "Share 明文数据区(MBR 直挂, 免密读写)".into(),
+                1 => "Boot 启动区(FAT16, 加密盘形态)".into(),
+                _ => String::new(),
+            },
+        });
+    }
+    // 尾部区域(CHS 基准, capture_disk 口径)
+    let tail_def: &[(&str, u64, u64, &str)] = &[
+        ("Region A", 1792, 6, "IIR 密钥表区(LBA7 type4 指针指向; 免密盘全零)"),
+        ("IIR", 512, 4, "IIR 基准区(GetFlagInfo 读, 全零则 labelValidate 短路)"),
+        ("TagExp", 480, 8, "标签过期区(只读)"),
+        ("loginCfg", 416, 14, "登录策略 JSON 配置区"),
+        ("USB签名", 384, 4, "USB 签名区"),
+    ];
+    let mut tail = Vec::new();
+    for (name, back, nsec, desc) in tail_def {
+        let start = chs_base - back;
+        tail.push(RegionRow { name: name.to_string(), start_lba: start, end_lba: start + nsec - 1,
+            size_gb: format!("{nsec} 扇"), color: "tail".into(), desc: desc.to_string() });
+    }
+    // 空档 = 最后分区结束 → Region A
+    let last_part_end = regions.iter().filter(|r| r.color != "meta").map(|r| r.end_lba).max().unwrap_or(62);
+    if last_part_end + 1 < chs_base - 1792 {
+        regions.push(RegionRow { name: "空档".into(), start_lba: last_part_end + 1, end_lba: chs_base - 1793,
+            size_gb: parser::fmt_gb((chs_base - 1792 - last_part_end - 1) * 512), color: "free".into(),
+            desc: "未定义区域".into() });
+    }
+
+    // LBA0-13 方格
+    let mut meta = Vec::new();
+    for lba in 0u64..14 {
+        let (name, color, desc) = match lba {
+            0 => ("MBR", "part", "主引导记录: 分区表(Share 直挂=免密 / Boot 小分区=加密)"),
+            4 => ("标签索引", "key", "$$$labelOnlyId$$$ + 三件套(xor8/2Nd), 盘唯一标识"),
+            6 => ("SAFE6", "label", "盘标签: 部门/用户/CRC32(device_id)/校验和"),
+            7 => ("EDPF·旧", "part", "分区表(64B entry): Share + Encrypt(IIR 指针 3072B); K0 滚动XOR"),
+            8 => ("LLGB", "label", "ELABEL 标签键值(Dept/User/GLAB…); A6B0 加密"),
+            9 => ("EETU", "cipher", "临时使用区; 全零=无(免密特征)"),
+            11 => ("PDKB", "key", "device_id 备份块: 解 LBA7/8/12 的 key 源"),
+            12 => ("EDPF·新", "part", "分区表(96B entry): Share/Encrypt + salt/algo; A6B0 加密"),
+            _ => ("保留", "zero", "全零保留区"),
+        };
+        meta.push(MetaCell { lba, name: name.into(), color: color.into(), desc: desc.into() });
+    }
+
+    Ok(DiskMap { disk: disk_no, total_sectors: total, size_gb: parser::fmt_gb(usb.size_bytes),
+        regions, meta, tail })
+}
+
 #[tauri::command]
 pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
     if disk_no < 2 { return Err("拒绝系统盘".into()); }

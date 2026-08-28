@@ -10,7 +10,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::list_disks,
-            commands::analyze_disk
+            commands::analyze_disk,
+            commands::read_sector,
+            commands::disk_map
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -120,9 +120,65 @@ function renderHexdump() {
 const STATUS_COLOR = { encrypted: 'var(--accent)', nopwd: 'var(--accent-2)', not_cems: 'var(--text-dim)' };
 $('#disk-select').addEventListener('change', (e) => {
   const d = e.target.value;
-  if (d) { currentDisk = +d; analyzeDisk(+d); loadSector($('#sector-lba').value || 0); }
-  else location.reload();
+  if (d) {
+    currentDisk = +d;
+    analyzeDisk(+d);
+    loadDiskMap(+d);
+    loadSector(+($('#sector-lba').value || 0));
+  } else location.reload();
 });
+
+/* ── 盘地图页 ── */
+const REGION_LEGEND = [
+    ['meta', '#8b949e', '元数据区'], ['data', '#1f6feb', 'Share 数据区'], ['boot', '#58a6ff', 'Boot 区'],
+    ['encrypt', '#bc8cff', 'Encrypt 加密区'], ['free', '#21262d', '空档'], ['tail', '#d29922', '尾部区域'],
+];
+
+function jumpToSector(lba) {
+  document.querySelector('.tabs button[data-page="sector"]').click();
+  $('#sector-lba').value = lba;
+  loadSector(lba);
+}
+
+const escTip = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '&#10;');
+
+async function loadDiskMap(disk) {
+  try {
+    const m = await invoke('disk_map', { diskNo: disk });
+    // LBA0-13 方格
+    $('#map-meta').innerHTML = m.meta.map(c =>
+      `<div class="meta-cell mc-${c.color}" data-lba="${c.lba}" ` +
+      `data-tip="<span class='tt-title'>LBA${c.lba} · ${c.name}</span>&#10;${escTip(c.desc)}">` +
+      `<span class="lba-no">${c.lba}</span><span class="lba-name">${c.name}</span></div>`).join('');
+    document.querySelectorAll('#map-meta .meta-cell').forEach(el =>
+      el.addEventListener('click', () => jumpToSector(+el.dataset.lba)));
+
+    // 全盘比例条(按扇区占比, 小区域保底可见)
+    const total = m.total_sectors;
+    $('#map-total').textContent = `共 ${total.toLocaleString()} 扇 · ${m.size_gb}`;
+    const rows = m.regions.map(r => ({ ...r, span: r.end_lba - r.start_lba + 1 }));
+    $('#map-strip').innerHTML = rows.map(r => {
+      const pct = Math.max(r.span / total * 100, 0.6);
+      const label = pct > 7 ? r.name : '';
+      return `<div class="map-region map-c-${r.color}" style="flex:${pct} 1 0" ` +
+        `data-lba="${r.start_lba}" data-tip="<span class='tt-title'>${r.name}</span>&#10;` +
+        `LBA ${r.start_lba.toLocaleString()} ~ ${r.end_lba.toLocaleString()} · ${r.size_gb}&#10;${escTip(r.desc)}">${label}</div>`;
+    }).join('');
+    document.querySelectorAll('#map-strip .map-region').forEach(el =>
+      el.addEventListener('click', () => jumpToSector(+el.dataset.lba)));
+    $('#map-legend').innerHTML = REGION_LEGEND.map(([k, c, n]) =>
+      `<span><i style="background:${c}"></i>${n}</span>`).join('');
+
+    // 尾部放大条(等宽)
+    $('#map-tail').innerHTML = m.tail.map(r =>
+      `<div class="map-region map-c-${r.color}" style="flex:1" data-lba="${r.start_lba}" ` +
+      `data-tip="<span class='tt-title'>${r.name}</span>&#10;LBA ${r.start_lba.toLocaleString()} ~ ${r.end_lba.toLocaleString()} · ${r.size_gb}&#10;${escTip(r.desc)}">${r.name}</div>`).join('');
+    document.querySelectorAll('#map-tail .map-region').forEach(el =>
+      el.addEventListener('click', () => jumpToSector(+el.dataset.lba)));
+  } catch (e) {
+    $('#map-meta').innerHTML = `<div class="placeholder" style="color:var(--danger)">${e}</div>`;
+  }
+}
 
 let currentDisk = null;
 

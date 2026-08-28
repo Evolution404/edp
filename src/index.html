@@ -29,7 +29,19 @@
       <div id="overview-content"><div class="card placeholder">插入 USB 盘后自动识别 · 状态判定 · 分区摘要</div></div>
     </section>
     <section id="page-map" class="page">
-      <div class="card placeholder">全盘区域色块 + LBA0-13 方格网格 · 悬停看含义 · 点击跳扇区</div>
+      <div class="card">
+        <h3>LBA 0-13 元数据区 <span class="dim" style="font-weight:400">(点击方格查看扇区)</span></h3>
+        <div id="map-meta" class="meta-grid"></div>
+      </div>
+      <div class="card">
+        <h3>全盘布局 <span id="map-total" class="dim" style="font-weight:400"></span></h3>
+        <div id="map-strip" class="map-strip"></div>
+        <div class="map-legend" id="map-legend"></div>
+      </div>
+      <div class="card">
+        <h3>尾部区域 <span class="dim" style="font-weight:400">(CHS 基准前, 放大显示)</span></h3>
+        <div id="map-tail" class="map-strip tail"></div>
+      </div>
     </section>
     <section id="page-sector" class="page">
       <div class="card sector-nav">
