@@ -18,7 +18,7 @@ RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY
  11M	/Users/runner/work/_temp/bench-edp-whole-device.raw
 
 ## hidden transport
-file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-c69bf922-a888-4ba7-ba81-b171cfeec4ef/session.json on /Users/runner/work/_temp/edp-bench-hidden-fdbf1f57-4749-4a6d-bac7-d0012ca32d3e (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-58b4fc18-33d0-4f6e-bb95-494dc0ceb78c/session.json on /Users/runner/work/_temp/edp-bench-hidden-c1ae4a88-2b62-4a20-ba29-6a2333938b1d (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 BACKING_MODE=EDP_UNLOCK_RANDOM_ACCESS
 RAW_ACCESS=O_RDONLY|O_CLOEXEC
 PLAINTEXT_CACHE=none
@@ -27,40 +27,40 @@ PARTITION_TYPE=2
 PARTITION_START_SECTOR=20480
 PARTITION_SIZE=118477684736
 ALGORITHM=2
-SESSION_ID=edp-fuset-c69bf922-a888-4ba7-ba81-b171cfeec4ef
-SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-c69bf922-a888-4ba7-ba81-b171cfeec4ef/session.json
-SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-c69bf922-a.sock
-MOUNTPOINT=/Users/runner/work/_temp/edp-bench-hidden-fdbf1f57-4749-4a6d-bac7-d0012ca32d3e
+SESSION_ID=edp-fuset-58b4fc18-33d0-4f6e-bb95-494dc0ceb78c
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-58b4fc18-33d0-4f6e-bb95-494dc0ceb78c/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-58b4fc18-3.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-bench-hidden-c1ae4a88-2b62-4a20-ba29-6a2333938b1d
 BACKING_SIZE=118477684736
 ACCESS_MODE=read-only
 mount process exited status=0
 
 ## H1 raw trials
-BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 nocache=1 rdahead=0 seconds=4.111533 mib_per_s=7.783 iops=1992.4 checksum=1600144
-BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 nocache=1 rdahead=0 seconds=4.069042 mib_per_s=7.864 iops=2013.3 checksum=1600144
-BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 nocache=1 rdahead=0 seconds=4.923127 mib_per_s=6.500 iops=1664.0 checksum=1600144
-BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 nocache=1 rdahead=0 seconds=3.262667 mib_per_s=39.232 iops=627.7 checksum=400428
-BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 nocache=1 rdahead=0 seconds=3.075464 mib_per_s=41.620 iops=665.9 checksum=400428
-BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 nocache=1 rdahead=0 seconds=3.955943 mib_per_s=32.356 iops=517.7 checksum=400428
-BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=4.454479 mib_per_s=57.470 iops=57.5 checksum=49980
-BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=4.311231 mib_per_s=59.380 iops=59.4 checksum=49980
-BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=4.843263 mib_per_s=52.857 iops=52.9 checksum=49980
+BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 nocache=1 rdahead=0 seconds=6.326067 mib_per_s=5.058 iops=1295.0 checksum=1600144
+BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 nocache=1 rdahead=0 seconds=5.520605 mib_per_s=5.796 iops=1483.9 checksum=1600144
+BENCH pattern=random block_bytes=4096 operations=8192 span_bytes=268435456 total_bytes=33554432 nocache=1 rdahead=0 seconds=5.240458 mib_per_s=6.106 iops=1563.2 checksum=1600144
+BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 nocache=1 rdahead=0 seconds=4.617365 mib_per_s=27.721 iops=443.5 checksum=400428
+BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 nocache=1 rdahead=0 seconds=5.253164 mib_per_s=24.366 iops=389.9 checksum=400428
+BENCH pattern=random block_bytes=65536 operations=2048 span_bytes=268435456 total_bytes=134217728 nocache=1 rdahead=0 seconds=4.509418 mib_per_s=28.385 iops=454.2 checksum=400428
+BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=5.293273 mib_per_s=48.363 iops=48.4 checksum=49980
+BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=5.141606 mib_per_s=49.790 iops=49.8 checksum=49980
+BENCH pattern=random block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=6.356664 mib_per_s=40.273 iops=40.3 checksum=49980
 
 ## H1 medians
-H1 block_bytes=4096 median_mib_per_s=7.783 median_iops=1992.4
-H1 block_bytes=65536 median_mib_per_s=39.232 median_iops=627.7
-H1 block_bytes=1048576 median_mib_per_s=57.470 median_iops=57.5
+H1 block_bytes=4096 median_mib_per_s=5.796 median_iops=1483.9
+H1 block_bytes=65536 median_mib_per_s=27.721 median_iops=443.5
+H1 block_bytes=1048576 median_mib_per_s=48.363 median_iops=48.4
 
 ## H2 sequential
-BENCH pattern=sequential block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=5.368646 mib_per_s=47.684 iops=47.7 checksum=49980
+BENCH pattern=sequential block_bytes=1048576 operations=256 span_bytes=268435456 total_bytes=268435456 nocache=1 rdahead=0 seconds=7.421859 mib_per_s=34.493 iops=34.5 checksum=49980
 
 ## H3 client time -l
-        5.38 real         0.00 user         0.03 sys
-             7176192  maximum resident set size
+        7.45 real         0.00 user         0.05 sys
+             7159808  maximum resident set size
                    0  average shared memory size
                    0  average unshared data size
                    0  average unshared stack size
-                 625  page reclaims
+                 623  page reclaims
                    2  page faults
                    0  swaps
                    0  block input operations
@@ -69,30 +69,37 @@ BENCH pattern=sequential block_bytes=1048576 operations=256 span_bytes=268435456
                    0  messages received
                    0  signals received
                  258  voluntary context switches
-                  30  involuntary context switches
-             2704512  peak memory footprint
+                  57  involuntary context switches
+             2655232  peak memory footprint
 
 ## H3 bridge summary
-bridge_cpu_before=0:27.21
-bridge_cpu_after=0:31.71
-bridge_rss_max_kb=144720
+bridge_cpu_before=0:31.55
+bridge_cpu_after=0:37.26
+bridge_rss_max_kb=46352
 
 ## H3 bridge RSS samples
-143696  16.8
-143760  48.7
-143824  77.5
-143872  81.2
-143952  85.8
-144032  86.7
-144080  88.0
-144144  85.9
-144256  84.3
-144304  86.7
-144368  83.4
-144448  78.8
-144528  85.0
-144592  86.6
-144656  81.5
-144720  86.8
-131792  83.4
-131872  87.7
+ 46352  20.0
+ 44256  31.2
+ 39664  40.2
+ 36560  67.3
+ 36592  71.8
+ 36672  80.6
+ 36720  71.4
+ 32016  75.2
+ 32096  79.3
+ 32144  79.0
+ 32224  82.2
+ 32256  84.1
+ 32304  84.3
+ 32336  84.0
+ 32384  86.3
+ 32432  86.5
+ 32496  84.3
+ 32528  83.9
+ 32576  85.4
+ 32624  81.6
+ 32672  83.4
+ 32704  81.8
+ 30656  80.7
+ 22416  57.6
+ 20864  64.0
