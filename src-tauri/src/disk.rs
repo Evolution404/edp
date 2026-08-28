@@ -1,9 +1,11 @@
 //! disk.rs — 盘枚举(diskutil plist) / ioreg INQUIRY / device_id 识别 / 扇区读。
-//! 读权限: 可直接打开 /dev/rdiskN 时零授权；遇到 EACCES 时仅提权批量读取 LBA0-13 并缓存。
+//! raw 权限: 可直接打开时零授权；受保护时通过 macOS authopen 获取授权 FD。
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
@@ -179,14 +181,76 @@ fn metadata_cache_key(disk: u32) -> Option<String> {
     ))
 }
 
-fn authorized_metadata(disk: u32) -> std::io::Result<Vec<u8>> {
+/// 通过 macOS authopen 获取已授权的 raw-device FD。
+/// `write=false` 请求 O_RDONLY；`write=true` 请求 O_RDWR。
+/// authopen 使用 SCM_RIGHTS 把已打开的 FD 交给父进程，父进程随后直接 seek/read/write。
+pub(crate) fn authopen_rdisk(disk: u32, write: bool) -> std::io::Result<File> {
     if disk < 2 || !list_usb_disks().iter().any(|d| d.disk == disk) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "只允许读取 disk2+ 的外置 USB 整盘",
+            "只允许访问 disk2+ 的外置 USB 整盘",
         ));
     }
 
+    let path = format!("/dev/rdisk{disk}");
+    let (parent_sock, child_sock) = UnixStream::pair()?;
+    let child_stdout = unsafe { Stdio::from_raw_fd(child_sock.into_raw_fd()) };
+    let flags = if write { libc::O_RDWR } else { libc::O_RDONLY };
+    let mut child = Command::new("/usr/libexec/authopen")
+        .args(["-stdoutpipe", "-o", &flags.to_string(), &path])
+        .stdout(child_stdout)
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut data = [0u8; 16];
+    let mut iov = libc::iovec {
+        iov_base: data.as_mut_ptr().cast(),
+        iov_len: data.len(),
+    };
+    let mut control = [0u8; 128];
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &mut iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.as_mut_ptr().cast();
+    msg.msg_controllen = control.len() as _;
+
+    let received = unsafe { libc::recvmsg(parent_sock.as_raw_fd(), &mut msg, 0) };
+    let status = child.wait()?;
+    let mut stderr = String::new();
+    if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut stderr); }
+
+    if received <= 0 || !status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            if stderr.trim().is_empty() {
+                format!("authopen {} 授权失败", if write { "读写" } else { "只读" })
+            } else {
+                stderr.trim().to_string()
+            },
+        ));
+    }
+
+    let cmsg = unsafe { libc::CMSG_FIRSTHDR(&msg) };
+    if cmsg.is_null()
+        || unsafe { (*cmsg).cmsg_level } != libc::SOL_SOCKET
+        || unsafe { (*cmsg).cmsg_type } != libc::SCM_RIGHTS
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "authopen 未返回 SCM_RIGHTS 文件描述符",
+        ));
+    }
+    let fd = unsafe { *(libc::CMSG_DATA(cmsg).cast::<libc::c_int>()) };
+    if fd < 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "authopen 返回无效文件描述符",
+        ));
+    }
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+fn authorized_metadata(disk: u32) -> std::io::Result<Vec<u8>> {
     let key = metadata_cache_key(disk);
     let cache = META_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(k) = key.as_ref() {
@@ -195,43 +259,12 @@ fn authorized_metadata(disk: u32) -> std::io::Result<Vec<u8>> {
         }
     }
 
-    // macOS 的 authopen 专门用于 authorization-based file opening；直接 root open
-    // 在 macOS 26 的原始磁盘上仍可能被 EPERM 拒绝。这里只请求只读权，并且
-    // 只消费前 14 个扇区；读满后立即关闭 stdout/结束 authopen。
-    let path = format!("/dev/rdisk{disk}");
-    let mut child = Command::new("/usr/libexec/authopen")
-        .arg(&path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut f = authopen_rdisk(disk, false)?;
     let mut data = vec![0u8; SECTOR * 14];
-    let read_result = child
-        .stdout
-        .as_mut()
-        .ok_or_else(|| std::io::Error::other("authopen stdout 未建立"))?
-        .read_exact(&mut data);
-
-    if read_result.is_ok() {
-        // 关闭读端后 authopen 可能以 SIGPIPE 退出，这是成功读取固定长度后的预期行为。
-        child.stdout.take();
-        let _ = child.kill();
-        let _ = child.wait();
-        if let (Some(k), Ok(mut m)) = (key, cache.lock()) { m.insert(k, data.clone()); }
-        return Ok(data);
-    }
-
-    child.stdout.take();
-    let _ = child.wait();
-    let mut stderr = String::new();
-    if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut stderr); }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::PermissionDenied,
-        if stderr.trim().is_empty() {
-            format!("authopen 未能读取 {path}: {}", read_result.unwrap_err())
-        } else {
-            stderr.trim().to_string()
-        },
-    ))
+    f.seek(SeekFrom::Start(0))?;
+    f.read_exact(&mut data)?;
+    if let (Some(k), Ok(mut m)) = (key, cache.lock()) { m.insert(k, data.clone()); }
+    Ok(data)
 }
 
 pub fn read_lba(disk: u32, lba: u64) -> std::io::Result<Vec<u8>> {

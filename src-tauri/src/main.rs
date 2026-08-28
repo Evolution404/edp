@@ -2,10 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // CLI 子命令模式(GUI 之外): edpopen --analyze <diskN>
-// (后续 --write-sectors 提权写入器同此入口)
+// `--write-sectors` 保留为 CLI 兼容入口，与 GUI 共用 authopen 授权写入核心。
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    // 提权写入器: 由 osascript 以 root 拉起(见 commands::apply_convert)
+    // CLI 兼容写入器: 与 GUI 共用 authopen O_RDWR 核心，不依赖 root direct-open。
     if args.len() >= 3 && args[1] == "--write-sectors" {
         let payload = std::path::PathBuf::from(&args[2]);
         let result = payload.with_extension("result.json");

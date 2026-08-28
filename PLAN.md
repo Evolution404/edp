@@ -23,24 +23,24 @@ src/                    前端(原生 JS)
 src-tauri/
   src/crypto.rs         加密原语(全部从 nopwd.py 移植, 向量对拍)
   src/parser.rs         MBR/EDPF/LBA4·6·8·9·11 解析 + FieldRow 字段表 + 状态判定
-  src/disk.rs           盘枚举(diskutil)/ioreg INQUIRY/device_id 两候选识别/扇区读
-  src/convert.rs        免密改造 5 扇生成 + --write-sectors 提权写入器
+  src/disk.rs           盘枚举(diskutil)/ioreg INQUIRY/device_id 识别/LBA11兜底/authopen raw FD
+  src/convert.rs        免密改造 5 扇生成 + 目标盘复核 + authopen O_RDWR 写入器
   src/commands.rs       Tauri 命令门面(analyze_disk/read_sector/disk_map/convert_preview/apply_convert)
   tests/                向量与 golden 对拍测试(见 §5)
 tools/                  golden 生成脚本(Python, 调用对拍基准)
 ```
 
-**权限模型**（macOS 实测结论）：
-- 热插拔 USB 盘 `/dev/rdiskN` owner=当前用户只读 → **读盘（分析/浏览/备份）无需提权**
-- 写盘通过 `osascript ... with administrator privileges` 拉起本程序自身二进制的
-  `--write-sectors <payload.json>` 子命令（系统标准授权框，每次写入一次）
-- 写入器安全约束：LBA 白名单 `[0,4,6,7,8,9,11,12,13]`；先备份 LBA0-14 → 写序铁律
-  （**LBA0 最后写**，改 MBR 触发重扫锁盘）→ 逐扇回读校验 → chown 备份回用户
+**权限模型**（macOS 实测结论，2026-08-28 修订）：
+- `/dev/rdiskN` 的 owner/mode **不能假定**为当前用户可读；真机已观察到 `root:operator crw-r-----`，普通用户直接读返回 EACCES。
+- 读盘采用最小权限降级：先直接只读；仅当 LBA0-13 遇到 PermissionDenied 时调用系统 `/usr/libexec/authopen /dev/rdiskN` 获取 readonly authorization。父进程只读取前 14 扇共 7168B，随后立即关闭/结束 authopen；并按 disk号+容量+USB序列号做进程内缓存，因此同一 App 进程通常只授权一次。该路径没有任何写操作。
+- 已实测排除 `osascript → root → open(/dev/rdiskN)`：macOS 26 上 root 子进程仍返回 EPERM；不要恢复该方案。
+- 写盘不再走 `osascript → root → open(/dev/rdiskN)`。GUI 在写入前再次复核 VID/PID、总扇区数、device_id、LBA4 `labelOnlyId` 和 `Encrypted` 状态；随后强制卸载整盘，再通过 `authopen -stdoutpipe -o O_RDWR` 获取单个已授权 raw-device FD。
+- 同一个 O_RDWR FD 严格执行：**先读取并落盘备份 LBA0-13 + MD5，备份成功前零写入** → 按白名单 `[0,4,6,7,8,9,11,12,13]` 写入且 **LBA0 最后写** → `sync_all` → 不 reopen、直接用同一 FD 逐扇回读校验。授权取消/备份失败且尚未写任何扇区时自动重新挂载；若已发生部分写入则保持卸载以避免自动挂载不完整状态。
+- `--write-sectors <payload.json>` 仅保留为 CLI/恢复兼容入口，内部调用与 GUI 完全相同的 authopen 写入核心，不再拥有另一套 root direct-open 路径。
 
 ## 3. 功能清单
 
-1. **盘选择**：USB 外置盘枚举 + device_id 自动识别（两候选 LBA7 EDPF magic 判真）+ 状态判定
-   （标准加密盘 / 免密盘 / 已改造 / 非 cems）
+1. **盘选择**：USB 外置盘枚举 + device_id 自动识别（先按 UAS/BOT 两候选做 LBA7 EDPF magic 判真；失败时用 LBA11 PDKB 的独立 VID/PID/DiskSize 密钥恢复盘内真实 device_id，再回到 LBA7 二次验真）+ 状态判定（标准加密盘 / 免密盘 / 已改造 / 非 cems）
 2. **盘地图页**（核心可视化）：LBA0-13 十四宫格（语义色 + hover 释义 + 点击跳扇区）、
    全盘区域比例条（Share/Encrypt/空档/尾部，hover 显示 LBA 范围与含义）、尾部五区放大条、图例
 3. **扇区页**：hexdump（offset+hex+ascii）+ 字段级着色（7 类语义色）+ hover 字段释义 +
@@ -70,7 +70,7 @@ tools/                  golden 生成脚本(Python, 调用对拍基准)
 | 盘状态判定 | LBA12 3条=标准加密盘；2条+MBR首分区==entry0(Share)大小=免密；2条+MBR Boot 小分区=自愈恢复态 |
 | 备份命名 | `disk{N}_{总扇区}_vid{}_pid{}_{device_id含&}_lid{labelOnlyId}_{时间戳}.bin`；labelOnlyId=LBA4 头明文，**每盘唯一**（device_id/容量/VID/PID 同型号盘全同） |
 | 容量显示 | GB(10^9) 两位小数四舍五入（整数运算防浮点误差） |
-| device_id 两候选 | BOT(usbstor)含 &rev_ 长版 / UAS 短版；按当前传输模式排序后 LBA7 EDPF magic 判真 |
+| device_id 识别 | 第一层：BOT(usbstor)含 &rev_ 长版 / UAS 短版，按当前传输模式排序后以 LBA7 EDPF magic 判真；第二层：若两候选均失败，则用 LBA11 PDKB（其 key 不依赖 device_id）恢复嵌入的真实 device_id，再以 LBA7 二次验真 |
 
 ### 字节编辑器重加密表（保存时按 LBA）
 
@@ -99,7 +99,7 @@ python3 tools/gen_parse_golden.py --nopwd ... --read-metadata ... --backup ... \
 python3 tools/gen_convert_golden.py --nopwd ... --backup ... \
     --out src-tauri/tests/convert_golden.json
 
-cd src-tauri && cargo test    # 当前 9/9 绿
+cd src-tauri && cargo test    # 当前 12/12 绿
 ```
 
 | 测试 | 覆盖 |
@@ -108,22 +108,25 @@ cd src-tauri && cargo test    # 当前 9/9 绿
 | crypto_vectors×2 | 6 盘 × LBA4/6/7/8/9/11/12 raw↔dec 逐字节对拍；重加密还原原始密文 + LBA6 校验和与盘上一致 |
 | parse_golden×1 | 6 盘解析金标准（LBA4 三件套 / LBA6 全字段含 GBK 中文 / ELABEL 全 KV / EDPF entries） |
 | convert_golden×1 | 6 盘免密改造 5 扇与 nopwd.py --dir 产物逐字节一致 |
+| disk 单测×2 | ioreg 顶层服务名≠类名时仍能正确分块；LBA11 PDKB 能恢复嵌入 device_id |
+| convert 写入输入单测×1 | 512B sector hex 长度与十六进制字符严格校验，拒绝短数据/非法字符 |
 
-**待补测试**（原计划）：编辑重加密对拍（明文改 1 字节→重加密 vs Python 等价脚本）、真盘写入→还原闭环、提权三分支、非 cems 盘拒绝、多盘同插。
+**待补测试**：编辑重加密对拍（明文改 1 字节→重加密 vs Python 等价脚本）、真盘写入→还原闭环、authopen 授权/取消/拒绝分支、非 cems 盘拒绝、多盘同插。
 
 ## 6. 剩余任务（优先级序）
 
-1. **任务7 收尾**：改造页真盘端到端（授权→写入→回读）实测
-2. **任务4 收尾**：disk.rs 真盘验证（enumerate/identify/read 链路，插盘后 `cargo run -- --analyze 4`）
-3. **任务8**：字节级编辑器 + 加密感知重加密（表见 §4）+ 敏感区警示 + 重加密对拍测试
-4. **任务9**：备份管理页（lid 终验匹配/MD5/还原走 --write-sectors）+ 离线拖拽模式
+**任务4 已于 2026-08-28 真盘完成**：`disk6` enumerate→EACCES→authopen→INQUIRY→LBA7/LBA12→`analyze_disk` 成功，输出 VID/PID=`21c4:0cd1`、device_id=`disk&ven_lexar&prod_usb_flash_drive`、status=`encrypted`、LBA12 3 entries。
+
+1. **任务7 收尾**：授权层代码已改为 `unmountDisk → authopen O_RDWR SCM_RIGHTS FD → 备份 → LBA0最后写 → sync → 同FD回读`，并加入 VID/PID+容量+device_id+LBA4唯一ID+Encrypted 五重写前复核；**尚未执行真盘写入**。下一步是真盘端到端（再次确认当前 diskN/status → 授权 → 备份 → 写入 → 回读 → 再 analyze），任何真实写入前不能复用历史 diskN。
+2. **任务8**：字节级编辑器 + 加密感知重加密（表见 §4）+ 敏感区警示 + 重加密对拍测试
+3. **任务9**：备份管理页（lid 终验匹配/MD5/还原走 --write-sectors）+ 离线拖拽模式
    （文件名规则 `disk\d+_(\d+)_vid(..)_pid(..)_(.+?)_lid(\d+)_(\d{8}_\d{6})\.bin` 提取参数）
-5. **任务10**：打包 .app（tauri build，未签名首次右键打开；`cargo tauri icon` 生成正式图标替换占位）
-6. GUI 整体验证：`cargo tauri dev` 五页签走查（盘地图着色/hover/跳转、扇区 hexdump、改造流程）
+4. **任务10**：打包 .app（tauri build，未签名首次右键打开；`cargo tauri icon` 生成正式图标替换占位）
+5. GUI 整体验证：`cargo tauri dev` 五页签走查（盘地图着色/hover/跳转、扇区 hexdump、改造流程）
 
 ## 7. 风险与对策
 
-- osascript 授权被管控 → 兜底提示终端命令 `sudo <app> --write-sectors <payload>`
+- authopen 授权被取消/拒绝 → 保留明确错误，不回退到 sudo/root direct-open（该路径已实测 EPERM）。写入端在尚未写任何扇区时会自动尝试恢复挂载；CLI `--write-sectors` 也只调用同一 authopen 核心。
 - 未签名 app → README 注明右键打开
 - GBK 解码用 encoding_rs；ELABEL 解析必须**字节级 split("||") 再逐段解码**（GBK trail byte 含 '|'，整段解码会吞管道符导致字段粘连）
-- identify 每扇区查看都会跑 ioreg/diskutil（无缓存）——如卡顿再做 Identity 缓存
+- authopen 读取的 LBA0-13 已做进程内缓存；Identity 本身仍可能重复跑 ioreg/diskutil，如 GUI 实测卡顿再按“disk号+容量+USB序列号”做同口径缓存，避免 diskN 换盘污染。

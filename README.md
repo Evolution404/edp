@@ -21,14 +21,17 @@ src/            前端(原生 JS, 无框架)
 src-tauri/src/  Rust 后端
   crypto.rs     crc32_bare / AES-128 变体(A6B0/a7f0) / 滚动 XOR / LBA6 校验和
   parser.rs     LBA4/6/7/8/9/11/12 解析 + EDPF entry + ELABEL(GBK) + MBR
-  disk.rs       盘枚举(diskutil) / device_id 两候选识别 / 扇区读写
-  convert.rs    免密改造 5 扇生成 / 备份还原
+  disk.rs       盘枚举(diskutil) / device_id 识别 / authopen raw-device FD
+  convert.rs    免密改造 5 扇生成 / 目标盘复核 / 备份与授权写入
   commands.rs   Tauri 命令门面
 ```
 
-macOS 下读盘无需提权（热插拔盘设备节点 owner=当前用户）；写盘通过
-`osascript` 管理员授权拉起本程序 `--write-sectors` 子命令（先备份 →
-按序写入 → 回读校验）。
+macOS 26 下 raw 设备节点可能是 `root:operator`，普通进程不能直接读取。
+EDPOpen 先尝试直接只读；受保护时使用系统 `/usr/libexec/authopen` 获取已授权 FD。
+写盘在再次核验 VID/PID、容量、device_id、LBA4 唯一 ID 和加密盘状态后，先卸载卷，
+再通过 `authopen -stdoutpipe -o O_RDWR` 获取单个读写 FD，使用同一 FD 完成
+LBA0-13 备份 → LBA0 最后写 → `sync` → 逐扇回读校验。GUI 不再依赖
+`osascript → root → open(/dev/rdiskN)`；该 direct-open 路径已在 macOS 26 实测为 EPERM。
 
 ## 参照与对拍基准
 

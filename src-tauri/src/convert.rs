@@ -1,7 +1,7 @@
 //! convert.rs — 免密改造 5 扇生成, 与 nopwd.py 逐字节一致(golden 对拍)。
 //! 三条铁律: EDPF 表尾终止符保留; LBA12 尾 144B 保留; 不发明原盘没有的状态。
 
-use crate::crypto;
+use crate::{crypto, disk, parser};
 
 pub const PWD_CRC: u32 = 0x0429735D;     // CRC32("0000aaaa")
 pub const NOPWD_LBA6_1CA: u32 = 128_480; // A 盘实测模板值(语义未定案)
@@ -143,9 +143,9 @@ pub fn convert(
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 提权写入器(--write-sectors, 以 root 运行): 备份 → 写序铁律 → 回读校验
+// 授权写入器: 身份复核 → 卸载 → authopen O_RDWR → 备份 → 写序铁律 → 回读校验
 // ══════════════════════════════════════════════════════════════════════════
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -178,49 +178,88 @@ pub struct WriteResult {
     pub error: Option<String>,
 }
 
-fn rdisk(disk: u32, write: bool) -> std::io::Result<File> {
-    // EBUSY 重试: 写 LBA0 改 MBR 会触发 macOS 重扫短暂锁盘(nopwd.py 实测教训)
-    let mut last = None;
-    for i in 0..15 {
-        match OpenOptions::new().read(true).write(write).open(format!("/dev/rdisk{disk}")) {
-            Ok(f) => return Ok(f),
-            Err(e) if e.raw_os_error() == Some(16) && i < 14 => {
-                last = Some(e);
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-            Err(e) => return Err(e),
+fn decode_sector_hex(lba: u64, s: &str) -> Result<Vec<u8>, String> {
+    if s.len() != 1024 { return Err(format!("LBA{lba} 数据非 512B")); }
+    (0..512)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+            .map_err(|_| format!("LBA{lba} 含非法十六进制数据")))
+        .collect()
+}
+
+fn validate_target(p: &WritePayload) -> Result<(), String> {
+    if p.disk < 2 { return Err("拒绝系统盘".into()); }
+    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == p.disk)
+        .ok_or_else(|| format!("disk{} 已不存在或不是外置 USB 整盘", p.disk))?;
+    if !p.vid.is_empty() && p.vid != "0000" && !usb.vid.eq_ignore_ascii_case(&p.vid) {
+        return Err(format!("目标盘 VID 已变化: 预期 {}, 当前 {}", p.vid, usb.vid));
+    }
+    if !p.pid.is_empty() && p.pid != "0000" && !usb.pid.eq_ignore_ascii_case(&p.pid) {
+        return Err(format!("目标盘 PID 已变化: 预期 {}, 当前 {}", p.pid, usb.pid));
+    }
+    if let Some(expect) = p.total_sectors {
+        let actual = usb.size_bytes / 512;
+        if actual != expect {
+            return Err(format!("目标盘容量已变化: 预期 {expect} 扇, 当前 {actual} 扇"));
         }
     }
-    Err(last.unwrap())
+
+    let id = disk::identify_checked(p.disk)?;
+    if id.device_id != p.device_id {
+        return Err(format!("目标盘 device_id 已变化: 预期 {}, 当前 {}", p.device_id, id.device_id));
+    }
+    if let Some(expect) = p.lid {
+        let raw4 = disk::read_lba(p.disk, 4).map_err(|e| format!("复核 LBA4 失败: {e}"))?;
+        let actual = crypto::lba4_parse_serial(&raw4)
+            .ok_or("复核 LBA4 唯一 ID 失败")?;
+        if actual != expect {
+            return Err(format!("目标盘 LBA4 唯一 ID 已变化: 预期 {expect}, 当前 {actual}"));
+        }
+    }
+
+    let raw12 = disk::read_lba(p.disk, 12).map_err(|e| format!("复核 LBA12 失败: {e}"))?;
+    let dec12 = crypto::a6b0_full(&raw12[..EDPF_ENC_LEN], &id.crc.to_le_bytes(), 0);
+    if !dec12.starts_with(b"EDPF") { return Err("复核 LBA12 非 EDPF".into()); }
+    let entries = parser::parse_edpf(&dec12, E12);
+    let raw0 = disk::read_lba(p.disk, 0).map_err(|e| format!("复核 LBA0 失败: {e}"))?;
+    let mbr = parser::parse_mbr(&raw0).unwrap_or_default();
+    let raw9 = disk::read_lba(p.disk, 9).map_err(|e| format!("复核 LBA9 失败: {e}"))?;
+    if parser::classify(&entries, &mbr, raw9.iter().any(|&b| b != 0)) != parser::DiskStatus::Encrypted {
+        return Err("目标盘已不再是标准加密盘，拒绝写入".into());
+    }
+    Ok(())
 }
 
-/// 写入器主流程。返回 WriteResult 同时写入 result_path。
-pub fn write_sectors_run(payload_path: &Path, result_path: &Path) -> i32 {
-    let r = write_sectors_inner(payload_path);
-    let result = match r {
-        Ok(res) => res,
-        Err(e) => WriteResult { ok: false, backup_path: None, written: vec![], verified: vec![], error: Some(e) },
-    };
-    let code = if result.ok { 0 } else { 1 };
-    let _ = fs::write(result_path, serde_json::to_string(&result).unwrap());
-    code
+fn diskutil(disk: u32, action: &str) -> Result<(), String> {
+    let name = format!("disk{disk}");
+    let out = std::process::Command::new("/usr/sbin/diskutil")
+        .args([action, "force", &name])
+        .output()
+        .map_err(|e| format!("diskutil {action}: {e}"))?;
+    if out.status.success() { return Ok(()); }
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(if err.is_empty() { format!("diskutil {action} 失败") } else { err })
 }
 
-fn write_sectors_inner(payload_path: &Path) -> Result<WriteResult, String> {
-    let p: WritePayload = serde_json::from_reader(
-        File::open(payload_path).map_err(|e| format!("打开 payload: {e}"))?)
-        .map_err(|e| format!("解析 payload: {e}"))?;
-    if p.disk < 2 { return Err("拒绝系统盘".into()); }
+fn remount_disk(disk: u32) {
+    let name = format!("disk{disk}");
+    let _ = std::process::Command::new("/usr/sbin/diskutil")
+        .args(["mountDisk", &name])
+        .output();
+}
+
+/// 已构造 payload 的正式写入入口。授权由 authopen O_RDWR 提供，不再依赖 root direct-open。
+pub fn write_sectors(p: WritePayload) -> Result<WriteResult, String> {
     let mut lbas = Vec::new();
+    let mut decoded = std::collections::BTreeMap::<u64, Vec<u8>>::new();
     for (k, v) in &p.sectors {
         let lba: u64 = k.parse().map_err(|_| format!("非法 LBA 键 {k}"))?;
         if !WRITABLE_LBAS.contains(&lba) { return Err(format!("LBA{lba} 不在白名单 {WRITABLE_LBAS:?}")); }
-        if v.len() != 1024 { return Err(format!("LBA{lba} 数据非 512B")); }
+        decoded.insert(lba, decode_sector_hex(lba, v)?);
         lbas.push(lba);
     }
     if lbas.is_empty() { return Err("无写入扇区".into()); }
+    validate_target(&p)?;
 
-    // ── 1. 备份 LBA0-13 ──
     fs::create_dir_all(&p.backup_dir).map_err(|e| format!("建备份目录: {e}"))?;
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let now = chrono_like(ts);
@@ -229,66 +268,79 @@ fn write_sectors_inner(payload_path: &Path) -> Result<WriteResult, String> {
     let backup_path: PathBuf = Path::new(&p.backup_dir).join(
         format!("disk{}_{}_vid{}_pid{}_{}{}{}_{}.bin",
                 p.disk, secs_part, p.vid, p.pid, p.device_id, "", lid_part, now));
-    {
-        let mut f = rdisk(p.disk, false).map_err(|e| format!("打开盘(备份): {e}"))?;
-        let mut data = Vec::with_capacity(14 * 512);
-        let mut one = [0u8; 512];
-        for lba in 0..14u64 {
-            f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("seek: {e}"))?;
-            f.read_exact(&mut one).map_err(|e| format!("备份读 LBA{lba}: {e}"))?;
-            data.extend_from_slice(&one);
-        }
-        fs::write(&backup_path, &data).map_err(|e| format!("写备份: {e}"))?;
-        let digest = format!("{:x}", md5::compute(&data));
+
+    // O_RDWR authopen 在卷仍挂载时会被系统拒绝；先卸载，再只申请一次读写 FD。
+    diskutil(p.disk, "unmountDisk")?;
+    let mut wrote_any = false;
+    let operation = (|| -> Result<WriteResult, String> {
+        let mut f = disk::authopen_rdisk(p.disk, true)
+            .map_err(|e| format!("authopen 读写授权失败: {e}"))?;
+
+        // 1. 同一个已授权 FD 先完整备份 LBA0-13；备份成功前绝不写盘。
+        f.seek(SeekFrom::Start(0)).map_err(|e| format!("备份 seek: {e}"))?;
+        let mut backup = vec![0u8; 14 * 512];
+        f.read_exact(&mut backup).map_err(|e| format!("备份读 LBA0-13: {e}"))?;
+        fs::write(&backup_path, &backup).map_err(|e| format!("写备份: {e}"))?;
+        let digest = format!("{:x}", md5::compute(&backup));
         fs::write(backup_path.with_extension("bin.md5"), format!("{digest}\n"))
             .map_err(|e| format!("写 md5: {e}"))?;
-        // chown 回发起用户(root 写入, 用户可读写)
         chown_user(&backup_path, p.uid);
         chown_user(&backup_path.with_extension("bin.md5"), p.uid);
-    }
 
-    // ── 2. 卸载卷(避免写入时系统占用) ──
-    let _ = std::process::Command::new("diskutil")
-        .args(["unmountDisk", "force", &format!("disk{}", p.disk)]).output();
+        // 2. LBA0 永远最后写，避免 MBR 改动触发系统重扫后影响后续写入。
+        let mut order = lbas.clone();
+        order.sort_unstable();
+        order.retain(|&l| l != 0);
+        if decoded.contains_key(&0) { order.push(0); }
 
-    // ── 3. 写入: LBA0 最后(改 MBR 触发重扫锁盘, 放最后无后续写受波及) ──
-    let mut order: Vec<u64> = lbas.clone();
-    order.sort();
-    order.retain(|&l| l != 0);
-    if p.sectors.contains_key("0") { order.push(0); }
-    let unhex = |s: &str| -> Vec<u8> {
-        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap()).collect()
-    };
-    let mut written = Vec::new();
-    {
-        let mut f = rdisk(p.disk, true).map_err(|e| format!("打开盘(写): {e}"))?;
+        let mut written = Vec::new();
         for &lba in &order {
-            let data = unhex(&p.sectors[&lba.to_string()]);
+            let data = &decoded[&lba];
             f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("seek LBA{lba}: {e}"))?;
-            f.write_all(&data).map_err(|e| format!("写 LBA{lba}: {e}"))?;
+            f.write_all(data).map_err(|e| format!("写 LBA{lba}: {e}"))?;
+            wrote_any = true;
             written.push(lba);
         }
         f.sync_all().map_err(|e| format!("sync: {e}"))?;
-    }
 
-    // ── 4. 回读校验 ──
-    let mut verified = Vec::new();
-    {
-        let mut f = rdisk(p.disk, false).map_err(|e| format!("打开盘(校验): {e}"))?;
+        // 3. 不重新 open；继续使用同一个授权 FD 逐扇回读，避免 LBA0 重扫后的重新授权/EBUSY。
+        let mut verified = Vec::new();
         let mut one = [0u8; 512];
         for &lba in &order {
-            let expect = unhex(&p.sectors[&lba.to_string()]);
-            f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("seek: {e}"))?;
+            f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("校验 seek LBA{lba}: {e}"))?;
             f.read_exact(&mut one).map_err(|e| format!("回读 LBA{lba}: {e}"))?;
-            if one[..] != expect[..] {
-                return Err(format!("LBA{lba} 回读不一致(盘缓存?)"));
+            if one[..] != decoded[&lba][..] {
+                return Err(format!("LBA{lba} 回读不一致"));
             }
             verified.push(lba);
         }
-    }
-    let _ = fs::remove_file(payload_path);   // 清理 payload
-    Ok(WriteResult { ok: true, backup_path: Some(backup_path.to_string_lossy().into_owned()),
-        written, verified, error: None })
+        Ok(WriteResult {
+            ok: true,
+            backup_path: Some(backup_path.to_string_lossy().into_owned()),
+            written,
+            verified,
+            error: None,
+        })
+    })();
+
+    // 授权取消/备份失败且尚未写任何扇区时，恢复原挂载状态；若已发生部分写入则保持卸载，避免自动挂载不完整状态。
+    if operation.is_err() && !wrote_any { remount_disk(p.disk); }
+    operation
+}
+
+/// CLI 兼容入口：读取 JSON payload，调用同一 authopen 写入核心并写 result.json。
+pub fn write_sectors_run(payload_path: &Path, result_path: &Path) -> i32 {
+    let parsed: Result<WritePayload, String> = File::open(payload_path)
+        .map_err(|e| format!("打开 payload: {e}"))
+        .and_then(|f| serde_json::from_reader(f).map_err(|e| format!("解析 payload: {e}")));
+    let result = match parsed.and_then(write_sectors) {
+        Ok(res) => res,
+        Err(e) => WriteResult { ok: false, backup_path: None, written: vec![], verified: vec![], error: Some(e) },
+    };
+    let _ = fs::remove_file(payload_path);
+    let code = if result.ok { 0 } else { 1 };
+    let _ = fs::write(result_path, serde_json::to_string(&result).unwrap());
+    code
 }
 
 /// 简易时间戳 YYYYmmdd_HHMMSS(UTC+8 近似, 仅用于文件名; 不引 chrono)
@@ -326,3 +378,18 @@ extern "C" {
 }
 #[cfg(not(unix))]
 fn chown_user(_path: &Path, _uid: u32) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sector_hex_validation_is_strict() {
+        let good = "00".repeat(512);
+        assert_eq!(decode_sector_hex(7, &good).unwrap(), vec![0u8; 512]);
+        assert!(decode_sector_hex(7, &"00".repeat(511)).is_err());
+        let mut bad = good;
+        bad.replace_range(10..12, "zz");
+        assert!(decode_sector_hex(7, &bad).is_err());
+    }
+}

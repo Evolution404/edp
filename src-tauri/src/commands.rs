@@ -309,7 +309,7 @@ pub struct ApplyResult {
     pub error: Option<String>,
 }
 
-/// 提权写入: 生成 payload → osascript 管理员授权 → root 写入器(备份→写序→回读校验)
+/// 正式写入：再次构造并锁定目标身份 → 卸载 → authopen O_RDWR → 备份 → 写入 → 同 FD 回读校验。
 #[tauri::command]
 pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, String> {
     let (id, plan, status) = build_plan(disk_no, size_gb)?;
@@ -319,11 +319,14 @@ pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, 
         parser::DiskStatus::NotCems => return Err("非 cems 盘或结构异常".into()),
     }
 
-    // 盘身份信息(备份命名)
-    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no);
-    let (vid, pid, total) = usb.map(|u| (u.vid, u.pid, u.size_bytes / 512)).unwrap_or(("0000".into(), "0000".into(), 0));
-    let lid = disk::read_lba(disk_no, 4).ok()
-        .and_then(|r| crypto::lba4_parse_serial(&r));
+    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no)
+        .ok_or("目标 USB 盘已离线")?;
+    let total = usb.size_bytes / 512;
+    let vid = usb.vid;
+    let pid = usb.pid;
+    let lid = disk::read_lba(disk_no, 4)
+        .map_err(|e| format!("读取 LBA4 唯一 ID 失败: {e}"))
+        .and_then(|r| crypto::lba4_parse_serial(&r).ok_or("无法解析 LBA4 唯一 ID".to_string()))?;
 
     let mut sectors = std::collections::BTreeMap::new();
     let hx = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
@@ -334,43 +337,25 @@ pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, 
     if let Some(l9) = &plan.lba9 { sectors.insert("9".to_string(), hx(l9)); }
 
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let backup_dir = format!("{home}/Library/Application Support/EDPOpen/backups");
-    std::fs::create_dir_all(&backup_dir).map_err(|e| format!("建备份目录: {e}"))?;
-
-    let uid = unsafe { edpopen_getuid() };
-    let payload = serde_json::json!({
-        "disk": disk_no, "backup_dir": backup_dir,
-        "device_id": id.device_id, "lid": lid, "vid": vid, "pid": pid,
-        "total_sectors": total, "uid": uid, "sectors": sectors,
-    });
-    let payload_path = format!("/tmp/edpopen_payload_{disk_no}_{}.json",
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos());
-    std::fs::write(&payload_path, payload.to_string()).map_err(|e| format!("写 payload: {e}"))?;
-    let result_path = payload_path.replace(".json", ".result.json");
-
-    // osascript 提权拉起写入器
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe_s = exe.to_string_lossy().replace('\'', "'\\''");
-    let script = format!(
-        "do shell script \"'{}' --write-sectors '{}'\" with administrator privileges with prompt \"EDPOpen: 写入 U 盘元数据 (自动备份后写入)\"",
-        exe_s, payload_path);
-    let out = std::process::Command::new("osascript").arg("-e").arg(&script).output()
-        .map_err(|e| format!("启动授权: {e}"))?;
-    if !out.status.success() {
-        let _ = std::fs::remove_file(&payload_path);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let msg = if stderr.contains("User canceled") || stderr.contains("用户已取消") {
-            "已取消授权".to_string()
-        } else { format!("写入器失败: {stderr}") };
-        return Err(msg);
-    }
-    // 读回写入器结果
-    let r: ApplyResult = std::fs::read_to_string(&result_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(ApplyResult { ok: false, backup_path: None, written: vec![], verified: vec![], error: Some("未读到写入器结果".into()) });
-    let _ = std::fs::remove_file(&result_path);
-    Ok(r)
+    let payload = convert::WritePayload {
+        disk: disk_no,
+        backup_dir: format!("{home}/Library/Application Support/EDPOpen/backups"),
+        device_id: id.device_id,
+        lid: Some(lid),
+        vid,
+        pid,
+        total_sectors: Some(total),
+        uid: unsafe { edpopen_getuid() },
+        sectors,
+    };
+    let r = convert::write_sectors(payload)?;
+    Ok(ApplyResult {
+        ok: r.ok,
+        backup_path: r.backup_path,
+        written: r.written,
+        verified: r.verified,
+        error: r.error,
+    })
 }
 
 extern "C" {
