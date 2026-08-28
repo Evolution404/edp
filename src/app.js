@@ -1,6 +1,13 @@
 // EDPOpen 前端 — 原生 JS, 无框架无构建
 const $ = (sel) => document.querySelector(sel);
 const invoke = window.__TAURI__.core.invoke;
+let currentDisk = null;
+let currentDiskFingerprint = null;
+let visibleDisks = [];
+let diskActivationSeq = 0;
+let diskRefreshInFlight = false;
+
+const diskFingerprint = (d) => `${d.disk}:${d.size_bytes}:${d.vid}:${d.pid}`;
 
 /* ── tooltip 通用(盘地图/字段着色共用) ── */
 const tooltip = $('#tooltip');
@@ -40,21 +47,88 @@ async function checkBackend() {
 }
 checkBackend();
 
-/* ── 盘枚举(占位: disk.rs 完成后接 list_disks) ── */
-$('#btn-refresh').addEventListener('click', refreshDisks);
-async function refreshDisks() {
+/* ── 盘枚举 / 激活 ── */
+$('#btn-refresh').addEventListener('click', () => refreshDisks(true));
+
+function clearDiskViews() {
+  currentDisk = null;
+  currentDiskFingerprint = null;
+  sectorView = null;
+  sectorEdit = null;
+  $('#overview-content').innerHTML = '<div class="card placeholder">插入 USB 盘后自动识别 · 状态判定 · 分区摘要</div>';
+  $('#map-meta').innerHTML = '';
+  $('#map-strip').innerHTML = '';
+  $('#map-tail').innerHTML = '';
+  $('#map-total').textContent = '';
+  $('#hexdump').textContent = '选择盘后读取扇区…';
+  $('#convert-preview').innerHTML = '<div class="dim">选盘后生成预览…</div>';
+  $('#btn-convert-apply').disabled = true;
+  $('#backup-list').innerHTML = '<tr><td colspan="6" class="dim">选择 U 盘后显示备份</td></tr>';
+  $('#backup-status').textContent = '选择 U 盘后加载备份…';
+  setEditControls(false);
+}
+
+async function activateDisk(disk, descriptor = null) {
+  const seq = ++diskActivationSeq;
+  currentDisk = disk;
+  currentDiskFingerprint = null;
+  $('#disk-select').value = String(disk);
+  $('#disk-hint').textContent = `正在分析 disk${disk}…`;
+
+  // 先串行完成身份分析，让 raw LBA0-13 授权/缓存只发生一次；再并发加载其余页面。
+  const analyzed = await analyzeDisk(disk);
+  if (seq !== diskActivationSeq || currentDisk !== disk) return;
+  if (!analyzed) {
+    $('#disk-hint').textContent = `disk${disk} 分析失败 · 将自动重试`;
+    return;
+  }
+  const actual = descriptor || visibleDisks.find(d => d.disk === disk);
+  currentDiskFingerprint = actual ? diskFingerprint(actual) : null;
+  $('#disk-hint').textContent = `${visibleDisks.length} 个 USB 盘`;
+  await Promise.all([
+    loadDiskMap(disk),
+    loadConvertPreview(),
+    loadSector(+($('#sector-lba').value || 0)),
+    loadBackups(),
+  ]);
+}
+
+async function refreshDisks(forceReload = false) {
+  if (diskRefreshInFlight) return;
+  diskRefreshInFlight = true;
+  const sel = $('#disk-select');
+  const previous = currentDisk;
+  if (forceReload || currentDisk == null) $('#disk-hint').textContent = '正在扫描 USB 盘…';
   try {
     const disks = await invoke('list_disks');
-    const sel = $('#disk-select');
+    visibleDisks = disks;
     sel.innerHTML = disks.length
       ? disks.map(d => `<option value="${d.disk}">disk${d.disk} — ${(d.size_bytes/1e9).toFixed(2)}GB</option>`).join('')
       : '<option value="">— 未检测到 USB 盘 —</option>';
-    $('#disk-hint').textContent = disks.length ? `${disks.length} 个 USB 盘` : '';
+    if (!disks.length) {
+      ++diskActivationSeq;
+      clearDiskViews();
+      $('#disk-hint').textContent = '未检测到 USB 盘';
+      return;
+    }
+
+    const target = disks.find(d => d.disk === previous) || disks[0];
+    const identityChanged = currentDiskFingerprint !== diskFingerprint(target);
+    sel.value = String(target.disk);
+    if (forceReload || currentDisk !== target.disk || identityChanged) {
+      await activateDisk(target.disk, target);
+    } else {
+      $('#disk-hint').textContent = `${disks.length} 个 USB 盘`;
+    }
   } catch (e) {
     $('#disk-hint').textContent = '枚举失败: ' + e;
+  } finally {
+    diskRefreshInFlight = false;
   }
 }
 refreshDisks();
+// 当前后端尚未接 Disk Arbitration 事件，用低频枚举补齐热插拔自动识别。
+setInterval(() => refreshDisks(false), 3000);
 
 /* ── 扇区页: read_sector + hexdump(字段着色) ── */
 const META_LBAS = [0, 4, 6, 7, 8, 9, 11, 12];
@@ -297,15 +371,9 @@ $('#btn-edit-save').addEventListener('click', saveSectorEdit);
 
 const STATUS_COLOR = { encrypted: 'var(--accent)', nopwd: 'var(--accent-2)', not_cems: 'var(--text-dim)' };
 $('#disk-select').addEventListener('change', (e) => {
-  const d = e.target.value;
-  if (d) {
-    currentDisk = +d;
-    analyzeDisk(+d);
-    loadDiskMap(+d);
-    loadConvertPreview();
-    loadSector(+($('#sector-lba').value || 0));
-    loadBackups();
-  } else location.reload();
+  const d = Number(e.target.value);
+  if (Number.isInteger(d) && d >= 2) activateDisk(d, visibleDisks.find(x => x.disk === d) || null);
+  else clearDiskViews();
 });
 
 /* ── 盘地图页 ── */
@@ -482,8 +550,6 @@ async function loadDiskMap(disk) {
   }
 }
 
-let currentDisk = null;
-
 async function analyzeDisk(disk) {
   const box = $('#overview-content');
   box.innerHTML = '<div class="card placeholder">分析中…</div>';
@@ -509,7 +575,9 @@ async function analyzeDisk(disk) {
       </div>
       <div class="card"><h3>EDPF 布局(LBA12)</h3>${layout}</div>
       <div class="card"><h3>MBR 分区表</h3>${parts}</div>`;
+    return true;
   } catch (e) {
     box.innerHTML = `<div class="card placeholder" style="color:var(--danger)">${e}</div>`;
+    return false;
   }
 }
