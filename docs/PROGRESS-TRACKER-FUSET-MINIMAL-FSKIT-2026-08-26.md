@@ -287,6 +287,9 @@ Clean Installer run `33047939672` @ `116e77067bd200e9dc4d681a26f1fa3af21eaaca`�
 - “在 Finder 中显示”不再用通用 `NSWorkspace.open(URL)` 打开目录，而改用 Finder file-viewer rooted-path API，并显式激活 Finder；详情页、兼容卡片和菜单栏入口共用同一实现，以得到正常 Finder 浏览窗口。
 - 设备唯一识别修复 `6b80667` 的 Native Production Path `33143400448`、Native Swift Fast Checks `33143400523`、macFUSE Local Product Lifecycle E2E `33143400389` 与 Clean ExFAT + NTFS Installer `33143400482` 均已成功。
 - 本机 0.5.15 打包在 GitHub DMG 与 `raw.githubusercontent.com` 许可证下载阶段分别遭遇 partial transfer/TLS 断连；clean installer 现对两处下载统一启用 all-errors retry，并支持传入经过既有 SHA-256 gate 校验的本地 macFUSE DMG/许可证缓存，不改变 5.3.3 pin。
+- 设备记录删除与 Finder 正常窗口提交 `00f0c28` 已通过 Native Production Path `33143729163`、FUSE-T Thin Product Read-Only Contract `33143729105`、Clean ExFAT + NTFS Installer `33143729137` 和 macFUSE Local Product Lifecycle E2E `33143729148`；
+- 下载重试提交 `c8cd8b7` 已通过 Native Production Path `33143991582` 与 Clean ExFAT + NTFS Installer `33143991607`；
+- 本机 `smappservice` Apple Development 测试包 `artifacts/fix-device-record-finder/EDP-USB-Vault-0.5.15-arm64-Clean.pkg` 已通过 `verify-clean-installer.sh`，SHA-256 为 `f685b4e599851883ad9a9e250219e5570867df7985fd19a6d10acc4b8f35721d`；外层 pkg 未使用 Developer ID Installer 签名，仍只用于本机验证，不作为其他用户发行包。
 
 在 `5275b45` 基线上已通过：
 
