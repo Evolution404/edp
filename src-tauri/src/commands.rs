@@ -242,6 +242,144 @@ pub fn disk_map(disk_no: u32) -> Result<DiskMap, String> {
         regions, meta, tail })
 }
 
+// ── 免密改造: 预览 + 提权写入 ────────────────────────────────────────────
+use crate::convert;
+
+#[derive(Serialize)]
+pub struct ConvertPreview {
+    pub status: parser::DiskStatus,
+    pub status_label: String,
+    pub convertible: bool,
+    pub reason: String,                // 不可转换原因
+    pub share: u64,
+    pub share_gb: String,
+    pub enc_start: u64,
+    pub enc_size_gb: String,
+    pub sectors: Vec<u32>,             // 将写入的 LBA 列表
+    pub lba9_write: bool,
+    pub device_id: String,
+}
+
+fn build_plan(disk_no: u32, size_gb: Option<f64>) -> Result<(disk::Identity, convert::ConvertPlan, parser::DiskStatus), String> {
+    let id = disk::identify(disk_no).ok_or("无法识别 device_id — 非 cems 盘?")?;
+    let raw = |lba: u64| disk::read_lba(disk_no, lba).map_err(|e| format!("读 LBA{lba}: {e}"));
+    let raw12 = raw(12)?;
+    let dec12 = crypto::a6b0_full(&raw12[..0x170], &id.crc.to_le_bytes(), 0);
+    if !dec12.starts_with(b"EDPF") { return Err("LBA12 非 EDPF — 非可转换盘".into()); }
+    let entries = parser::parse_edpf(&dec12, 0x60);
+    let raw0 = raw(0)?;
+    let mbr = parser::parse_mbr(&raw0).unwrap_or_default();
+    let raw9 = raw(9)?;
+    let status = parser::classify(&entries, &mbr, raw9.iter().any(|&b| b != 0));
+    let plan = convert::convert(&raw0, &raw(6)?, &raw(7)?, &raw9, &raw12, id.crc, id.k0, size_gb)?;
+    Ok((id, plan, status))
+}
+
+#[tauri::command]
+pub fn convert_preview(disk_no: u32, size_gb: Option<f64>) -> Result<ConvertPreview, String> {
+    let (id, plan, status) = build_plan(disk_no, size_gb)?;
+    let (convertible, reason) = match status {
+        parser::DiskStatus::Encrypted => (true, String::new()),
+        parser::DiskStatus::NoPwd => (false, "该盘已是免密盘, 拒绝重复改造".into()),
+        parser::DiskStatus::NotCems => (false, "非 cems 盘或结构异常".into()),
+    };
+    let mut sectors: Vec<u32> = vec![0, 6, 7, 12];
+    if plan.lba9.is_some() { sectors.push(9); }
+    Ok(ConvertPreview {
+        status, status_label: status_label_id(status),
+        convertible, reason,
+        share: plan.share,
+        share_gb: parser::fmt_gb(plan.share * 512),
+        enc_start: plan.enc_start,
+        enc_size_gb: parser::fmt_gb(plan.enc_size),
+        sectors, lba9_write: plan.lba9.is_some(),
+        device_id: id.device_id,
+    })
+}
+
+fn status_label_id(s: parser::DiskStatus) -> String {
+    status_label(s)
+}
+
+#[derive(Serialize, serde::Deserialize)]
+pub struct ApplyResult {
+    pub ok: bool,
+    pub backup_path: Option<String>,
+    pub written: Vec<u64>,
+    pub verified: Vec<u64>,
+    pub error: Option<String>,
+}
+
+/// 提权写入: 生成 payload → osascript 管理员授权 → root 写入器(备份→写序→回读校验)
+#[tauri::command]
+pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, String> {
+    let (id, plan, status) = build_plan(disk_no, size_gb)?;
+    match status {
+        parser::DiskStatus::Encrypted => {}
+        parser::DiskStatus::NoPwd => return Err("该盘已是免密盘, 拒绝重复改造".into()),
+        parser::DiskStatus::NotCems => return Err("非 cems 盘或结构异常".into()),
+    }
+
+    // 盘身份信息(备份命名)
+    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no);
+    let (vid, pid, total) = usb.map(|u| (u.vid, u.pid, u.size_bytes / 512)).unwrap_or(("0000".into(), "0000".into(), 0));
+    let lid = disk::read_lba(disk_no, 4).ok()
+        .and_then(|r| crypto::lba4_parse_serial(&r));
+
+    let mut sectors = std::collections::BTreeMap::new();
+    let hx = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    sectors.insert("0".to_string(), hx(&plan.lba0));
+    sectors.insert("6".to_string(), hx(&plan.lba6));
+    sectors.insert("7".to_string(), hx(&plan.lba7));
+    sectors.insert("12".to_string(), hx(&plan.lba12));
+    if let Some(l9) = &plan.lba9 { sectors.insert("9".to_string(), hx(l9)); }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let backup_dir = format!("{home}/Library/Application Support/EDPOpen/backups");
+    std::fs::create_dir_all(&backup_dir).map_err(|e| format!("建备份目录: {e}"))?;
+
+    let uid = unsafe { edpopen_getuid() };
+    let payload = serde_json::json!({
+        "disk": disk_no, "backup_dir": backup_dir,
+        "device_id": id.device_id, "lid": lid, "vid": vid, "pid": pid,
+        "total_sectors": total, "uid": uid, "sectors": sectors,
+    });
+    let payload_path = format!("/tmp/edpopen_payload_{disk_no}_{}.json",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos());
+    std::fs::write(&payload_path, payload.to_string()).map_err(|e| format!("写 payload: {e}"))?;
+    let result_path = payload_path.replace(".json", ".result.json");
+
+    // osascript 提权拉起写入器
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_s = exe.to_string_lossy().replace('\'', "'\\''");
+    let script = format!(
+        "do shell script \"'{}' --write-sectors '{}'\" with administrator privileges with prompt \"EDPOpen: 写入 U 盘元数据 (自动备份后写入)\"",
+        exe_s, payload_path);
+    let out = std::process::Command::new("osascript").arg("-e").arg(&script).output()
+        .map_err(|e| format!("启动授权: {e}"))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_file(&payload_path);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let msg = if stderr.contains("User canceled") || stderr.contains("用户已取消") {
+            "已取消授权".to_string()
+        } else { format!("写入器失败: {stderr}") };
+        return Err(msg);
+    }
+    // 读回写入器结果
+    let r: ApplyResult = std::fs::read_to_string(&result_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(ApplyResult { ok: false, backup_path: None, written: vec![], verified: vec![], error: Some("未读到写入器结果".into()) });
+    let _ = std::fs::remove_file(&result_path);
+    Ok(r)
+}
+
+extern "C" {
+    #[link_name = "getuid"]
+    fn edpopen_getuid_raw() -> u32;
+}
+unsafe fn edpopen_getuid() -> u32 { edpopen_getuid_raw() }
+
 #[tauri::command]
 pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
     if disk_no < 2 { return Err("拒绝系统盘".into()); }

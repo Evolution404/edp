@@ -124,6 +124,7 @@ $('#disk-select').addEventListener('change', (e) => {
     currentDisk = +d;
     analyzeDisk(+d);
     loadDiskMap(+d);
+    loadConvertPreview();
     loadSector(+($('#sector-lba').value || 0));
   } else location.reload();
 });
@@ -141,6 +142,49 @@ function jumpToSector(lba) {
 }
 
 const escTip = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '&#10;');
+
+/* ── 改造页: 预览 → 授权写入 ── */
+$('#btn-convert-load').addEventListener('click', loadConvertPreview);
+$('#btn-convert-apply').addEventListener('click', async () => {
+  if (!currentDisk) return;
+  if (!confirm(`确认改造 disk${currentDisk}? 将先自动备份 LBA0-13, 再写入免密布局(需管理员授权)。`)) return;
+  $('#convert-status').textContent = '等待管理员授权…';
+  $('#btn-convert-apply').disabled = true;
+  try {
+    const r = await invoke('apply_convert', { diskNo: currentDisk, sizeGb: readSizeGb() });
+    $('#convert-status').textContent = r.ok
+      ? `✓ 已写入并回读校验 ${r.verified.map(x => 'LBA' + x).join(' ')} · 备份: ${r.backup_path}`
+      : '✗ ' + (r.error || '未知错误');
+  } catch (e) {
+    $('#convert-status').textContent = '✗ ' + e;
+  }
+  $('#btn-convert-apply').disabled = false;
+});
+
+function readSizeGb() {
+  const v = parseFloat($('#convert-size').value);
+  return isNaN(v) ? null : v;
+}
+
+async function loadConvertPreview() {
+  if (!currentDisk) return;
+  const box = $('#convert-preview');
+  box.innerHTML = '<div class="dim">生成预览…</div>';
+  try {
+    const p = await invoke('convert_preview', { diskNo: currentDisk, sizeGb: readSizeGb() });
+    const ok = p.convertible;
+    box.innerHTML = `
+      <div class="kv"><span class="k">状态</span><span class="v ${ok ? '' : 'dim'}">${p.status_label}${ok ? '' : ' — ' + p.reason}</span></div>
+      ${ok ? `
+      <div class="kv"><span class="k">布局</span><span class="v">Share @LBA63 × ${p.share.toLocaleString()} 扇 (${p.share_gb}) · Encrypt @LBA${p.enc_start.toLocaleString()} (${p.enc_size_gb}) 原样保留</span></div>
+      <div class="kv"><span class="k">写入</span><span class="v">${p.sectors.map(x => 'LBA' + x).join(' · ')}${p.lba9_write ? ' (含 LBA9 清零)' : ' (LBA9 已零, 不写)'}</span></div>
+      <div class="kv"><span class="k">备份</span><span class="v">写入前自动备份 LBA0-13 到 ~/Library/Application Support/EDPOpen/backups</span></div>` : ''}`;
+    $('#btn-convert-apply').disabled = !ok;
+  } catch (e) {
+    box.innerHTML = `<div style="color:var(--danger)">${e}</div>`;
+    $('#btn-convert-apply').disabled = true;
+  }
+}
 
 async function loadDiskMap(disk) {
   try {

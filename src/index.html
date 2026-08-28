@@ -58,7 +58,20 @@
       <div class="card"><pre id="hexdump" class="hexdump">选择盘后读取扇区…</pre></div>
     </section>
     <section id="page-convert" class="page">
-      <div class="card placeholder">免密改造预览 → 授权写入（自动备份 → 写 5 扇 → 回读校验）</div>
+      <div class="card">
+        <h3>免密改造 <span class="dim" style="font-weight:400">加密盘 → 明文直挂免密盘</span></h3>
+        <div class="sector-nav">
+          <span>Share 大小</span>
+          <input id="convert-size" type="number" placeholder="默认占满到 Encrypt 前" style="width:180px">
+          <span class="dim">GB</span>
+          <button id="btn-convert-load">生成预览</button>
+        </div>
+        <div id="convert-preview" style="margin-top:10px"><div class="dim">选盘后生成预览…</div></div>
+        <div style="margin-top:12px">
+          <button id="btn-convert-apply" disabled>写入 U 盘（管理员授权）</button>
+          <span id="convert-status" class="dim"></span>
+        </div>
+      </div>
     </section>
     <section id="page-backup" class="page">
       <div class="card placeholder">备份列表（labelOnlyId 匹配）· 还原（MD5 校验）</div>

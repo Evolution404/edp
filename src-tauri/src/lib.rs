@@ -12,7 +12,9 @@ pub fn run() {
             commands::list_disks,
             commands::analyze_disk,
             commands::read_sector,
-            commands::disk_map
+            commands::disk_map,
+            commands::convert_preview,
+            commands::apply_convert
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
