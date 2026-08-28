@@ -59,8 +59,7 @@ fn status_label(s: parser::DiskStatus) -> String {
 /// 概览: 识别 + 状态判定 + MBR + LBA12 布局
 #[tauri::command]
 pub fn analyze_disk(disk_no: u32) -> Result<DiskOverview, String> {    if disk_no < 2 { return Err("拒绝系统盘(须 disk2+)".into()); }
-    let id = disk::identify(disk_no)
-        .ok_or("无法识别 device_id(LBA7 两候选均未解出 EDPF) — 非 cems 盘?")?;
+    let id = disk::identify_checked(disk_no)?;
 
     let raw12 = disk::read_lba(disk_no, 12).map_err(|e| format!("读 LBA12 失败: {e}"))?;
     let crc_key = id.crc.to_le_bytes();
@@ -261,7 +260,7 @@ pub struct ConvertPreview {
 }
 
 fn build_plan(disk_no: u32, size_gb: Option<f64>) -> Result<(disk::Identity, convert::ConvertPlan, parser::DiskStatus), String> {
-    let id = disk::identify(disk_no).ok_or("无法识别 device_id — 非 cems 盘?")?;
+    let id = disk::identify_checked(disk_no)?;
     let raw = |lba: u64| disk::read_lba(disk_no, lba).map_err(|e| format!("读 LBA{lba}: {e}"));
     let raw12 = raw(12)?;
     let dec12 = crypto::a6b0_full(&raw12[..0x170], &id.crc.to_le_bytes(), 0);
@@ -445,7 +444,7 @@ pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
         11 => {
             if let Some((vid, pid, sizes)) = lba11_params() {
                 let rand = &raw[..0x100];
-                for &sz in &sizes {
+                for (size_index, &sz) in sizes.iter().enumerate() {
                     let mut buf = rand.to_vec();
                     buf.extend_from_slice(&vid);
                     buf.extend_from_slice(&pid);
@@ -455,7 +454,7 @@ pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
                     if pt.starts_with(b"PDKB") {
                         let mut dec = rand.to_vec();
                         dec.extend_from_slice(&pt);
-                        let label = if sz % (255 * 63 * 512) == 0 && sz != sizes[0] { "CHS" } else { "DiskSize" };
+                        let label = if size_index == 0 { "DiskSize" } else { "CHS" };
                         sv.dec_method = Some(format!("A6B0 key=crc32(rand+VID+PID+{label})"));
                         sv.fields = parser::lba11_fields(&dec);
                         sv.dec_hex = Some(hexs(&dec));

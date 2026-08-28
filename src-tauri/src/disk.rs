@@ -1,11 +1,13 @@
-//! disk.rs — 盘枚举(diskutil plist) / ioreg INQUIRY / device_id 两候选识别 / 扇区读。
-//! 读无需提权: macOS 把热插拔盘 /dev/rdiskN chown 给当前用户(只读)。
+//! disk.rs — 盘枚举(diskutil plist) / ioreg INQUIRY / device_id 识别 / 扇区读。
+//! 读权限: 可直接打开 /dev/rdiskN 时零授权；遇到 EACCES 时仅提权批量读取 LBA0-13 并缓存。
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
-use crate::crypto::{crc32_bare, xor_rolling};
+use crate::crypto::{a6b0_full, crc32_bare, xor_rolling};
 
 pub const SECTOR: usize = 512;
 
@@ -18,7 +20,13 @@ pub struct UsbDisk {
 }
 
 fn cmd_out(prog: &str, args: &[&str]) -> Option<String> {
-    Command::new(prog)
+    let path = match prog {
+        "diskutil" => "/usr/sbin/diskutil",
+        "ioreg" => "/usr/sbin/ioreg",
+        "osascript" => "/usr/bin/osascript",
+        _ => prog,
+    };
+    Command::new(path)
         .args(args)
         .output()
         .ok()
@@ -59,14 +67,17 @@ pub fn list_usb_disks() -> Vec<UsbDisk> {
 // ── ioreg ────────────────────────────────────────────────────────────────
 /// 取 ioreg 指定类的块列表(以 `+-o <cls>` 分块)
 fn ioreg_blocks(cls: &str) -> Vec<String> {
-    match cmd_out("ioreg", &["-r", "-c", cls, "-l"]) {
-        Some(out) => out
-            .split(&format!("+-o {cls}"))
-            .skip(1)
-            .map(|s| s.to_string())
-            .collect(),
-        None => Vec::new(),
-    }
+    let Some(out) = cmd_out("ioreg", &["-r", "-c", cls, "-l"]) else { return Vec::new() };
+    // `ioreg -r -c <Class>` 的顶层服务名不保证等于 Class，例如
+    // `IOUSBHostDevice` 常显示为 `+-o USB Flash Drive@... <class IOUSBHostDevice,...>`。
+    // 只按“第 0 列的 +-o”切根节点，避免把子节点误切开，同时兼容多盘同插。
+    let Ok(root) = regex::Regex::new(r"(?m)^\+-o ") else { return Vec::new() };
+    let starts: Vec<usize> = root.find_iter(&out).map(|m| m.start()).collect();
+    if starts.is_empty() { return Vec::new(); }
+    starts.iter().enumerate().map(|(i, &start)| {
+        let end = starts.get(i + 1).copied().unwrap_or(out.len());
+        out[start..end].to_string()
+    }).collect()
 }
 
 fn block_for_disk(cls: &str, disk: u32) -> Option<String> {
@@ -84,6 +95,17 @@ pub fn usb_vid_pid(disk: u32) -> Option<(String, String)> {
     Some((format!("{v:04x}"), format!("{p:04x}")))
 }
 
+fn usb_serial(disk: u32) -> Option<String> {
+    let b = block_for_disk("IOUSBHostDevice", disk)?;
+    for key in ["USB Serial Number", "kUSBSerialNumberString"] {
+        let re = regex::Regex::new(&format!(r#""{key}"\s*=\s*"([^"]+)""#)).ok()?;
+        if let Some(c) = re.captures(&b) {
+            return Some(c.get(1)?.as_str().to_string());
+        }
+    }
+    None
+}
+
 fn norm(s: &str) -> String {
     s.trim_end_matches(' ').replace(' ', "_").to_lowercase()
 }
@@ -91,7 +113,7 @@ fn norm(s: &str) -> String {
 /// SCSI INQUIRY 三字段
 fn inquiry(disk: u32) -> Option<(String, String, String)> {
     for cls in ["IOSCSITargetDevice", "IOSCSILogicalUnitNub", "IOSCSIPeripheralDeviceNub"] {
-        let b = block_for_disk(cls, disk)?;
+        let Some(b) = block_for_disk(cls, disk) else { continue };
         let g = |key: &str| {
             let re = regex::Regex::new(&format!(r#""{key}"\s*=\s*"([^"]*)""#)).unwrap();
             re.captures(&b).map(|c| c[1].to_string())
@@ -140,12 +162,133 @@ pub fn generate_candidates(disk: u32) -> Vec<String> {
 }
 
 // ── 扇区读 ────────────────────────────────────────────────────────────────
-pub fn read_lba(disk: u32, lba: u64) -> std::io::Result<Vec<u8>> {
+fn read_lba_direct(disk: u32, lba: u64) -> std::io::Result<Vec<u8>> {
     let mut f = File::open(format!("/dev/rdisk{disk}"))?;
     f.seek(SeekFrom::Start(lba * SECTOR as u64))?;
     let mut buf = vec![0u8; SECTOR];
     f.read_exact(&mut buf)?;
     Ok(buf)
+}
+
+fn hex_encode(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if s.len() % 2 != 0 { return None; }
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
+        .collect()
+}
+
+/// root CLI 专用：只读抓取 LBA0-13，共 7168B；绝不写盘。
+pub fn dump_metadata_direct(disk: u32) -> std::io::Result<String> {
+    if disk < 2 || !list_usb_disks().iter().any(|d| d.disk == disk) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "只允许读取 disk2+ 的外置 USB 整盘",
+        ));
+    }
+    let mut f = File::open(format!("/dev/rdisk{disk}"))?;
+    f.seek(SeekFrom::Start(0))?;
+    let mut buf = vec![0u8; SECTOR * 14];
+    f.read_exact(&mut buf)?;
+    Ok(hex_encode(&buf))
+}
+
+static META_CACHE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+
+fn metadata_cache_key(disk: u32) -> Option<String> {
+    Some(format!(
+        "{disk}:{}:{}",
+        disk_size_bytes(disk)?,
+        usb_serial(disk)?
+    ))
+}
+
+fn privileged_metadata(disk: u32) -> std::io::Result<Vec<u8>> {
+    let key = metadata_cache_key(disk);
+    let cache = META_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(k) = key.as_ref() {
+        if let Some(v) = cache.lock().ok().and_then(|m| m.get(k).cloned()) {
+            return Ok(v);
+        }
+    }
+
+    let exe = std::env::current_exe()?;
+    let exe_s = exe.to_string_lossy().replace('\'', "'\\''");
+    let script = format!(
+        "do shell script \"'{}' --read-metadata {}\" with administrator privileges with prompt \"EDPOpen: 只读读取 U 盘元数据 (LBA0-13)\"",
+        exe_s, disk
+    );
+    let out = Command::new("/usr/bin/osascript").arg("-e").arg(script).output()?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            if stderr.is_empty() { "原始盘读取授权失败".into() } else { stderr },
+        ));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let data = hex_decode(&text).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "提权读取器返回的十六进制数据无效")
+    })?;
+    if data.len() != SECTOR * 14 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!("提权读取器应返回 {}B，实际 {}B", SECTOR * 14, data.len()),
+        ));
+    }
+    if let (Some(k), Ok(mut m)) = (key, cache.lock()) { m.insert(k, data.clone()); }
+    Ok(data)
+}
+
+pub fn read_lba(disk: u32, lba: u64) -> std::io::Result<Vec<u8>> {
+    match read_lba_direct(disk, lba) {
+        Ok(v) => Ok(v),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && lba < 14 => {
+            let all = privileged_metadata(disk)?;
+            let off = lba as usize * SECTOR;
+            Ok(all[off..off + SECTOR].to_vec())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn disk_size_bytes(disk: u32) -> Option<u64> {
+    let name = format!("disk{disk}");
+    let info = cmd_out("diskutil", &["info", "-plist", &name])?;
+    let pl = plist::Value::from_reader(std::io::Cursor::new(info.as_bytes())).ok()?;
+    let d = pl.as_dictionary()?;
+    d.get("TotalSize")
+        .or_else(|| d.get("DiskSize"))
+        .or_else(|| d.get("Size"))
+        .and_then(|v| v.as_unsigned_integer())
+}
+
+fn recover_device_id_from_lba11(raw: &[u8], vid: &str, pid: &str, size: u64) -> Option<String> {
+    if raw.len() != SECTOR || vid.len() != 4 || pid.len() != 4 || size == 0 { return None; }
+    let rand = &raw[..0x100];
+    let chs_unit = 255u64 * 63 * SECTOR as u64;
+    let chs = (size / chs_unit) * chs_unit;
+    let mut sizes = vec![size];
+    if chs != 0 && chs != size { sizes.push(chs); }
+
+    for sz in sizes {
+        let mut seed = rand.to_vec();
+        seed.extend_from_slice(vid.as_bytes());
+        seed.extend_from_slice(pid.as_bytes());
+        seed.extend_from_slice(&sz.to_le_bytes());
+        let key = crc32_bare(&seed).to_le_bytes();
+        let pt = a6b0_full(&raw[0x100..], &key, 0);
+        if !pt.starts_with(b"PDKB") { continue; }
+        let bytes = &pt[4..];
+        let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+        let device_id = std::str::from_utf8(&bytes[..end]).ok()?.trim().to_string();
+        if !device_id.is_empty() { return Some(device_id); }
+    }
+    None
 }
 
 // ── device_id 识别(LBA7 EDPF magic 判真) ─────────────────────────────────
@@ -159,15 +302,78 @@ pub struct Identity {
     pub k0: u16,
 }
 
-/// 返回 (device_id, crc32, k0); 两候选均失败返回 None
-pub fn identify(disk: u32) -> Option<Identity> {
-    let raw = read_lba(disk, 7).ok()?;
+/// 严格身份识别：保留底层读取/授权失败原因，供 CLI 与改造流程准确报错。
+pub fn identify_checked(disk: u32) -> Result<Identity, String> {
+    let raw7 = read_lba(disk, 7).map_err(|e| format!("读 LBA7 失败: {e}"))?;
     for c in generate_candidates(disk) {
         let crc = crc32_bare(c.as_bytes());
         let k0 = lba7_k0(crc);
-        if xor_rolling(&raw, k0).starts_with(b"EDPF") {
-            return Some(Identity { device_id: c, crc, k0 });
+        if xor_rolling(&raw7, k0).starts_with(b"EDPF") {
+            return Ok(Identity { device_id: c, crc, k0 });
         }
     }
-    None
+
+    let raw11 = read_lba(disk, 11).map_err(|e| format!("读 LBA11 失败: {e}"))?;
+    let (vid, pid) = usb_vid_pid(disk).ok_or("无法从 ioreg 获取该盘 VID/PID")?;
+    let size = disk_size_bytes(disk).ok_or("无法从 diskutil 获取该盘容量")?;
+    let c = recover_device_id_from_lba11(&raw11, &vid, &pid, size)
+        .ok_or("SCSI INQUIRY 两候选均失败，且 LBA11 PDKB 未能恢复 device_id")?;
+    let crc = crc32_bare(c.as_bytes());
+    let k0 = lba7_k0(crc);
+    if xor_rolling(&raw7, k0).starts_with(b"EDPF") {
+        Ok(Identity { device_id: c, crc, k0 })
+    } else {
+        Err("LBA11 恢复出的 device_id 无法通过 LBA7 EDPF 二次验真".into())
+    }
+}
+
+/// 宽松身份识别：扇区浏览等可选解密路径使用；失败时仅表示“当前不可解密”。
+pub fn identify(disk: u32) -> Option<Identity> {
+    identify_checked(disk).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::a7f0_full;
+
+    #[test]
+    fn ioreg_root_split_handles_named_usb_service() {
+        let fixture = concat!(
+            "+-o USB Flash Drive@00100000  <class IOUSBHostDevice, id 0x1>\n",
+            "  |   \"idVendor\" = 8644\n",
+            "  |   +-o Media <class IOMedia>\n",
+            "  |       \"BSD Name\" = \"disk4\"\n",
+            "+-o Other Device@00200000  <class IOUSBHostDevice, id 0x2>\n",
+            "  |   \"idVendor\" = 1234\n",
+            "  |   +-o Media <class IOMedia>\n",
+            "  |       \"BSD Name\" = \"disk5\"\n",
+        );
+        let root = regex::Regex::new(r"(?m)^\+-o ").unwrap();
+        let starts: Vec<usize> = root.find_iter(fixture).map(|m| m.start()).collect();
+        assert_eq!(starts.len(), 2);
+        let first = &fixture[starts[0]..starts[1]];
+        assert!(first.contains("\"BSD Name\" = \"disk4\""));
+        assert!(!first.contains("disk5"));
+    }
+
+    #[test]
+    fn lba11_recovers_embedded_device_id() {
+        let vid = "21c4";
+        let pid = "0cd1";
+        let size = 124_736_503_808u64;
+        let device_id = "disk&ven_lexar&prod_usb_flash_drive&rev_1100";
+        let mut raw = vec![0u8; SECTOR];
+        for (i, b) in raw[..0x100].iter_mut().enumerate() { *b = (i as u8).wrapping_mul(17); }
+        let mut pt = vec![0u8; 0x100];
+        pt[..4].copy_from_slice(b"PDKB");
+        pt[4..4 + device_id.len()].copy_from_slice(device_id.as_bytes());
+        let mut seed = raw[..0x100].to_vec();
+        seed.extend_from_slice(vid.as_bytes());
+        seed.extend_from_slice(pid.as_bytes());
+        seed.extend_from_slice(&size.to_le_bytes());
+        let key = crc32_bare(&seed).to_le_bytes();
+        raw[0x100..].copy_from_slice(&a7f0_full(&pt, &key, 0));
+        assert_eq!(recover_device_id_from_lba11(&raw, vid, pid, size).as_deref(), Some(device_id));
+    }
 }
