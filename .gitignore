@@ -18,3 +18,5 @@ src-tauri/gen/
 *.img
 *.dmg
 vectors.json
+parse_golden.json
+convert_golden.json
