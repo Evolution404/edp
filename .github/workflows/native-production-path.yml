@@ -68,6 +68,16 @@ jobs:
             -o "${RUNNER_TEMP}/edp-vaultctl"
           echo 'RESULT=NATIVE_PRODUCTION_STRICT_SWIFT6_BUILD_OK'
 
+      - name: Validate macFUSE failed-mount scratch cleanup contract
+        run: |
+          set -euo pipefail
+          xcrun swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
+            product/EDPBlockDevicePublisher.swift \
+            product/Tests/ValidateMacFUSEScratchCleanup.swift \
+            -o "${RUNNER_TEMP}/validate-macfuse-scratch-cleanup"
+          "${RUNNER_TEMP}/validate-macfuse-scratch-cleanup" \
+            | grep -F 'RESULT=MACFUSE_SCRATCH_CLEANUP_CONTRACT_OK'
+
       - name: Validate SwiftUI XPC product surface and private adapter boundary
         run: |
           set -euo pipefail

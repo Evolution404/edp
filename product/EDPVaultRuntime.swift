@@ -488,6 +488,9 @@ private final class MountManager {
             request: transportRequest,
             requireFinderHidden: true
         )
+        let macFUSEScratchBaseline = runtimeStatus.backend == .macFUSELocal
+            ? EDPMacFUSEScratchImageCleanup.captureBaseline()
+            : nil
         let passwordPipe = Pipe()
         let transportProcess = Process()
         configureConsoleProcess(
@@ -583,6 +586,9 @@ private final class MountManager {
                 unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
                 isMounted: { EDPNativeMountTable.isMountpoint($0) }
             )
+            if runtimeStatus.backend == .macFUSELocal {
+                EDPMacFUSEScratchImageCleanup.cleanupNewOrphans(since: macFUSEScratchBaseline)
+            }
             try? FileManager.default.removeItem(atPath: bridgeMount)
             throw error
         }
