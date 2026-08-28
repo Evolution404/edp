@@ -17,6 +17,8 @@ private enum PrepareError: Error, CustomStringConvertible {
 }
 
 private struct Arguments {
+    let lba4Path: String
+    let lba7Path: String
     let lba11Path: String
     let lba12Path: String
     let vidHex: String
@@ -45,7 +47,9 @@ private func parseArguments() throws -> Arguments {
         index += 1
     }
 
-    guard let lba11Path = values["--lba11"],
+    guard let lba4Path = values["--lba4"],
+          let lba7Path = values["--lba7"],
+          let lba11Path = values["--lba11"],
           let lba12Path = values["--lba12"],
           let vidHex = values["--vid"],
           let pidHex = values["--pid"],
@@ -57,7 +61,7 @@ private func parseArguments() throws -> Arguments {
           let outputPath = values["--output"],
           let passwordFile = values["--password-file"] else {
         throw PrepareError.usage(
-            "usage: PrepareEDPFilesystemFixture --lba11 <file> --lba12 <file> --vid <hex> --pid <hex> --device-size <bytes> --partition-type <2|4> --plaintext <raw-fs> --output <sparse-edp-image> --password-file <file>"
+            "usage: PrepareEDPFilesystemFixture --lba4 <file> --lba7 <file> --lba11 <file> --lba12 <file> --vid <hex> --pid <hex> --device-size <bytes> --partition-type <2|4> --plaintext <raw-fs> --output <sparse-edp-image> --password-file <file>"
         )
     }
 
@@ -65,6 +69,8 @@ private func parseArguments() throws -> Arguments {
         throw PrepareError.usage("invalid device size or partition type")
     }
     return Arguments(
+        lba4Path: lba4Path,
+        lba7Path: lba7Path,
         lba11Path: lba11Path,
         lba12Path: lba12Path,
         vidHex: vidHex,
@@ -131,10 +137,13 @@ private enum PrepareEDPFilesystemFixtureMain {
 
     private static func run() throws {
         let args = try parseArguments()
+        let lba4 = try Data(contentsOf: URL(fileURLWithPath: args.lba4Path))
+        let lba7 = try Data(contentsOf: URL(fileURLWithPath: args.lba7Path))
         let lba11 = try Data(contentsOf: URL(fileURLWithPath: args.lba11Path))
         let lba12 = try Data(contentsOf: URL(fileURLWithPath: args.lba12Path))
-        guard lba11.count == 512, lba12.count == 512 else {
-            throw PrepareError.invalid("LBA11/LBA12 must both be exactly 512 bytes")
+        guard lba4.count == 512, lba7.count == 512,
+              lba11.count == 512, lba12.count == 512 else {
+            throw PrepareError.invalid("LBA4/LBA7/LBA11/LBA12 must all be exactly 512 bytes")
         }
 
         let password = try readPassword(path: args.passwordFile)
@@ -185,6 +194,16 @@ private enum PrepareEDPFilesystemFixtureMain {
             throw PrepareError.posix("ftruncate sparse EDP image", errno)
         }
 
+        try writeAll(
+            fd: outputFD,
+            data: lba4,
+            offset: UInt64(4) * EDPMetadataProbe.legacySectorSize
+        )
+        try writeAll(
+            fd: outputFD,
+            data: lba7,
+            offset: UInt64(7) * EDPMetadataProbe.legacySectorSize
+        )
         try writeAll(fd: outputFD, data: lba11, offset: EDPVolumeMetadata.lba11ByteOffset)
         try writeAll(fd: outputFD, data: lba12, offset: EDPVolumeMetadata.lba12ByteOffset)
 

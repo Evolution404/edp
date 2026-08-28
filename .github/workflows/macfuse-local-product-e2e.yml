@@ -41,6 +41,8 @@ jobs:
       GENERIC_ID: "io.macfuse.app.fsmodule.macfuse"
       LOCAL_ID: "io.macfuse.app.fsmodule.macfuse-local"
       GOLDEN_NAME: "disk4_real_lexar"
+      REAL_LBA4: "fixtures/real_disks/disk4/LBA4.bin"
+      REAL_LBA7: "fixtures/real_disks/disk4/LBA7.bin"
       REAL_LBA11: "fixtures/real_disks/disk4/LBA11.bin"
       REAL_LBA12: "fixtures/real_disks/disk4/LBA12.bin"
       VOLNAME: "EDPPRODUCT"
@@ -144,6 +146,7 @@ jobs:
             native/EDPFSKitPoC/Tools/FuseTMinimal/PrepareEDPFilesystemFixture.swift \
             -o "${PREPARE}"
           "${PREPARE}" \
+            --lba4 "${REAL_LBA4}" --lba7 "${REAL_LBA7}" \
             --lba11 "${REAL_LBA11}" --lba12 "${REAL_LBA12}" \
             --vid "${EDP_VID}" --pid "${EDP_PID}" --device-size "${EDP_DEVICE_SIZE}" \
             --partition-type "${EDP_PARTITION_TYPE}" --plaintext "${PLAIN}" \
