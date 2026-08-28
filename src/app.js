@@ -58,7 +58,9 @@ refreshDisks();
 
 /* ── 扇区页: read_sector + hexdump(字段着色) ── */
 const META_LBAS = [0, 4, 6, 7, 8, 9, 11, 12];
+const EDIT_WRITABLE_LBAS = new Set([0, 4, 6, 7, 8, 9, 11, 12, 13]);
 let sectorView = null;
+let sectorEdit = null;
 
 $('#sector-jumps').innerHTML = META_LBAS.map(l => `<span class="jump-btn" data-lba="${l}">${l}</span>`).join(' ');
 document.querySelectorAll('.jump-btn').forEach(b =>
@@ -70,6 +72,7 @@ document.querySelectorAll('input[name=sector-view]').forEach(r => r.addEventList
 
 async function loadSector(lba) {
   if (!currentDisk || lba < 0) return;
+  if (sectorEdit) exitSectorEdit(false);
   const el = $('#hexdump');
   el.textContent = `读取 disk${currentDisk} LBA${lba}…`;
   try {
@@ -83,9 +86,10 @@ async function loadSector(lba) {
 
 function renderHexdump() {
   if (!sectorView) return;
-  const view = document.querySelector('input[name=sector-view]:checked').value;
+  const selectedView = document.querySelector('input[name=sector-view]:checked').value;
+  const view = sectorEdit ? sectorEdit.view : selectedView;
   const useDec = view === 'dec' && sectorView.dec_hex;
-  const hexStr = useDec ? sectorView.dec_hex : sectorView.raw_hex;
+  const hexStr = sectorEdit ? sectorEdit.bytes.join('') : (useDec ? sectorView.dec_hex : sectorView.raw_hex);
   $('#sector-method').textContent =
     (sectorView.dec_method ? `[${view === 'dec' && !useDec ? '不可解密, 显示原始' : sectorView.dec_method}]` : '[无解密]');
   const bytes = hexStr.match(/../g) || [];
@@ -105,19 +109,192 @@ function renderHexdump() {
       const b = bytes[idx] || '00';
       const ch = parseInt(b, 16);
       const asc = ch >= 32 && ch < 127 ? esc(String.fromCharCode(ch)) : '.';
+      const changed = sectorEdit && sectorEdit.baseBytes[idx] !== sectorEdit.bytes[idx];
+      const selected = sectorEdit && sectorEdit.selected === idx;
+      const editCls = `${changed ? ' edit-changed' : ''}${selected ? ' edit-selected' : ''}`;
+      const dataIdx = sectorEdit ? ` data-byte-index="${idx}"` : '';
       if (f) {
         const tip = esc(`${f.name} · ${f.desc}` + (f.value ? `\n= ${f.value}` : ''));
-        hexPart += `<span class="b c-${f.color}" data-tip="${tip}">${b}</span> `;
-        asciiPart += `<span class="b c-${f.color}" data-tip="${tip}">${asc}</span>`;
+        hexPart += `<span class="b c-${f.color}${editCls}"${dataIdx} data-tip="${tip}">${b}</span> `;
+        asciiPart += `<span class="b c-${f.color}${editCls}"${dataIdx} data-tip="${tip}">${asc}</span>`;
       } else {
-        hexPart += `<span class="b">${b}</span> `;
-        asciiPart += `<span class="b dim2">${asc}</span>`;
+        hexPart += `<span class="b${editCls}"${dataIdx}>${b}</span> `;
+        asciiPart += `<span class="b dim2${editCls}"${dataIdx}>${asc}</span>`;
       }
     }
     out += `<span class="off">${(row * 16).toString(16).padStart(3, '0')}</span>${hexPart}<span class="ascii">${asciiPart}</span>\n`;
   }
   $('#hexdump').innerHTML = out;
+  if (sectorEdit) {
+    document.querySelectorAll('#hexdump [data-byte-index]').forEach(el =>
+      el.addEventListener('click', () => selectEditByte(+el.dataset.byteIndex)));
+  }
 }
+
+function beginSectorEdit() {
+  if (!sectorView) return;
+  const useDec = !!sectorView.dec_hex;
+  const baseHex = useDec ? sectorView.dec_hex : sectorView.raw_hex;
+  const bytes = baseHex.match(/../g) || [];
+  if (bytes.length !== 512) return;
+  sectorEdit = {
+    view: useDec ? 'dec' : 'raw',
+    baseBytes: bytes.slice(),
+    bytes: bytes.slice(),
+    selected: null,
+    preview: null,
+  };
+  if (useDec) document.querySelector('input[name=sector-view][value=dec]').checked = true;
+  document.querySelectorAll('input[name=sector-view]').forEach(r => r.disabled = true);
+  $('#sector-editor').hidden = false;
+  $('#edit-offset').textContent = '—';
+  $('#edit-byte').value = '';
+  $('#edit-byte').disabled = true;
+  $('#btn-edit-set').disabled = true;
+  $('#btn-edit-export').disabled = true;
+  $('#btn-edit-save').disabled = true;
+  $('#edit-status').textContent = EDIT_WRITABLE_LBAS.has(sectorView.lba)
+    ? '点击下方任意字节开始编辑；黄色为已修改字节。'
+    : '当前 LBA 可编辑预览，但安全写入器不允许保存到真实 U 盘。';
+  $('#edit-warnings').innerHTML = '';
+  renderHexdump();
+}
+
+function exitSectorEdit(render = true) {
+  sectorEdit = null;
+  document.querySelectorAll('input[name=sector-view]').forEach(r => r.disabled = false);
+  $('#sector-editor').hidden = true;
+  if (render && sectorView) renderHexdump();
+}
+
+function selectEditByte(idx) {
+  if (!sectorEdit || idx < 0 || idx >= 512) return;
+  sectorEdit.selected = idx;
+  $('#edit-offset').textContent = `0x${idx.toString(16).padStart(3, '0')} (${idx})`;
+  $('#edit-byte').value = sectorEdit.bytes[idx].toUpperCase();
+  $('#edit-byte').disabled = false;
+  $('#btn-edit-set').disabled = false;
+  $('#edit-byte').focus();
+  $('#edit-byte').select();
+  renderHexdump();
+}
+
+function invalidateEditPreview() {
+  if (!sectorEdit) return;
+  sectorEdit.preview = null;
+  $('#btn-edit-export').disabled = true;
+  $('#btn-edit-save').disabled = true;
+  $('#edit-warnings').innerHTML = '';
+}
+
+function setSelectedEditByte() {
+  if (!sectorEdit || sectorEdit.selected == null) return;
+  const value = $('#edit-byte').value.trim();
+  if (!/^[0-9a-fA-F]{2}$/.test(value)) {
+    $('#edit-status').textContent = '字节值必须是两位十六进制，例如 00、7F、A5。';
+    return;
+  }
+  sectorEdit.bytes[sectorEdit.selected] = value.toLowerCase();
+  invalidateEditPreview();
+  const changed = sectorEdit.bytes.filter((b, i) => b !== sectorEdit.baseBytes[i]).length;
+  $('#edit-status').textContent = `已修改 ${changed} 个视图字节；请先执行“重加密预览”。`;
+  renderHexdump();
+}
+
+async function previewSectorEdit() {
+  if (!sectorEdit || !sectorView || !currentDisk) return;
+  const editedHex = sectorEdit.bytes.join('');
+  try {
+    const p = await invoke('preview_sector_edit', {
+      diskNo: currentDisk,
+      lba: sectorView.lba,
+      editedHex,
+    });
+    sectorEdit.preview = p;
+    $('#edit-status').textContent = p.save_blocked_reason
+      ? `重加密预览完成，但禁止保存：${p.save_blocked_reason}`
+      : `重加密预览完成：raw 将变化 ${p.changed_raw_offsets.length} 个字节。`;
+    const messages = [...p.warnings];
+    if (p.save_blocked_reason) messages.push(p.save_blocked_reason);
+    $('#edit-warnings').innerHTML = messages.length
+      ? messages.map(w => `<div>⚠ ${escTip(w)}</div>`).join('')
+      : '<div class="backup-ok">未触发额外敏感区警告。</div>';
+    $('#btn-edit-export').disabled = false;
+    $('#btn-edit-save').disabled = !!p.save_blocked_reason || !EDIT_WRITABLE_LBAS.has(sectorView.lba) || p.changed_raw_offsets.length === 0;
+  } catch (e) {
+    sectorEdit.preview = null;
+    $('#btn-edit-export').disabled = true;
+    $('#btn-edit-save').disabled = true;
+    $('#edit-status').textContent = '预览失败: ' + e;
+  }
+}
+
+function exportSectorEditRaw() {
+  if (!sectorEdit?.preview || !sectorView || !currentDisk) return;
+  const pairs = sectorEdit.preview.raw_hex.match(/../g) || [];
+  const bytes = new Uint8Array(pairs.map(x => parseInt(x, 16)));
+  const blob = new Blob([bytes], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `edpopen_disk${currentDisk}_lba${sectorView.lba}_raw.bin`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  $('#edit-status').textContent = `已导出重加密 raw：${a.download}`;
+}
+
+async function saveSectorEdit() {
+  if (!sectorEdit || !sectorEdit.preview || !sectorView || !currentDisk) return;
+  const warnings = sectorEdit.preview.warnings || [];
+  const detail = warnings.length ? `\n\n警告:\n- ${warnings.join('\n- ')}` : '';
+  if (!confirm(
+    `确认保存 disk${currentDisk} LBA${sectorView.lba} 的编辑?\n` +
+    `raw 将变化 ${sectorEdit.preview.changed_raw_offsets.length} 个字节。\n` +
+    '保存前会自动备份 LBA0-13，并再次核验目标盘身份。' + detail
+  )) return;
+  $('#btn-edit-save').disabled = true;
+  $('#edit-status').textContent = '重新核验扇区与目标盘身份，等待系统授权…';
+  try {
+    const r = await invoke('apply_sector_edit', {
+      diskNo: currentDisk,
+      lba: sectorView.lba,
+      editedHex: sectorEdit.bytes.join(''),
+      expectedRawHex: sectorView.raw_hex,
+    });
+    $('#edit-status').textContent = r.ok
+      ? `✓ LBA${sectorView.lba} 已保存并回读验证 · 备份: ${r.backup_path}`
+      : '✗ ' + (r.error || '未知错误');
+    await loadSector(sectorView.lba);
+    await loadBackups();
+    await analyzeDisk(currentDisk);
+  } catch (e) {
+    $('#edit-status').textContent = '✗ ' + e;
+    $('#btn-edit-save').disabled = false;
+  }
+}
+
+$('#btn-sector-edit').addEventListener('click', beginSectorEdit);
+$('#btn-edit-exit').addEventListener('click', () => exitSectorEdit());
+$('#btn-edit-set').addEventListener('click', setSelectedEditByte);
+$('#edit-byte').addEventListener('keydown', e => { if (e.key === 'Enter') setSelectedEditByte(); });
+$('#btn-edit-undo').addEventListener('click', () => {
+  if (!sectorEdit) return;
+  sectorEdit.bytes = sectorEdit.baseBytes.slice();
+  sectorEdit.selected = null;
+  invalidateEditPreview();
+  $('#edit-offset').textContent = '—';
+  $('#edit-byte').value = '';
+  $('#edit-byte').disabled = true;
+  $('#btn-edit-set').disabled = true;
+  $('#edit-status').textContent = '已撤销全部修改。';
+  renderHexdump();
+});
+$('#btn-edit-preview').addEventListener('click', previewSectorEdit);
+$('#btn-edit-export').addEventListener('click', exportSectorEditRaw);
+$('#btn-edit-save').addEventListener('click', saveSectorEdit);
+
 const STATUS_COLOR = { encrypted: 'var(--accent)', nopwd: 'var(--accent-2)', not_cems: 'var(--text-dim)' };
 $('#disk-select').addEventListener('change', (e) => {
   const d = e.target.value;

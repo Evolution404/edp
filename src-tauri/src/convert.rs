@@ -165,6 +165,8 @@ pub struct WritePayload {
     pub pid: String,
     #[serde(default)]
     pub total_sectors: Option<u64>,
+    #[serde(default)]
+    pub allow_nopwd: bool,              // 字节编辑可允许 NoPwd；免密改造本身保持 false
     pub uid: u32,                       // 备份文件 chown 回该用户
     pub sectors: std::collections::BTreeMap<String, String>, // lba → hex(512B)
 }
@@ -271,7 +273,7 @@ fn validate_restore_source(data: &[u8], id: &disk::Identity, current_lid: u64) -
 
     let raw7 = &data[7 * 512..8 * 512];
     if !crypto::xor_rolling(raw7, id.k0).starts_with(b"EDPF") {
-        return Err("备份 LBA7 无法用当前 device_id 解出 EDPF".into());
+        return Err("备份 LBA7 无法用备份自身 device_id 解出 EDPF".into());
     }
     let status = disk_status_from_metadata(
         &data[0..512],
@@ -285,12 +287,35 @@ fn validate_restore_source(data: &[u8], id: &disk::Identity, current_lid: u64) -
     Ok(())
 }
 
+fn identity_from_backup(data: &[u8], vid: &str, pid: &str, size_bytes: u64) -> Result<disk::Identity, String> {
+    if data.len() != 14 * 512 { return Err("备份长度不是 LBA0-13".into()); }
+    let raw11 = &data[11 * 512..12 * 512];
+    let device_id = disk::recover_device_id_from_lba11(raw11, vid, pid, size_bytes)
+        .ok_or("无法从备份 LBA11 恢复 device_id")?;
+    let crc = crypto::crc32_bare(device_id.as_bytes());
+    let k0 = disk::lba7_k0(crc);
+    let raw7 = &data[7 * 512..8 * 512];
+    if !crypto::xor_rolling(raw7, k0).starts_with(b"EDPF") {
+        return Err("备份 LBA11 恢复的 device_id 无法通过备份 LBA7 二次验真".into());
+    }
+    Ok(disk::Identity { device_id, crc, k0 })
+}
+
 fn decode_sector_hex(lba: u64, s: &str) -> Result<Vec<u8>, String> {
     if s.len() != 1024 { return Err(format!("LBA{lba} 数据非 512B")); }
     (0..512)
         .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
             .map_err(|_| format!("LBA{lba} 含非法十六进制数据")))
         .collect()
+}
+
+fn validate_write_status(status: parser::DiskStatus, allow_nopwd: bool) -> Result<(), String> {
+    match status {
+        parser::DiskStatus::Encrypted => Ok(()),
+        parser::DiskStatus::NoPwd if allow_nopwd => Ok(()),
+        parser::DiskStatus::NoPwd => Err("目标盘已是免密盘，本次写入类型不允许 NoPwd 状态".into()),
+        parser::DiskStatus::NotCems => Err("目标盘结构无法识别，拒绝写入".into()),
+    }
 }
 
 fn validate_target(p: &WritePayload) -> Result<(), String> {
@@ -330,10 +355,9 @@ fn validate_target(p: &WritePayload) -> Result<(), String> {
     let raw0 = disk::read_lba(p.disk, 0).map_err(|e| format!("复核 LBA0 失败: {e}"))?;
     let mbr = parser::parse_mbr(&raw0).unwrap_or_default();
     let raw9 = disk::read_lba(p.disk, 9).map_err(|e| format!("复核 LBA9 失败: {e}"))?;
-    if parser::classify(&entries, &mbr, raw9.iter().any(|&b| b != 0)) != parser::DiskStatus::Encrypted {
-        return Err("目标盘已不再是标准加密盘，拒绝写入".into());
-    }
-    Ok(())
+    let status = parser::classify(&entries, &mbr, raw9.iter().any(|&b| b != 0));
+    validate_write_status(status, p.allow_nopwd)
+
 }
 
 fn diskutil(disk: u32, action: &str) -> Result<(), String> {
@@ -463,17 +487,12 @@ pub fn restore_backup(
 
     let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no)
         .ok_or_else(|| format!("disk{disk_no} 已不存在或不是外置 USB 整盘"))?;
-    let id = disk::identify_checked(disk_no)?;
+    // 还原身份从“已校验的来源备份”恢复，而不是依赖当前 LBA7/LBA12。
+    // 这样即使字节编辑把当前结构改坏，只要 LBA4 唯一 ID 仍匹配，仍可安全恢复。
+    let id = identity_from_backup(&source, &usb.vid, &usb.pid, usb.size_bytes)?;
     let raw4 = disk::read_lba(disk_no, 4).map_err(|e| format!("读取当前 LBA4: {e}"))?;
     let current_lid = crypto::lba4_parse_serial(&raw4).ok_or("当前 LBA4 唯一 ID 无法解析")?;
     validate_restore_source(&source, &id, current_lid)?;
-
-    let current0 = disk::read_lba(disk_no, 0).map_err(|e| format!("读取当前 LBA0: {e}"))?;
-    let current9 = disk::read_lba(disk_no, 9).map_err(|e| format!("读取当前 LBA9: {e}"))?;
-    let current12 = disk::read_lba(disk_no, 12).map_err(|e| format!("读取当前 LBA12: {e}"))?;
-    if disk_status_from_metadata(&current0, &current9, &current12, id.crc)? == parser::DiskStatus::NotCems {
-        return Err("当前盘结构已无法识别，拒绝自动还原".into());
-    }
 
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let safety_path = backup_dir.join(format!(
@@ -578,6 +597,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn write_status_gate_keeps_convert_strict_but_allows_nopwd_editor() {
+        assert!(validate_write_status(parser::DiskStatus::Encrypted, false).is_ok());
+        assert!(validate_write_status(parser::DiskStatus::Encrypted, true).is_ok());
+        assert!(validate_write_status(parser::DiskStatus::NoPwd, false).is_err());
+        assert!(validate_write_status(parser::DiskStatus::NoPwd, true).is_ok());
+        assert!(validate_write_status(parser::DiskStatus::NotCems, true).is_err());
+    }
+
+    #[test]
     fn sector_hex_validation_is_strict() {
         let good = "00".repeat(512);
         assert_eq!(decode_sector_hex(7, &good).unwrap(), vec![0u8; 512]);
@@ -632,13 +660,17 @@ mod tests {
         };
         let mut backup = vec![0u8; 14 * 512];
         backup[0..512].copy_from_slice(&unhex(g["raw0"].as_str().unwrap()));
-        for lba in [4usize, 6, 7, 9, 12] {
+        for lba in [4usize, 6, 7, 9, 11, 12] {
             let raw = unhex(v["sectors"][lba.to_string()]["raw_hex"].as_str().unwrap());
             backup[lba * 512..(lba + 1) * 512].copy_from_slice(&raw);
         }
-        let device_id = v["device_id"].as_str().unwrap().to_string();
-        let crc = crypto::crc32_bare(device_id.as_bytes());
-        let id = disk::Identity { device_id, crc, k0: disk::lba7_k0(crc) };
+        let id = identity_from_backup(
+            &backup,
+            v["vid"].as_str().unwrap(),
+            v["pid"].as_str().unwrap(),
+            v["size_bytes"].as_u64().unwrap(),
+        ).unwrap();
+        assert_eq!(id.device_id, v["device_id"].as_str().unwrap());
         let lid = backup_lid(&backup).unwrap();
         validate_restore_source(&backup, &id, lid).unwrap();
     }

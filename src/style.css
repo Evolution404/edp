@@ -129,6 +129,13 @@ table.grid th { color: var(--text-dim); font-weight: 500; }
 .hexdump .c-checksum { background: #d2992222; color: #e3b659; }
 .hexdump .c-warn   { background: #f8514926; color: #ff8a84; outline: 1px solid #f8514966; }
 .hexdump .dim2 { color: #565f6b; }
+.hexdump .edit-changed { background: #d2992240 !important; color: #ffd166 !important; outline: 1px solid #d2992288; }
+.hexdump .edit-selected { outline: 1px solid var(--accent) !important; background: #58a6ff35 !important; }
+.editor-panel { border-color: #d2992266; }
+.editor-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.editor-toolbar input { width: 54px; text-align: center; text-transform: uppercase; }
+.editor-warnings { margin-top: 8px; color: var(--warn); font-size: 12px; }
+.editor-warnings div { padding: 2px 0; }
 
 /* ── 盘地图页 ── */
 .meta-grid { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; }

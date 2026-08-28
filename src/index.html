@@ -53,7 +53,22 @@
         <span id="sector-jumps"></span>
         <label class="view-sw"><input type="radio" name="sector-view" value="dec" checked> 解密视图</label>
         <label class="view-sw"><input type="radio" name="sector-view" value="raw"> 原始密文</label>
+        <button id="btn-sector-edit">编辑字节</button>
         <span id="sector-method" class="dim"></span>
+      </div>
+      <div id="sector-editor" class="card editor-panel" hidden>
+        <div class="editor-toolbar">
+          <span>偏移 <b id="edit-offset">—</b></span>
+          <input id="edit-byte" type="text" maxlength="2" placeholder="00" disabled>
+          <button id="btn-edit-set" disabled>修改</button>
+          <button id="btn-edit-undo">全部撤销</button>
+          <button id="btn-edit-preview">重加密预览</button>
+          <button id="btn-edit-export" disabled>导出 raw</button>
+          <button id="btn-edit-save" disabled>保存到 U 盘（授权）</button>
+          <button id="btn-edit-exit">退出编辑</button>
+        </div>
+        <div id="edit-status" class="dim" style="margin-top:8px">点击下方任意字节开始编辑；黄色为已修改字节。</div>
+        <div id="edit-warnings" class="editor-warnings"></div>
       </div>
       <div class="card"><pre id="hexdump" class="hexdump">选择盘后读取扇区…</pre></div>
     </section>

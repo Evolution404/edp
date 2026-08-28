@@ -290,7 +290,7 @@ fn disk_size_bytes(disk: u32) -> Option<u64> {
         .and_then(|v| v.as_unsigned_integer())
 }
 
-fn recover_device_id_from_lba11(raw: &[u8], vid: &str, pid: &str, size: u64) -> Option<String> {
+pub(crate) fn recover_device_id_from_lba11(raw: &[u8], vid: &str, pid: &str, size: u64) -> Option<String> {
     if raw.len() != SECTOR || vid.len() != 4 || pid.len() != 4 || size == 0 { return None; }
     let rand = &raw[..0x100];
     let chs_unit = 255u64 * 63 * SECTOR as u64;

@@ -1,6 +1,6 @@
 //! commands.rs — Tauri 命令门面
 
-use crate::{disk, parser, crypto};
+use crate::{disk, parser, crypto, editor};
 use serde::Serialize;
 
 #[tauri::command]
@@ -135,6 +135,14 @@ pub struct SectorView {
 }
 
 fn hexs(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
+
+fn unhex_512(s: &str) -> Result<Vec<u8>, String> {
+    if s.len() != 1024 { return Err("编辑数据必须是 512B / 1024 个十六进制字符".into()); }
+    (0..512)
+        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+            .map_err(|_| format!("编辑数据在字节 {i} 含非法十六进制")))
+        .collect()
+}
 
 // ── 盘地图(全盘区域 + LBA0-13 方格) ───────────────────────────────────────
 #[derive(Serialize)]
@@ -354,6 +362,7 @@ pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, 
         vid,
         pid,
         total_sectors: Some(total),
+        allow_nopwd: false,
         uid: unsafe { edpopen_getuid() },
         sectors,
     };
@@ -444,20 +453,23 @@ pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
         8 => {
             if let Some(id) = ident() {
                 let mut dec = crypto::a6b0_full(&raw[..0x170], &id.crc.to_le_bytes(), 0);
-                dec.extend_from_slice(&[0u8; 144]);
-                sv.dec_method = Some("A6B0(368B) key=CRC32(device_id)".into());
+                dec.extend_from_slice(&raw[0x170..]);
+                sv.dec_method = Some("A6B0(368B) key=CRC32(device_id); 尾144B raw".into());
                 sv.fields = parser::lba8_fields(&dec);
                 sv.dec_hex = Some(hexs(&dec));
             }
         }
         9 => {
-            if let Some(id) = ident() {
+            if raw.iter().all(|&b| b == 0) {
+                sv.dec_method = Some("全零扇区(raw)".into());
+                sv.fields = parser::lba9_fields(&raw);
+                sv.dec_hex = Some(hexs(&raw));
+            } else if let Some(id) = ident() {
                 let mut dec = crypto::a6b0_full(&raw[..0x80], &id.crc.to_le_bytes(), 0);
-                dec.extend_from_slice(&[0u8; 128]);
-                let xor_part: Vec<u8> = raw[0x100..0x120].iter().map(|b| b ^ 0x88).collect();
-                dec.extend_from_slice(&xor_part);
-                dec.extend_from_slice(&[0u8; 224]);
-                sv.dec_method = Some("A6B0(128B)+XOR0x88(32B)".into());
+                dec.extend_from_slice(&raw[0x80..0x100]);
+                dec.extend(raw[0x100..0x120].iter().map(|b| b ^ 0x88));
+                dec.extend_from_slice(&raw[0x120..]);
+                sv.dec_method = Some("A6B0(128B)+raw(128B)+XOR0x88(32B)+raw(224B)".into());
                 sv.fields = parser::lba9_fields(&dec);
                 sv.dec_hex = Some(hexs(&dec));
             }
@@ -498,4 +510,94 @@ pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
         _ => {}
     }
     Ok(sv)
+}
+
+fn build_sector_edit_preview(disk_no: u32, lba: u64, edited_hex: &str) -> Result<(editor::EditPreview, SectorView, disk::Identity, disk::UsbDisk), String> {
+    if disk_no < 2 { return Err("拒绝系统盘".into()); }
+    let edited = unhex_512(edited_hex)?;
+    let current = read_sector(disk_no, lba)?;
+    let original_raw = unhex_512(&current.raw_hex)?;
+    let original_view = unhex_512(current.dec_hex.as_deref().unwrap_or(&current.raw_hex))?;
+    let id = disk::identify_checked(disk_no)?;
+    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no)
+        .ok_or("目标 USB 盘已离线")?;
+    let ctx = editor::EditContext {
+        identity: &id,
+        vid: &usb.vid,
+        pid: &usb.pid,
+        size_bytes: usb.size_bytes,
+    };
+    let preview = editor::preview(lba, &original_raw, &original_view, &edited, &ctx)?;
+    Ok((preview, current, id, usb))
+}
+
+#[tauri::command]
+pub fn preview_sector_edit(disk_no: u32, lba: u64, edited_hex: String) -> Result<editor::EditPreview, String> {
+    Ok(build_sector_edit_preview(disk_no, lba, &edited_hex)?.0)
+}
+
+#[tauri::command]
+pub fn apply_sector_edit(
+    disk_no: u32,
+    lba: u64,
+    edited_hex: String,
+    expected_raw_hex: String,
+) -> Result<ApplyResult, String> {
+    if !convert::WRITABLE_LBAS.contains(&lba) {
+        return Err(format!("当前安全写入器只允许元数据 LBA {:#?}", convert::WRITABLE_LBAS));
+    }
+    let (preview, current, id, usb) = build_sector_edit_preview(disk_no, lba, &edited_hex)?;
+    if current.raw_hex != expected_raw_hex.to_ascii_lowercase() {
+        return Err("该扇区在编辑期间已发生变化，请重新读取后再保存".into());
+    }
+    if preview.changed_raw_offsets.is_empty() {
+        return Err("没有实际 raw 变化，无需保存".into());
+    }
+    if let Some(reason) = preview.save_blocked_reason.as_ref() {
+        return Err(reason.clone());
+    }
+    let lid = disk::read_lba(disk_no, 4)
+        .map_err(|e| format!("读取 LBA4 唯一 ID: {e}"))
+        .and_then(|raw| crypto::lba4_parse_serial(&raw).ok_or("LBA4 唯一 ID 无法解析".to_string()))?;
+    let mut sectors = std::collections::BTreeMap::new();
+    sectors.insert(lba.to_string(), preview.raw_hex);
+    let payload = convert::WritePayload {
+        disk: disk_no,
+        backup_dir: app_backup_dir().to_string_lossy().into_owned(),
+        device_id: id.device_id,
+        lid: Some(lid),
+        vid: usb.vid,
+        pid: usb.pid,
+        total_sectors: Some(usb.size_bytes / 512),
+        allow_nopwd: true,
+        uid: unsafe { edpopen_getuid() },
+        sectors,
+    };
+    let r = convert::write_sectors(payload)?;
+    Ok(ApplyResult {
+        ok: r.ok,
+        backup_path: r.backup_path,
+        written: r.written,
+        verified: r.verified,
+        error: r.error,
+    })
+}
+
+#[cfg(test)]
+mod edit_command_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a real removable disk; preview only, performs no writes"]
+    fn live_unchanged_edit_preview_has_zero_raw_diff() {
+        let disk: u32 = std::env::var("EDPOPEN_TEST_DISK")
+            .expect("set EDPOPEN_TEST_DISK")
+            .parse()
+            .expect("numeric disk number");
+        let sector = read_sector(disk, 12).expect("read LBA12");
+        let edited = sector.dec_hex.clone().expect("LBA12 decrypt view");
+        let preview = preview_sector_edit(disk, 12, edited).expect("preview LBA12 edit");
+        assert!(preview.changed_raw_offsets.is_empty());
+        assert!(preview.save_blocked_reason.is_none());
+    }
 }

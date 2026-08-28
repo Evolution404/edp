@@ -14,11 +14,11 @@
 | 5 | parser.rs + 扇区页 | ✅ 完成 | golden 对拍全绿（含 GBK 中文/ELABEL） |
 | 6 | 盘地图页 | ✅ 完成 | 代码完整；视觉效果待 dev 走查 |
 | 7 | convert.rs + 授权写入器 + 改造页 | 🟡 **授权层已重构，未真盘写入** | 5 扇 golden 对拍全绿；GUI 已改为写前五重身份复核 → unmountDisk → authopen O_RDWR SCM_RIGHTS FD → 先备份 → LBA0最后写 → sync → 同FD回读。O_RDWR FD 已用真盘做过只读 `pread` 验证，但尚未执行任何真实改造写入 |
-| 8 | 字节编辑器 + 重加密 | ⬜ 未开始 | 重加密表在 PLAN §4 |
+| 8 | 字节编辑器 + 重加密 | 🟡 **代码完成** | hexdump 点击字节编辑/diff/撤销/重加密预览/raw导出/敏感警告/授权保存已接通；支持 Encrypted+NoPwd 编辑保存，免密改造仍仅 Encrypted；真实 golden 覆盖零改动 raw 精确还原 + 每类规则单字节修改往返；LBA4 ID 改动禁止保存。剩 GUI 人眼走查/真盘编辑写实证 |
 | 9 | 备份管理 + 离线模式 | 🟡 **备份安全闭环已完成** | 列表/7168B/MD5/LBA4 ID 当前盘匹配/来源 EDPF+Encrypted 二次校验/还原前安全备份/同FD还原已完成；离线拖拽仍待做 |
 | 10 | 测试补全 + 打包 | ⬜ 未开始 | |
 
-测试现状：`cd src-tauri && cargo test` → **16 项通过 + 1 个默认 ignored 真盘探针**。覆盖写入 sector hex、disk0/1 授权前拒绝、假盘单FD事务/LBA0最后写、备份目录边界/MD5、真实 golden 还原源校验；真盘 ignored O_RDWR 只读探针已在 `disk4` 手工通过。`git diff --check`、前端 JS 语法、`cargo tauri build --debug --no-bundle` 均通过。
+测试现状：`cd src-tauri && cargo test` → **22 项通过 + 2 个默认 ignored 真盘只读探针**。新增编辑器真实 golden：6 盘 LBA4/6/7/8/9/11/12 零改动重加密精确还原 raw，以及各规则单字节修改重加密→再解密往返；LBA4 ID 保护也有单测。两个真盘探针（O_RDWR FD pread、unchanged edit preview）均已手工通过。`git diff --check`、前端 JS 语法、`cargo tauri build --debug --no-bundle` 均通过。
 
 ## 2. 当前分支与提交历史
 
@@ -85,7 +85,7 @@ git switch fix/robust-device-identification
 git status && git log --oneline -5
 
 # 开发循环
-cd src-tauri && cargo test                # 当前 13/13 必须绿
+cd src-tauri && cargo test                # 当前 22 项通过 + 2 ignored
 diskutil list external physical           # 先确认当前 diskN，盘号会随重插变化
 cargo run -- --analyze 6                  # 2026-08-28 真盘基线：成功；raw EACCES 时由 authopen 请求只读授权
 cargo tauri dev                           # GUI 走查(五页签)
@@ -96,7 +96,7 @@ cargo tauri dev                           # GUI 走查(五页签)
 #   4. 成功后再 --analyze 当前盘号，应变 nopwd；备份落在 ~/Library/Application Support/EDPOpen/backups
 ```
 
-优先级：任务4已完成；任务7授权/安全代码已完成但尚未执行真实改造写入；任务9的备份/安全还原最小闭环已完成。接下来优先任务8字节编辑器与重加密测试，同时保留真盘写入→还原端到端作为 Draft PR 转 Ready 前阻塞。
+优先级：任务4已完成；任务7授权/安全代码已完成但尚未执行真实改造写入；任务8代码已完成，剩 GUI走查/真盘编辑写实证；任务9备份/安全还原最小闭环已完成。Draft PR 转 Ready 的核心阻塞仍是真盘写入→再 analyze→应用内还原→再 analyze 的端到端实证。
 
 ## 7. 环境快照
 

@@ -2,6 +2,7 @@ pub mod crypto;
 pub mod parser;
 pub mod disk;
 pub mod convert;
+pub mod editor;
 pub mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -16,7 +17,9 @@ pub fn run() {
             commands::convert_preview,
             commands::apply_convert,
             commands::list_backups,
-            commands::restore_backup
+            commands::restore_backup,
+            commands::preview_sector_edit,
+            commands::apply_sector_edit
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

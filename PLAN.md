@@ -46,9 +46,7 @@ tools/                  golden 生成脚本(Python, 调用对拍基准)
 3. **扇区页**：hexdump（offset+hex+ascii）+ 字段级着色（7 类语义色）+ hover 字段释义 +
    raw/dec 视图切换 + LBA 快速跳转/前后导航
 4. **改造页**：预览（状态/布局/写入清单）→ 确认 → 授权写入 → 回读校验结果展示
-5. **字节级编辑器**（待做）：hexdump 点击字节修改/diff 高亮/撤销/导出；**加密感知保存**——
-   解密视图编辑明文，保存按 LBA 规则重加密（见 §4 重加密表）；敏感区（表尾终止符/LBA12 尾 144B/
-   LBA11 rand）修改标红警示
+5. **字节级编辑器**（代码完成）：hexdump 点击字节修改、diff 高亮、全部撤销、重加密预览、raw 导出、敏感区警告与授权保存。Rust `editor.rs` 统一处理 LBA4/6/7/8/9/11/12 重加密；保存前比较 expected raw 防止编辑期间扇区变化，并复用整盘身份复核+自动备份+authopen O_RDWR+回读。LBA4 `labelOnlyId` 变化可预览但禁止保存，避免破坏同型号多盘唯一恢复依据。编辑保存允许 Encrypted/NoPwd 两种已识别状态；免密改造本身仍只允许 Encrypted。当前真实盘编辑写保存尚未主动执行，剩 GUI 人眼走查。
 6. **备份管理页**（最小闭环已完成）：列出 EDPOpen 备份、7168B/MD5 校验、LBA4 `labelOnlyId` 与当前盘匹配；只有匹配项可还原。后端还会二次验证来源 LBA7/LBA12 EDPF 且来源状态必须为原始 `Encrypted`。还原前再次保存当前 LBA0-13 安全备份，再通过同一 authopen O_RDWR FD 还原 5 个改造相关扇区并回读。
 7. **离线模式**（待做）：拖入备份 .bin 或 dd 镜像全流程分析（规则文件名自动提取 vid/pid/secs/device_id）
 
@@ -99,7 +97,7 @@ python3 tools/gen_parse_golden.py --nopwd ... --read-metadata ... --backup ... \
 python3 tools/gen_convert_golden.py --nopwd ... --backup ... \
     --out src-tauri/tests/convert_golden.json
 
-cd src-tauri && cargo test    # 当前 13/13 绿
+cd src-tauri && cargo test    # 当前 22 项通过 + 2 个默认 ignored 真盘只读探针
 ```
 
 | 测试 | 覆盖 |
@@ -111,14 +109,14 @@ cd src-tauri && cargo test    # 当前 13/13 绿
 | disk 单测×3 | ioreg 顶层服务名≠类名时仍能正确分块；LBA11 PDKB 能恢复嵌入 device_id；disk0/1 在触发 authopen 前即拒绝 |
 | convert 写入输入单测×1 | 512B sector hex 长度与十六进制字符严格校验，拒绝短数据/非法字符 |
 
-**待补测试**：编辑重加密对拍（明文改 1 字节→重加密 vs Python 等价脚本）、真盘写入→还原闭环、authopen 授权取消/拒绝分支、非 cems 盘拒绝、多盘同插。当前已有 16 项常规测试通过 + 1 个默认 ignored 的真盘 O_RDWR 只读探针；该探针已在 `disk4` 手工执行通过。
+**待补测试**：真盘写入→还原闭环、authopen 授权取消/拒绝分支、非 cems 盘拒绝、多盘同插。编辑器已有两条真实 golden：① 6 盘 LBA4/6/7/8/9/11/12 解密视图零改动后重加密必须逐字节还原 raw；② 每类加密规则实际改 1 个明文字节后重加密→再解密必须保留修改。当前共 22 项常规测试通过 + 2 个默认 ignored 真盘只读探针；O_RDWR FD 探针和 unchanged-edit preview 探针均已在真盘手工通过。
 
 ## 6. 剩余任务（优先级序）
 
 **任务4 已于 2026-08-28 真盘完成**：`disk6` enumerate→EACCES→authopen→INQUIRY→LBA7/LBA12→`analyze_disk` 成功，输出 VID/PID=`21c4:0cd1`、device_id=`disk&ven_lexar&prod_usb_flash_drive`、status=`encrypted`、LBA12 3 entries。
 
 1. **任务7 收尾**：授权层代码已改为 `unmountDisk → authopen O_RDWR SCM_RIGHTS FD → 备份 → LBA0最后写 → sync → 同FD回读`，并加入 VID/PID+容量+device_id+LBA4唯一ID+Encrypted 五重写前复核；**尚未执行真盘写入**。下一步是真盘端到端（再次确认当前 diskN/status → 授权 → 备份 → 写入 → 回读 → 再 analyze），任何真实写入前不能复用历史 diskN。
-2. **任务8**：字节级编辑器 + 加密感知重加密（表见 §4）+ 敏感区警示 + 重加密对拍测试
+2. **任务8 剩余**：代码功能已完成（编辑/diff/撤销/重加密/raw导出/敏感警告/expected-raw 防竞态/Encrypted+NoPwd 安全保存/真实 golden）；仅剩 GUI 人眼走查与真实写保存实证。
 3. **任务9 剩余**：备份列表/匹配/MD5/安全还原已完成；剩余离线拖拽模式与更完整的备份元数据展示。
    （文件名规则 `disk\d+_(\d+)_vid(..)_pid(..)_(.+?)_lid(\d+)_(\d{8}_\d{6})\.bin` 可用于离线参数提取）
 4. **任务10**：打包 .app（tauri build，未签名首次右键打开；`cargo tauri icon` 生成正式图标替换占位）
