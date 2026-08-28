@@ -381,6 +381,14 @@ mod tests {
     }
 
     #[test]
+    fn authopen_rejects_system_disks_before_authorization() {
+        for disk in [0, 1] {
+            assert_eq!(authopen_rdisk(disk, false).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+            assert_eq!(authopen_rdisk(disk, true).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[test]
     fn lba11_recovers_embedded_device_id() {
         let vid = "21c4";
         let pid = "0cd1";

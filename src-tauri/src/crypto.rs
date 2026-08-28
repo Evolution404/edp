@@ -304,9 +304,6 @@ pub fn lba4_decode(raw: &[u8]) -> Option<(Vec<u8>, u64)> {
 mod tests {
     use super::*;
 
-    fn unhex(s: &str) -> Vec<u8> {
-        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap()).collect()
-    }
 
     #[test]
     fn crc32_known() {

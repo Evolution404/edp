@@ -18,7 +18,7 @@
 | 9 | 备份管理 + 离线模式 | ⬜ 未开始 | |
 | 10 | 测试补全 + 打包 | ⬜ 未开始 | |
 
-测试现状：`cd src-tauri && cargo test` → **12/12 绿**（原 11 项 + 写入 sector hex 严格输入回归）。另有 `git diff --check` 通过。
+测试现状：`cd src-tauri && cargo test` → **13/13 绿**（含写入 sector hex 严格校验、disk0/1 在授权前拒绝）。另有 `git diff --check` 通过；`cargo tauri build --debug --no-bundle` 成功。
 
 ## 2. 当前分支与提交历史
 
@@ -85,7 +85,7 @@ git switch fix/robust-device-identification
 git status && git log --oneline -5
 
 # 开发循环
-cd src-tauri && cargo test                # 当前 12/12 必须绿
+cd src-tauri && cargo test                # 当前 13/13 必须绿
 diskutil list external physical           # 先确认当前 diskN，盘号会随重插变化
 cargo run -- --analyze 6                  # 2026-08-28 真盘基线：成功；raw EACCES 时由 authopen 请求只读授权
 cargo tauri dev                           # GUI 走查(五页签)

@@ -99,7 +99,7 @@ python3 tools/gen_parse_golden.py --nopwd ... --read-metadata ... --backup ... \
 python3 tools/gen_convert_golden.py --nopwd ... --backup ... \
     --out src-tauri/tests/convert_golden.json
 
-cd src-tauri && cargo test    # 当前 12/12 绿
+cd src-tauri && cargo test    # 当前 13/13 绿
 ```
 
 | 测试 | 覆盖 |
@@ -108,7 +108,7 @@ cd src-tauri && cargo test    # 当前 12/12 绿
 | crypto_vectors×2 | 6 盘 × LBA4/6/7/8/9/11/12 raw↔dec 逐字节对拍；重加密还原原始密文 + LBA6 校验和与盘上一致 |
 | parse_golden×1 | 6 盘解析金标准（LBA4 三件套 / LBA6 全字段含 GBK 中文 / ELABEL 全 KV / EDPF entries） |
 | convert_golden×1 | 6 盘免密改造 5 扇与 nopwd.py --dir 产物逐字节一致 |
-| disk 单测×2 | ioreg 顶层服务名≠类名时仍能正确分块；LBA11 PDKB 能恢复嵌入 device_id |
+| disk 单测×3 | ioreg 顶层服务名≠类名时仍能正确分块；LBA11 PDKB 能恢复嵌入 device_id；disk0/1 在触发 authopen 前即拒绝 |
 | convert 写入输入单测×1 | 512B sector hex 长度与十六进制字符严格校验，拒绝短数据/非法字符 |
 
 **待补测试**：编辑重加密对拍（明文改 1 字节→重加密 vs Python 等价脚本）、真盘写入→还原闭环、authopen 授权/取消/拒绝分支、非 cems 盘拒绝、多盘同插。
