@@ -389,6 +389,41 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a real removable disk; obtains O_RDWR authopen FD but performs read-only I/O"]
+    fn live_authopen_rw_fd_pread_only() {
+        let disk: u32 = std::env::var("EDPOPEN_TEST_DISK")
+            .expect("set EDPOPEN_TEST_DISK to the external disk number")
+            .parse()
+            .expect("EDPOPEN_TEST_DISK must be numeric");
+        assert!(disk >= 2);
+        assert!(list_usb_disks().iter().any(|d| d.disk == disk));
+
+        struct Remount(u32);
+        impl Drop for Remount {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new("/usr/sbin/diskutil")
+                    .args(["mountDisk", &format!("disk{}", self.0)])
+                    .output();
+            }
+        }
+
+        let name = format!("disk{disk}");
+        let out = std::process::Command::new("/usr/sbin/diskutil")
+            .args(["unmountDisk", "force", &name])
+            .output()
+            .expect("diskutil unmountDisk");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let _remount = Remount(disk);
+
+        // Intentionally no write/write_all/pwrite call in this probe.
+        let mut f = authopen_rdisk(disk, true).expect("authopen O_RDWR");
+        let mut mbr = [0u8; SECTOR];
+        f.seek(SeekFrom::Start(0)).unwrap();
+        f.read_exact(&mut mbr).unwrap();
+        assert_eq!(&mbr[0x1FE..0x200], b"\x55\xaa");
+    }
+
+    #[test]
     fn lba11_recovers_embedded_device_id() {
         let vid = "21c4";
         let pid = "0cd1";

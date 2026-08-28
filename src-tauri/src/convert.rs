@@ -247,6 +247,48 @@ fn remount_disk(disk: u32) {
         .output();
 }
 
+fn read_metadata_backup(f: &mut File) -> Result<Vec<u8>, String> {
+    f.seek(SeekFrom::Start(0)).map_err(|e| format!("备份 seek: {e}"))?;
+    let mut backup = vec![0u8; 14 * 512];
+    f.read_exact(&mut backup).map_err(|e| format!("备份读 LBA0-13: {e}"))?;
+    Ok(backup)
+}
+
+fn write_order(decoded: &std::collections::BTreeMap<u64, Vec<u8>>) -> Vec<u64> {
+    let mut order: Vec<u64> = decoded.keys().copied().filter(|&l| l != 0).collect();
+    if decoded.contains_key(&0) { order.push(0); }
+    order
+}
+
+fn write_and_verify_fd(
+    f: &mut File,
+    decoded: &std::collections::BTreeMap<u64, Vec<u8>>,
+    wrote_any: &mut bool,
+) -> Result<(Vec<u64>, Vec<u64>), String> {
+    let order = write_order(decoded);
+    let mut written = Vec::new();
+    for &lba in &order {
+        let data = &decoded[&lba];
+        f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("seek LBA{lba}: {e}"))?;
+        f.write_all(data).map_err(|e| format!("写 LBA{lba}: {e}"))?;
+        *wrote_any = true;
+        written.push(lba);
+    }
+    f.sync_all().map_err(|e| format!("sync: {e}"))?;
+
+    let mut verified = Vec::new();
+    let mut one = [0u8; 512];
+    for &lba in &order {
+        f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("校验 seek LBA{lba}: {e}"))?;
+        f.read_exact(&mut one).map_err(|e| format!("回读 LBA{lba}: {e}"))?;
+        if one[..] != decoded[&lba][..] {
+            return Err(format!("LBA{lba} 回读不一致"));
+        }
+        verified.push(lba);
+    }
+    Ok((written, verified))
+}
+
 /// 已构造 payload 的正式写入入口。授权由 authopen O_RDWR 提供，不再依赖 root direct-open。
 pub fn write_sectors(p: WritePayload) -> Result<WriteResult, String> {
     let mut lbas = Vec::new();
@@ -277,9 +319,7 @@ pub fn write_sectors(p: WritePayload) -> Result<WriteResult, String> {
             .map_err(|e| format!("authopen 读写授权失败: {e}"))?;
 
         // 1. 同一个已授权 FD 先完整备份 LBA0-13；备份成功前绝不写盘。
-        f.seek(SeekFrom::Start(0)).map_err(|e| format!("备份 seek: {e}"))?;
-        let mut backup = vec![0u8; 14 * 512];
-        f.read_exact(&mut backup).map_err(|e| format!("备份读 LBA0-13: {e}"))?;
+        let backup = read_metadata_backup(&mut f)?;
         fs::write(&backup_path, &backup).map_err(|e| format!("写备份: {e}"))?;
         let digest = format!("{:x}", md5::compute(&backup));
         fs::write(backup_path.with_extension("bin.md5"), format!("{digest}\n"))
@@ -287,33 +327,8 @@ pub fn write_sectors(p: WritePayload) -> Result<WriteResult, String> {
         chown_user(&backup_path, p.uid);
         chown_user(&backup_path.with_extension("bin.md5"), p.uid);
 
-        // 2. LBA0 永远最后写，避免 MBR 改动触发系统重扫后影响后续写入。
-        let mut order = lbas.clone();
-        order.sort_unstable();
-        order.retain(|&l| l != 0);
-        if decoded.contains_key(&0) { order.push(0); }
-
-        let mut written = Vec::new();
-        for &lba in &order {
-            let data = &decoded[&lba];
-            f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("seek LBA{lba}: {e}"))?;
-            f.write_all(data).map_err(|e| format!("写 LBA{lba}: {e}"))?;
-            wrote_any = true;
-            written.push(lba);
-        }
-        f.sync_all().map_err(|e| format!("sync: {e}"))?;
-
-        // 3. 不重新 open；继续使用同一个授权 FD 逐扇回读，避免 LBA0 重扫后的重新授权/EBUSY。
-        let mut verified = Vec::new();
-        let mut one = [0u8; 512];
-        for &lba in &order {
-            f.seek(SeekFrom::Start(lba * 512)).map_err(|e| format!("校验 seek LBA{lba}: {e}"))?;
-            f.read_exact(&mut one).map_err(|e| format!("回读 LBA{lba}: {e}"))?;
-            if one[..] != decoded[&lba][..] {
-                return Err(format!("LBA{lba} 回读不一致"));
-            }
-            verified.push(lba);
-        }
+        // 2/3. LBA0 永远最后写；sync 后不 reopen，继续使用同一授权 FD 回读。
+        let (written, verified) = write_and_verify_fd(&mut f, &decoded, &mut wrote_any)?;
         Ok(WriteResult {
             ok: true,
             backup_path: Some(backup_path.to_string_lossy().into_owned()),
@@ -391,5 +406,44 @@ mod tests {
         let mut bad = good;
         bad.replace_range(10..12, "zz");
         assert!(decode_sector_hex(7, &bad).is_err());
+    }
+
+    #[test]
+    fn fd_transaction_backs_up_writes_lba0_last_and_verifies() {
+        use std::fs::OpenOptions;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("edpopen-fd-{}-{unique}.img", std::process::id()));
+        let mut f = OpenOptions::new().create_new(true).read(true).write(true).open(&path).unwrap();
+
+        let mut original = vec![0u8; 14 * 512];
+        for lba in 0..14usize {
+            original[lba * 512..(lba + 1) * 512].fill(lba as u8);
+        }
+        f.write_all(&original).unwrap();
+        f.sync_all().unwrap();
+        assert_eq!(read_metadata_backup(&mut f).unwrap(), original);
+
+        let mut decoded = std::collections::BTreeMap::new();
+        for (lba, byte) in [(0u64, 0xA0), (6, 0xA6), (7, 0xA7), (9, 0xA9), (12, 0xAC)] {
+            decoded.insert(lba, vec![byte; 512]);
+        }
+        let mut wrote_any = false;
+        let (written, verified) = write_and_verify_fd(&mut f, &decoded, &mut wrote_any).unwrap();
+        assert!(wrote_any);
+        assert_eq!(written, vec![6, 7, 9, 12, 0]);
+        assert_eq!(verified, written);
+
+        for (&lba, expect) in &decoded {
+            let mut got = vec![0u8; 512];
+            f.seek(SeekFrom::Start(lba * 512)).unwrap();
+            f.read_exact(&mut got).unwrap();
+            assert_eq!(&got, expect, "LBA{lba}");
+        }
+        drop(f);
+        std::fs::remove_file(path).unwrap();
     }
 }
