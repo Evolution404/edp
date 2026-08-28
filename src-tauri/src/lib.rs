@@ -8,8 +8,9 @@ pub mod commands;
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            commands::ping,
             commands::list_disks,
-            commands::ping
+            commands::analyze_disk
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

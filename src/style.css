@@ -83,3 +83,19 @@ main { flex: 1; overflow: auto; padding: 16px; }
 }
 .tooltip .tt-title { color: var(--accent); font-weight: 600; }
 .tooltip .tt-dim { color: var(--text-dim); }
+
+/* ── 概览页 ── */
+.kv { display: flex; gap: 12px; padding: 4px 0; align-items: baseline; }
+.kv .k { color: var(--text-dim); min-width: 44px; }
+.kv .v.mono { word-break: break-all; }
+.badge { border: 1px solid; border-radius: 10px; padding: 1px 10px; font-size: 12px; }
+.dim { color: var(--text-dim); }
+.layout-row { display: flex; gap: 16px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
+.layout-row:last-child { border-bottom: none; }
+.lname { color: var(--accent); min-width: 110px; }
+.lrange { min-width: 300px; }
+.lsize { min-width: 80px; }
+
+table.grid { border-collapse: collapse; width: 100%; }
+table.grid th, table.grid td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--border); }
+table.grid th { color: var(--text-dim); font-weight: 500; }

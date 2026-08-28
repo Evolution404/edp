@@ -54,3 +54,40 @@ async function refreshDisks() {
   }
 }
 refreshDisks();
+
+/* ── 概览页: 选盘 → analyze_disk → 渲染 ── */
+const STATUS_COLOR = { encrypted: 'var(--accent)', nopwd: 'var(--accent-2)', not_cems: 'var(--text-dim)' };
+$('#disk-select').addEventListener('change', (e) => {
+  const d = e.target.value;
+  if (d) analyzeDisk(+d); else location.reload();
+});
+
+async function analyzeDisk(disk) {
+  const box = $('#overview-content');
+  box.innerHTML = '<div class="card placeholder">分析中…</div>';
+  try {
+    const o = await invoke('analyze_disk', { diskNo: disk });
+    const parts = o.partitions.length
+      ? `<table class="grid"><tr><th>#</th><th>类型</th><th>起始 LBA</th><th>扇数</th><th>大小</th></tr>` +
+        o.partitions.map(p =>
+          `<tr><td>${p.index}</td><td>${p.type_name}</td><td>${p.start.toLocaleString()}</td><td>${p.sectors.toLocaleString()}</td><td>${p.size_gb}</td></tr>`).join('') + '</table>'
+      : '<div class="dim">无分区表</div>';
+    const layout = o.layout.length
+      ? o.layout.map(l =>
+          `<div class="layout-row"><span class="lname">${l.name}</span>` +
+          `<span class="lrange">LBA ${l.start.toLocaleString()} ~ ${l.end.toLocaleString()}</span>` +
+          `<span class="lsize">${l.size_gb}</span><span class="dim">${l.note}</span></div>`).join('')
+      : '';
+    box.innerHTML = `
+      <div class="card">
+        <div class="kv"><span class="k">盘</span><span class="v">disk${o.disk} · ${o.size_gb} · USB ${o.vid}:${o.pid}</span></div>
+        <div class="kv"><span class="k">标识</span><span class="v mono">${o.device_id} <span class="dim">(CRC32 0x${o.crc32} · K0 0x${o.lba7_k0})</span></span></div>
+        <div class="kv"><span class="k">状态</span><span class="v badge" style="color:${STATUS_COLOR[o.status] || 'inherit'};border-color:${STATUS_COLOR[o.status] || 'inherit'}">${o.status_label}</span>
+          <span class="dim">LBA12 ${o.lba12_entries} 条 entry · LBA9 ${o.lba9_eetu ? '有 EETU' : '无 EETU'}</span></div>
+      </div>
+      <div class="card"><h3>EDPF 布局(LBA12)</h3>${layout}</div>
+      <div class="card"><h3>MBR 分区表</h3>${parts}</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="card placeholder" style="color:var(--danger)">${e}</div>`;
+  }
+}

@@ -719,6 +719,7 @@ dependencies = [
  "encoding_rs",
  "md5",
  "plist",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
