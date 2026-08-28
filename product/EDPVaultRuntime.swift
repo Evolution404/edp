@@ -1205,6 +1205,24 @@ private final class EDPDaemonController: @unchecked Sendable {
         }
     }
 
+    func deleteDeviceRecord(deviceID: String) throws {
+        try queue.sync {
+            guard !connectedDisks.contains(where: { $0.deviceID == deviceID }) else {
+                throw fail("请先安全推出并拔出该 U 盘，再删除设备记录")
+            }
+            guard !manager.isMounted(deviceID: deviceID) else {
+                throw fail("该设备仍有挂载会话，暂时不能删除记录")
+            }
+            try store.remove(deviceID: deviceID)
+            try policies.remove(deviceID: deviceID)
+            failedMounts = failedMounts.filter { !$0.key.hasPrefix("\(deviceID):") }
+            manualUnmountSuppressions = manualUnmountSuppressions.filter {
+                !$0.hasPrefix("\(deviceID):")
+            }
+            addActivity("已删除设备记录和保存的密码", deviceID: deviceID)
+        }
+    }
+
     func setPartitionAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool) throws {
         try queue.sync {
             try policies.setAutoMount(
@@ -1401,6 +1419,18 @@ private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCP
     ) {
         do {
             try controller.deleteCredential(deviceID: deviceID, partitionType: partitionType)
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func deleteDeviceRecord(
+        deviceID: String,
+        withReply reply: @escaping (String?) -> Void
+    ) {
+        do {
+            try controller.deleteDeviceRecord(deviceID: deviceID)
             reply(nil)
         } catch {
             reply(String(describing: error))

@@ -80,6 +80,10 @@ private enum ValidateProductModels {
         try require(migrated.devices[0].displayName == "财务安全盘", "device-ID migration lost display name")
         try require(migrated.devices[0].policy(for: 2).autoMount, "device-ID migration lost auto-mount policy")
 
+        try store.remove(deviceID: physicalID)
+        let removed = try store.load()
+        try require(removed.devices.isEmpty, "device policy removal did not delete the record")
+
         print("RESULT=EDP_PRODUCT_MODELS_OK")
     }
 }

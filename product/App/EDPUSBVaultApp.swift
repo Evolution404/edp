@@ -425,6 +425,19 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
+    func deleteDeviceRecord(deviceID: String) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.deleteDeviceRecord(deviceID: deviceID) { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
     func setAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool) {
         guard let proxy = proxy() else { return }
         proxy.setPartitionAutoMount(
@@ -461,7 +474,13 @@ final class EDPVaultViewModel: ObservableObject {
 
     func openInFinder(_ partition: EDPXPCPartition) {
         guard let mountPoint = partition.mountPoint, !mountPoint.isEmpty else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: mountPoint, isDirectory: true))
+        guard NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: mountPoint) else {
+            lastError = "Finder 无法显示挂载目录：\(mountPoint)"
+            return
+        }
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder")
+            .first?
+            .activate(options: [.activateAllWindows])
     }
 
     func eject(deviceID: String) {
@@ -829,6 +848,7 @@ struct EDPDeviceDetailView: View {
     @ObservedObject var model: EDPVaultViewModel
     @State private var credentialTarget: EDPCredentialTarget?
     @State private var displayName = ""
+    @State private var confirmingRecordDeletion = false
 
     var body: some View {
         ScrollView {
@@ -872,6 +892,12 @@ struct EDPDeviceDetailView: View {
                 HStack {
                     Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
                         .disabled(!device.connected || model.isBusy)
+                    if !device.connected {
+                        Button("删除设备记录", role: .destructive) {
+                            confirmingRecordDeletion = true
+                        }
+                        .disabled(model.isBusy)
+                    }
                     Spacer()
                     Text("关闭窗口不会停止自动挂载服务")
                         .font(.caption)
@@ -884,6 +910,14 @@ struct EDPDeviceDetailView: View {
         .onChange(of: device.displayName) { _, value in displayName = value }
         .sheet(item: $credentialTarget) { target in
             EDPCredentialSheet(target: target, model: model)
+        }
+        .alert("删除此 U 盘记录？", isPresented: $confirmingRecordDeletion) {
+            Button("删除记录", role: .destructive) {
+                model.deleteDeviceRecord(deviceID: device.deviceID)
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将删除这台 Mac 上保存的设备名称、自动挂载设置和分区密码，不会擦除 U 盘中的任何数据。")
         }
     }
 }

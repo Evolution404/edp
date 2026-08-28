@@ -155,6 +155,12 @@ final class EDPDevicePolicyStore {
         try save(document)
     }
 
+    func remove(deviceID: String) throws {
+        var document = try load()
+        document.devices.removeAll { $0.deviceID == deviceID }
+        try save(document)
+    }
+
     private func save(_ document: EDPPolicyDocument) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

@@ -283,6 +283,9 @@ Clean Installer run `33047939672` @ `116e77067bd200e9dc4d681a26f1fa3af21eaaca`�
 - GitHub Actions `CI-Legacy-Contract-Only` artifact 使用临时自签 leaf、legacy diagnostic service，明确不能访问 macOS 26 physical raw USB，也未形成 Developer ID Installer + notarization 分发链。普通用户发行必须使用 Developer ID Application/Installer、`smappservice`、notarization 与 stapling；Apple Development 本机包也不等于可公开分发包；
 - 授权成功识别结果按当前 attachment 缓存，避免每次 UI/Disk Arbitration reconciliation 都重新打开 whole raw disk；设备消失后 cache 随 connected set 清除；
 - 本机正式修复包必须用有效 Apple Development/Developer ID 身份构建 `smappservice`，不能安装 CI legacy contract artifact。
+- 设备详情为离线历史记录提供“删除设备记录”：daemon 仅在设备已断开且无挂载会话时删除本机 policy、System Keychain 分区密码、失败状态与手动卸载 suppression；该操作不读取、写入或擦除 U 盘介质，并由 UI 二次确认；
+- “在 Finder 中显示”不再用通用 `NSWorkspace.open(URL)` 打开目录，而改用 Finder file-viewer rooted-path API，并显式激活 Finder；详情页、兼容卡片和菜单栏入口共用同一实现，以得到正常 Finder 浏览窗口。
+- 设备唯一识别修复 `6b80667` 的 Native Production Path `33143400448`、Native Swift Fast Checks `33143400523`、macFUSE Local Product Lifecycle E2E `33143400389` 与 Clean ExFAT + NTFS Installer `33143400482` 均已成功。
 
 在 `5275b45` 基线上已通过：
 

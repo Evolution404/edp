@@ -103,6 +103,7 @@ struct EDPXPCSnapshot: Codable, Sendable {
     func grantRawAccess(rawPath: String, authorization: Data, withReply reply: @escaping (String?) -> Void)
     func saveCredential(deviceID: String, partitionType: UInt32, password: Data, withReply reply: @escaping (String?) -> Void)
     func deleteCredential(deviceID: String, partitionType: UInt32, withReply reply: @escaping (String?) -> Void)
+    func deleteDeviceRecord(deviceID: String, withReply reply: @escaping (String?) -> Void)
     func setPartitionAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool, withReply reply: @escaping (String?) -> Void)
     func setDeviceDisplayName(deviceID: String, displayName: String, withReply reply: @escaping (String?) -> Void)
     func setGlobalAutoMount(enabled: Bool, withReply reply: @escaping (String?) -> Void)
