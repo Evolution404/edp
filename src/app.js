@@ -25,6 +25,7 @@ $('#tabs').addEventListener('click', (e) => {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b === btn));
   document.querySelectorAll('.page').forEach(p =>
     p.classList.toggle('active', p.id === `page-${btn.dataset.page}`));
+  if (btn.dataset.page === 'backup') loadBackups();
 });
 
 /* ── 后端连通性 ── */
@@ -126,6 +127,7 @@ $('#disk-select').addEventListener('change', (e) => {
     loadDiskMap(+d);
     loadConvertPreview();
     loadSector(+($('#sector-lba').value || 0));
+    loadBackups();
   } else location.reload();
 });
 
@@ -164,6 +166,85 @@ $('#btn-convert-apply').addEventListener('click', async () => {
 function readSizeGb() {
   const v = parseFloat($('#convert-size').value);
   return isNaN(v) ? null : v;
+}
+
+/* ── 备份管理: 列表 + 匹配校验 + 安全还原 ── */
+$('#btn-backup-refresh').addEventListener('click', loadBackups);
+
+async function loadBackups() {
+  const body = $('#backup-list');
+  const status = $('#backup-status');
+  if (!currentDisk) {
+    body.innerHTML = '<tr><td colspan="6" class="dim">请先选择 U 盘</td></tr>';
+    status.textContent = '选择 U 盘后加载备份…';
+    return;
+  }
+  status.textContent = `读取 disk${currentDisk} 的可用备份…`;
+  try {
+    const rows = await invoke('list_backups', { diskNo: currentDisk });
+    body.innerHTML = '';
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="6" class="dim">尚无 EDPOpen 备份</td></tr>';
+      status.textContent = '0 个备份';
+      return;
+    }
+    for (const b of rows) {
+      const tr = document.createElement('tr');
+      const name = document.createElement('td');
+      name.textContent = b.file_name;
+      name.title = b.path;
+      const size = document.createElement('td');
+      size.textContent = `${b.size_bytes} B`;
+      const md5 = document.createElement('td');
+      md5.textContent = b.md5_ok ? '通过' : '失败';
+      md5.className = b.md5_ok ? 'backup-ok' : 'backup-bad';
+      const lid = document.createElement('td');
+      lid.textContent = b.lid == null ? '—' : String(b.lid);
+      const match = document.createElement('td');
+      match.textContent = b.current_match ? '匹配' : '不匹配';
+      match.className = b.current_match ? 'backup-ok' : 'backup-bad';
+      const action = document.createElement('td');
+      const btn = document.createElement('button');
+      btn.textContent = '还原';
+      btn.disabled = !b.current_match;
+      btn.title = b.current_match ? '还原该备份' : 'MD5 或 LBA4 唯一 ID 不匹配，禁止还原';
+      btn.addEventListener('click', () => restoreBackupRecord(b, btn));
+      action.appendChild(btn);
+      tr.append(name, size, md5, lid, match, action);
+      body.appendChild(tr);
+    }
+    const matched = rows.filter(x => x.current_match).length;
+    status.textContent = `${rows.length} 个备份 · ${matched} 个匹配当前盘`;
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="6" class="backup-bad">加载失败</td></tr>';
+    status.textContent = '错误: ' + e;
+  }
+}
+
+async function restoreBackupRecord(b, button) {
+  if (!currentDisk || !b.current_match) return;
+  const ok = confirm(
+    `确认把 ${b.file_name} 还原到 disk${currentDisk}?\n\n` +
+    'EDPOpen 会先再次备份当前 LBA0-13，再申请读写授权并还原 5 个改造相关扇区。'
+  );
+  if (!ok) return;
+  const status = $('#backup-status');
+  button.disabled = true;
+  status.textContent = '复核备份和当前盘身份，等待系统授权…';
+  try {
+    const r = await invoke('restore_backup', { diskNo: currentDisk, backupPath: b.path });
+    status.textContent = r.ok
+      ? `✓ 还原并回读通过 ${r.verified.map(x => 'LBA' + x).join(' ')} · 还原前安全备份: ${r.backup_path}`
+      : '✗ ' + (r.error || '未知错误');
+    await analyzeDisk(currentDisk);
+    await loadDiskMap(currentDisk);
+    await loadConvertPreview();
+    await loadSector(+($('#sector-lba').value || 0));
+    await loadBackups();
+  } catch (e) {
+    status.textContent = '✗ ' + e;
+    button.disabled = false;
+  }
 }
 
 async function loadConvertPreview() {

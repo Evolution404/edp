@@ -14,7 +14,9 @@ pub fn run() {
             commands::read_sector,
             commands::disk_map,
             commands::convert_preview,
-            commands::apply_convert
+            commands::apply_convert,
+            commands::list_backups,
+            commands::restore_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

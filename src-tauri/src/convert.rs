@@ -178,6 +178,113 @@ pub struct WriteResult {
     pub error: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+pub struct BackupRecord {
+    pub file_name: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub lid: Option<u64>,
+    pub md5_ok: bool,
+    pub current_match: bool,
+}
+
+fn backup_md5_path(path: &Path) -> PathBuf {
+    path.with_extension("bin.md5")
+}
+
+fn backup_lid(data: &[u8]) -> Option<u64> {
+    if data.len() != 14 * 512 { return None; }
+    crypto::lba4_parse_serial(&data[4 * 512..5 * 512])
+}
+
+fn backup_md5_ok(path: &Path, data: &[u8]) -> bool {
+    let expected = match fs::read_to_string(backup_md5_path(path)) {
+        Ok(s) => s.split_whitespace().next().unwrap_or("").to_ascii_lowercase(),
+        Err(_) => return false,
+    };
+    !expected.is_empty() && expected == format!("{:x}", md5::compute(data))
+}
+
+fn load_backup(path: &Path) -> Result<Vec<u8>, String> {
+    let data = fs::read(path).map_err(|e| format!("读取备份 {}: {e}", path.display()))?;
+    if data.len() != 14 * 512 {
+        return Err(format!("备份大小异常: 应为 {}B, 实际 {}B", 14 * 512, data.len()));
+    }
+    if !backup_md5_ok(path, &data) {
+        return Err("备份 MD5 缺失或校验失败".into());
+    }
+    Ok(data)
+}
+
+fn canonical_backup_path(backup_dir: &Path, requested: &Path) -> Result<PathBuf, String> {
+    let root = backup_dir.canonicalize().map_err(|e| format!("备份目录不可用: {e}"))?;
+    let path = requested.canonicalize().map_err(|e| format!("备份文件不可用: {e}"))?;
+    if !path.starts_with(&root) || path.extension().and_then(|s| s.to_str()) != Some("bin") {
+        return Err("拒绝访问备份目录之外的文件".into());
+    }
+    Ok(path)
+}
+
+pub fn list_backup_records(backup_dir: &Path, current_lid: Option<u64>) -> Result<Vec<BackupRecord>, String> {
+    if !backup_dir.exists() { return Ok(Vec::new()); }
+    let mut rows = Vec::new();
+    for entry in fs::read_dir(backup_dir).map_err(|e| format!("读取备份目录: {e}"))? {
+        let entry = entry.map_err(|e| format!("读取备份项: {e}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("bin") { continue; }
+        let data = match fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let lid = backup_lid(&data);
+        let md5_ok = data.len() == 14 * 512 && backup_md5_ok(&path, &data);
+        rows.push(BackupRecord {
+            file_name: path.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_string(),
+            path: path.to_string_lossy().into_owned(),
+            size_bytes: data.len() as u64,
+            lid,
+            md5_ok,
+            current_match: md5_ok && lid.is_some() && lid == current_lid,
+        });
+    }
+    rows.sort_by(|a, b| b.file_name.cmp(&a.file_name));
+    Ok(rows)
+}
+
+fn disk_status_from_metadata(raw0: &[u8], raw9: &[u8], raw12: &[u8], crc: u32) -> Result<parser::DiskStatus, String> {
+    if raw0.len() != 512 || raw9.len() != 512 || raw12.len() != 512 {
+        return Err("元数据扇区长度异常".into());
+    }
+    let dec12 = crypto::a6b0_full(&raw12[..EDPF_ENC_LEN], &crc.to_le_bytes(), 0);
+    if !dec12.starts_with(b"EDPF") { return Err("LBA12 非 EDPF".into()); }
+    let entries = parser::parse_edpf(&dec12, E12);
+    let mbr = parser::parse_mbr(raw0).unwrap_or_default();
+    Ok(parser::classify(&entries, &mbr, raw9.iter().any(|&b| b != 0)))
+}
+
+fn validate_restore_source(data: &[u8], id: &disk::Identity, current_lid: u64) -> Result<(), String> {
+    if data.len() != 14 * 512 { return Err("备份长度不是 LBA0-13".into()); }
+    let lid = backup_lid(data).ok_or("备份 LBA4 唯一 ID 无法解析")?;
+    if lid != current_lid {
+        return Err(format!("备份属于另一只盘: LBA4 唯一 ID {lid}, 当前 {current_lid}"));
+    }
+
+    let raw7 = &data[7 * 512..8 * 512];
+    if !crypto::xor_rolling(raw7, id.k0).starts_with(b"EDPF") {
+        return Err("备份 LBA7 无法用当前 device_id 解出 EDPF".into());
+    }
+    let status = disk_status_from_metadata(
+        &data[0..512],
+        &data[9 * 512..10 * 512],
+        &data[12 * 512..13 * 512],
+        id.crc,
+    )?;
+    if status != parser::DiskStatus::Encrypted {
+        return Err("只允许还原标准加密盘状态的备份".into());
+    }
+    Ok(())
+}
+
 fn decode_sector_hex(lba: u64, s: &str) -> Result<Vec<u8>, String> {
     if s.len() != 1024 { return Err(format!("LBA{lba} 数据非 512B")); }
     (0..512)
@@ -338,8 +445,80 @@ pub fn write_sectors(p: WritePayload) -> Result<WriteResult, String> {
         })
     })();
 
-    // 授权取消/备份失败且尚未写任何扇区时，恢复原挂载状态；若已发生部分写入则保持卸载，避免自动挂载不完整状态。
-    if operation.is_err() && !wrote_any { remount_disk(p.disk); }
+    // 成功时主动恢复挂载；授权取消/备份失败且尚未写任何扇区时也恢复。
+    // 若已发生部分写入后失败，则保持卸载，避免自动挂载不完整状态。
+    if operation.is_ok() || !wrote_any { remount_disk(p.disk); }
+    operation
+}
+
+pub fn restore_backup(
+    disk_no: u32,
+    backup_dir: &Path,
+    requested_path: &Path,
+    uid: u32,
+) -> Result<WriteResult, String> {
+    if disk_no < 2 { return Err("拒绝系统盘".into()); }
+    let source_path = canonical_backup_path(backup_dir, requested_path)?;
+    let source = load_backup(&source_path)?;
+
+    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no)
+        .ok_or_else(|| format!("disk{disk_no} 已不存在或不是外置 USB 整盘"))?;
+    let id = disk::identify_checked(disk_no)?;
+    let raw4 = disk::read_lba(disk_no, 4).map_err(|e| format!("读取当前 LBA4: {e}"))?;
+    let current_lid = crypto::lba4_parse_serial(&raw4).ok_or("当前 LBA4 唯一 ID 无法解析")?;
+    validate_restore_source(&source, &id, current_lid)?;
+
+    let current0 = disk::read_lba(disk_no, 0).map_err(|e| format!("读取当前 LBA0: {e}"))?;
+    let current9 = disk::read_lba(disk_no, 9).map_err(|e| format!("读取当前 LBA9: {e}"))?;
+    let current12 = disk::read_lba(disk_no, 12).map_err(|e| format!("读取当前 LBA12: {e}"))?;
+    if disk_status_from_metadata(&current0, &current9, &current12, id.crc)? == parser::DiskStatus::NotCems {
+        return Err("当前盘结构已无法识别，拒绝自动还原".into());
+    }
+
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let safety_path = backup_dir.join(format!(
+        "prerestore_disk{}_{}_vid{}_pid{}_{}_lid{}_{}.bin",
+        disk_no,
+        usb.size_bytes / 512,
+        usb.vid,
+        usb.pid,
+        id.device_id,
+        current_lid,
+        chrono_like(ts),
+    ));
+
+    let mut decoded = std::collections::BTreeMap::<u64, Vec<u8>>::new();
+    for lba in [0u64, 6, 7, 9, 12] {
+        let off = lba as usize * 512;
+        decoded.insert(lba, source[off..off + 512].to_vec());
+    }
+
+    diskutil(disk_no, "unmountDisk")?;
+    let mut wrote_any = false;
+    let operation = (|| -> Result<WriteResult, String> {
+        let mut f = disk::authopen_rdisk(disk_no, true)
+            .map_err(|e| format!("authopen 读写授权失败: {e}"))?;
+
+        // 还原前再次完整保存“当前状态”，因此还原动作本身也可逆。
+        let current_backup = read_metadata_backup(&mut f)?;
+        fs::write(&safety_path, &current_backup).map_err(|e| format!("写还原前安全备份: {e}"))?;
+        let digest = format!("{:x}", md5::compute(&current_backup));
+        fs::write(backup_md5_path(&safety_path), format!("{digest}\n"))
+            .map_err(|e| format!("写还原前安全备份 MD5: {e}"))?;
+        chown_user(&safety_path, uid);
+        chown_user(&backup_md5_path(&safety_path), uid);
+
+        let (written, verified) = write_and_verify_fd(&mut f, &decoded, &mut wrote_any)?;
+        Ok(WriteResult {
+            ok: true,
+            backup_path: Some(safety_path.to_string_lossy().into_owned()),
+            written,
+            verified,
+            error: None,
+        })
+    })();
+
+    if operation.is_ok() || !wrote_any { remount_disk(disk_no); }
     operation
 }
 
@@ -406,6 +585,62 @@ mod tests {
         let mut bad = good;
         bad.replace_range(10..12, "zz");
         assert!(decode_sector_hex(7, &bad).is_err());
+    }
+
+    #[test]
+    fn backup_catalog_requires_md5_and_lid_match() {
+        use std::fs::OpenOptions;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("edpopen-backups-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sample.bin");
+        let data = vec![0u8; 14 * 512];
+        std::fs::write(&path, &data).unwrap();
+        std::fs::write(backup_md5_path(&path), format!("{:x}\n", md5::compute(&data))).unwrap();
+
+        let rows = list_backup_records(&dir, Some(123)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].md5_ok);
+        assert!(!rows[0].current_match);
+        assert!(rows[0].lid.is_none());
+
+        let outside = std::env::temp_dir().join(format!("edpopen-outside-{}-{unique}.bin", std::process::id()));
+        OpenOptions::new().create_new(true).write(true).open(&outside).unwrap();
+        assert!(canonical_backup_path(&dir, &outside).is_err());
+
+        std::fs::remove_file(outside).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_golden_backup_passes_restore_source_validation_when_available() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
+        let Ok(vectors_text) = std::fs::read_to_string(root.join("vectors.json")) else { return; };
+        let Ok(golden_text) = std::fs::read_to_string(root.join("convert_golden.json")) else { return; };
+        let vectors: serde_json::Value = serde_json::from_str(&vectors_text).unwrap();
+        let golden: serde_json::Value = serde_json::from_str(&golden_text).unwrap();
+        let g = &golden["disks"][0];
+        let name = g["name"].as_str().unwrap();
+        let v = vectors["disks"].as_array().unwrap().iter()
+            .find(|x| x["name"].as_str() == Some(name)).unwrap();
+        let unhex = |s: &str| -> Vec<u8> {
+            (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap()).collect()
+        };
+        let mut backup = vec![0u8; 14 * 512];
+        backup[0..512].copy_from_slice(&unhex(g["raw0"].as_str().unwrap()));
+        for lba in [4usize, 6, 7, 9, 12] {
+            let raw = unhex(v["sectors"][lba.to_string()]["raw_hex"].as_str().unwrap());
+            backup[lba * 512..(lba + 1) * 512].copy_from_slice(&raw);
+        }
+        let device_id = v["device_id"].as_str().unwrap().to_string();
+        let crc = crypto::crc32_bare(device_id.as_bytes());
+        let id = disk::Identity { device_id, crc, k0: disk::lba7_k0(crc) };
+        let lid = backup_lid(&backup).unwrap();
+        validate_restore_source(&backup, &id, lid).unwrap();
     }
 
     #[test]

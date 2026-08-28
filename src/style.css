@@ -100,6 +100,14 @@ table.grid { border-collapse: collapse; width: 100%; }
 table.grid th, table.grid td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--border); }
 table.grid th { color: var(--text-dim); font-weight: 500; }
 
+/* ── 备份管理 ── */
+.backup-toolbar { display: flex; align-items: center; gap: 10px; }
+.backup-table td:first-child { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.backup-table button:disabled { cursor: not-allowed; opacity: .45; border-color: var(--border); color: var(--text-dim); }
+.backup-ok { color: var(--accent-2); }
+.backup-bad { color: var(--danger); }
+.backup-note { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 12px; }
+
 /* ── 扇区页 ── */
 .sector-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .sector-nav input[type=number] { width: 110px; }

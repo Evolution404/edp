@@ -309,6 +309,15 @@ pub struct ApplyResult {
     pub error: Option<String>,
 }
 
+fn app_backup_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    std::path::PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("EDPOpen")
+        .join("backups")
+}
+
 /// 正式写入：再次构造并锁定目标身份 → 卸载 → authopen O_RDWR → 备份 → 写入 → 同 FD 回读校验。
 #[tauri::command]
 pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, String> {
@@ -336,10 +345,10 @@ pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, 
     sectors.insert("12".to_string(), hx(&plan.lba12));
     if let Some(l9) = &plan.lba9 { sectors.insert("9".to_string(), hx(l9)); }
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let backup_dir = app_backup_dir();
     let payload = convert::WritePayload {
         disk: disk_no,
-        backup_dir: format!("{home}/Library/Application Support/EDPOpen/backups"),
+        backup_dir: backup_dir.to_string_lossy().into_owned(),
         device_id: id.device_id,
         lid: Some(lid),
         vid,
@@ -349,6 +358,33 @@ pub fn apply_convert(disk_no: u32, size_gb: Option<f64>) -> Result<ApplyResult, 
         sectors,
     };
     let r = convert::write_sectors(payload)?;
+    Ok(ApplyResult {
+        ok: r.ok,
+        backup_path: r.backup_path,
+        written: r.written,
+        verified: r.verified,
+        error: r.error,
+    })
+}
+
+#[tauri::command]
+pub fn list_backups(disk_no: u32) -> Result<Vec<convert::BackupRecord>, String> {
+    if disk_no < 2 { return Err("拒绝系统盘".into()); }
+    let current_lid = disk::read_lba(disk_no, 4)
+        .map_err(|e| format!("读取当前盘 LBA4: {e}"))
+        .and_then(|raw| crypto::lba4_parse_serial(&raw).ok_or("当前盘 LBA4 唯一 ID 无法解析".to_string()))?;
+    convert::list_backup_records(&app_backup_dir(), Some(current_lid))
+}
+
+#[tauri::command]
+pub fn restore_backup(disk_no: u32, backup_path: String) -> Result<ApplyResult, String> {
+    if disk_no < 2 { return Err("拒绝系统盘".into()); }
+    let r = convert::restore_backup(
+        disk_no,
+        &app_backup_dir(),
+        std::path::Path::new(&backup_path),
+        unsafe { edpopen_getuid() },
+    )?;
     Ok(ApplyResult {
         ok: r.ok,
         backup_path: r.backup_path,

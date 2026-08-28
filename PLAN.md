@@ -49,7 +49,7 @@ tools/                  golden 生成脚本(Python, 调用对拍基准)
 5. **字节级编辑器**（待做）：hexdump 点击字节修改/diff 高亮/撤销/导出；**加密感知保存**——
    解密视图编辑明文，保存按 LBA 规则重加密（见 §4 重加密表）；敏感区（表尾终止符/LBA12 尾 144B/
    LBA11 rand）修改标红警示
-6. **备份管理页**（待做）：列表（LBA4 labelOnlyId 终验匹配，同型号多盘不混淆）/ 还原（MD5 校验）
+6. **备份管理页**（最小闭环已完成）：列出 EDPOpen 备份、7168B/MD5 校验、LBA4 `labelOnlyId` 与当前盘匹配；只有匹配项可还原。后端还会二次验证来源 LBA7/LBA12 EDPF 且来源状态必须为原始 `Encrypted`。还原前再次保存当前 LBA0-13 安全备份，再通过同一 authopen O_RDWR FD 还原 5 个改造相关扇区并回读。
 7. **离线模式**（待做）：拖入备份 .bin 或 dd 镜像全流程分析（规则文件名自动提取 vid/pid/secs/device_id）
 
 ## 4. 关键算法与规则（全部实测/逆向定案，勿凭直觉改）
@@ -111,7 +111,7 @@ cd src-tauri && cargo test    # 当前 13/13 绿
 | disk 单测×3 | ioreg 顶层服务名≠类名时仍能正确分块；LBA11 PDKB 能恢复嵌入 device_id；disk0/1 在触发 authopen 前即拒绝 |
 | convert 写入输入单测×1 | 512B sector hex 长度与十六进制字符严格校验，拒绝短数据/非法字符 |
 
-**待补测试**：编辑重加密对拍（明文改 1 字节→重加密 vs Python 等价脚本）、真盘写入→还原闭环、authopen 授权/取消/拒绝分支、非 cems 盘拒绝、多盘同插。
+**待补测试**：编辑重加密对拍（明文改 1 字节→重加密 vs Python 等价脚本）、真盘写入→还原闭环、authopen 授权取消/拒绝分支、非 cems 盘拒绝、多盘同插。当前已有 16 项常规测试通过 + 1 个默认 ignored 的真盘 O_RDWR 只读探针；该探针已在 `disk4` 手工执行通过。
 
 ## 6. 剩余任务（优先级序）
 
@@ -119,8 +119,8 @@ cd src-tauri && cargo test    # 当前 13/13 绿
 
 1. **任务7 收尾**：授权层代码已改为 `unmountDisk → authopen O_RDWR SCM_RIGHTS FD → 备份 → LBA0最后写 → sync → 同FD回读`，并加入 VID/PID+容量+device_id+LBA4唯一ID+Encrypted 五重写前复核；**尚未执行真盘写入**。下一步是真盘端到端（再次确认当前 diskN/status → 授权 → 备份 → 写入 → 回读 → 再 analyze），任何真实写入前不能复用历史 diskN。
 2. **任务8**：字节级编辑器 + 加密感知重加密（表见 §4）+ 敏感区警示 + 重加密对拍测试
-3. **任务9**：备份管理页（lid 终验匹配/MD5/还原走 --write-sectors）+ 离线拖拽模式
-   （文件名规则 `disk\d+_(\d+)_vid(..)_pid(..)_(.+?)_lid(\d+)_(\d{8}_\d{6})\.bin` 提取参数）
+3. **任务9 剩余**：备份列表/匹配/MD5/安全还原已完成；剩余离线拖拽模式与更完整的备份元数据展示。
+   （文件名规则 `disk\d+_(\d+)_vid(..)_pid(..)_(.+?)_lid(\d+)_(\d{8}_\d{6})\.bin` 可用于离线参数提取）
 4. **任务10**：打包 .app（tauri build，未签名首次右键打开；`cargo tauri icon` 生成正式图标替换占位）
 5. GUI 整体验证：`cargo tauri dev` 五页签走查（盘地图着色/hover/跳转、扇区 hexdump、改造流程）
 

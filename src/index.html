@@ -74,7 +74,22 @@
       </div>
     </section>
     <section id="page-backup" class="page">
-      <div class="card placeholder">备份列表（labelOnlyId 匹配）· 还原（MD5 校验）</div>
+      <div class="card">
+        <h3>备份管理 <span class="dim" style="font-weight:400">仅允许还原到 LBA4 唯一 ID 匹配的当前 U 盘</span></h3>
+        <div class="backup-toolbar">
+          <button id="btn-backup-refresh">刷新备份</button>
+          <span id="backup-status" class="dim">选择 U 盘后加载备份…</span>
+        </div>
+        <table class="grid backup-table" style="margin-top:10px">
+          <thead>
+            <tr><th>备份</th><th>大小</th><th>MD5</th><th>LBA4 ID</th><th>当前盘</th><th>操作</th></tr>
+          </thead>
+          <tbody id="backup-list"><tr><td colspan="6" class="dim">暂无数据</td></tr></tbody>
+        </table>
+        <div class="backup-note dim">
+          还原前会再次备份当前 LBA0-13；来源备份必须通过 7168B、MD5、LBA4 ID、LBA7/LBA12 EDPF 和原始 Encrypted 状态校验。
+        </div>
+      </div>
     </section>
   </main>
 

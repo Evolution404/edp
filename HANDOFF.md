@@ -15,10 +15,10 @@
 | 6 | 盘地图页 | ✅ 完成 | 代码完整；视觉效果待 dev 走查 |
 | 7 | convert.rs + 授权写入器 + 改造页 | 🟡 **授权层已重构，未真盘写入** | 5 扇 golden 对拍全绿；GUI 已改为写前五重身份复核 → unmountDisk → authopen O_RDWR SCM_RIGHTS FD → 先备份 → LBA0最后写 → sync → 同FD回读。O_RDWR FD 已用真盘做过只读 `pread` 验证，但尚未执行任何真实改造写入 |
 | 8 | 字节编辑器 + 重加密 | ⬜ 未开始 | 重加密表在 PLAN §4 |
-| 9 | 备份管理 + 离线模式 | ⬜ 未开始 | |
+| 9 | 备份管理 + 离线模式 | 🟡 **备份安全闭环已完成** | 列表/7168B/MD5/LBA4 ID 当前盘匹配/来源 EDPF+Encrypted 二次校验/还原前安全备份/同FD还原已完成；离线拖拽仍待做 |
 | 10 | 测试补全 + 打包 | ⬜ 未开始 | |
 
-测试现状：`cd src-tauri && cargo test` → **13/13 绿**（含写入 sector hex 严格校验、disk0/1 在授权前拒绝）。另有 `git diff --check` 通过；`cargo tauri build --debug --no-bundle` 成功。
+测试现状：`cd src-tauri && cargo test` → **16 项通过 + 1 个默认 ignored 真盘探针**。覆盖写入 sector hex、disk0/1 授权前拒绝、假盘单FD事务/LBA0最后写、备份目录边界/MD5、真实 golden 还原源校验；真盘 ignored O_RDWR 只读探针已在 `disk4` 手工通过。`git diff --check`、前端 JS 语法、`cargo tauri build --debug --no-bundle` 均通过。
 
 ## 2. 当前分支与提交历史
 
@@ -46,7 +46,7 @@ e12b5e2 EDPOpen 初始提交: 项目定位与结构规划
 | `src-tauri/src/crypto.rs` | 加密原语 | `crc32_bare` `a6b0_full/a7f0_full` `xor_rolling` `lba6_decode/lba6_checksum` `lba4_decode` |
 | `src-tauri/src/parser.rs` | 解析 + 字段表 + 状态判定 | `parse_edpf(dec,stride)` `parse_mbr` `classify` `parse_elabel` `parse_lba4_info/parse_lba6_info` `lba*_fields`（FieldRow 表，扇区页着色与盘地图 tooltip 的数据源）`LBA6_TEMPLATE` |
 | `src-tauri/src/disk.rs` | 盘/IO/authopen 授权 | `list_usb_disks()` `usb_vid_pid` `generate_candidates` `identify_checked/identify` `read_lba` `authopen_rdisk`；SCM_RIGHTS 接收 readonly/O_RDWR raw FD；INQUIRY 候选失败时从 LBA11 PDKB 恢复 device_id |
-| `src-tauri/src/convert.rs` | 改造 + 写入器 | `convert(...)→ConvertPlan`；`write_sectors(payload)` 负责五重目标盘复核、卸载、authopen O_RDWR、备份、LBA0最后写、同FD回读；`write_sectors_run` 仅为 CLI 兼容包装 |
+| `src-tauri/src/convert.rs` | 改造 + 写入/还原器 | `convert(...)→ConvertPlan`；`write_sectors(payload)` 负责五重目标盘复核与单FD写事务；`list_backup_records` 做备份索引/MD5/LID匹配；`restore_backup` 验证来源 EDPF+Encrypted、还原前再备份当前状态、同FD还原 5 扇 |
 | `src-tauri/src/commands.rs` | Tauri 命令 | `ping` `list_disks` `analyze_disk` `read_sector` `disk_map` `convert_preview` `apply_convert` |
 | `src-tauri/src/main.rs` | 入口 | GUI 默认；CLI: `--analyze <N>`、`--write-sectors <payload.json>` |
 | `src/app.js` | 全部前端逻辑 | `analyzeDisk` `loadDiskMap` `loadSector/renderHexdump` `loadConvertPreview`；tooltip 通用（任何元素挂 `data-tip` 即生效） |
@@ -96,7 +96,7 @@ cargo tauri dev                           # GUI 走查(五页签)
 #   4. 成功后再 --analyze 当前盘号，应变 nopwd；备份落在 ~/Library/Application Support/EDPOpen/backups
 ```
 
-优先级：任务4已完成；下一步是 **任务7真盘写入闭环**（先确认当前 diskN 与 `status=encrypted`，再执行备份→写入→回读）→ 任务8编辑器 → 任务9 → 任务10打包。
+优先级：任务4已完成；任务7授权/安全代码已完成但尚未执行真实改造写入；任务9的备份/安全还原最小闭环已完成。接下来优先任务8字节编辑器与重加密测试，同时保留真盘写入→还原端到端作为 Draft PR 转 Ready 前阻塞。
 
 ## 7. 环境快照
 
