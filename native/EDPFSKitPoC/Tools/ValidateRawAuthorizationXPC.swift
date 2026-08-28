@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 private final class ReplyBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -20,42 +19,13 @@ private final class ReplyBox: @unchecked Sendable {
     }
 }
 
-private func makeRawAuthorization() throws -> (AuthorizationRef, Data) {
-    var created: AuthorizationRef?
-    let createStatus = AuthorizationCreate(nil, nil, [], &created)
-    guard createStatus == errAuthorizationSuccess, let created else {
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(createStatus))
-    }
-
-    let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
-    let status = "system.privilege.admin".withCString { rightName in
-        var item = AuthorizationItem(name: rightName, valueLength: 0, value: nil, flags: 0)
-        return withUnsafeMutablePointer(to: &item) { itemPointer in
-            var rights = AuthorizationRights(count: 1, items: itemPointer)
-            return AuthorizationCopyRights(created, &rights, nil, flags, nil)
-        }
-    }
-    guard status == errAuthorizationSuccess else {
-        AuthorizationFree(created, [])
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-    }
-
-    var external = AuthorizationExternalForm()
-    let externalStatus = AuthorizationMakeExternalForm(created, &external)
-    guard externalStatus == errAuthorizationSuccess else {
-        AuthorizationFree(created, [])
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(externalStatus))
-    }
-    return (created, withUnsafeBytes(of: external) { Data($0) })
-}
-
 @main
 struct ValidateRawAuthorizationXPC {
     static func main() throws {
-        let (authorizationRef, externalForm) = try makeRawAuthorization()
-        defer { AuthorizationFree(authorizationRef, []) }
-
-        let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+        let connection = NSXPCConnection(
+            machServiceName: edpVaultMachServiceName,
+            options: .privileged
+        )
         connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
         let semaphore = DispatchSemaphore(value: 0)
         let box = ReplyBox()
@@ -63,20 +33,25 @@ struct ValidateRawAuthorizationXPC {
             box.setMessage(error.localizedDescription)
             semaphore.signal()
         }) as? EDPVaultXPCProtocol else {
-            throw NSError(domain: "EDPValidateRawAuthorization", code: 1)
+            throw NSError(domain: "EDPValidateRawAccess", code: 1)
         }
         connection.resume()
-        proxy.grantRawAccess(authorization: externalForm) { errorMessage in
+
+        proxy.refreshRawAccess { errorMessage in
             box.setMessage(errorMessage)
             semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now() + 10) == .success else {
+        guard semaphore.wait(timeout: .now() + 30) == .success else {
             connection.invalidate()
-            throw NSError(domain: "EDPValidateRawAuthorization", code: 2)
+            throw NSError(domain: "EDPValidateRawAccess", code: 2)
         }
         if let message = box.snapshot().0 {
             connection.invalidate()
-            throw NSError(domain: "EDPValidateRawAuthorization", code: 3, userInfo: [NSLocalizedDescriptionKey: message])
+            throw NSError(
+                domain: "EDPValidateRawAccess",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
         }
 
         let snapshotSemaphore = DispatchSemaphore(value: 0)
@@ -87,17 +62,17 @@ struct ValidateRawAuthorizationXPC {
         guard snapshotSemaphore.wait(timeout: .now() + 10) == .success,
               let data = box.snapshot().1 else {
             connection.invalidate()
-            throw NSError(domain: "EDPValidateRawAuthorization", code: 4)
+            throw NSError(domain: "EDPValidateRawAccess", code: 4)
         }
         connection.invalidate()
         let snapshot = try JSONDecoder().decode(EDPXPCSnapshot.self, from: data)
-        print("RAW_AUTH_DEVICE_COUNT=\(snapshot.devices.count)")
+        print("RAW_ACCESS_DEVICE_COUNT=\(snapshot.devices.count)")
         for device in snapshot.devices {
-            print("RAW_AUTH_DEVICE=\(device.bsdName)|ready=\(device.rawAccessReady)|authorized=\(device.authorized)|mounted=\(device.mounted)")
+            print("RAW_ACCESS_DEVICE=\(device.bsdName)|ready=\(device.privilegedAccessReady)|authorized=\(device.authorized)|mounted=\(device.mounted)")
         }
-        guard snapshot.devices.contains(where: { $0.rawAccessReady }) else {
-            throw NSError(domain: "EDPValidateRawAuthorization", code: 5)
+        guard snapshot.devices.filter(\.connected).allSatisfy(\.privilegedAccessReady) else {
+            throw NSError(domain: "EDPValidateRawAccess", code: 5)
         }
-        print("RESULT=RAW_AUTHORIZATION_XPC_OK")
+        print("RESULT=FDA_RAW_ACCESS_XPC_OK")
     }
 }

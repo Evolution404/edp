@@ -71,11 +71,19 @@ if [[ -n "${NTFS3G_RUNTIME:-}" ]]; then
   }
   mkdir -p "${BUILD_ROOT}/third-party/ntfs-3g"
   if [[ -d "${NTFS3G_RUNTIME}/licenses/ntfs-3g" ]]; then
-    # Accept an installed EDP product root as a reusable NTFS runtime. Its
-    # notices live below licenses/ntfs-3g, unlike the builder's staging root.
-    mkdir -p "${BUILD_ROOT}/third-party/ntfs-3g/licenses"
-    cp -R "${NTFS3G_RUNTIME}/bin" "${NTFS3G_RUNTIME}/lib" \
-      "${BUILD_ROOT}/third-party/ntfs-3g/"
+    # Accept an installed EDP product root as a reusable NTFS runtime, but
+    # copy only the pinned NTFS-3G artifacts. Never import unrelated EDP
+    # executables from its shared bin directory into this build staging tree.
+    mkdir -p \
+      "${BUILD_ROOT}/third-party/ntfs-3g/bin" \
+      "${BUILD_ROOT}/third-party/ntfs-3g/lib" \
+      "${BUILD_ROOT}/third-party/ntfs-3g/licenses"
+    for tool in ntfs-3g ntfs-3g.probe ntfslabel; do
+      cp "${NTFS3G_RUNTIME}/bin/${tool}" \
+        "${BUILD_ROOT}/third-party/ntfs-3g/bin/${tool}"
+    done
+    cp "${NTFS3G_RUNTIME}/lib/libntfs-3g.90.dylib" \
+      "${BUILD_ROOT}/third-party/ntfs-3g/lib/libntfs-3g.90.dylib"
     cp -R "${NTFS3G_RUNTIME}/licenses/ntfs-3g/." \
       "${BUILD_ROOT}/third-party/ntfs-3g/licenses/"
     cp -R "${NTFS3G_RUNTIME}/source" \
@@ -102,13 +110,6 @@ CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
 )
 
-/usr/bin/cc -O2 -Wall -Wextra -c \
-  "${REPO_ROOT}/product/EDPRawReadAuthorization.c" \
-  -o "${BUILD_ROOT}/EDPRawReadAuthorization.o"
-/usr/bin/cc -O2 -Wall -Wextra -c \
-  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
-  -o "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o"
-
 xcrun swiftc -O -framework CryptoKit -framework Security \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/product/EDPNTFSWriteSafety.swift" \
@@ -125,8 +126,6 @@ xcrun swiftc -O -framework CryptoKit -framework Security \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/EDPXPCSecurity.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \
-  "${BUILD_ROOT}/EDPRawReadAuthorization.o" \
-  "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 
 xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
@@ -140,15 +139,6 @@ echo "Building switchable transport backends (default macfuse-local)..."
 MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   "${REPO_ROOT}/installer/build-transport-backends.sh" "${RUNTIME_STAGE}/bin"
 
-FUSE_CFLAGS="$(pkg-config --cflags fuse)"
-FUSE_LIBS="$(pkg-config --libs fuse)"
-# shellcheck disable=SC2086
-/usr/bin/cc "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteFuseBridge.c" \
-  -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} -framework Security \
-  "${RUNTIME_STAGE}/bin/libEDPReadWriteBridge.dylib" \
-  -Wl,-rpath,@loader_path \
-  -o "${RUNTIME_STAGE}/bin/edp-readwrite-fuse"
-
 /usr/bin/clang -fobjc-arc -fblocks \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/DiskImages2Attach.m" \
   -framework Foundation \
@@ -156,27 +146,31 @@ FUSE_LIBS="$(pkg-config --libs fuse)"
 
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPConsoleExec.c" \
-  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
-  -framework Security \
+  -framework CoreFoundation -framework IOKit \
   -o "${RUNTIME_STAGE}/bin/edp-console-exec"
 
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
-  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
-  -framework Security \
   -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
-
-/usr/bin/cc -O2 -Wall -Wextra -c \
-  "${REPO_ROOT}/product/EDPRawReadAuthorization.c" \
-  -o "${BUILD_ROOT}/EDPRawReadAuthorization.o"
-xcrun swiftc -parse-as-library -O -framework CryptoKit -framework Security \
-  "${REPO_ROOT}/product/EDPRawSparseBackup.swift" \
-  "${BUILD_ROOT}/EDPRawReadAuthorization.o" \
-  -o "${RUNTIME_STAGE}/bin/edp-raw-sparse"
 
 for item in "${RUNTIME_STAGE}/bin/"* "${RUNTIME_STAGE}/lib/"*; do
   /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" "${item}"
 done
+
+RAW_ACCESS_APP_STAGE="${BUILD_ROOT}/EDP USB Vault Raw Access.app"
+mkdir -p "${RAW_ACCESS_APP_STAGE}/Contents/MacOS"
+cp "${REPO_ROOT}/product/RawAccessHelper/Info.plist" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
+cp "${RUNTIME_STAGE}/bin/edp-console-exec" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-console-exec"
+/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
+  --identifier com.edp.usbvault.rawaccess \
+  "${RAW_ACCESS_APP_STAGE}"
+/usr/bin/codesign --verify --strict "${RAW_ACCESS_APP_STAGE}"
 
 echo "Building SwiftUI app..."
 APP_STAGE="${BUILD_ROOT}/EDP USB Vault.app"
@@ -188,7 +182,7 @@ cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
 xcrun swiftc -O \
-  -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement -framework Security \
+  -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
   -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"
@@ -243,6 +237,19 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
     echo "self-signed distribution requires a certificate-backed signature, not ad-hoc signing" >&2
     exit 2
   }
+
+  APP_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}" 2>&1)"
+  RAW_REQUIREMENT="$(/usr/bin/codesign -dr - "${RAW_ACCESS_APP_STAGE}" 2>&1)"
+  DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${RUNTIME_STAGE}/bin/edp-vaultctl" 2>&1)"
+  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.app"' <<<"${APP_REQUIREMENT}"
+  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.rawaccess"' <<<"${RAW_REQUIREMENT}"
+  APP_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${APP_REQUIREMENT}")"
+  RAW_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${RAW_REQUIREMENT}")"
+  DAEMON_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${DAEMON_REQUIREMENT}")"
+  [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${RAW_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
+    echo "self-signed App, raw-access helper, and daemon must share one stable certificate root for FDA/XPC continuity" >&2
+    exit 2
+  }
 fi
 
 if [[ -n "${MACFUSE_LICENSE_FILE}" ]]; then
@@ -266,6 +273,8 @@ PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
 mkdir -p "${PRODUCT_DIR}" "${PAYLOAD}/usr/local/bin" "${PAYLOAD}/Applications"
 cp -R "${RUNTIME_STAGE}/." "${PRODUCT_DIR}/"
 cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP USB Vault.app"
+cp -R "${RAW_ACCESS_APP_STAGE}" \
+  "${PAYLOAD}/Applications/EDP USB Vault Raw Access.app"
 ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
   "${PAYLOAD}/usr/local/bin/edp-vaultctl"
 if [[ "${SERVICE_MODE}" == "legacy" ]]; then
@@ -329,12 +338,13 @@ cat > "${SCRIPTS}/postinstall" <<'POSTINSTALL'
 set -e
 ROOT="/Library/Application Support/EDP USB Vault"
 APP="/Applications/EDP USB Vault.app"
-/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
-/bin/chmod -R go-w "${ROOT}" "${APP}"
+RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
+/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
+/bin/chmod -R go-w "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
 /bin/chmod 0755 "${ROOT}" "${ROOT}/bin" "${ROOT}/lib"
 /bin/chmod 0755 "${ROOT}/bin/"*
 /bin/chmod 0644 "${ROOT}/lib/"*
-/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
+/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" "${RAW_ACCESS_APP}" >/dev/null 2>&1 || true
 LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 if [[ -f "${LEGACY_PLIST}" ]]; then
   /bin/launchctl bootstrap system "${LEGACY_PLIST}"
@@ -354,7 +364,15 @@ APP_COMPONENT="${BUILD_ROOT}/components/ZZ-EDP-USB-Vault.pkg"
 COMPONENT_PLIST="${BUILD_ROOT}/edp-component.plist"
 mkdir -p "${BUILD_ROOT}/components"
 /usr/bin/pkgbuild --analyze --root "${PAYLOAD}" "${COMPONENT_PLIST}"
+# Keep the main App as ordinary payload, but make the FDA Raw Access helper a
+# fixed-location bundle. Full Disk Access is tied to a stable code identity at
+# /Applications/EDP USB Vault Raw Access.app, so PackageKit must never chase a
+# relocated copy with the same bundle identifier.
 /usr/libexec/PlistBuddy -c 'Delete :0' "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c 'Set :0:BundleHasStrictIdentifier true' "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c 'Set :0:BundleIsVersionChecked true' "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c 'Set :0:BundleOverwriteAction upgrade' "${COMPONENT_PLIST}"
 /usr/bin/pkgbuild \
   --root "${PAYLOAD}" \
   --identifier com.edp.usbvault.runtime \

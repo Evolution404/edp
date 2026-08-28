@@ -99,8 +99,7 @@ struct EDPXPCSnapshot: Codable, Sendable {
 
 @objc protocol EDPVaultXPCProtocol {
     func snapshot(withReply reply: @escaping (Data) -> Void)
-    func rawDeviceCandidates(withReply reply: @escaping (Data) -> Void)
-    func grantRawAccess(rawPath: String, authorization: Data, withReply reply: @escaping (String?) -> Void)
+    func refreshRawAccess(withReply reply: @escaping (String?) -> Void)
     func saveCredential(deviceID: String, partitionType: UInt32, password: Data, withReply reply: @escaping (String?) -> Void)
     func deleteCredential(deviceID: String, partitionType: UInt32, withReply reply: @escaping (String?) -> Void)
     func deleteDeviceRecord(deviceID: String, withReply reply: @escaping (String?) -> Void)

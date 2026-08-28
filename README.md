@@ -50,14 +50,17 @@ ExFAT 由 Apple 原生读写。NTFS 可以按系统能力只读挂载，但虚�
 license；在此之前不得将其二进制随商业产品分发。
 
 原始磁盘访问不保存 `AuthorizationExternalForm`，也不修改 AuthorizationDB。
-root 后台服务只接受经过签名校验的 App XPC 客户端，只对设备发现层确认过的
-`/dev/rdiskN` 整盘执行 `O_RDWR`；root-owned `edp-console-exec` 将该文件描述符
-固定继承为 fd 3，然后降权到当前控制台用户并启动 FUSE-T 桥。桥会再次校验
-字符设备、设备大小、VID/PID、EDP 身份和分区元数据。安装及系统扩展批准完成
-后，重启或重新插盘不再需要管理员密码。
+首次配置时，用户只需要为稳定签名的 `EDP USB Vault 磁盘访问`
+（`com.edp.usbvault.rawaccess`）开启一次 Full Disk Access。root 后台服务先通过
+IOKit 与只读 metadata helper 识别 EDP whole USB，再由该 FDA helper 对当前
+`/dev/rdiskN` 进行二次 whole-USB、字符设备、device-node 一致性以及 LBA4/LBA7
+EDP 元数据校验。校验通过后才以 `O_RDWR` 打开整盘，将 fd 固定继承为 3，随后
+降权到当前控制台用户并启动加密 transport。正式路径不再使用
+`sys.openfile.*` / `authopen`，因此 U 盘拔插和 `diskN` 变化不依赖 300 秒授权缓存。
 
-正式发布前仍需在干净 macOS 26 机器完成“安装 → 系统批准 → 重启 → 无提示
-自动挂载”的实体盘 E2E，作为发布验收项；这不是通过持久化临时授权令牌实现。
+正式发布前仍需用同一稳定 self-signed certificate 完成“首次 FDA → App/daemon
+重启 → U 盘拔插与 diskN 变化 → Mac 重启 → 版本升级仍无重复授权”的实体盘 E2E。
+详细设计与当前验收状态见 `docs/PLAN-2026-08-29-fda-raw-access.md`。
 
 ## 0.5.0 旧版 macFUSE/NTFS-3G 安装包
 

@@ -2,7 +2,7 @@ name: macFUSE Local Product Lifecycle E2E
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/fuset-minimal-fskit-bridge", "test/self-signed-standalone-distribution"]
     paths:
       - "product/EDPTransportProvider.swift"
       - "product/EDPTransportRuntimePolicy.swift"
@@ -176,8 +176,10 @@ jobs:
           mkdir -p "${BUILD}"
           chmod +x installer/build-transport-backends.sh
           installer/build-transport-backends.sh "${BUILD}" | tee "${RUNNER_TEMP}/builder.txt"
-          cc -O2 -Wall -Wextra -Werror product/EDPConsoleExec.c \
-            product/EDPRawReadWriteAuthorization.c -framework Security \
+          cc -O2 -Wall -Wextra -Werror \
+            -DEDP_ALLOW_SYNTHETIC_RAW_FIXTURE=1 \
+            product/EDPConsoleExec.c \
+            -framework CoreFoundation -framework IOKit \
             -o "${BUILD}/edp-console-exec"
           xcrun clang -fobjc-arc -fblocks native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
             -framework Foundation -o "${BUILD}/diskimages2-attach"

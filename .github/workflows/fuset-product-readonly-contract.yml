@@ -2,7 +2,7 @@ name: FUSE-T Thin Product Read-Only Contract
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/fuset-minimal-fskit-bridge", "test/self-signed-standalone-distribution"]
     paths:
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift"
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedBridge.swift"
@@ -237,12 +237,8 @@ jobs:
             native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
             native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
           )
-          # Match installer/build-clean-installer.sh for the pre-existing runtime.
-          # Newly added thin targets above remain Swift 6 warnings-as-errors.
-          cc -O2 -Wall -Wextra -c product/EDPRawReadAuthorization.c \
-            -o "${RUNNER_TEMP}/EDPRawReadAuthorization.o"
-          cc -O2 -Wall -Wextra -c product/EDPRawReadWriteAuthorization.c \
-            -o "${RUNNER_TEMP}/EDPRawReadWriteAuthorization.o"
+          # Match the current installer runtime. Legacy authopen probes are
+          # validated separately above and are not linked into edp-vaultctl.
           xcrun swiftc -O -framework CryptoKit -framework Security \
             "${CORE_SOURCES[@]}" \
             product/EDPNTFSWriteSafety.swift product/EDPNTFSMountPolicy.swift \
@@ -251,8 +247,6 @@ jobs:
             product/EDPTransportProvider.swift product/EDPTransportRuntimePolicy.swift \
             product/EDPFinderVolumeDefaults.swift product/EDPNativeSystem.swift product/EDPBlockDevicePublisher.swift \
             product/EDPXPCProtocol.swift product/EDPXPCSecurity.swift product/EDPVaultRuntime.swift \
-            "${RUNNER_TEMP}/EDPRawReadAuthorization.o" \
-            "${RUNNER_TEMP}/EDPRawReadWriteAuthorization.o" \
             -o "${RUNNER_TEMP}/edp-vaultctl"
           test -x "${RUNNER_TEMP}/edp-vaultctl"
           echo 'RESULT=P0_EXISTING_PRODUCT_RUNTIME_STILL_BUILDS'

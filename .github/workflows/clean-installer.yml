@@ -6,6 +6,7 @@ on:
     branches:
       - "feat/macos26-native-fskit"
       - "test/fuset-minimal-fskit-bridge"
+      - "test/self-signed-standalone-distribution"
     paths:
       - "product/**"
       - "installer/build-clean-installer.sh"
@@ -129,6 +130,8 @@ jobs:
             | tee "${RUNNER_TEMP}/verify.txt"
           grep -F 'RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED' "${RUNNER_TEMP}/verify.txt"
           grep -Eq 'RESULT=(SMAPPSERVICE_DAEMON_EMBEDDED|LEGACY_XPC_DAEMON_PACKAGED)' "${RUNNER_TEMP}/verify.txt"
+          grep -F 'RESULT=FULL_DISK_ACCESS_RAW_FD3_TRANSPORT_PATH_ENFORCED' "${RUNNER_TEMP}/verify.txt"
+          grep -F 'RESULT=LEGACY_AUTHOPEN_RUNTIME_REMOVED' "${RUNNER_TEMP}/verify.txt"
           grep -F 'RESULT=EDP_CLEAN_INSTALLER_VERIFIED' "${RUNNER_TEMP}/verify.txt"
 
       - name: Install product and register ServiceManagement daemon
@@ -153,20 +156,35 @@ jobs:
             exit "${INSTALL_RC}"
           fi
           APP='/Applications/EDP USB Vault.app'
+          RAW_HELPER='/Applications/EDP USB Vault Raw Access.app'
           DAEMON='/Library/Application Support/EDP USB Vault/bin/edp-vaultctl'
           test -x "${APP}/Contents/MacOS/EDP USB Vault"
+          test -x "${RAW_HELPER}/Contents/MacOS/edp-console-exec"
           test -x "${DAEMON}"
           test "$(stat -f '%u' "${APP}")" -eq 0
+          test "$(stat -f '%u' "${RAW_HELPER}")" -eq 0
 
           APP_SIGNING="${RUNNER_TEMP}/installed-app-signing.txt"
+          RAW_SIGNING="${RUNNER_TEMP}/installed-raw-helper-signing.txt"
           DAEMON_SIGNING="${RUNNER_TEMP}/installed-daemon-signing.txt"
           /usr/bin/codesign -dv --verbose=4 "${APP}" 2>&1 | tee "${APP_SIGNING}"
+          /usr/bin/codesign -dv --verbose=4 "${RAW_HELPER}" 2>&1 | tee "${RAW_SIGNING}"
           /usr/bin/codesign -dv --verbose=4 "${DAEMON}" 2>&1 | tee "${DAEMON_SIGNING}"
-          /usr/bin/grep -F 'Authority=EDP CI Code Signing' "${APP_SIGNING}"
-          /usr/bin/grep -F 'Authority=EDP CI Code Signing' "${DAEMON_SIGNING}"
-          /usr/bin/grep -F 'TeamIdentifier=not set' "${APP_SIGNING}"
-          /usr/bin/grep -F 'TeamIdentifier=not set' "${DAEMON_SIGNING}"
+          for SIGNING in "${APP_SIGNING}" "${RAW_SIGNING}" "${DAEMON_SIGNING}"; do
+            /usr/bin/grep -F 'Authority=EDP CI Code Signing' "${SIGNING}"
+            /usr/bin/grep -F 'TeamIdentifier=not set' "${SIGNING}"
+          done
+          /usr/bin/codesign -dr - "${APP}" 2>&1 | tee "${RUNNER_TEMP}/app-requirement.txt"
+          /usr/bin/codesign -dr - "${RAW_HELPER}" 2>&1 | tee "${RUNNER_TEMP}/raw-helper-requirement.txt"
+          /usr/bin/codesign -dr - "${DAEMON}" 2>&1 | tee "${RUNNER_TEMP}/daemon-requirement.txt"
+          APP_ROOT="$(sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' "${RUNNER_TEMP}/app-requirement.txt")"
+          RAW_ROOT="$(sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' "${RUNNER_TEMP}/raw-helper-requirement.txt")"
+          DAEMON_ROOT="$(sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' "${RUNNER_TEMP}/daemon-requirement.txt")"
+          test -n "${APP_ROOT}"
+          test "${APP_ROOT}" = "${RAW_ROOT}"
+          test "${APP_ROOT}" = "${DAEMON_ROOT}"
           echo 'RESULT=CLEAN_INSTALL_CERTIFICATE_FALLBACK_READY'
+          echo 'RESULT=FDA_HELPER_STABLE_SELF_SIGNED_IDENTITY_READY'
 
           # The installed product must not depend on the maintainer's signing
           # keychain being present on the end user's Mac. Remove the ephemeral
@@ -205,8 +223,8 @@ jobs:
             artifacts/EDP-USB-Vault-0.5.0-arm64-Self-Signed.pkg \
             > artifacts/EDP-USB-Vault-0.5.0-arm64-Self-Signed.pkg.sha256
           printf '%s\n' \
-            'Hosted CI validates self-signed packaging, installation, signer isolation and privileged XPC.' \
-            'Physical raw USB authorization remains a separate real-Mac release gate.' \
+            'Hosted CI validates self-signed packaging, installation, signer isolation, privileged XPC and stable FDA-helper code identity.' \
+            'Physical Full Disk Access behavior on a real EDP USB remains a separate real-Mac release gate.' \
             'End users do not need the maintainer signing certificate installed in Keychain.' \
             > artifacts/SELF-SIGNED-DISTRIBUTION.txt
 

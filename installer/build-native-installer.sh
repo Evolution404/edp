@@ -58,18 +58,9 @@ PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPVaultRuntime.swift"
 )
 
-/usr/bin/cc -O2 -Wall -Wextra -c \
-  "${REPO_ROOT}/product/EDPRawReadAuthorization.c" \
-  -o "${BUILD_ROOT}/EDPRawReadAuthorization.o"
-/usr/bin/cc -O2 -Wall -Wextra -c \
-  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
-  -o "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o"
-
 echo "Building native privileged service..."
 xcrun swiftc -O -framework CryptoKit -framework Security \
   "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
-  "${BUILD_ROOT}/EDPRawReadAuthorization.o" \
-  "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 
 echo "Building switchable transport backends (default macfuse-local)..."
@@ -82,18 +73,30 @@ MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   -o "${RUNTIME_STAGE}/bin/diskimages2-attach"
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPConsoleExec.c" \
-  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
-  -framework Security \
+  -framework CoreFoundation -framework IOKit \
   -o "${RUNTIME_STAGE}/bin/edp-console-exec"
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
-  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
-  -framework Security \
   -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
 
 for item in "${RUNTIME_STAGE}/bin/"*; do
   /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" "${item}"
 done
+
+RAW_ACCESS_APP_STAGE="${BUILD_ROOT}/EDP USB Vault Raw Access.app"
+mkdir -p "${RAW_ACCESS_APP_STAGE}/Contents/MacOS"
+cp "${REPO_ROOT}/product/RawAccessHelper/Info.plist" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
+cp "${RUNTIME_STAGE}/bin/edp-console-exec" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-console-exec"
+/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
+  --identifier com.edp.usbvault.rawaccess \
+  "${RAW_ACCESS_APP_STAGE}"
+/usr/bin/codesign --verify --strict "${RAW_ACCESS_APP_STAGE}"
 
 echo "Building native menu-bar app..."
 cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
@@ -102,7 +105,7 @@ cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
 xcrun swiftc -O \
   -framework AppKit -framework FSKit -framework SwiftUI \
-  -framework ServiceManagement -framework Security \
+  -framework ServiceManagement \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
   -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"
@@ -123,6 +126,19 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   SIGNING_INFO="$(/usr/bin/codesign -dv --verbose=4 "${APP_STAGE}" 2>&1)"
   /usr/bin/grep -Fq 'TeamIdentifier=not set' <<<"${SIGNING_INFO}"
   /usr/bin/grep -Fq 'Authority=' <<<"${SIGNING_INFO}"
+
+  APP_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}" 2>&1)"
+  RAW_REQUIREMENT="$(/usr/bin/codesign -dr - "${RAW_ACCESS_APP_STAGE}" 2>&1)"
+  DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${RUNTIME_STAGE}/bin/edp-vaultctl" 2>&1)"
+  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.app"' <<<"${APP_REQUIREMENT}"
+  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.rawaccess"' <<<"${RAW_REQUIREMENT}"
+  APP_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${APP_REQUIREMENT}")"
+  RAW_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${RAW_REQUIREMENT}")"
+  DAEMON_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${DAEMON_REQUIREMENT}")"
+  [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${RAW_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
+    echo "self-signed App, raw-access helper, and daemon must share one stable certificate root for FDA/XPC continuity" >&2
+    exit 2
+  }
 fi
 
 PAYLOAD="${BUILD_ROOT}/payload"
@@ -130,6 +146,8 @@ PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
 mkdir -p "${PRODUCT_DIR}/bin" "${PAYLOAD}/Applications" "${PAYLOAD}/usr/local/bin"
 cp -R "${RUNTIME_STAGE}/bin/." "${PRODUCT_DIR}/bin/"
 cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP USB Vault.app"
+cp -R "${RAW_ACCESS_APP_STAGE}" \
+  "${PAYLOAD}/Applications/EDP USB Vault Raw Access.app"
 ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
   "${PAYLOAD}/usr/local/bin/edp-vaultctl"
 
@@ -146,11 +164,23 @@ cp "${REPO_ROOT}/installer/scripts/native-postinstall" "${SCRIPTS}/postinstall"
 chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
 
 COMPONENT="${BUILD_ROOT}/EDP-USB-Vault-Native.pkg"
+COMPONENT_PLIST="${BUILD_ROOT}/native-component.plist"
+/usr/bin/pkgbuild --analyze --root "${PAYLOAD}" "${COMPONENT_PLIST}"
+# Both installed application bundles have fixed /Applications paths. In
+# particular, relocating com.edp.usbvault.rawaccess would break the stable FDA
+# identity/path contract used by the privileged daemon.
+for INDEX in 0 1; do
+  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleIsRelocatable false" "${COMPONENT_PLIST}"
+  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleHasStrictIdentifier true" "${COMPONENT_PLIST}"
+  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleIsVersionChecked true" "${COMPONENT_PLIST}"
+  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleOverwriteAction upgrade" "${COMPONENT_PLIST}"
+done
 /usr/bin/pkgbuild \
   --root "${PAYLOAD}" \
   --identifier com.edp.usbvault.native \
   --version "${VERSION}" \
   --install-location / \
+  --component-plist "${COMPONENT_PLIST}" \
   --scripts "${SCRIPTS}" \
   "${COMPONENT}"
 

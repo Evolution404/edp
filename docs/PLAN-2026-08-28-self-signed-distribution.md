@@ -2,6 +2,8 @@
 
 分支：`test/self-signed-standalone-distribution`
 
+> 2026-08-29 更新：本文 E/F 阶段中的 `authopen + sys.openfile.* + AuthorizationExternalForm` raw-device 模型已被实机否定并废弃。当前正式权限模型改为稳定签名的 Full Disk Access Raw Access helper，详见 `docs/PLAN-2026-08-29-fda-raw-access.md`。本文保留为 self-signed 分发和历史实验记录，不再作为 raw 权限实现规范。
+
 ## 目标
 
 满足两个硬条件：

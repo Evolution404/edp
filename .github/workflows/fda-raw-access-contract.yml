@@ -1,0 +1,138 @@
+name: FDA Raw Access Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "test/self-signed-standalone-distribution"
+      - "test/fuset-minimal-fskit-bridge"
+      - "feat/macos26-native-fskit"
+    paths:
+      - "product/**"
+      - "installer/build-clean-installer.sh"
+      - "installer/build-native-installer.sh"
+      - "installer/scripts/native-postinstall"
+      - "native/EDPFSKitPoC/Extension/**"
+      - "native/EDPFSKitPoC/Tools/ValidateRawAuthorizationXPC.swift"
+      - "native/EDPFSKitPoC/Tools/EDPXPCMountSmoke.swift"
+      - "scripts/verify-clean-installer.sh"
+      - ".github/workflows/fda-raw-access-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  fda-raw-access-contract:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compile FDA broker and read-only metadata helper
+        run: |
+          set -euo pipefail
+          cc -std=c17 -O2 -Wall -Wextra -Werror \
+            product/EDPConsoleExec.c \
+            -framework CoreFoundation -framework IOKit \
+            -o "${RUNNER_TEMP}/edp-console-exec"
+          cc -std=c17 -O2 -Wall -Wextra -Werror \
+            product/EDPRawMetadataHelper.c \
+            -o "${RUNNER_TEMP}/edp-raw-metadata"
+          grep -Fq -- '--probe-raw-device' product/EDPConsoleExec.c
+          grep -Fq 'EDP_ALLOW_SYNTHETIC_RAW_FIXTURE 0' product/EDPConsoleExec.c
+          grep -Fq 'EDP_RAW_BROKER_TARGET_REFUSED' product/EDPConsoleExec.c
+          grep -Fq 'EDP_RAW_BROKER_METADATA_REFUSED' product/EDPConsoleExec.c
+          grep -Fq 'status.st_rdev != path_before.st_rdev' product/EDPConsoleExec.c
+          grep -Fq 'status.st_rdev != path_after.st_rdev' product/EDPConsoleExec.c
+          grep -Fq 'idVendor' product/EDPConsoleExec.c
+          grep -Fq 'idProduct' product/EDPConsoleExec.c
+          echo 'RESULT=FDA_RAW_BROKER_C_CONTRACT_OK'
+
+      - name: Strict Swift 6 daemon build without Authorization Services objects
+        run: |
+          set -euo pipefail
+          CORE=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+          )
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            -framework CryptoKit -framework Security \
+            "${CORE[@]}" \
+            product/EDPNTFSWriteSafety.swift \
+            product/EDPNTFSMountPolicy.swift \
+            product/EDPCredentialStore.swift \
+            product/EDPDevicePolicyStore.swift \
+            product/EDPFuseTRuntimePolicy.swift \
+            product/EDPMacFUSERuntimePolicy.swift \
+            product/EDPTransportProvider.swift \
+            product/EDPTransportRuntimePolicy.swift \
+            product/EDPFinderVolumeDefaults.swift \
+            product/EDPNativeSystem.swift \
+            product/EDPBlockDevicePublisher.swift \
+            product/EDPXPCProtocol.swift \
+            product/EDPXPCSecurity.swift \
+            product/EDPVaultRuntime.swift \
+            -o "${RUNNER_TEMP}/edp-vaultctl"
+          echo 'RESULT=FDA_DAEMON_STRICT_SWIFT6_BUILD_OK'
+
+      - name: Strict Swift 6 App and XPC smoke builds
+        run: |
+          set -euo pipefail
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
+            product/EDPXPCProtocol.swift \
+            product/App/EDPUSBVaultApp.swift \
+            -o "${RUNNER_TEMP}/edp-usb-vault-app"
+          ! otool -L "${RUNNER_TEMP}/edp-usb-vault-app" | grep -F 'Security.framework'
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            product/EDPXPCProtocol.swift \
+            native/EDPFSKitPoC/Tools/ValidateRawAuthorizationXPC.swift \
+            -o "${RUNNER_TEMP}/validate-fda-xpc"
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete \
+            product/EDPXPCProtocol.swift \
+            native/EDPFSKitPoC/Tools/EDPXPCMountSmoke.swift \
+            -o "${RUNNER_TEMP}/validate-fda-mount-xpc"
+          echo 'RESULT=FDA_APP_XPC_STRICT_SWIFT6_BUILD_OK'
+
+      - name: Enforce production Authorization Services removal
+        run: |
+          set -euo pipefail
+          if grep -E 'EDPRawReadAuthorization|EDPRawReadWriteAuthorization|AuthorizationExternalForm|/usr/libexec/authopen' \
+            installer/build-clean-installer.sh installer/build-native-installer.sh; then
+            echo 'production installer still references Authorization Services raw helpers' >&2
+            exit 1
+          fi
+          if grep -E 'AuthorizationExternalForm|AuthorizationCopyRights|AuthorizationMakeExternalForm|sys\.openfile|authopen|grantRawAccess|--raw-device-auth' \
+            product/App/EDPUSBVaultApp.swift \
+            product/EDPVaultRuntime.swift \
+            product/EDPXPCProtocol.swift \
+            product/EDPConsoleExec.c \
+            product/EDPRawMetadataHelper.c; then
+            echo 'production runtime still references retired raw Authorization Services path' >&2
+            exit 1
+          fi
+          grep -Fq 'com.edp.usbvault.rawaccess' product/RawAccessHelper/Info.plist
+          grep -Fq 'Privacy_AllFiles' product/App/EDPUSBVaultApp.swift
+          grep -Fq 'persistent Full Disk Access broker + inherited raw fd' product/EDPVaultRuntime.swift
+          grep -Fq 'no authenticated console user is available' product/EDPVaultRuntime.swift
+          echo 'RESULT=FDA_PRODUCTION_AUTHORIZATION_SERVICES_REMOVED'
+
+      - name: Validate installer and fixed-path contract syntax
+        run: |
+          set -euo pipefail
+          bash -n \
+            installer/build-clean-installer.sh \
+            installer/build-native-installer.sh \
+            installer/scripts/native-postinstall \
+            scripts/verify-clean-installer.sh
+          grep -Fq 'BundleIsRelocatable false' installer/build-clean-installer.sh
+          grep -Fq 'BundleIsRelocatable false' installer/build-native-installer.sh
+          grep -Fq 'RAW_ACCESS_HELPER_FIXED_INSTALL_PATH' scripts/verify-clean-installer.sh
+          grep -Fq 'certificate root' installer/build-clean-installer.sh
+          grep -Fq 'certificate root' installer/build-native-installer.sh
+          echo 'RESULT=FDA_INSTALLER_FIXED_IDENTITY_CONTRACT_OK'

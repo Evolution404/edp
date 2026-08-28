@@ -152,7 +152,7 @@ enum EDPNativeDeviceDiscovery {
                     "usb=\(item.vid):\(item.pid)",
                     "size=\(item.size)",
                     "name=\(item.mediaName)",
-                    "rawAccess=delegated",
+                    "rawAccess=fda-broker",
                 ].joined(separator: ";")
             }
         } catch {

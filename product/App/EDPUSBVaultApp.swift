@@ -1,48 +1,10 @@
 import AppKit
 import Darwin
 import Foundation
-import Security
 import ServiceManagement
 import SwiftUI
 
-private func makeRawDeviceAuthorization(for rawPath: String) throws -> (AuthorizationRef, Data) {
-    let suffix = rawPath.dropFirst("/dev/rdisk".count)
-    guard rawPath.hasPrefix("/dev/rdisk"), !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else {
-        throw NSError(
-            domain: "com.edp.usbvault.authorization",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "磁盘授权目标不是 whole raw disk"]
-        )
-    }
-    var created: AuthorizationRef?
-    let createStatus = AuthorizationCreate(nil, nil, [], &created)
-    guard createStatus == errAuthorizationSuccess, let authorization = created else {
-        throw NSError(domain: NSOSStatusErrorDomain, code: Int(createStatus))
-    }
-    do {
-        let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
-        let right = "sys.openfile.readwrite.\(rawPath)"
-        let status = right.withCString { name in
-            var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
-            return withUnsafeMutablePointer(to: &item) { pointer in
-                var rights = AuthorizationRights(count: 1, items: pointer)
-                return AuthorizationCopyRights(authorization, &rights, nil, flags, nil)
-            }
-        }
-        guard status == errAuthorizationSuccess else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-        }
-        var external = AuthorizationExternalForm()
-        let externalStatus = AuthorizationMakeExternalForm(authorization, &external)
-        guard externalStatus == errAuthorizationSuccess else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(externalStatus))
-        }
-        return (authorization, withUnsafeBytes(of: external) { Data($0) })
-    } catch {
-        AuthorizationFree(authorization, [])
-        throw error
-    }
-}
+private let edpRawAccessHelperAppPath = "/Applications/EDP USB Vault Raw Access.app"
 
 private let edpMacFUSEModuleIDs = [
     "io.macfuse.app.fsmodule.macfuse",
@@ -182,17 +144,35 @@ final class EDPVaultViewModel: ObservableObject {
     @Published var diagnostics = ""
     @Published var isBusy = false
     @Published var transportRuntimeReady: Bool?
-    @Published var rawDeviceCandidates = [String]()
 
     private let serviceMode: String
     private let daemonService: SMAppService?
     private let daemonPlistName = "com.edp.usbvault.mountd.v2.plist"
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
     private var connection: NSXPCConnection?
-    private var rawAuthorizationRefs = [String: AuthorizationRef]()
+
+    var needsFullDiskAccess: Bool {
+        snapshot.devices.contains { $0.connected && !$0.privilegedAccessReady }
+    }
+
+    var rawAccessHelperInstalled: Bool {
+        FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath)
+    }
+
+    var rawAccessStatusText: String {
+        guard rawAccessHelperInstalled else { return "组件未安装" }
+        if needsFullDiskAccess { return "需要完全磁盘访问" }
+        if snapshot.devices.contains(where: { $0.connected && $0.privilegedAccessReady }) {
+            return "已验证"
+        }
+        return "待连接 EDP U 盘验证"
+    }
 
     var setupReady: Bool {
-        currentServiceStatus() == .enabled && transportRuntimeReady == true
+        currentServiceStatus() == .enabled
+            && transportRuntimeReady == true
+            && rawAccessHelperInstalled
+            && snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
     }
 
     init() {
@@ -327,44 +307,39 @@ final class EDPVaultViewModel: ObservableObject {
                 self.refreshServiceStatus()
             }
         }
-        proxy.rawDeviceCandidates { [weak self] data in
-            Task { @MainActor in
-                self?.rawDeviceCandidates = (try? JSONDecoder().decode([String].self, from: data)) ?? []
-            }
-        }
     }
 
-    func grantRawAccess() {
-        guard let rawPath = rawDeviceCandidates.first, let proxy = proxy() else { return }
-        NSLog("EDP foreground raw authorization requested for %@", rawPath)
-        let capability: (AuthorizationRef, Data)
-        do {
-            capability = try makeRawDeviceAuthorization(for: rawPath)
-        } catch {
-            NSLog("EDP foreground raw authorization failed before XPC: %@", error.localizedDescription)
-            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
+    func openFullDiskAccessSettings() {
+        guard FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath) else {
+            lastError = "磁盘访问组件尚未安装，请重新运行 EDP USB Vault 安装器。"
             return
         }
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
+            lastError = "无法打开完全磁盘访问设置。"
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func revealRawAccessHelper() {
+        guard FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath) else {
+            lastError = "磁盘访问组件尚未安装，请重新运行 EDP USB Vault 安装器。"
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([
+            URL(fileURLWithPath: edpRawAccessHelperAppPath)
+        ])
+    }
+
+    func refreshRawAccess() {
+        guard let proxy = proxy() else { return }
         isBusy = true
-        proxy.grantRawAccess(rawPath: rawPath, authorization: capability.1) { [weak self] errorMessage in
+        proxy.refreshRawAccess { [weak self] errorMessage in
             Task { @MainActor in
-                guard let self else {
-                    AuthorizationFree(capability.0, [])
-                    return
-                }
+                guard let self else { return }
                 self.isBusy = false
-                if let errorMessage {
-                    NSLog("EDP raw authorization rejected by daemon: %@", errorMessage)
-                    AuthorizationFree(capability.0, [])
-                    self.lastError = errorMessage
-                } else {
-                    NSLog("EDP raw authorization accepted for %@", rawPath)
-                    if let previous = self.rawAuthorizationRefs.updateValue(capability.0, forKey: rawPath) {
-                        AuthorizationFree(previous, [])
-                    }
-                    self.lastError = nil
-                    self.refresh()
-                }
+                self.lastError = errorMessage
+                self.refresh()
             }
         }
     }
@@ -620,15 +595,8 @@ struct ContentView: View {
                     ContentUnavailableView(
                         "未发现 EDP U 盘",
                         systemImage: "externaldrive",
-                        description: Text(model.rawDeviceCandidates.isEmpty
-                            ? "插入 EDP U 盘后会自动识别。"
-                            : "检测到外置磁盘，需要先授权读取 EDP 设备元数据。")
+                        description: Text("插入 EDP U 盘后会自动识别。")
                     )
-                    if !model.rawDeviceCandidates.isEmpty {
-                        Button("启用磁盘访问") { model.grantRawAccess() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.isBusy)
-                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -742,16 +710,17 @@ struct EDPDevicesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if model.snapshot.devices.filter(\.connected).isEmpty,
-               !model.rawDeviceCandidates.isEmpty {
+            if model.needsFullDiskAccess {
                 HStack(spacing: 12) {
                     Label(
-                        "已检测到外置磁盘，需要授权后识别 EDP 设备",
-                        systemImage: "externaldrive.badge.questionmark"
+                        "EDP U 盘已识别。请为“EDP USB Vault 磁盘访问”开启一次完全磁盘访问。",
+                        systemImage: "externaldrive.badge.exclamationmark"
                     )
                     Spacer()
-                    Button("启用磁盘访问") { model.grantRawAccess() }
+                    Button("显示组件") { model.revealRawAccessHelper() }
+                    Button("打开完全磁盘访问") { model.openFullDiskAccessSettings() }
                         .buttonStyle(.borderedProminent)
+                    Button("重新检测") { model.refreshRawAccess() }
                         .disabled(model.isBusy)
                 }
                 .padding(12)
@@ -786,15 +755,8 @@ struct EDPDevicesView: View {
                             ContentUnavailableView(
                                 "未发现 EDP U 盘",
                                 systemImage: "externaldrive",
-                                description: Text(model.rawDeviceCandidates.isEmpty
-                                    ? "插入设备后会自动识别，也可以查看此前保存的设备。"
-                                    : "检测到外置磁盘，需要先授权读取 EDP 设备元数据。")
+                                description: Text("插入设备后会自动识别，也可以查看此前保存的设备。")
                             )
-                            if !model.rawDeviceCandidates.isEmpty {
-                                Button("启用磁盘访问") { model.grantRawAccess() }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(model.isBusy)
-                            }
                         }
                     }
                 }
@@ -1154,9 +1116,12 @@ struct EDPSettingsView: View {
                 } label: {
                     Text("macFUSE Local")
                 }
+                LabeledContent("完全磁盘访问", value: model.rawAccessStatusText)
                 Text(model.setupReady
                      ? "首次设置已完成。后台服务会按需打开经校验的 EDP 整盘并把文件描述符交给降权桥进程；重启或重新插盘不再请求管理员密码。"
-                     : "请完成后台服务批准，并确认安装器已安装 macFUSE Local 运行组件。")
+                     : (model.needsFullDiskAccess
+                        ? "请为“EDP USB Vault 磁盘访问”开启一次完全磁盘访问，然后点击重新检测。"
+                        : "请完成后台服务、macFUSE Local 和磁盘访问组件设置；完全磁盘访问会在连接 EDP U 盘后进行验证。"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 if model.serviceStatus != "已启用" {
@@ -1176,7 +1141,7 @@ struct EDPSettingsView: View {
             Section("后台服务") {
                 LabeledContent("状态", value: model.serviceStatus)
                 LabeledContent("版本", value: model.snapshot.serviceVersion)
-                LabeledContent("磁盘访问", value: "特权服务按需提供")
+                LabeledContent("磁盘访问", value: model.rawAccessStatusText)
                 LabeledContent(
                     "文件系统运行组件",
                     value: model.transportRuntimeReady == true ? "已就绪" : "需要重新安装"
@@ -1271,10 +1236,13 @@ struct EDPMenuBarView: View {
 
         if model.snapshot.devices.filter(\.connected).isEmpty {
             Text("未连接 EDP U 盘").foregroundStyle(.secondary)
-            if !model.rawDeviceCandidates.isEmpty {
-                Button("启用磁盘访问") { model.grantRawAccess() }
-                    .disabled(model.isBusy)
-            }
+        } else if model.needsFullDiskAccess {
+            Text("加密分区需要为“EDP USB Vault 磁盘访问”开启一次完全磁盘访问。")
+                .foregroundStyle(.secondary)
+            Button("显示磁盘访问组件") { model.revealRawAccessHelper() }
+            Button("打开完全磁盘访问") { model.openFullDiskAccessSettings() }
+            Button("重新检测权限") { model.refreshRawAccess() }
+                .disabled(model.isBusy)
         }
 
         Divider()
@@ -1331,49 +1299,39 @@ struct EDPUSBVaultApp: App {
     @StateObject private var model = EDPVaultViewModel()
 
     init() {
-        if let index = CommandLine.arguments.firstIndex(of: "--grant-raw-access-smoke"),
-           CommandLine.arguments.count > index + 1 {
-            let rawPath = CommandLine.arguments[index + 1]
-            do {
-                let capability = try makeRawDeviceAuthorization(for: rawPath)
-                defer { AuthorizationFree(capability.0, []) }
-                let connection = NSXPCConnection(
-                    machServiceName: edpVaultMachServiceName,
-                    options: .privileged
-                )
-                connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-                let result = EDPXPCSmokeResult()
-                let semaphore = DispatchSemaphore(value: 0)
-                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-                    result.set(passed: false, detail: error.localizedDescription)
-                    semaphore.signal()
-                }) as? EDPVaultXPCProtocol else {
-                    print("RESULT=RAW_ACCESS_XPC_PROXY_UNAVAILABLE")
-                    exit(1)
-                }
-                connection.resume()
-                proxy.grantRawAccess(rawPath: rawPath, authorization: capability.1) { errorMessage in
-                    result.set(
-                        passed: errorMessage == nil,
-                        detail: errorMessage ?? "raw authorization accepted"
-                    )
-                    semaphore.signal()
-                }
-                guard semaphore.wait(timeout: .now() + 20) == .success else {
-                    connection.invalidate()
-                    print("RESULT=RAW_ACCESS_XPC_TIMEOUT")
-                    exit(1)
-                }
-                connection.invalidate()
-                let captured = result.snapshot()
-                print("RAW_ACCESS_XPC_DETAIL=\(captured.1)")
-                print(captured.0 ? "RESULT=RAW_ACCESS_XPC_OK" : "RESULT=RAW_ACCESS_XPC_FAILED")
-                exit(captured.0 ? 0 : 1)
-            } catch {
-                print("RAW_ACCESS_AUTH_ERROR=\(error.localizedDescription)")
-                print("RESULT=RAW_ACCESS_XPC_FAILED")
+        if CommandLine.arguments.contains("--refresh-raw-access-smoke") {
+            let connection = NSXPCConnection(
+                machServiceName: edpVaultMachServiceName,
+                options: .privileged
+            )
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            let result = EDPXPCSmokeResult()
+            let semaphore = DispatchSemaphore(value: 0)
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                result.set(passed: false, detail: error.localizedDescription)
+                semaphore.signal()
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=RAW_ACCESS_XPC_PROXY_UNAVAILABLE")
                 exit(1)
             }
+            connection.resume()
+            proxy.refreshRawAccess { errorMessage in
+                result.set(
+                    passed: errorMessage == nil,
+                    detail: errorMessage ?? "Full Disk Access broker probe accepted"
+                )
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 30) == .success else {
+                connection.invalidate()
+                print("RESULT=RAW_ACCESS_XPC_TIMEOUT")
+                exit(1)
+            }
+            connection.invalidate()
+            let captured = result.snapshot()
+            print("RAW_ACCESS_XPC_DETAIL=\(captured.1)")
+            print(captured.0 ? "RESULT=RAW_ACCESS_XPC_OK" : "RESULT=RAW_ACCESS_XPC_FAILED")
+            exit(captured.0 ? 0 : 1)
         }
 
         if let index = CommandLine.arguments.firstIndex(of: "--xpc-mount-smoke"),
