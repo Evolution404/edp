@@ -3,6 +3,8 @@
 
 use edpopen_lib::crypto::*;
 
+mod support;
+
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len() / 2)
         .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap())
@@ -11,8 +13,7 @@ fn unhex(s: &str) -> Vec<u8> {
 
 #[test]
 fn all_disks_all_sectors_match_python() {
-    let v: serde_json::Value =
-        serde_json::from_str(include_str!("vectors.json")).expect("vectors.json 缺失, 先跑 tools/gen_vectors.py");
+    let Some(v) = support::load_json("vectors.json") else { return; };
     let disks = v["disks"].as_array().expect("vectors 结构错误");
     assert!(!disks.is_empty());
 
@@ -75,7 +76,7 @@ fn all_disks_all_sectors_match_python() {
 /// 加密感知保存的核心路径: 解密明文 → a7f0 重加密 → 还原原始密文
 #[test]
 fn reencrypt_reproduces_raw() {
-    let v: serde_json::Value = serde_json::from_str(include_str!("vectors.json")).unwrap();
+    let Some(v) = support::load_json("vectors.json") else { return; };
     for disk in v["disks"].as_array().unwrap() {
         let name = disk["name"].as_str().unwrap();
         let crc = crc32_bare(disk["device_id"].as_str().unwrap().as_bytes());

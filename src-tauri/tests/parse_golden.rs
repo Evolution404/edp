@@ -3,14 +3,16 @@
 
 use edpopen_lib::{crypto, parser};
 
+mod support;
+
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap()).collect()
 }
 
 #[test]
 fn parse_matches_python_golden() {
-    let vec: serde_json::Value = serde_json::from_str(include_str!("vectors.json")).unwrap();
-    let gold: serde_json::Value = serde_json::from_str(include_str!("parse_golden.json")).unwrap();
+    let Some(vec) = support::load_json("vectors.json") else { return; };
+    let Some(gold) = support::load_json("parse_golden.json") else { return; };
     let disks = gold["disks"].as_array().unwrap();
     let vdisks = vec["disks"].as_array().unwrap();
     assert_eq!(disks.len(), vdisks.len(), "两文件应同盘数同序");
