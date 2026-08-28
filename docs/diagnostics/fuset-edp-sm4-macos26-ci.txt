@@ -4,11 +4,11 @@ generated_at_utc=<normalized>
 runner_os=26.5.2
 runner_build=25F84
 xcode=Xcode 26.6 Build version 17F113 
-plain_sha=5f8e65fc4c97b388bd51550f2b65aeacffecfe38a6740465a3843d22b2c2affc
-cipher_sha_before=e2f2af4b73564eae0aeb8cda9a2ac00ac2a6347c7015c78facaad4a3998b011f
-cipher_sha_after=e2f2af4b73564eae0aeb8cda9a2ac00ac2a6347c7015c78facaad4a3998b011f
-cipher_meta_before=67108864:1787789011:100444
-cipher_meta_after=67108864:1787789011:100444
+plain_sha=28e24afaf976a1add7530ede43067cbc5aa3c657c752e24833db73f64ecee876
+cipher_sha_before=3137ce8859dc5b7ac8373e3cd0bd0a898c8dd73b66b96ff276a6b68ec4b38f6e
+cipher_sha_after=3137ce8859dc5b7ac8373e3cd0bd0a898c8dd73b66b96ff276a6b68ec4b38f6e
+cipher_meta_before=67108864:1787893372:100444
+cipher_meta_after=67108864:1787893372:100444
 final_mount=/Volumes/EDP_SM4_FINAL
 
 ## encryption
@@ -16,36 +16,36 @@ ENCRYPTED_DISK_BYTES=67108864
 RESULT=EDP_SM4_DISK_IMAGE_ENCRYPTED
 
 ## hidden transport
-file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-2ee4f142-c29d-45c5-b9c5-9441efc438d3/session.json on /Users/runner/work/_temp/edp-sm4-hidden-09afcb69-e00d-4702-a28f-70b491686df1 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
+file:///var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-568af818-0f5e-4759-8eaa-f612fc871f2d/session.json on /Users/runner/work/_temp/edp-sm4-hidden-a8ef63e7-5dd6-452c-bbff-954f0f5bb913 (fuse-t, local, nodev, nosuid, noowners, noatime, fskit, mounted by runner)
 
 ## bridge log
 BACKING_MODE=EDP_SM4_RANDOM_ACCESS
 PLAINTEXT_CACHE=none
-SESSION_ID=edp-fuset-2ee4f142-c29d-45c5-b9c5-9441efc438d3
-SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-2ee4f142-c29d-45c5-b9c5-9441efc438d3/session.json
-SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-2ee4f142-c.sock
-MOUNTPOINT=/Users/runner/work/_temp/edp-sm4-hidden-09afcb69-e00d-4702-a28f-70b491686df1
+SESSION_ID=edp-fuset-568af818-0f5e-4759-8eaa-f612fc871f2d
+SESSION_JSON=/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/edp-fuset-568af818-0f5e-4759-8eaa-f612fc871f2d/session.json
+SOCKET=/Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-568af818-0.sock
+MOUNTPOINT=/Users/runner/work/_temp/edp-sm4-hidden-a8ef63e7-5dd6-452c-bbff-954f0f5bb913
 BACKING_SIZE=67108864
 ACCESS_MODE=read-only
 mount process exited status=0
 
 ## bridge open files
 COMMAND    PID   USER   FD    TYPE             DEVICE SIZE/OFF                NODE NAME
-FuseTEDPS 1737 runner  cwd     DIR               1,17      416             2863483 /Users/runner/work/edp-usb-vault/edp-usb-vault
-FuseTEDPS 1737 runner  txt     REG               1,17   365664             2865437 /Users/runner/work/_temp/FuseTEDPSM4Bridge
-FuseTEDPS 1737 runner  txt     REG               1,17  2374000 1152921500312573276 /usr/lib/dyld
-FuseTEDPS 1737 runner  txt     REG               1,17    72984             2848681 /Library/Preferences/Logging/.plist-cache.9LgGEaKr
-FuseTEDPS 1737 runner  txt     REG               1,17 35444880 1152921500312583777 /usr/share/icu/icudt78l.dat
-FuseTEDPS 1737 runner    0r    CHR                3,2      0t0                 334 /dev/null
-FuseTEDPS 1737 runner    1w    REG               1,17      498             2865449 /Users/runner/work/_temp/edp-sm4-bridge.log
-FuseTEDPS 1737 runner    2w    REG               1,17      498             2865449 /Users/runner/work/_temp/edp-sm4-bridge.log
-FuseTEDPS 1737 runner    3r    REG               1,17 67108864             2864985 /Users/runner/work/_temp/edp-sm4-cipher.raw
-FuseTEDPS 1737 runner    4u   unix 0x4d0edb81475a5fd3      0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-2ee4f142-c.sock
-FuseTEDPS 1737 runner    5u   unix 0xca3910450a291165      0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-2ee4f142-c.sock
-FuseTEDPS 1737 runner  131u  systm 0xf7769d927748f1dd      0t0                     [ctl com.apple.netsrc id 7 unit 32]
-FuseTEDPS 1737 runner  138u  systm 0xf158bca00d40547a      0t0                     [ctl com.apple.netsrc id 7 unit 33]
-FuseTEDPS 1737 runner  143    PIPE 0x35cc6da937595c16    65536                     ->0x825770c3fd22f67c
-FuseTEDPS 1737 runner  146    PIPE 0x59ce0b82215328e2    16384                     ->0xd8193e1c4a3f0617
+FuseTEDPS 5281 runner  cwd     DIR               1,18      416             2866218 /Users/runner/work/edp-usb-vault/edp-usb-vault
+FuseTEDPS 5281 runner  txt     REG               1,18   366816             2871048 /Users/runner/work/_temp/FuseTEDPSM4Bridge
+FuseTEDPS 5281 runner  txt     REG               1,18    72984             2848681 /Library/Preferences/Logging/.plist-cache.acRPFYzH
+FuseTEDPS 5281 runner  txt     REG               1,18  2374000 1152921500312573276 /usr/lib/dyld
+FuseTEDPS 5281 runner  txt     REG               1,18 35444880 1152921500312583777 /usr/share/icu/icudt78l.dat
+FuseTEDPS 5281 runner    0r    CHR                3,2      0t0                 334 /dev/null
+FuseTEDPS 5281 runner    1w    REG               1,18      498             2871060 /Users/runner/work/_temp/edp-sm4-bridge.log
+FuseTEDPS 5281 runner    2w    REG               1,18      498             2871060 /Users/runner/work/_temp/edp-sm4-bridge.log
+FuseTEDPS 5281 runner    3r    REG               1,18 67108864             2868058 /Users/runner/work/_temp/edp-sm4-cipher.raw
+FuseTEDPS 5281 runner    4u   unix 0xd942f30fae0f019f      0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-568af818-0.sock
+FuseTEDPS 5281 runner    5u   unix 0x8089066d4b55d131      0t0                     /Users/runner/Library/Group Containers/group.org.fuset.fskit-srv/s/edp-fuset-568af818-0.sock
+FuseTEDPS 5281 runner  131u  systm 0x578a622b683c90c2      0t0                     [ctl com.apple.netsrc id 7 unit 45]
+FuseTEDPS 5281 runner  138u  systm 0x5f328fe60a059847      0t0                     [ctl com.apple.netsrc id 7 unit 46]
+FuseTEDPS 5281 runner  143    PIPE 0x11e2201f808436f9    65536                     ->0xc6bc154aa49380b0
+FuseTEDPS 5281 runner  146    PIPE 0x2891b92dca3a398b    16384                     ->0x226767ff6aa16ddb
 
 ## final attach
 /dev/disk8          	                               	/Volumes/EDP_SM4_FINAL
@@ -71,7 +71,7 @@ FuseTEDPS 1737 runner  146    PIPE 0x59ce0b82215328e2    16384                  
    Media Type:                Generic
    Protocol:                  Disk Image
    SMART Status:              Not Supported
-   Volume UUID:               61BE05DE-EE2E-3090-AC3F-EC202914582D
+   Volume UUID:               4388152F-F5DE-3FC1-AC9D-82DD85150463
 
    Disk Size:                 67.1 MB (67108864 Bytes) (exactly 131072 512-Byte-Units)
    Device Block Size:         512 Bytes
