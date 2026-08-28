@@ -16,6 +16,7 @@ on:
       - "product/EDPFuseTRuntimePolicy.swift"
       - "product/EDPBlockDevicePublisher.swift"
       - "product/EDPNativeSystem.swift"
+      - "product/EDPFinderVolumeDefaults.swift"
       - "product/EDPVaultRuntime.swift"
       - ".github/workflows/fuset-product-readonly-contract.yml"
   workflow_dispatch:
@@ -248,7 +249,7 @@ jobs:
             product/EDPCredentialStore.swift product/EDPDevicePolicyStore.swift \
             product/EDPFuseTRuntimePolicy.swift product/EDPMacFUSERuntimePolicy.swift \
             product/EDPTransportProvider.swift product/EDPTransportRuntimePolicy.swift \
-            product/EDPNativeSystem.swift product/EDPBlockDevicePublisher.swift \
+            product/EDPFinderVolumeDefaults.swift product/EDPNativeSystem.swift product/EDPBlockDevicePublisher.swift \
             product/EDPXPCProtocol.swift product/EDPXPCSecurity.swift product/EDPVaultRuntime.swift \
             "${RUNNER_TEMP}/EDPRawReadAuthorization.o" \
             "${RUNNER_TEMP}/EDPRawReadWriteAuthorization.o" \

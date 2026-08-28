@@ -22,6 +22,7 @@ on:
       - "native/EDPFSKitPoC/Tools/probe-edp-crypto-ntfs-readwrite.sh"
       - "native/EDPFSKitPoC/Tools/RenderNTFSMountPolicy.swift"
       - "product/EDPNTFSMountPolicy.swift"
+      - "product/EDPFinderVolumeDefaults.swift"
       - "product/EDPVaultRuntime.swift"
   workflow_dispatch:
 

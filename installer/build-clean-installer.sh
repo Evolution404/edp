@@ -119,6 +119,7 @@ xcrun swiftc -O -framework CryptoKit -framework Security \
   "${REPO_ROOT}/product/EDPMacFUSERuntimePolicy.swift" \
   "${REPO_ROOT}/product/EDPTransportProvider.swift" \
   "${REPO_ROOT}/product/EDPTransportRuntimePolicy.swift" \
+  "${REPO_ROOT}/product/EDPFinderVolumeDefaults.swift" \
   "${REPO_ROOT}/product/EDPNativeSystem.swift" \
   "${REPO_ROOT}/product/EDPBlockDevicePublisher.swift" \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \

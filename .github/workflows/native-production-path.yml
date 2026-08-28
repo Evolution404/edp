@@ -58,6 +58,7 @@ jobs:
             product/EDPMacFUSERuntimePolicy.swift \
             product/EDPTransportProvider.swift \
             product/EDPTransportRuntimePolicy.swift \
+            product/EDPFinderVolumeDefaults.swift \
             product/EDPNativeSystem.swift \
             product/EDPBlockDevicePublisher.swift \
             product/EDPXPCProtocol.swift \
@@ -67,6 +68,57 @@ jobs:
             "${RUNNER_TEMP}/EDPRawReadWriteAuthorization.o" \
             -o "${RUNNER_TEMP}/edp-vaultctl"
           echo 'RESULT=NATIVE_PRODUCTION_STRICT_SWIFT6_BUILD_OK'
+
+      - name: Validate first-visible Finder root defaults
+        run: |
+          set -euo pipefail
+          CORE=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+          )
+          xcrun swiftc -swift-version 6 -strict-concurrency=complete -framework CryptoKit \
+            "${CORE[@]}" \
+            product/EDPFinderVolumeDefaults.swift \
+            product/EDPNativeSystem.swift \
+            product/Tests/ValidateFinderNobrowseMount.swift \
+            -o "${RUNNER_TEMP}/validate-finder-nobrowse-mount"
+
+          NAME="EDPFinderCIDefaults"
+          IMAGE="${RUNNER_TEMP}/${NAME}.dmg"
+          STAGING="${RUNNER_TEMP}/.${NAME}-stage"
+          hdiutil create -size 64m -fs APFS -volname "${NAME}" "${IMAGE}" >/dev/null
+          ATTACH="$(hdiutil attach -nomount "${IMAGE}")"
+          WHOLE="$(printf '%s\n' "${ATTACH}" | awk 'NR==1 {gsub("/dev/", "", $1); print $1}')"
+          BSD="$(printf '%s\n' "${ATTACH}" | awk 'END {gsub("/dev/", "", $1); print $1}')"
+          cleanup_finder_probe() {
+            hdiutil detach "/dev/${WHOLE}" >/dev/null 2>&1 || true
+            rm -rf "${STAGING}"
+          }
+          trap cleanup_finder_probe EXIT
+          mkdir -p "${STAGING}"
+          "${RUNNER_TEMP}/validate-finder-nobrowse-mount" "${BSD}" "${STAGING}" \
+            | tee "${RUNNER_TEMP}/finder-preseed.txt"
+          grep -F 'RESULT=FINDER_NOBROWSE_PRESEED_OK' "${RUNNER_TEMP}/finder-preseed.txt"
+          rmdir "${STAGING}"
+          diskutil mount "${BSD}" >/dev/null
+          VISIBLE="/Volumes/${NAME}"
+          test -f "${VISIBLE}/.DS_Store"
+          open "${VISIBLE}"
+          sleep 2
+          STATE="$(osascript \
+            -e 'tell application "Finder"' \
+            -e 'set w to first Finder window whose name is "EDPFinderCIDefaults"' \
+            -e 'return (toolbar visible of w as text) & "|" & (sidebar width of w as text) & "|" & ((current view of w is list view) as text)' \
+            -e 'close w' \
+            -e 'end tell')"
+          echo "FINDER_VISIBLE_STATE=${STATE}"
+          [[ "${STATE}" == true\|*\|true ]]
+          echo 'RESULT=FINDER_FIRST_VISIBLE_LIST_SIDEBAR_OK'
 
       - name: Validate macFUSE failed-mount scratch cleanup contract
         run: |
@@ -97,6 +149,10 @@ jobs:
           grep -F '!manualUnmountSuppressions.contains(key(disk.deviceID, type))' product/EDPVaultRuntime.swift
           grep -F 'func deleteDeviceRecord(deviceID: String)' product/EDPVaultRuntime.swift
           grep -F 'NSWorkspace.shared.open(url)' product/App/EDPUSBVaultApp.swift
+          grep -F 'mountNobrowse' product/EDPNativeSystem.swift
+          grep -F 'EDPFinderVolumeDefaults.seedIfMissing' product/EDPVaultRuntime.swift
+          grep -F 'O_WRONLY | O_CREAT | O_EXCL' product/EDPFinderVolumeDefaults.swift
+          python3 -c 'import base64,pathlib,re,zlib; s=pathlib.Path("product/EDPFinderVolumeDefaults.swift").read_text(); b=re.search(r"rawDeflateBase64 = \"([^\"]+)\"", s).group(1); d=zlib.decompress(base64.b64decode(b), -zlib.MAX_WBITS); assert len(d) == 8196 and d[4:8] == b"Bud1" and b"ShowToolbar" in d and b"ShowSidebar" in d and b"Nlsv" in d; print("RESULT=FINDER_DEFAULT_TEMPLATE_OK")'
           ! grep -F 'run(binaryRoot + "/diskimages2-attach"' product/EDPVaultRuntime.swift
           grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
           cc -Wall -Wextra product/EDPRawMetadataHelper.c \

@@ -8,6 +8,7 @@ on:
       - "product/EDPTransportRuntimePolicy.swift"
       - "product/EDPMacFUSERuntimePolicy.swift"
       - "product/EDPConsoleExec.c"
+      - "product/EDPFinderVolumeDefaults.swift"
       - "product/EDPVaultRuntime.swift"
       - "product/EDPNativeSystem.swift"
       - "product/EDPBlockDevicePublisher.swift"

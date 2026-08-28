@@ -324,6 +324,33 @@ final class EDPDiskArbitrationController: @unchecked Sendable {
         throw RuntimeNativeError("Disk Arbitration mounted \(bsdName) but no mount point appeared")
     }
 
+    func mountNobrowse(_ bsdName: String, at mountPoint: String) throws -> String {
+        let mountURL = URL(fileURLWithPath: mountPoint, isDirectory: true) as CFURL
+        let nobrowse = "nobrowse" as CFString
+        var arguments: [Unmanaged<CFString>?] = [Unmanaged.passUnretained(nobrowse), nil]
+        try arguments.withUnsafeMutableBufferPointer { buffer in
+            try perform({ disk, context in
+                DADiskMountWithArguments(
+                    disk,
+                    mountURL,
+                    DADiskMountOptions(kDADiskMountOptionDefault),
+                    daOperationCallback,
+                    context,
+                    buffer.baseAddress
+                )
+            }, bsdName: bsdName)
+        }
+        guard let actual = EDPNativeMountTable.mountPoint(forBSD: bsdName) else {
+            throw RuntimeNativeError("Disk Arbitration mounted \(bsdName) but no mount point appeared")
+        }
+        guard actual == mountPoint else {
+            throw RuntimeNativeError(
+                "Disk Arbitration mounted \(bsdName) at unexpected path \(actual), expected \(mountPoint)"
+            )
+        }
+        return actual
+    }
+
     func eject(_ bsdName: String) throws {
         try perform({ disk, context in
             DADiskEject(disk, DADiskEjectOptions(kDADiskEjectOptionDefault), daOperationCallback, context)

@@ -549,6 +549,13 @@ private final class MountManager {
             let published = try blockPublisher.publishWritableImage(at: decryptedVolume)
             publishedDevice = published
             let resolved = try resolveFilesystemDevice(published.bsdName)
+            if ["EXFAT", "NTFS", "FAT"].contains(resolved.magic) {
+                try prepareFinderDefaults(
+                    bsd: resolved.bsdName,
+                    sessionSuffix: suffix,
+                    owner: identity
+                )
+            }
             let mounted: (String, String?, Process?)
             switch resolved.magic {
             case "EXFAT":
@@ -591,6 +598,63 @@ private final class MountManager {
             }
             try? FileManager.default.removeItem(atPath: bridgeMount)
             throw error
+        }
+    }
+
+    private func prepareFinderDefaults(
+        bsd: String,
+        sessionSuffix: String,
+        owner: (uid_t, gid_t)
+    ) throws {
+        let safeSuffix = String(sessionSuffix.prefix(48))
+        let stagingMount = "/private/tmp/.edp-finder-seed-\(safeSuffix)-\(UUID().uuidString)"
+        do {
+            try FileManager.default.createDirectory(
+                atPath: stagingMount,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
+            )
+        } catch {
+            NSLog(
+                "EDP could not create Finder staging mount for %@; continuing without defaults: %@",
+                bsd,
+                String(describing: error)
+            )
+            return
+        }
+        defer { try? FileManager.default.removeItem(atPath: stagingMount) }
+
+        do {
+            _ = try diskArbitration.mountNobrowse(bsd, at: stagingMount)
+        } catch {
+            NSLog(
+                "EDP could not stage %@ with nobrowse; continuing with normal mount: %@",
+                bsd,
+                String(describing: error)
+            )
+            return
+        }
+
+        do {
+            if try EDPFinderVolumeDefaults.seedIfMissing(at: stagingMount, owner: owner) {
+                NSLog("EDP seeded Finder list/sidebar defaults on %@", bsd)
+            }
+        } catch {
+            NSLog(
+                "EDP could not seed Finder defaults on %@; preserving existing volume contents: %@",
+                bsd,
+                String(describing: error)
+            )
+        }
+
+        do {
+            try diskArbitration.unmount(bsd)
+        } catch {
+            try? diskArbitration.unmount(bsd)
+            if EDPNativeMountTable.mountPoint(forBSD: bsd) != nil {
+                throw error
+            }
+            NSLog("EDP Finder staging unmount for %@ recovered after retry", bsd)
         }
     }
 

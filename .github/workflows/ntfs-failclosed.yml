@@ -11,6 +11,7 @@ on:
       - "native/EDPFSKitPoC/Tools/probe-ntfs-failclosed.sh"
       - "native/EDPFSKitPoC/Tools/ValidateNTFSWriteSafety.swift"
       - "product/EDPNTFSWriteSafety.swift"
+      - "product/EDPFinderVolumeDefaults.swift"
       - "product/EDPVaultRuntime.swift"
       - "installer/build-clean-installer.sh"
   workflow_dispatch:
