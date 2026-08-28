@@ -9,6 +9,7 @@ MACFUSE_VERSION="5.3.3"
 MACFUSE_SHA256="7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15"
 MACFUSE_URL="https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg"
 MACFUSE_DMG="${MACFUSE_DMG:-}"
+MACFUSE_LICENSE_FILE="${MACFUSE_LICENSE_FILE:-}"
 APP_SIGN_IDENTITY="${EDP_APP_SIGN_IDENTITY:--}"
 SERVICE_MODE="${EDP_SERVICE_MODE:-}"
 LEGACY_DIAGNOSTIC="${EDP_LEGACY_DIAGNOSTIC:-0}"
@@ -37,7 +38,8 @@ mkdir -p "${OUTPUT_DIR}" "${MACFUSE_MOUNT}"
 
 if [[ -z "${MACFUSE_DMG}" ]]; then
   MACFUSE_DMG="${BUILD_ROOT}/macfuse-${MACFUSE_VERSION}.dmg"
-  /usr/bin/curl --fail --location --retry 3 --output "${MACFUSE_DMG}" "${MACFUSE_URL}"
+  /usr/bin/curl --fail --location --retry 5 --retry-all-errors \
+    --output "${MACFUSE_DMG}" "${MACFUSE_URL}"
 fi
 [[ -f "${MACFUSE_DMG}" ]] || {
   echo "macFUSE dmg not found: ${MACFUSE_DMG}" >&2
@@ -219,9 +221,17 @@ fi
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
 
-/usr/bin/curl --fail --location --output \
-  "${RUNTIME_STAGE}/licenses/macfuse/LICENSE.txt" \
-  "https://raw.githubusercontent.com/macfuse/macfuse/macfuse-5.3.3/LICENSE.txt"
+if [[ -n "${MACFUSE_LICENSE_FILE}" ]]; then
+  [[ -f "${MACFUSE_LICENSE_FILE}" ]] || {
+    echo "macFUSE license file not found: ${MACFUSE_LICENSE_FILE}" >&2
+    exit 2
+  }
+  cp "${MACFUSE_LICENSE_FILE}" "${RUNTIME_STAGE}/licenses/macfuse/LICENSE.txt"
+else
+  /usr/bin/curl --fail --location --retry 5 --retry-all-errors \
+    --output "${RUNTIME_STAGE}/licenses/macfuse/LICENSE.txt" \
+    "https://raw.githubusercontent.com/macfuse/macfuse/macfuse-5.3.3/LICENSE.txt"
+fi
 printf '%s  %s\n' \
   1201956ec47b2c53c4c4fe7751be6d6f55fefcc44a6eca08780a94e009bcdbcd \
   "${RUNTIME_STAGE}/licenses/macfuse/LICENSE.txt" \

@@ -286,6 +286,7 @@ Clean Installer run `33047939672` @ `116e77067bd200e9dc4d681a26f1fa3af21eaaca`�
 - 设备详情为离线历史记录提供“删除设备记录”：daemon 仅在设备已断开且无挂载会话时删除本机 policy、System Keychain 分区密码、失败状态与手动卸载 suppression；该操作不读取、写入或擦除 U 盘介质，并由 UI 二次确认；
 - “在 Finder 中显示”不再用通用 `NSWorkspace.open(URL)` 打开目录，而改用 Finder file-viewer rooted-path API，并显式激活 Finder；详情页、兼容卡片和菜单栏入口共用同一实现，以得到正常 Finder 浏览窗口。
 - 设备唯一识别修复 `6b80667` 的 Native Production Path `33143400448`、Native Swift Fast Checks `33143400523`、macFUSE Local Product Lifecycle E2E `33143400389` 与 Clean ExFAT + NTFS Installer `33143400482` 均已成功。
+- 本机 0.5.15 打包在 GitHub DMG 与 `raw.githubusercontent.com` 许可证下载阶段分别遭遇 partial transfer/TLS 断连；clean installer 现对两处下载统一启用 all-errors retry，并支持传入经过既有 SHA-256 gate 校验的本地 macFUSE DMG/许可证缓存，不改变 5.3.3 pin。
 
 在 `5275b45` 基线上已通过：
 
