@@ -54,6 +54,26 @@ enum EDPVolumeMetadata {
         return nil
     }
 
+    static func stablePhysicalDeviceID(
+        metadataDeviceID: String,
+        vidHex: String,
+        pidHex: String,
+        sizeBytes: UInt64
+    ) -> String {
+        var material = Array("EDP-PHYSICAL-ID-V2\0".utf8)
+        material.append(contentsOf: Array(vidHex.utf8))
+        material.append(0)
+        material.append(contentsOf: Array(pidHex.utf8))
+        material.append(0)
+        material.append(contentsOf: Array(metadataDeviceID.utf8))
+        material.append(0)
+        material.append(contentsOf: EDPCrypto.littleEndianBytes(sizeBytes))
+        let suffix = EDPCrypto.sha256(material).prefix(10)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "\(metadataDeviceID)#\(suffix)"
+    }
+
     static func decodeLBA12(_ raw: [UInt8], deviceID: String) throws -> [UInt8] {
         guard raw.count == 512 else {
             throw EDPNativeCoreError.invalidInput("LBA12 must be exactly 512 bytes")

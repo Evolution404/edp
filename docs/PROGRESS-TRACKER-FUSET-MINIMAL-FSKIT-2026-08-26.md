@@ -277,6 +277,10 @@ Clean Installer run `33047939672` @ `116e77067bd200e9dc4d681a26f1fa3af21eaaca`�
 - 界面点“卸载”后看似马上重挂并非 MFMount teardown 回归，而是该分区“插入后自动挂载”仍开启，periodic reconcile 在完整卸载后创建了新 transport/DiskImages2 PID。关闭该分区自动挂载后 teardown 稳定收口；产品需把“手动卸载抑制当前插入周期自动重挂”作为独立 UX policy 处理，不能再归因于 5.3.2/5.3.3 行为差异；
 - App 首次启动现负责 console-user FSKit enablement：登记 macFUSE host、向 PluginKit 添加并启用 generic/local appex、保留 Apple 既有模块并补齐 `enabledModules.plist`、固定权限为 `0600`，仅在状态发生变化时重启用户态 FSKit agents。runtime gate 同时要求 generic/local appex、`MFMount.framework` 与用户启用清单全部就绪；
 - daemon 新增 in-memory `manualUnmountSuppressions`：手动卸载启动区/交换区/保密区后，即使该分区 policy 仍为 auto-mount，也不会在同一次连接周期被 reconcile 立即重挂；手动挂载、切换该分区自动挂载开关或设备真正断开会清除 suppression；
+- 用户报告两块完全不同的 U 盘被合并为同一设备后，确认 LBA11 `PDKB` plaintext（例如 `disk&ven_lexar&prod_usb_flash_drive`）是 metadata crypto identity，并非物理盘唯一标识；旧 discovery cache 也只比较 raw path、容量和 VID/PID，无法可靠识别相同规格换盘；
+- 设备身份现拆为两层：`metadataDeviceID` 仅用于 LBA12 crypto closure；产品持久 `deviceID` 严格使用 `SHA-256(VID + PID + metadataDeviceID + whole-disk capacity)` 的 80-bit hex suffix。不能使用 LBA11 raw：该扇区会在每次进入内网环境时被重写，同一物理盘必须保持相同产品身份。IOKit registry-entry ID 只参与当前 attachment cache 命中，拔插/换盘会重新读取 metadata，但不进入跨插拔主键；
+- 旧无 suffix 的 policy/Keychain 记录只在 VID/PID 与容量同时精确匹配时迁移到新物理 ID；无法消歧时保留为离线旧记录并要求该盘重新验证密码，禁止猜测归属；
+- GitHub Actions `CI-Legacy-Contract-Only` artifact 使用临时自签 leaf、legacy diagnostic service，明确不能访问 macOS 26 physical raw USB，也未形成 Developer ID Installer + notarization 分发链。普通用户发行必须使用 Developer ID Application/Installer、`smappservice`、notarization 与 stapling；Apple Development 本机包也不等于可公开分发包；
 - 授权成功识别结果按当前 attachment 缓存，避免每次 UI/Disk Arbitration reconciliation 都重新打开 whole raw disk；设备消失后 cache 随 connected set 清除；
 - 本机正式修复包必须用有效 Apple Development/Developer ID 身份构建 `smappservice`，不能安装 CI legacy contract artifact。
 

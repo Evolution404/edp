@@ -72,6 +72,14 @@ private enum ValidateProductModels {
                     "partition snapshot round-trip changed partition ordering")
         try require(!decoded.globalAutoMountEnabled, "snapshot round-trip changed global policy")
 
+        let physicalID = initial.deviceID + "#0123456789abcdef"
+        try store.migrateDeviceID(from: initial.deviceID, to: physicalID)
+        let migrated = try store.load()
+        try require(migrated.devices.count == 1, "device-ID migration created a duplicate policy")
+        try require(migrated.devices[0].deviceID == physicalID, "physical device ID was not migrated")
+        try require(migrated.devices[0].displayName == "财务安全盘", "device-ID migration lost display name")
+        try require(migrated.devices[0].policy(for: 2).autoMount, "device-ID migration lost auto-mount policy")
+
         print("RESULT=EDP_PRODUCT_MODELS_OK")
     }
 }

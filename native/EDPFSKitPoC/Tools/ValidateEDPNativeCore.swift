@@ -86,6 +86,7 @@ struct ValidateEDPNativeCore {
         try validateSM4()
         try validateEncryptedReader()
         try validateEncryptedWriter()
+        try validateStablePhysicalDeviceID()
         try validateMetadataErrorPaths()
 
         var lba12Count = 0
@@ -163,6 +164,30 @@ struct ValidateEDPNativeCore {
         print("RESULT=SWIFT_NATIVE_LBA11_LBA12_OK")
         print("RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK")
         print("RESULT=SWIFT_NATIVE_ENCRYPTED_WRITER_OK")
+    }
+
+    private static func validateStablePhysicalDeviceID() throws {
+        let first = EDPVolumeMetadata.stablePhysicalDeviceID(
+            metadataDeviceID: "disk&ven_fixture&prod_usb",
+            vidHex: "21c4",
+            pidHex: "0cd1",
+            sizeBytes: 64 * 1024 * 1024
+        )
+        let repeated = EDPVolumeMetadata.stablePhysicalDeviceID(
+            metadataDeviceID: "disk&ven_fixture&prod_usb",
+            vidHex: "21c4",
+            pidHex: "0cd1",
+            sizeBytes: 64 * 1024 * 1024
+        )
+        let second = EDPVolumeMetadata.stablePhysicalDeviceID(
+            metadataDeviceID: "disk&ven_fixture&prod_usb",
+            vidHex: "21c4",
+            pidHex: "0cd1",
+            sizeBytes: 128 * 1024 * 1024
+        )
+        try require(first == repeated, "physical device ID must be deterministic")
+        try require(first != second, "capacity must participate in physical device ID")
+        print("RESULT=STABLE_PHYSICAL_DEVICE_ID_UNIQUE")
     }
 
     private static func validateCRC() throws {

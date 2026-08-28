@@ -2,7 +2,7 @@ name: Native Swift Fast Checks
 
 on:
   push:
-    branches: ["feat/macos26-native-fskit", "feat/macos26-fskit-*"]
+    branches: ["feat/macos26-native-fskit", "feat/macos26-fskit-*", "test/fuset-minimal-fskit-bridge"]
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"

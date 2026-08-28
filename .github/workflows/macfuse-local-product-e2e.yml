@@ -8,6 +8,7 @@ on:
       - "product/EDPTransportRuntimePolicy.swift"
       - "product/EDPMacFUSERuntimePolicy.swift"
       - "product/EDPConsoleExec.c"
+      - "product/EDPVaultRuntime.swift"
       - "product/EDPNativeSystem.swift"
       - "product/EDPBlockDevicePublisher.swift"
       - "installer/build-transport-backends.sh"
@@ -16,6 +17,8 @@ on:
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPAdapter.c"
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c"
       - "native/EDPFSKitPoC/Tools/FuseTMinimal/PrepareEDPFilesystemFixture.swift"
+      - "native/EDPFSKitPoC/Extension/EDPCrypto.swift"
+      - "native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift"
       - "native/EDPFSKitPoC/Tools/DiskImages2Attach.m"
       - ".github/workflows/macfuse-local-product-e2e.yml"
   workflow_dispatch:

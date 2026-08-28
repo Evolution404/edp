@@ -12,6 +12,8 @@ struct PhysicalDisk: Hashable, Sendable {
     let mediaName: String
     let vidHex: String
     let pidHex: String
+    let registryEntryID: UInt64
+    let metadataDeviceID: String
     let deviceID: String
 }
 
@@ -99,7 +101,7 @@ private func hasAncestorBSDName(_ service: io_registry_entry_t, _ target: String
 }
 
 enum EDPNativeDeviceDiscovery {
-    static func allWholeUSBMedia() throws -> [(bsdName: String, size: UInt64, mediaName: String, vid: String, pid: String)] {
+    static func allWholeUSBMedia() throws -> [(bsdName: String, size: UInt64, mediaName: String, vid: String, pid: String, registryEntryID: UInt64)] {
         guard let matching = IOServiceMatching("IOMedia") else {
             throw RuntimeNativeError("IOServiceMatching(IOMedia) failed")
         }
@@ -110,7 +112,7 @@ enum EDPNativeDeviceDiscovery {
         }
         defer { IOObjectRelease(iterator) }
 
-        var answer: [(String, UInt64, String, String, String)] = []
+        var answer: [(String, UInt64, String, String, String, UInt64)] = []
         while case let service = IOIteratorNext(iterator), service != 0 {
             defer { IOObjectRelease(service) }
             guard ioBool(ioRegistryProperty(service, "Whole")) == true,
@@ -121,6 +123,10 @@ enum EDPNativeDeviceDiscovery {
                   let usb = usbAncestorIdentity(of: service) else {
                 continue
             }
+            var registryEntryID: UInt64 = 0
+            guard IORegistryEntryGetRegistryEntryID(service, &registryEntryID) == KERN_SUCCESS else {
+                continue
+            }
             let mediaName = usb.productName
                 ?? (ioRegistryProperty(service, "Media Name") as? String)
                 ?? "EDP USB"
@@ -129,7 +135,8 @@ enum EDPNativeDeviceDiscovery {
                 size,
                 mediaName,
                 String(format: "%04x", usb.vid),
-                String(format: "%04x", usb.pid)
+                String(format: "%04x", usb.pid),
+                registryEntryID
             ))
         }
         return answer
@@ -180,7 +187,7 @@ enum EDPNativeDeviceDiscovery {
                 at: EDPVolumeMetadata.lba11ByteOffset,
                 length: Int(EDPMetadataProbe.legacySectorByteLength)
             ),
-            let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+            let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
                 [UInt8](lba11),
                 vidHex: media.vid,
                 pidHex: media.pid,
@@ -188,6 +195,12 @@ enum EDPNativeDeviceDiscovery {
             ) else {
                 continue
             }
+            let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(
+                metadataDeviceID: metadataDeviceID,
+                vidHex: media.vid,
+                pidHex: media.pid,
+                sizeBytes: media.size
+            )
             answer.append(PhysicalDisk(
                 bsdName: media.bsdName,
                 rawPath: rawPath,
@@ -195,6 +208,8 @@ enum EDPNativeDeviceDiscovery {
                 mediaName: media.mediaName,
                 vidHex: media.vid,
                 pidHex: media.pid,
+                registryEntryID: media.registryEntryID,
+                metadataDeviceID: metadataDeviceID,
                 deviceID: deviceID
             ))
         }

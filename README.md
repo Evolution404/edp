@@ -91,6 +91,13 @@ MACFUSE_DMG=/path/to/macfuse-5.3.3.dmg \
   artifacts/EDP-USB-Vault-0.5.0-arm64-Clean.pkg
 ```
 
+GitHub Actions 上传的 `CI-Legacy-Contract-Only` 包只验证构建、签名边界和
+XPC contract：它使用临时自签证书、legacy diagnostic service，明确不能在
+macOS 26 访问物理 raw USB media，也不是给最终用户安装的发行包。可分发版本
+必须使用 Developer ID Application 签名 App/daemon、Developer ID Installer
+签名外层 pkg，并完成 Apple notarization/stapling；物理盘产品包必须使用
+`smappservice`。
+
 安装后先对每个 EDP 设备做一次本地密码登记：
 
 ```bash

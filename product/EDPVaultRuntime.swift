@@ -178,6 +178,7 @@ private func discoverEDPDisks(
                 && $0.sizeBytes == media.size
                 && $0.vidHex == media.vid
                 && $0.pidHex == media.pid
+                && $0.registryEntryID == media.registryEntryID
         }) {
             diagnostic?("bsd=\(media.bsdName);result=recognized_cached;deviceID=\(cached.deviceID)")
             answer.append(cached)
@@ -207,7 +208,7 @@ private func discoverEDPDisks(
             diagnostic?("bsd=\(media.bsdName);result=metadata_not_edp")
             continue
         }
-        guard let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+        guard let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
                   [UInt8](metadata.lba11),
                   vidHex: media.vid,
                   pidHex: media.pid,
@@ -216,6 +217,12 @@ private func discoverEDPDisks(
             diagnostic?("bsd=\(media.bsdName);result=device_id_invalid")
             continue
         }
+        let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(
+            metadataDeviceID: metadataDeviceID,
+            vidHex: media.vid,
+            pidHex: media.pid,
+            sizeBytes: media.size
+        )
         diagnostic?("bsd=\(media.bsdName);result=recognized;deviceID=\(deviceID)")
         answer.append(PhysicalDisk(
             bsdName: media.bsdName,
@@ -224,6 +231,8 @@ private func discoverEDPDisks(
             mediaName: media.mediaName,
             vidHex: media.vid,
             pidHex: media.pid,
+            registryEntryID: media.registryEntryID,
+            metadataDeviceID: metadataDeviceID,
             deviceID: deviceID
         ))
     }
@@ -738,17 +747,17 @@ private func verifiedPartitionTypes(
         for: disk.rawPath,
         authorization: rawAuthorization
     )
-    guard let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+    guard let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
         [UInt8](metadata.lba11),
         vidHex: disk.vidHex,
         pidHex: disk.pidHex,
         sizeBytes: disk.sizeBytes
-    ), deviceID == disk.deviceID else {
+    ), metadataDeviceID == disk.metadataDeviceID else {
         throw fail("EDP device identity changed during authorization")
     }
     let plain = try EDPVolumeMetadata.decodeLBA12(
         [UInt8](metadata.lba12),
-        deviceID: deviceID
+        deviceID: metadataDeviceID
     )
     let volumes = try EDPVolumeMetadata.parseLBA12Entries(plain, password: password)
     let verified = volumes.map(\.partitionType).filter { $0 == 2 || $0 == 4 }
@@ -836,6 +845,25 @@ private final class EDPDaemonController: @unchecked Sendable {
 
     private func observe(_ disks: [PhysicalDisk]) throws {
         for disk in disks {
+            let document = try policies.load()
+            if !document.devices.contains(where: { $0.deviceID == disk.deviceID }),
+               let legacy = document.devices.first(where: {
+                   $0.deviceID == disk.metadataDeviceID
+                       && $0.lastVIDPID == "\(disk.vidHex):\(disk.pidHex)"
+                       && $0.lastSizeBytes == disk.sizeBytes
+               }) {
+                do {
+                    try store.migrateDeviceID(from: legacy.deviceID, to: disk.deviceID)
+                } catch {
+                    NSLog(
+                        "EDP legacy credential could not be migrated from %@ to %@: %@",
+                        legacy.deviceID,
+                        disk.deviceID,
+                        String(describing: error)
+                    )
+                }
+                try policies.migrateDeviceID(from: legacy.deviceID, to: disk.deviceID)
+            }
             _ = try policies.observe(
                 deviceID: disk.deviceID,
                 mediaName: disk.mediaName,
@@ -1235,7 +1263,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             lba4: [UInt8](metadata.lba4),
             lba7: [UInt8](metadata.lba7)
         ) != nil,
-        let deviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+        let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
             [UInt8](metadata.lba11),
             vidHex: media.vid,
             pidHex: media.pid,
@@ -1243,6 +1271,12 @@ private final class EDPDaemonController: @unchecked Sendable {
         ) else {
             throw fail("authorized disk does not contain valid EDP metadata")
         }
+        let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(
+            metadataDeviceID: metadataDeviceID,
+            vidHex: media.vid,
+            pidHex: media.pid,
+            sizeBytes: media.size
+        )
         let disk = PhysicalDisk(
             bsdName: media.bsdName,
             rawPath: rawPath,
@@ -1250,6 +1284,8 @@ private final class EDPDaemonController: @unchecked Sendable {
             mediaName: media.mediaName,
             vidHex: media.vid,
             pidHex: media.pid,
+            registryEntryID: media.registryEntryID,
+            metadataDeviceID: metadataDeviceID,
             deviceID: deviceID
         )
         queue.sync {
