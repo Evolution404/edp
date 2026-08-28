@@ -65,6 +65,8 @@ e12b5e2 EDPOpen 初始提交: 项目定位与结构规划
 - `disk_map` 尾部区域用 CHS 基准（`total/16065*16065`），与 u_disk 采集脚本口径一致；sectormanage 理论口径用物理 size，两者在多数盘上重合。
 - 空盘时 `list_disks` 返回空、`analyze_disk` 报「无法识别」——这是正确行为，不是 bug。
 - tauri.conf.json 的 `bundle.icon` 为空数组，`generate_context!` 仍要求 `icons/icon.png` 存在（已放占位图标）。
+- **历史提交残留**：parse_golden.json/convert_golden.json 曾误入 a9e79e8/5b755c0 两个历史提交（真实盘扇区 hex，私有库风险低）；b6d13cd 起已移出索引并 gitignore。若仓库将来转公开，须先用 `git filter-repo` 清历史。**生成脚本在 tools/，任何机器可重生成 golden。**
+- u_disk 主仓库有完整项目记忆（`~/.claude/projects/-Users-zhangyuxi-Desktop-u-disk/memory/MEMORY.md`），逆向结论的原始出处都在那里。
 
 ## 6. 接手后怎么干活
 
