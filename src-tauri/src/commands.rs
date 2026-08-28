@@ -58,8 +58,7 @@ fn status_label(s: parser::DiskStatus) -> String {
 
 /// 概览: 识别 + 状态判定 + MBR + LBA12 布局
 #[tauri::command]
-pub fn analyze_disk(disk_no: u32) -> Result<DiskOverview, String> {
-    if disk_no < 2 { return Err("拒绝系统盘(须 disk2+)".into()); }
+pub fn analyze_disk(disk_no: u32) -> Result<DiskOverview, String> {    if disk_no < 2 { return Err("拒绝系统盘(须 disk2+)".into()); }
     let id = disk::identify(disk_no)
         .ok_or("无法识别 device_id(LBA7 两候选均未解出 EDPF) — 非 cems 盘?")?;
 
@@ -123,4 +122,117 @@ pub fn analyze_disk(disk_no: u32) -> Result<DiskOverview, String> {
         partitions,
         layout,
     })
+}
+
+// ── 扇区读取(raw + 解密 + 字段表) ─────────────────────────────────────────
+#[derive(Serialize)]
+pub struct SectorView {
+    pub disk: u32,
+    pub lba: u64,
+    pub raw_hex: String,
+    pub dec_hex: Option<String>,      // 可解密扇区才有
+    pub dec_method: Option<String>,   // 解密方法描述
+    pub fields: Vec<parser::FieldRow>,// 字段表(对 dec 视图; LBA0 对 raw)
+}
+
+fn hexs(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
+
+#[tauri::command]
+pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
+    if disk_no < 2 { return Err("拒绝系统盘".into()); }
+    let raw = disk::read_lba(disk_no, lba).map_err(|e| format!("读 LBA{lba} 失败: {e}"))?;
+    let mut sv = SectorView { disk: disk_no, lba, raw_hex: hexs(&raw), dec_hex: None, dec_method: None, fields: Vec::new() };
+
+    // 惰性身份识别(仅需要 device_id 的扇区)
+    let ident = || disk::identify(disk_no);
+    let lba11_params = || -> Option<(Vec<u8>, Vec<u8>, Vec<u64>)> {
+        let (vid, pid) = disk::usb_vid_pid(disk_no)?;
+        let size = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no)?.size_bytes;
+        let chs = (size / (255 * 63 * 512)) * 255 * 63 * 512;
+        Some((vid.into_bytes(), pid.into_bytes(), vec![size, chs]))
+    };
+
+    match lba {
+        0 => { sv.fields = parser::lba0_fields(&raw); }
+        4 => {
+            if let Some((dec, serial)) = crypto::lba4_decode(&raw) {
+                sv.dec_method = Some(format!("XOR K0=0x{:04X}($$$serial={serial})", crypto::lba4_k0_from_serial(serial)));
+                sv.fields = parser::lba4_fields(&dec);
+                sv.dec_hex = Some(hexs(&dec));
+            }
+        }
+        6 => {
+            let dec = crypto::lba6_decode(&raw);
+            let crc = ident().map(|i| i.crc).unwrap_or(0);
+            sv.dec_method = Some("XOR K0=0x4DAA(SAFE6)".into());
+            sv.fields = parser::lba6_fields(&dec, crc);
+            sv.dec_hex = Some(hexs(&dec));
+        }
+        7 => {
+            if let Some(id) = ident() {
+                let dec = crypto::xor_rolling(&raw, id.k0);
+                if dec.starts_with(b"EDPF") {
+                    sv.dec_method = Some(format!("XOR K0=0x{:04X}(CRC32(device_id))", id.k0));
+                    sv.fields = parser::lba7_fields(&dec);
+                    sv.dec_hex = Some(hexs(&dec));
+                }
+            }
+        }
+        8 => {
+            if let Some(id) = ident() {
+                let mut dec = crypto::a6b0_full(&raw[..0x170], &id.crc.to_le_bytes(), 0);
+                dec.extend_from_slice(&[0u8; 144]);
+                sv.dec_method = Some("A6B0(368B) key=CRC32(device_id)".into());
+                sv.fields = parser::lba8_fields(&dec);
+                sv.dec_hex = Some(hexs(&dec));
+            }
+        }
+        9 => {
+            if let Some(id) = ident() {
+                let mut dec = crypto::a6b0_full(&raw[..0x80], &id.crc.to_le_bytes(), 0);
+                dec.extend_from_slice(&[0u8; 128]);
+                let xor_part: Vec<u8> = raw[0x100..0x120].iter().map(|b| b ^ 0x88).collect();
+                dec.extend_from_slice(&xor_part);
+                dec.extend_from_slice(&[0u8; 224]);
+                sv.dec_method = Some("A6B0(128B)+XOR0x88(32B)".into());
+                sv.fields = parser::lba9_fields(&dec);
+                sv.dec_hex = Some(hexs(&dec));
+            }
+        }
+        11 => {
+            if let Some((vid, pid, sizes)) = lba11_params() {
+                let rand = &raw[..0x100];
+                for &sz in &sizes {
+                    let mut buf = rand.to_vec();
+                    buf.extend_from_slice(&vid);
+                    buf.extend_from_slice(&pid);
+                    buf.extend_from_slice(&sz.to_le_bytes());
+                    let key = crypto::crc32_bare(&buf).to_le_bytes();
+                    let pt = crypto::a6b0_full(&raw[0x100..], &key, 0);
+                    if pt.starts_with(b"PDKB") {
+                        let mut dec = rand.to_vec();
+                        dec.extend_from_slice(&pt);
+                        let label = if sz % (255 * 63 * 512) == 0 && sz != sizes[0] { "CHS" } else { "DiskSize" };
+                        sv.dec_method = Some(format!("A6B0 key=crc32(rand+VID+PID+{label})"));
+                        sv.fields = parser::lba11_fields(&dec);
+                        sv.dec_hex = Some(hexs(&dec));
+                        break;
+                    }
+                }
+            }
+        }
+        12 => {
+            if let Some(id) = ident() {
+                let mut dec = crypto::a6b0_full(&raw[..0x170], &id.crc.to_le_bytes(), 0);
+                dec.extend_from_slice(&raw[0x170..]);
+                if dec.starts_with(b"EDPF") {
+                    sv.dec_method = Some("A6B0(368B) key=CRC32(device_id); 尾144B raw".into());
+                    sv.fields = parser::lba12_fields(&dec);
+                    sv.dec_hex = Some(hexs(&dec));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(sv)
 }

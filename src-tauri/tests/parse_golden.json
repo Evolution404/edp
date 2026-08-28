@@ -1,0 +1,566 @@
+{
+ "disks": [
+  {
+   "name": "disk4_121077760_vid0951_pid1666_disk&ven_kingston&prod_datatraveler_3.0_lid1625940067_20260827_173024.bin",
+   "device_id": "disk&ven_kingston&prod_datatraveler_3.0",
+   "lba4": {
+    "serial": 1625940067,
+    "xor8": "E86168EB",
+    "second": "60E9E063",
+    "llgb": true
+   },
+   "lba6": {
+    "label": "江苏省电力有限公司/技能培训中心",
+    "user": "赵爽",
+    "serial_ascii": "",
+    "crc_ok": true,
+    "crc_l1_ok": true,
+    "safe6": true,
+    "glab": "322CA28A",
+    "flag_1f0": 1,
+    "reg_1ca": 17463
+   },
+   "lba8_elabel": [
+    {
+     "tag": "ELABEL",
+     "kvs": [
+      "GLab=322CA28A-D7D1448B-DCE2CED9",
+      "Indus=",
+      "Orgcd=",
+      "Org=",
+      "Unit=",
+      "Dept=江苏省电力有限公司/技能培训中心",
+      "User=赵爽",
+      "Alarm=",
+      "Autonum=",
+      "Label=江苏电力!SAFE6",
+      "Rmark=",
+      "VOL0=",
+      "VOL1=",
+      "VOL2=",
+      "VOLC0=",
+      "VOLC1=",
+      "VOLC2="
+     ]
+    }
+   ],
+   "lba7_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 121064048,
+     "size": 3072,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 121064048,
+     "size": 3072,
+     "pwd_crc": "0429735D"
+    }
+   ],
+   "lba12_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 20480,
+     "size": 58866139136,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 114995200,
+     "size": 3097624576,
+     "pwd_crc": "0429735D"
+    }
+   ]
+  },
+  {
+   "name": "disk4_243625984_vid21c4_pid0cd1_disk&ven_lexar&prod_usb_flash_drive_lid3164177653_20260827_221910.bin",
+   "device_id": "disk&ven_lexar&prod_usb_flash_drive",
+   "lba4": {
+    "serial": 3164177653,
+    "xor8": "34110C7D",
+    "second": "7647B1EF",
+    "llgb": true
+   },
+   "lba6": {
+    "label": "江苏省电力有限公司/南京供电公司/输电运检中心",
+    "user": "姚一鸣",
+    "serial_ascii": "YD000001",
+    "crc_ok": true,
+    "crc_l1_ok": true,
+    "safe6": true,
+    "glab": "322CA28A",
+    "flag_1f0": 1,
+    "reg_1ca": 62944
+   },
+   "lba8_elabel": [
+    {
+     "tag": "ELABEL",
+     "kvs": [
+      "GLab=322CA28A-D7D1448B-DCE2CED9",
+      "Indus=",
+      "Orgcd=",
+      "Org=",
+      "Unit=",
+      "Dept=江苏省电力有限公司/南京供电公司/输电运检中心",
+      "User=姚一鸣",
+      "Alarm=",
+      "Autonum=YD000001",
+      "Label=江苏电力!SAFE6",
+      "Rmark=",
+      "VOL0=",
+      "VOL1=",
+      "VOL2=",
+      "VOLC0=",
+      "VOLC1=",
+      "VOLC2="
+     ]
+    }
+   ],
+   "lba7_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 243623933,
+     "size": 3072,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 243623933,
+     "size": 3072,
+     "pwd_crc": "0429735D"
+    }
+   ],
+   "lba12_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 20480,
+     "size": 118477684736,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 231424000,
+     "size": 6234963968,
+     "pwd_crc": "0429735D"
+    }
+   ]
+  },
+  {
+   "name": "disk4_245760000_vid3535_pid6300_disk&ven_aigo&prod_u335&rev_pmap_lid1987718388_20260827_191701.bin",
+   "device_id": "disk&ven_aigo&prod_u335&rev_pmap",
+   "lba4": {
+    "serial": 1987718388,
+    "xor8": "FEF2A47C",
+    "second": "17D52D63",
+    "llgb": true
+   },
+   "lba6": {
+    "label": "输电运检中心",
+    "user": "张玉玺",
+    "serial_ascii": "1",
+    "crc_ok": true,
+    "crc_l1_ok": true,
+    "safe6": true,
+    "glab": "322CA28A",
+    "flag_1f0": 1,
+    "reg_1ca": 20417
+   },
+   "lba8_elabel": [
+    {
+     "tag": "ELABEL",
+     "kvs": [
+      "GLab=322CA28A-D7D1448B-DCE2CED9",
+      "Indus=",
+      "Orgcd=",
+      "Org=",
+      "Unit=",
+      "Dept=输电运检中心",
+      "User=张玉玺",
+      "Alarm=",
+      "Autonum=1",
+      "Label=江苏电力!SAFE6",
+      "Rmark=普通",
+      "VOL0=",
+      "VOL1=",
+      "VOL2=",
+      "VOLC0=",
+      "VOLC1=",
+      "VOLC2="
+     ]
+    }
+   ],
+   "lba7_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10454016,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 245744513,
+     "size": 3072,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 245744513,
+     "size": 3072,
+     "pwd_crc": "00000000"
+    }
+   ],
+   "lba12_entries": [
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10454016,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 20481,
+     "size": 124464936448,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 243116060,
+     "size": 1340720640,
+     "pwd_crc": "0429735D"
+    }
+   ]
+  },
+  {
+   "name": "disk4_245760000_vid3535_pid6300_disk&ven_aigo&prod_u335_lid2071754312_20260828_120922.bin",
+   "device_id": "disk&ven_aigo&prod_u335",
+   "lba4": {
+    "serial": 2071754312,
+    "xor8": "F3F4FEC0",
+    "second": "7B7C7648",
+    "llgb": true
+   },
+   "lba6": {
+    "label": "*^$@江苏省电力有限公司/盐城供电公司/盐城市建湖区/建湖供电公司/建",
+    "user": "周士彪",
+    "serial_ascii": "",
+    "crc_ok": true,
+    "crc_l1_ok": true,
+    "safe6": true,
+    "glab": "322CA28A",
+    "flag_1f0": 1,
+    "reg_1ca": 17463
+   },
+   "lba8_elabel": [
+    {
+     "tag": "ELABEL",
+     "kvs": [
+      "GLab=322CA28A-D7D1448B-DCE2CED9",
+      "Indus=",
+      "Orgcd=",
+      "Org=",
+      "Unit=",
+      "Dept=江苏省电力有限公司/盐城供电公司/盐城市建湖区/建湖供电公司/建湖输变电运检中心",
+      "User=周士彪",
+      "Alarm=",
+      "Autonum=",
+      "Label=江苏电力!SAFE6",
+      "Rmark=",
+      "VOL0=",
+      "VOL1=",
+      "VOL2=",
+      "VOLC0"
+     ]
+    }
+   ],
+   "lba7_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 245744513,
+     "size": 3072,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 245744513,
+     "size": 3072,
+     "pwd_crc": "00000000"
+    }
+   ],
+   "lba12_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 20480,
+     "size": 113227464704,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 221169664,
+     "size": 12580945920,
+     "pwd_crc": "0429735D"
+    }
+   ]
+  },
+  {
+   "name": "disk4_245760000_vid3535_pid6300_disk&ven_aigo&prod_u335_lid2071754312_20260828_120932.bin",
+   "device_id": "disk&ven_aigo&prod_u335",
+   "lba4": {
+    "serial": 2071754312,
+    "xor8": "F3F4FEC0",
+    "second": "7B7C7648",
+    "llgb": true
+   },
+   "lba6": {
+    "label": "*^$@江苏省电力有限公司/盐城供电公司/盐城市建湖区/建湖供电公司/建",
+    "user": "周士彪",
+    "serial_ascii": "",
+    "crc_ok": true,
+    "crc_l1_ok": true,
+    "safe6": true,
+    "glab": "322CA28A",
+    "flag_1f0": 1,
+    "reg_1ca": 62944
+   },
+   "lba8_elabel": [
+    {
+     "tag": "ELABEL",
+     "kvs": [
+      "GLab=322CA28A-D7D1448B-DCE2CED9",
+      "Indus=",
+      "Orgcd=",
+      "Org=",
+      "Unit=",
+      "Dept=江苏省电力有限公司/盐城供电公司/盐城市建湖区/建湖供电公司/建湖输变电运检中心",
+      "User=周士彪",
+      "Alarm=",
+      "Autonum=",
+      "Label=江苏电力!SAFE6",
+      "Rmark=",
+      "VOL0=",
+      "VOL1=",
+      "VOL2=",
+      "VOLC0"
+     ]
+    }
+   ],
+   "lba7_entries": [
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 63,
+     "size": 113238835712,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 1,
+     "enc": 1,
+     "start": 245744513,
+     "size": 3072,
+     "pwd_crc": "0429735D"
+    }
+   ],
+   "lba12_entries": [
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 63,
+     "size": 113238835712,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 1,
+     "enc": 1,
+     "start": 221169664,
+     "size": 12580945920,
+     "pwd_crc": "0429735D"
+    }
+   ]
+  },
+  {
+   "name": "disk4_61440000_vid3535_pid6300_disk&ven_aigo&prod_u320_lid1468967482_20260827_172228.bin",
+   "device_id": "disk&ven_aigo&prod_u320",
+   "lba4": {
+    "serial": 1468967482,
+    "xor8": "DF0622B2",
+    "second": "578EAA3A",
+    "llgb": true
+   },
+   "lba6": {
+    "label": "江苏省电力有限公司/技能培训中心",
+    "user": "赵爽",
+    "serial_ascii": "",
+    "crc_ok": true,
+    "crc_l1_ok": true,
+    "safe6": true,
+    "glab": "322CA28A",
+    "flag_1f0": 1,
+    "reg_1ca": 17463
+   },
+   "lba8_elabel": [
+    {
+     "tag": "ELABEL",
+     "kvs": [
+      "GLab=322CA28A-D7D1448B-DCE2CED9",
+      "Indus=",
+      "Orgcd=",
+      "Org=",
+      "Unit=",
+      "Dept=江苏省电力有限公司/技能培训中心",
+      "User=赵爽",
+      "Alarm=",
+      "Autonum=",
+      "Label=江苏电力!SAFE6",
+      "Rmark=",
+      "VOL0=",
+      "VOL1=",
+      "VOL2=",
+      "VOLC0=",
+      "VOLC1=",
+      "VOLC2="
+     ]
+    }
+   ],
+   "lba7_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 61430768,
+     "size": 3072,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 61430768,
+     "size": 3072,
+     "pwd_crc": "0429735D"
+    }
+   ],
+   "lba12_entries": [
+    {
+     "type": 1,
+     "active": 1,
+     "enc": 0,
+     "start": 63,
+     "size": 10453504,
+     "pwd_crc": "00000000"
+    },
+    {
+     "type": 2,
+     "active": 1,
+     "enc": 1,
+     "start": 20480,
+     "size": 29864624128,
+     "pwd_crc": "0429735D"
+    },
+    {
+     "type": 4,
+     "active": 0,
+     "enc": 1,
+     "start": 58351616,
+     "size": 1571946496,
+     "pwd_crc": "0429735D"
+    }
+   ]
+  }
+ ]
+}

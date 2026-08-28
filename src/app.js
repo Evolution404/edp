@@ -55,12 +55,76 @@ async function refreshDisks() {
 }
 refreshDisks();
 
-/* ── 概览页: 选盘 → analyze_disk → 渲染 ── */
+/* ── 扇区页: read_sector + hexdump(字段着色) ── */
+const META_LBAS = [0, 4, 6, 7, 8, 9, 11, 12];
+let sectorView = null;
+
+$('#sector-jumps').innerHTML = META_LBAS.map(l => `<span class="jump-btn" data-lba="${l}">${l}</span>`).join(' ');
+document.querySelectorAll('.jump-btn').forEach(b =>
+  b.addEventListener('click', () => { $('#sector-lba').value = b.dataset.lba; loadSector(+b.dataset.lba); }));
+$('#btn-sector-load').addEventListener('click', () => loadSector(+$('#sector-lba').value || 0));
+$('#sector-prev').addEventListener('click', () => { const i = +$('#sector-lba').value || 0; $('#sector-lba').value = Math.max(0, i - 1); loadSector(i - 1); });
+$('#sector-next').addEventListener('click', () => { const i = +$('#sector-lba').value || 0; $('#sector-lba').value = i + 1; loadSector(i + 1); });
+document.querySelectorAll('input[name=sector-view]').forEach(r => r.addEventListener('change', () => renderHexdump()));
+
+async function loadSector(lba) {
+  if (!currentDisk || lba < 0) return;
+  const el = $('#hexdump');
+  el.textContent = `读取 disk${currentDisk} LBA${lba}…`;
+  try {
+    sectorView = await invoke('read_sector', { diskNo: currentDisk, lba });
+    renderHexdump();
+  } catch (e) {
+    sectorView = null;
+    el.textContent = '错误: ' + e;
+  }
+}
+
+function renderHexdump() {
+  if (!sectorView) return;
+  const view = document.querySelector('input[name=sector-view]:checked').value;
+  const useDec = view === 'dec' && sectorView.dec_hex;
+  const hexStr = useDec ? sectorView.dec_hex : sectorView.raw_hex;
+  $('#sector-method').textContent =
+    (sectorView.dec_method ? `[${view === 'dec' && !useDec ? '不可解密, 显示原始' : sectorView.dec_method}]` : '[无解密]');
+  const bytes = hexStr.match(/../g) || [];
+  // 字段着色映射: 字节偏移 → FieldRow
+  const fmap = new Map();
+  if (useDec) for (const f of sectorView.fields)
+    for (let i = 0; i < f.len && f.off + i < 512; i++)
+      if (!fmap.has(f.off + i)) fmap.set(f.off + i, f);
+
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  let out = '';
+  for (let row = 0; row < 32; row++) {
+    let hexPart = '', asciiPart = '';
+    for (let c = 0; c < 16; c++) {
+      const idx = row * 16 + c;
+      const f = fmap.get(idx);
+      const b = bytes[idx] || '00';
+      const ch = parseInt(b, 16);
+      const asc = ch >= 32 && ch < 127 ? esc(String.fromCharCode(ch)) : '.';
+      if (f) {
+        const tip = esc(`${f.name} · ${f.desc}` + (f.value ? `\n= ${f.value}` : ''));
+        hexPart += `<span class="b c-${f.color}" data-tip="${tip}">${b}</span> `;
+        asciiPart += `<span class="b c-${f.color}" data-tip="${tip}">${asc}</span>`;
+      } else {
+        hexPart += `<span class="b">${b}</span> `;
+        asciiPart += `<span class="b dim2">${asc}</span>`;
+      }
+    }
+    out += `<span class="off">${(row * 16).toString(16).padStart(3, '0')}</span>${hexPart}<span class="ascii">${asciiPart}</span>\n`;
+  }
+  $('#hexdump').innerHTML = out;
+}
 const STATUS_COLOR = { encrypted: 'var(--accent)', nopwd: 'var(--accent-2)', not_cems: 'var(--text-dim)' };
 $('#disk-select').addEventListener('change', (e) => {
   const d = e.target.value;
-  if (d) analyzeDisk(+d); else location.reload();
+  if (d) { currentDisk = +d; analyzeDisk(+d); loadSector($('#sector-lba').value || 0); }
+  else location.reload();
 });
+
+let currentDisk = null;
 
 async function analyzeDisk(disk) {
   const box = $('#overview-content');

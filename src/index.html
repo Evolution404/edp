@@ -32,7 +32,18 @@
       <div class="card placeholder">全盘区域色块 + LBA0-13 方格网格 · 悬停看含义 · 点击跳扇区</div>
     </section>
     <section id="page-sector" class="page">
-      <div class="card placeholder">hexdump 浏览器 · 字段级着色 · raw / 解密切换 · 字节编辑</div>
+      <div class="card sector-nav">
+        <span>LBA</span>
+        <input id="sector-lba" type="number" min="0" value="0" style="width:110px">
+        <button id="btn-sector-load">读取</button>
+        <span id="sector-prev" class="nav-btn" title="上一扇区">◀</span>
+        <span id="sector-next" class="nav-btn" title="下一扇区">▶</span>
+        <span id="sector-jumps"></span>
+        <label class="view-sw"><input type="radio" name="sector-view" value="dec" checked> 解密视图</label>
+        <label class="view-sw"><input type="radio" name="sector-view" value="raw"> 原始密文</label>
+        <span id="sector-method" class="dim"></span>
+      </div>
+      <div class="card"><pre id="hexdump" class="hexdump">选择盘后读取扇区…</pre></div>
     </section>
     <section id="page-convert" class="page">
       <div class="card placeholder">免密改造预览 → 授权写入（自动备份 → 写 5 扇 → 回读校验）</div>

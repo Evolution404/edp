@@ -99,3 +99,25 @@ main { flex: 1; overflow: auto; padding: 16px; }
 table.grid { border-collapse: collapse; width: 100%; }
 table.grid th, table.grid td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--border); }
 table.grid th { color: var(--text-dim); font-weight: 500; }
+
+/* ── 扇区页 ── */
+.sector-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sector-nav input[type=number] { width: 110px; }
+.nav-btn { cursor: pointer; padding: 2px 8px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); }
+.nav-btn:hover { color: var(--accent); border-color: var(--accent); }
+.view-sw { color: var(--text-dim); cursor: pointer; display: flex; gap: 4px; align-items: center; }
+.jump-btn { cursor: pointer; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
+.jump-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+.hexdump { font-size: 12px; line-height: 1.7; overflow-x: auto; white-space: pre; }
+.hexdump .off { color: var(--text-dim); margin-right: 12px; }
+.hexdump .b { padding: 0 1px; border-radius: 2px; cursor: default; }
+.hexdump .ascii { margin-left: 14px; }
+.hexdump .c-magic  { background: #ff7b7226; color: #ff9d94; }
+.hexdump .c-part   { background: #58a6ff22; color: #8cc0ff; }
+.hexdump .c-key    { background: #d2a8ff22; color: #d9b8ff; }
+.hexdump .c-label  { background: #3fb95022; color: #71d68b; }
+.hexdump .c-cipher { background: #8b949e18; color: #9aa6b1; }
+.hexdump .c-checksum { background: #d2992222; color: #e3b659; }
+.hexdump .c-warn   { background: #f8514926; color: #ff8a84; outline: 1px solid #f8514966; }
+.hexdump .dim2 { color: #565f6b; }
