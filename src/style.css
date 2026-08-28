@@ -1,0 +1,85 @@
+:root {
+  --bg: #0d1117;
+  --bg-panel: #161b22;
+  --bg-card: #1c2129;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --accent-2: #3fb950;
+  --warn: #d29922;
+  --danger: #f85149;
+  /* 盘地图/字段语义色 */
+  --c-magic: #ff7b72;      /* magic 标识 */
+  --c-part: #58a6ff;       /* 分区表/布局 */
+  --c-key: #d2a8ff;        /* 密钥材料 */
+  --c-label: #3fb950;      /* 标签/文本 */
+  --c-cipher: #8b949e;     /* 密文 */
+  --c-zero: #21262d;       /* 零区 */
+  --c-data: #1f6feb44;     /* 明文数据区 */
+  --c-encrypt: #bc8cff44;  /* 加密区 */
+  --c-tail: #d2992244;     /* 尾部区域 */
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font: 13px/1.5 "SF Mono", "Menlo", "PingFang SC", monospace;
+  background: var(--bg); color: var(--text);
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  user-select: none;
+}
+
+/* ── 顶栏 ── */
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 16px; background: var(--bg-panel); border-bottom: 1px solid var(--border);
+}
+.brand { font-size: 17px; font-weight: 700; letter-spacing: 0.5px; }
+.brand .accent { color: var(--accent); }
+.disk-bar { display: flex; align-items: center; gap: 8px; flex: 1; }
+.hint { color: var(--text-dim); font-size: 12px; }
+
+select, button, input {
+  background: var(--bg-card); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 10px; font: inherit; cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── 页签 ── */
+.tabs { display: flex; gap: 4px; padding: 8px 16px 0; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+.tabs button {
+  border: none; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0;
+  background: none; color: var(--text-dim); padding: 8px 16px;
+}
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.tabs button:hover { color: var(--text); }
+
+/* ── 主区 ── */
+main { flex: 1; overflow: auto; padding: 16px; }
+.page { display: none; height: 100%; }
+.page.active { display: block; }
+
+.card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 12px;
+}
+.card h3 { font-size: 13px; color: var(--accent); margin-bottom: 10px; font-weight: 600; }
+.placeholder { color: var(--text-dim); text-align: center; padding: 48px 16px; }
+
+/* ── 状态栏 / tooltip ── */
+#statusbar {
+  padding: 5px 16px; background: var(--bg-panel); border-top: 1px solid var(--border);
+  color: var(--text-dim); font-size: 12px;
+}
+#backend-state.ok { color: var(--accent-2); }
+
+.tooltip {
+  position: fixed; z-index: 999; max-width: 380px;
+  background: #0d1117f2; border: 1px solid var(--accent); border-radius: 6px;
+  padding: 8px 12px; pointer-events: none; font-size: 12px; line-height: 1.6;
+  box-shadow: 0 4px 16px #000a;
+}
+.tooltip .tt-title { color: var(--accent); font-weight: 600; }
+.tooltip .tt-dim { color: var(--text-dim); }

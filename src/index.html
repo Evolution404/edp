@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDPOpen</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">ED<span class="accent">P</span>Open</div>
+    <div class="disk-bar">
+      <select id="disk-select"><option value="">— 未检测到 USB 盘 —</option></select>
+      <button id="btn-refresh" title="重新枚举 USB 盘">⟳ 刷新</button>
+      <span id="disk-hint" class="hint"></span>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-page="overview" class="active">概览</button>
+    <button data-page="map">盘地图</button>
+    <button data-page="sector">扇区</button>
+    <button data-page="convert">改造</button>
+    <button data-page="backup">备份</button>
+  </nav>
+
+  <main>
+    <section id="page-overview" class="page active">
+      <div class="card placeholder">插入 USB 盘后自动识别 · 状态判定 · 分区摘要</div>
+    </section>
+    <section id="page-map" class="page">
+      <div class="card placeholder">全盘区域色块 + LBA0-13 方格网格 · 悬停看含义 · 点击跳扇区</div>
+    </section>
+    <section id="page-sector" class="page">
+      <div class="card placeholder">hexdump 浏览器 · 字段级着色 · raw / 解密切换 · 字节编辑</div>
+    </section>
+    <section id="page-convert" class="page">
+      <div class="card placeholder">免密改造预览 → 授权写入（自动备份 → 写 5 扇 → 回读校验）</div>
+    </section>
+    <section id="page-backup" class="page">
+      <div class="card placeholder">备份列表（labelOnlyId 匹配）· 还原（MD5 校验）</div>
+    </section>
+  </main>
+
+  <footer id="statusbar">后端: <span id="backend-state">连接中…</span></footer>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
