@@ -6,10 +6,21 @@ VERSION="${EDP_VERSION:-0.6.0}"
 OUTPUT_DIR="${1:-${REPO_ROOT}/artifacts}"
 APP_SIGN_IDENTITY="${EDP_APP_SIGN_IDENTITY:--}"
 SERVICE_MODE="${EDP_SERVICE_MODE:-}"
+SELF_SIGNED_DISTRIBUTION="${EDP_SELF_SIGNED_DISTRIBUTION:-0}"
 if [[ -z "${SERVICE_MODE}" ]]; then
-  [[ "${APP_SIGN_IDENTITY}" == "-" ]] && SERVICE_MODE="legacy" || SERVICE_MODE="smappservice"
+  if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
+    SERVICE_MODE="legacy"
+  else
+    [[ "${APP_SIGN_IDENTITY}" == "-" ]] && SERVICE_MODE="legacy" || SERVICE_MODE="smappservice"
+  fi
 fi
 [[ "${SERVICE_MODE}" == "legacy" || "${SERVICE_MODE}" == "smappservice" ]]
+if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
+  [[ "${SERVICE_MODE}" == "legacy" && "${APP_SIGN_IDENTITY}" != "-" ]] || {
+    echo "self-signed distribution requires legacy service mode and a certificate-backed signing identity" >&2
+    exit 2
+  }
+fi
 
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/edp-native-installer.XXXXXX")"
 cleanup() { /bin/rm -rf "${BUILD_ROOT}"; }
@@ -107,6 +118,11 @@ fi
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
   --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
+if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
+  SIGNING_INFO="$(/usr/bin/codesign -dv --verbose=4 "${APP_STAGE}" 2>&1)"
+  /usr/bin/grep -Fq 'TeamIdentifier=not set' <<<"${SIGNING_INFO}"
+  /usr/bin/grep -Fq 'Authority=' <<<"${SIGNING_INFO}"
+fi
 
 PAYLOAD="${BUILD_ROOT}/payload"
 PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
@@ -147,3 +163,6 @@ fi
 echo "OUTPUT=${OUTPUT}"
 echo "FUSET_RUNTIME=external-pinned-1.2.7"
 echo "RESULT=EDP_NATIVE_INSTALLER_BUILT"
+if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
+  echo "RESULT=SELF_SIGNED_DISTRIBUTION_PACKAGE"
+fi

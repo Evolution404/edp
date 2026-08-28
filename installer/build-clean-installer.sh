@@ -13,17 +13,29 @@ MACFUSE_LICENSE_FILE="${MACFUSE_LICENSE_FILE:-}"
 APP_SIGN_IDENTITY="${EDP_APP_SIGN_IDENTITY:--}"
 SERVICE_MODE="${EDP_SERVICE_MODE:-}"
 LEGACY_DIAGNOSTIC="${EDP_LEGACY_DIAGNOSTIC:-0}"
+SELF_SIGNED_DISTRIBUTION="${EDP_SELF_SIGNED_DISTRIBUTION:-0}"
 if [[ -z "${SERVICE_MODE}" ]]; then
-  SERVICE_MODE="smappservice"
+  [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]] && SERVICE_MODE="legacy" || SERVICE_MODE="smappservice"
 fi
 [[ "${SERVICE_MODE}" == "legacy" || "${SERVICE_MODE}" == "smappservice" ]] || {
   echo "invalid EDP_SERVICE_MODE: ${SERVICE_MODE}" >&2
   exit 2
 }
-if [[ "${SERVICE_MODE}" == "legacy" && "${LEGACY_DIAGNOSTIC}" != "1" ]]; then
-  echo "legacy LaunchDaemon mode cannot access physical raw USB media on macOS 26" >&2
-  echo "use smappservice for installable products, or set EDP_LEGACY_DIAGNOSTIC=1 for CI-only contract tests" >&2
+if [[ "${SERVICE_MODE}" == "legacy" && "${LEGACY_DIAGNOSTIC}" != "1" && "${SELF_SIGNED_DISTRIBUTION}" != "1" ]]; then
+  echo "legacy LaunchDaemon mode requires an explicit distribution policy" >&2
+  echo "set EDP_SELF_SIGNED_DISTRIBUTION=1 for the self-signed community package" >&2
+  echo "or EDP_LEGACY_DIAGNOSTIC=1 for CI-only contract tests" >&2
   exit 2
+fi
+if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
+  [[ "${SERVICE_MODE}" == "legacy" ]] || {
+    echo "self-signed distribution requires EDP_SERVICE_MODE=legacy" >&2
+    exit 2
+  }
+  [[ "${APP_SIGN_IDENTITY}" != "-" ]] || {
+    echo "self-signed distribution requires a stable non-ad-hoc code-signing identity" >&2
+    exit 2
+  }
 fi
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/edp-clean-installer.XXXXXX")"
 MACFUSE_MOUNT="${BUILD_ROOT}/macfuse"
@@ -220,6 +232,17 @@ fi
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
+if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
+  SIGNING_INFO="$(/usr/bin/codesign -dv --verbose=4 "${APP_STAGE}" 2>&1)"
+  /usr/bin/grep -Fq 'TeamIdentifier=not set' <<<"${SIGNING_INFO}" || {
+    echo "self-signed distribution identity unexpectedly has an Apple TeamIdentifier" >&2
+    exit 2
+  }
+  /usr/bin/grep -Fq 'Authority=' <<<"${SIGNING_INFO}" || {
+    echo "self-signed distribution requires a certificate-backed signature, not ad-hoc signing" >&2
+    exit 2
+  }
+fi
 
 if [[ -n "${MACFUSE_LICENSE_FILE}" ]]; then
   [[ -f "${MACFUSE_LICENSE_FILE}" ]] || {
@@ -401,7 +424,9 @@ echo "OUTPUT=${OUTPUT_PKG}"
 echo "MACFUSE_VERSION=${MACFUSE_VERSION}"
 echo "NTFS3G_VERSION=2026.7.7"
 echo "RESULT=EDP_CLEAN_COMBINED_INSTALLER_BUILT"
-if [[ "${SERVICE_MODE}" == "legacy" ]]; then
+if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
+  echo "RESULT=SELF_SIGNED_DISTRIBUTION_PACKAGE"
+elif [[ "${SERVICE_MODE}" == "legacy" ]]; then
   echo "RESULT=CI_ONLY_LEGACY_DIAGNOSTIC_PACKAGE"
 else
   echo "RESULT=PHYSICAL_USB_SERVICE_CONTEXT_PACKAGED"
