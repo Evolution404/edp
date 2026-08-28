@@ -96,7 +96,7 @@ jobs:
           grep -F 'manualUnmountSuppressions.insert(key(deviceID, partitionType))' product/EDPVaultRuntime.swift
           grep -F '!manualUnmountSuppressions.contains(key(disk.deviceID, type))' product/EDPVaultRuntime.swift
           grep -F 'func deleteDeviceRecord(deviceID: String)' product/EDPVaultRuntime.swift
-          grep -F 'selectFile(nil, inFileViewerRootedAtPath: mountPoint)' product/App/EDPUSBVaultApp.swift
+          grep -F 'NSWorkspace.shared.open(url)' product/App/EDPUSBVaultApp.swift
           ! grep -F 'run(binaryRoot + "/diskimages2-attach"' product/EDPVaultRuntime.swift
           grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
           cc -Wall -Wextra product/EDPRawMetadataHelper.c \

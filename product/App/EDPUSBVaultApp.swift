@@ -474,8 +474,9 @@ final class EDPVaultViewModel: ObservableObject {
 
     func openInFinder(_ partition: EDPXPCPartition) {
         guard let mountPoint = partition.mountPoint, !mountPoint.isEmpty else { return }
-        guard NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: mountPoint) else {
-            lastError = "Finder 无法显示挂载目录：\(mountPoint)"
+        let url = URL(fileURLWithPath: mountPoint, isDirectory: true)
+        guard NSWorkspace.shared.open(url) else {
+            lastError = "Finder 无法打开挂载目录：\(mountPoint)"
             return
         }
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder")
