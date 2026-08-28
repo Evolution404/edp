@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
 use crate::crypto::{a6b0_full, crc32_bare, xor_rolling};
@@ -23,7 +23,6 @@ fn cmd_out(prog: &str, args: &[&str]) -> Option<String> {
     let path = match prog {
         "diskutil" => "/usr/sbin/diskutil",
         "ioreg" => "/usr/sbin/ioreg",
-        "osascript" => "/usr/bin/osascript",
         _ => prog,
     };
     Command::new(path)
@@ -170,33 +169,6 @@ fn read_lba_direct(disk: u32, lba: u64) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn hex_encode(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-
-fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    let s = s.trim();
-    if s.len() % 2 != 0 { return None; }
-    (0..s.len() / 2)
-        .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
-        .collect()
-}
-
-/// root CLI 专用：只读抓取 LBA0-13，共 7168B；绝不写盘。
-pub fn dump_metadata_direct(disk: u32) -> std::io::Result<String> {
-    if disk < 2 || !list_usb_disks().iter().any(|d| d.disk == disk) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "只允许读取 disk2+ 的外置 USB 整盘",
-        ));
-    }
-    let mut f = File::open(format!("/dev/rdisk{disk}"))?;
-    f.seek(SeekFrom::Start(0))?;
-    let mut buf = vec![0u8; SECTOR * 14];
-    f.read_exact(&mut buf)?;
-    Ok(hex_encode(&buf))
-}
-
 static META_CACHE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
 
 fn metadata_cache_key(disk: u32) -> Option<String> {
@@ -207,7 +179,14 @@ fn metadata_cache_key(disk: u32) -> Option<String> {
     ))
 }
 
-fn privileged_metadata(disk: u32) -> std::io::Result<Vec<u8>> {
+fn authorized_metadata(disk: u32) -> std::io::Result<Vec<u8>> {
+    if disk < 2 || !list_usb_disks().iter().any(|d| d.disk == disk) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "只允许读取 disk2+ 的外置 USB 整盘",
+        ));
+    }
+
     let key = metadata_cache_key(disk);
     let cache = META_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(k) = key.as_ref() {
@@ -216,39 +195,50 @@ fn privileged_metadata(disk: u32) -> std::io::Result<Vec<u8>> {
         }
     }
 
-    let exe = std::env::current_exe()?;
-    let exe_s = exe.to_string_lossy().replace('\'', "'\\''");
-    let script = format!(
-        "do shell script \"'{}' --read-metadata {}\" with administrator privileges with prompt \"EDPOpen: 只读读取 U 盘元数据 (LBA0-13)\"",
-        exe_s, disk
-    );
-    let out = Command::new("/usr/bin/osascript").arg("-e").arg(script).output()?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            if stderr.is_empty() { "原始盘读取授权失败".into() } else { stderr },
-        ));
+    // macOS 的 authopen 专门用于 authorization-based file opening；直接 root open
+    // 在 macOS 26 的原始磁盘上仍可能被 EPERM 拒绝。这里只请求只读权，并且
+    // 只消费前 14 个扇区；读满后立即关闭 stdout/结束 authopen。
+    let path = format!("/dev/rdisk{disk}");
+    let mut child = Command::new("/usr/libexec/authopen")
+        .arg(&path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut data = vec![0u8; SECTOR * 14];
+    let read_result = child
+        .stdout
+        .as_mut()
+        .ok_or_else(|| std::io::Error::other("authopen stdout 未建立"))?
+        .read_exact(&mut data);
+
+    if read_result.is_ok() {
+        // 关闭读端后 authopen 可能以 SIGPIPE 退出，这是成功读取固定长度后的预期行为。
+        child.stdout.take();
+        let _ = child.kill();
+        let _ = child.wait();
+        if let (Some(k), Ok(mut m)) = (key, cache.lock()) { m.insert(k, data.clone()); }
+        return Ok(data);
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let data = hex_decode(&text).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "提权读取器返回的十六进制数据无效")
-    })?;
-    if data.len() != SECTOR * 14 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            format!("提权读取器应返回 {}B，实际 {}B", SECTOR * 14, data.len()),
-        ));
-    }
-    if let (Some(k), Ok(mut m)) = (key, cache.lock()) { m.insert(k, data.clone()); }
-    Ok(data)
+
+    child.stdout.take();
+    let _ = child.wait();
+    let mut stderr = String::new();
+    if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut stderr); }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        if stderr.trim().is_empty() {
+            format!("authopen 未能读取 {path}: {}", read_result.unwrap_err())
+        } else {
+            stderr.trim().to_string()
+        },
+    ))
 }
 
 pub fn read_lba(disk: u32, lba: u64) -> std::io::Result<Vec<u8>> {
     match read_lba_direct(disk, lba) {
         Ok(v) => Ok(v),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && lba < 14 => {
-            let all = privileged_metadata(disk)?;
+            let all = authorized_metadata(disk)?;
             let off = lba as usize * SECTOR;
             Ok(all[off..off + SECTOR].to_vec())
         }
