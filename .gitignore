@@ -13,6 +13,9 @@ src-tauri/gen/
 # macOS
 .DS_Store
 
+# FDA raw-broker PoC build output
+poc/fda-raw-broker/RawBrokerProbe
+
 # 测试数据(含真实盘备份, 不入库)
 *.bin
 *.img
