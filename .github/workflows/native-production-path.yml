@@ -76,10 +76,15 @@ jobs:
             product/EDPXPCProtocol.swift \
             product/App/EDPUSBVaultApp.swift \
             -o "${RUNNER_TEMP}/edp-usb-vault-app"
+          grep -F 'group.com.apple.fskit.settings' product/App/EDPUSBVaultApp.swift
+          grep -F 'io.macfuse.app.fsmodule.macfuse-local' product/App/EDPUSBVaultApp.swift
+          grep -F 'runUserTool("/usr/bin/killall", ["-9", "fskit_agent", "extensionkitservice"])' product/App/EDPUSBVaultApp.swift
           grep -F 'EDPXPCPeerValidator.isTrusted' product/EDPVaultRuntime.swift
           grep -F 'com.edp.usbvault.app' product/EDPXPCSecurity.swift
           grep -F 'EDPBlockDevicePublisher' product/EDPVaultRuntime.swift
           grep -F 'EDPDiskImages2Publisher' product/EDPVaultRuntime.swift
+          grep -F 'manualUnmountSuppressions.insert(key(deviceID, partitionType))' product/EDPVaultRuntime.swift
+          grep -F '!manualUnmountSuppressions.contains(key(disk.deviceID, type))' product/EDPVaultRuntime.swift
           ! grep -F 'run(binaryRoot + "/diskimages2-attach"' product/EDPVaultRuntime.swift
           grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
           cc -Wall -Wextra product/EDPRawMetadataHelper.c \

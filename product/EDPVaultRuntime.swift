@@ -796,6 +796,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     private let diskArbitration: EDPDiskArbitrationController
     private let queue = DispatchQueue(label: "com.edp.usbvault.controller")
     private var failedMounts = [String: String]()
+    private var manualUnmountSuppressions = Set<String>()
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
@@ -887,7 +888,10 @@ private final class EDPDaemonController: @unchecked Sendable {
         guard let document = try? policies.load(),
               document.globalAutoMountEnabled,
               let policy = document.devices.first(where: { $0.deviceID == disk.deviceID }),
-              policy.policy(for: EDPPartitionKind.boot.rawValue).autoMount else { return }
+              policy.policy(for: EDPPartitionKind.boot.rawValue).autoMount,
+              !manualUnmountSuppressions.contains(
+                  key(disk.deviceID, EDPPartitionKind.boot.rawValue)
+              ) else { return }
         try? setBootMounted(true, disk: disk)
     }
 
@@ -927,6 +931,10 @@ private final class EDPDaemonController: @unchecked Sendable {
                     guard let separator = item.key.lastIndex(of: ":") else { return false }
                     return connectedDeviceIDs.contains(String(item.key[..<separator]))
                 }
+                manualUnmountSuppressions = manualUnmountSuppressions.filter { item in
+                    guard let separator = item.lastIndex(of: ":") else { return false }
+                    return connectedDeviceIDs.contains(String(item[..<separator]))
+                }
                 try observe(disks)
                 let policyDocument = try policies.load()
                 let records = try store.load().records
@@ -937,7 +945,10 @@ private final class EDPDaemonController: @unchecked Sendable {
                     let bootAutoMount = devicePolicy.policy(
                         for: EDPPartitionKind.boot.rawValue
                     ).autoMount
-                    if policyDocument.globalAutoMountEnabled, bootAutoMount {
+                    let bootKey = key(disk.deviceID, EDPPartitionKind.boot.rawValue)
+                    if policyDocument.globalAutoMountEnabled,
+                       bootAutoMount,
+                       !manualUnmountSuppressions.contains(bootKey) {
                         try? setBootMounted(true, disk: disk)
                     } else if !bootAutoMount {
                         try? setBootMounted(false, disk: disk)
@@ -949,7 +960,8 @@ private final class EDPDaemonController: @unchecked Sendable {
                     for type in [UInt32(2), 4]
                     where devicePolicy.policy(for: type).autoMount
                         && record.partitionTypes.contains(type)
-                        && !manager.contains(disk, type) {
+                        && !manager.contains(disk, type)
+                        && !manualUnmountSuppressions.contains(key(disk.deviceID, type)) {
                         let key = "\(disk.deviceID):\(type)"
                         if failedMounts[key] != nil { continue }
                         do {
@@ -1101,7 +1113,9 @@ private final class EDPDaemonController: @unchecked Sendable {
 
     func mountPartition(deviceID: String, partitionType: UInt32) throws {
         try queue.sync {
-            failedMounts.removeValue(forKey: key(deviceID, partitionType))
+            let partitionKey = key(deviceID, partitionType)
+            failedMounts.removeValue(forKey: partitionKey)
+            manualUnmountSuppressions.remove(partitionKey)
             guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 throw fail("EDP device is no longer connected")
             }
@@ -1148,6 +1162,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             } else {
                 manager.unmount(deviceID: deviceID, partitionType: partitionType)
             }
+            manualUnmountSuppressions.insert(key(deviceID, partitionType))
             addActivity("分区已卸载", deviceID: deviceID, partitionType: partitionType)
         }
     }
@@ -1157,6 +1172,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             manager.unmount(deviceID: deviceID, partitionType: partitionType)
             try store.remove(deviceID: deviceID, partitionType: partitionType)
             failedMounts.removeValue(forKey: key(deviceID, partitionType))
+            manualUnmountSuppressions.remove(key(deviceID, partitionType))
             addActivity("已删除保存的密码", deviceID: deviceID, partitionType: partitionType)
         }
     }
@@ -1168,6 +1184,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 partitionType: partitionType,
                 enabled: enabled
             )
+            manualUnmountSuppressions.remove(key(deviceID, partitionType))
             addActivity(
                 enabled ? "已开启自动挂载" : "已关闭自动挂载",
                 deviceID: deviceID,
@@ -1265,6 +1282,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             let payload: [String: Any] = [
                 "mounts": manager.mountedSummaries(),
                 "failedMounts": failedMounts,
+                "manualUnmountSuppressions": manualUnmountSuppressions.sorted(),
                 "rawAccessMode": "foreground exact-path Authorization + authopen inherited fd",
                 "authorizedRawPaths": rawAuthorizations.keys.sorted(),
                 "nativeMountCount": EDPNativeMountTable.entries().count,

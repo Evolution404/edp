@@ -1,9 +1,9 @@
 # EDP USB Vault — FUSE-T Minimal / macFUSE Local 产品化实时进度追踪
 
 日期：2026-08-26 起  
-最后更新：2026-08-27  
+最后更新：2026-08-28  
 分支：`test/fuset-minimal-fskit-bridge`  
-当前已验证产品代码 HEAD：`116e77067bd200e9dc4d681a26f1fa3af21eaaca`  
+当前已验证产品代码 HEAD：`679b2564d7c42fcb2027750dd7354852cab38a92`  
 配套计划：`docs/PLAN-2026-08-26-fuset-minimal-fskit-bridge.md`
 
 > 本文件现在以“当前产品架构与 release gate”为主。此前 FUSE-T thin bridge、macFUSE Local 生命周期诊断和淘汰路径的逐轮原始记录仍保留在本文件的 Git 历史（截至 `6ccc930` 及更早提交），不再在当前正文重复展开。
@@ -271,7 +271,12 @@ Clean Installer run `33047939672` @ `116e77067bd200e9dc4d681a26f1fa3af21eaaca`�
 - 同轮暴露启动区路由错误：partition 1 被送进只接受加密 partition 2/4 的 Direct MFMount adapter，进程以参数错误直接退出。启动区是物理 `/dev/diskNs1` FAT 分区，已改为由 Disk Arbitration 直接 mount/unmount，snapshot 从真实 mount table 读取 filesystem/mountpoint；只有 partition 2/4 进入 encrypted `macfuse-local → volume.raw → DiskImages2` 链；
 - 多条历史设备记录存在时，设备数组按 deviceID 排序曾导致 UI 默认选中离线旧设备；授权成功后即使当前 U 盘已识别，右侧仍显示“未连接”。设备页现在首次进入及连接状态变化时优先选择已连接设备，同时保留用户主动查看离线记录的能力；
 - 0.5.11 实机已证明物理启动区路由修复生效：App 显示当前 Lexar EDP U 盘已连接，启动区状态为“已挂载”，文件系统为 `msdos`。随后交换区“设置密码”在密码比对前失败，错误为 authorized `edp-raw-metadata` 的 `EDP_READWRITE_AUTHOPEN_EXIT_STATUS=1 / errno=13`；根因是启动区已挂载时再次申请 whole `/dev/rdiskN` 的 `O_RDWR` fd。密码验证现先记录启动区挂载状态，通过 Disk Arbitration whole-unmount 后读取 LBA12，并在成功或失败路径都恢复此前启动区状态；
-- 0.5.12 本机 Apple Development 签名 Clean package 已完成 build 与 `verify-clean-installer.sh` 全绿；覆盖安装已推进到 macOS `SecurityAgent` 管理员认证，因操作者离开电脑尚未完成，因此不得把 0.5.12 的交换区密码、mount 或 persistence 标记为实机通过；
+- 0.5.12 本机 Apple Development 签名 Clean package 已完成 build、`verify-clean-installer.sh` 与覆盖安装；App 识别 `/dev/disk4`，交换区密码校验成功并显示“密码已保存”，证明 console-user authopen、启动区 whole-unmount/restore 和 LBA12 验证链均已实机通过；
+- 初次交换区挂载随后准确失败于 `MFMount: File system extension not found/not enabled`。PluginKit 登记两个 macFUSE module 后，仍需在当前 console user 的 `~/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist` 同时加入 generic/local ID、设为 `0600` 并刷新用户态 `fskit_agent`/`extensionkitservice`；完成后同一 0.5.12 二进制直接返回 `RESULT=XPC_MOUNT_SMOKE_OK`，确认错误不在密码、raw fd 或 encrypted adapter；
+- 0.5.12 Lexar 真机完整闭环已通过：Direct MFMount Local bridge `/dev/disk6`、DiskImages2 published `/dev/disk8`、Apple ExFAT `/Volumes/交换区` 均存在且可写；写入 `EDP-LIFECYCLE-MARKER-2026-08-28.txt` 后关闭该分区自动挂载，通过正式 XPC `unmountPartition` 完整移除 user FS、DiskImages2 attachment、bridge mount、transport process 与 daemon session，再手动同路径 remount，marker SHA-256 `8673e169a6854de4128cdd0736979fa1aa4b8dc952511a7789dbb447cda905ba` 保持不变；
+- 界面点“卸载”后看似马上重挂并非 MFMount teardown 回归，而是该分区“插入后自动挂载”仍开启，periodic reconcile 在完整卸载后创建了新 transport/DiskImages2 PID。关闭该分区自动挂载后 teardown 稳定收口；产品需把“手动卸载抑制当前插入周期自动重挂”作为独立 UX policy 处理，不能再归因于 5.3.2/5.3.3 行为差异；
+- App 首次启动现负责 console-user FSKit enablement：登记 macFUSE host、向 PluginKit 添加并启用 generic/local appex、保留 Apple 既有模块并补齐 `enabledModules.plist`、固定权限为 `0600`，仅在状态发生变化时重启用户态 FSKit agents。runtime gate 同时要求 generic/local appex、`MFMount.framework` 与用户启用清单全部就绪；
+- daemon 新增 in-memory `manualUnmountSuppressions`：手动卸载启动区/交换区/保密区后，即使该分区 policy 仍为 auto-mount，也不会在同一次连接周期被 reconcile 立即重挂；手动挂载、切换该分区自动挂载开关或设备真正断开会清除 suppression；
 - 授权成功识别结果按当前 attachment 缓存，避免每次 UI/Disk Arbitration reconciliation 都重新打开 whole raw disk；设备消失后 cache 随 connected set 清除；
 - 本机正式修复包必须用有效 Apple Development/Developer ID 身份构建 `smappservice`，不能安装 CI legacy contract artifact。
 

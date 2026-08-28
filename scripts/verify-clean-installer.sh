@@ -98,6 +98,13 @@ echo "RESULT=PRODUCTION_NTFS_RUNTIME_CONTAINS_NO_FIXTURE_TOOLS"
   | /usr/bin/grep -F '_AuthorizationMakeExternalForm' >/dev/null
 /usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
   | /usr/bin/grep -F 'macfuse-local.appex' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F 'io.macfuse.app.fsmodule.macfuse-local' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F 'group.com.apple.fskit.settings' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F 'fskit_agent' >/dev/null
+echo "RESULT=CONSOLE_USER_MACFUSE_FSKIT_ENABLEMENT_PACKAGED"
 if /usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
   | /usr/bin/grep -F '/Applications/fuse-t.app' >/dev/null; then
   echo "production App unexpectedly gates mounting on FUSE-T" >&2
