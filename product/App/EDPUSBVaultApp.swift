@@ -1,8 +1,48 @@
 import AppKit
 import Darwin
 import Foundation
+import Security
 import ServiceManagement
 import SwiftUI
+
+private func makeRawDeviceAuthorization(for rawPath: String) throws -> (AuthorizationRef, Data) {
+    let suffix = rawPath.dropFirst("/dev/rdisk".count)
+    guard rawPath.hasPrefix("/dev/rdisk"), !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else {
+        throw NSError(
+            domain: "com.edp.usbvault.authorization",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "磁盘授权目标不是 whole raw disk"]
+        )
+    }
+    var created: AuthorizationRef?
+    let createStatus = AuthorizationCreate(nil, nil, [], &created)
+    guard createStatus == errAuthorizationSuccess, let authorization = created else {
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(createStatus))
+    }
+    do {
+        let flags: AuthorizationFlags = [.interactionAllowed, .extendRights, .preAuthorize]
+        let right = "sys.openfile.readwrite.\(rawPath)"
+        let status = right.withCString { name in
+            var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
+            return withUnsafeMutablePointer(to: &item) { pointer in
+                var rights = AuthorizationRights(count: 1, items: pointer)
+                return AuthorizationCopyRights(authorization, &rights, nil, flags, nil)
+            }
+        }
+        guard status == errAuthorizationSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        var external = AuthorizationExternalForm()
+        let externalStatus = AuthorizationMakeExternalForm(authorization, &external)
+        guard externalStatus == errAuthorizationSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(externalStatus))
+        }
+        return (authorization, withUnsafeBytes(of: external) { Data($0) })
+    } catch {
+        AuthorizationFree(authorization, [])
+        throw error
+    }
+}
 
 @MainActor
 final class EDPVaultViewModel: ObservableObject {
@@ -11,16 +51,18 @@ final class EDPVaultViewModel: ObservableObject {
     @Published var lastError: String?
     @Published var diagnostics = ""
     @Published var isBusy = false
-    @Published var fuseTFSKitReady: Bool?
+    @Published var transportRuntimeReady: Bool?
+    @Published var rawDeviceCandidates = [String]()
 
     private let serviceMode: String
     private let daemonService: SMAppService?
     private let daemonPlistName = "com.edp.usbvault.mountd.v2.plist"
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
     private var connection: NSXPCConnection?
+    private var rawAuthorizationRefs = [String: AuthorizationRef]()
 
     var setupReady: Bool {
-        currentServiceStatus() == .enabled && fuseTFSKitReady == true
+        currentServiceStatus() == .enabled && transportRuntimeReady == true
     }
 
     init() {
@@ -29,7 +71,7 @@ final class EDPVaultViewModel: ObservableObject {
             ? SMAppService.daemon(plistName: daemonPlistName)
             : nil
         ensureServiceRegistration()
-        refreshFSKitState()
+        refreshTransportRuntimeState()
         refresh()
         Task { [weak self] in
             while !Task.isCancelled {
@@ -100,16 +142,20 @@ final class EDPVaultViewModel: ObservableObject {
         SMAppService.openSystemSettingsLoginItems()
     }
 
-    func refreshFSKitState() {
-        let app = "/Applications/fuse-t.app"
-        let extensionPath = app + "/Contents/Extensions/FskitSrvModule.appex"
-        fuseTFSKitReady = FileManager.default.fileExists(atPath: app)
-            && FileManager.default.fileExists(atPath: extensionPath)
+    func refreshTransportRuntimeState() {
+        let root = "/Library/Filesystems/macfuse.fs/Contents"
+        let hostApp = root + "/Resources/macfuse.app"
+        let localModule = hostApp
+            + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
+        let framework = root + "/Frameworks/MFMount.framework"
+        transportRuntimeReady = FileManager.default.fileExists(atPath: hostApp)
+            && FileManager.default.fileExists(atPath: localModule)
+            && FileManager.default.fileExists(atPath: framework)
     }
 
-    private func requireFuseTFSKit() -> Bool {
-        guard fuseTFSKitReady == true else {
-            lastError = "FUSE-T FSKit 运行组件未安装或尚未批准，请完成首次安装设置后再试。"
+    private func requireTransportRuntime() -> Bool {
+        guard transportRuntimeReady == true else {
+            lastError = "macFUSE Local 运行组件未安装或不完整，请重新运行 EDP USB Vault 安装器。"
             return false
         }
         return true
@@ -117,7 +163,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     func refresh() {
         refreshServiceStatus()
-        refreshFSKitState()
+        refreshTransportRuntimeState()
         guard let proxy = proxy() else {
             let status = currentServiceStatus()
             if status == .requiresApproval {
@@ -136,17 +182,56 @@ final class EDPVaultViewModel: ObservableObject {
                 guard let self else { return }
                 do {
                     self.snapshot = try JSONDecoder().decode(EDPXPCSnapshot.self, from: data)
-                    self.lastError = nil
                 } catch {
                     self.lastError = String(data: data, encoding: .utf8) ?? error.localizedDescription
                 }
                 self.refreshServiceStatus()
             }
         }
+        proxy.rawDeviceCandidates { [weak self] data in
+            Task { @MainActor in
+                self?.rawDeviceCandidates = (try? JSONDecoder().decode([String].self, from: data)) ?? []
+            }
+        }
+    }
+
+    func grantRawAccess() {
+        guard let rawPath = rawDeviceCandidates.first, let proxy = proxy() else { return }
+        NSLog("EDP foreground raw authorization requested for %@", rawPath)
+        let capability: (AuthorizationRef, Data)
+        do {
+            capability = try makeRawDeviceAuthorization(for: rawPath)
+        } catch {
+            NSLog("EDP foreground raw authorization failed before XPC: %@", error.localizedDescription)
+            lastError = "无法取得磁盘访问授权：\(error.localizedDescription)"
+            return
+        }
+        isBusy = true
+        proxy.grantRawAccess(rawPath: rawPath, authorization: capability.1) { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else {
+                    AuthorizationFree(capability.0, [])
+                    return
+                }
+                self.isBusy = false
+                if let errorMessage {
+                    NSLog("EDP raw authorization rejected by daemon: %@", errorMessage)
+                    AuthorizationFree(capability.0, [])
+                    self.lastError = errorMessage
+                } else {
+                    NSLog("EDP raw authorization accepted for %@", rawPath)
+                    if let previous = self.rawAuthorizationRefs.updateValue(capability.0, forKey: rawPath) {
+                        AuthorizationFree(previous, [])
+                    }
+                    self.lastError = nil
+                    self.refresh()
+                }
+            }
+        }
     }
 
     func saveCredential(deviceID: String, partitionType: UInt32, password: String) {
-        guard requireFuseTFSKit(), !password.isEmpty, let proxy = proxy() else { return }
+        guard requireTransportRuntime(), !password.isEmpty, let proxy = proxy() else { return }
         isBusy = true
         proxy.saveCredential(
             deviceID: deviceID,
@@ -163,7 +248,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func mountPartition(deviceID: String, partitionType: UInt32) {
-        guard requireFuseTFSKit(), let proxy = proxy() else { return }
+        guard requireTransportRuntime(), let proxy = proxy() else { return }
         isBusy = true
         proxy.mountPartition(deviceID: deviceID, partitionType: partitionType) { [weak self] errorMessage in
             Task { @MainActor in
@@ -357,9 +442,9 @@ struct ContentView: View {
                 Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }
             }
 
-            if model.fuseTFSKitReady == false {
+            if model.transportRuntimeReady == false {
                 HStack {
-                    Label("FUSE-T FSKit 运行组件未安装或尚未批准，挂载操作已暂停", systemImage: "puzzlepiece.extension")
+                    Label("macFUSE Local 运行组件未安装或不完整，挂载操作已暂停", systemImage: "puzzlepiece.extension")
                         .foregroundStyle(.orange)
                     Spacer()
                 }
@@ -372,11 +457,20 @@ struct ContentView: View {
             }
 
             if model.snapshot.devices.isEmpty {
-                ContentUnavailableView(
-                    "未发现 EDP U 盘",
-                    systemImage: "externaldrive",
-                    description: Text("插入 EDP U 盘后会自动识别。")
-                )
+                VStack(spacing: 14) {
+                    ContentUnavailableView(
+                        "未发现 EDP U 盘",
+                        systemImage: "externaldrive",
+                        description: Text(model.rawDeviceCandidates.isEmpty
+                            ? "插入 EDP U 盘后会自动识别。"
+                            : "检测到外置磁盘，需要先授权读取 EDP 设备元数据。")
+                    )
+                    if !model.rawDeviceCandidates.isEmpty {
+                        Button("启用磁盘访问") { model.grantRawAccess() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(model.isBusy)
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -488,37 +582,65 @@ struct EDPDevicesView: View {
     }
 
     var body: some View {
-        HSplitView {
-            List(selection: $selectedDeviceID) {
-                Section("已连接") {
-                    ForEach(model.snapshot.devices.filter(\.connected)) { device in
-                        deviceLabel(device).tag(device.deviceID)
-                    }
+        VStack(spacing: 0) {
+            if model.snapshot.devices.filter(\.connected).isEmpty,
+               !model.rawDeviceCandidates.isEmpty {
+                HStack(spacing: 12) {
+                    Label(
+                        "已检测到外置磁盘，需要授权后识别 EDP 设备",
+                        systemImage: "externaldrive.badge.questionmark"
+                    )
+                    Spacer()
+                    Button("启用磁盘访问") { model.grantRawAccess() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isBusy)
                 }
-                let offline = model.snapshot.devices.filter { !$0.connected }
-                if !offline.isEmpty {
-                    Section("已保存") {
-                        ForEach(offline) { device in
+                .padding(12)
+                .background(Color.accentColor.opacity(0.10))
+                Divider()
+            }
+
+            HSplitView {
+                List(selection: $selectedDeviceID) {
+                    Section("已连接") {
+                        ForEach(model.snapshot.devices.filter(\.connected)) { device in
                             deviceLabel(device).tag(device.deviceID)
                         }
                     }
+                    let offline = model.snapshot.devices.filter { !$0.connected }
+                    if !offline.isEmpty {
+                        Section("已保存") {
+                            ForEach(offline) { device in
+                                deviceLabel(device).tag(device.deviceID)
+                            }
+                        }
+                    }
                 }
-            }
-            .frame(minWidth: 220, idealWidth: 250, maxWidth: 300)
+                .frame(minWidth: 220, idealWidth: 250, maxWidth: 300)
 
-            Group {
-                if let selectedDevice {
-                    EDPDeviceDetailView(device: selectedDevice, model: model)
-                        .id(selectedDevice.deviceID)
-                } else {
-                    ContentUnavailableView(
-                        "未发现 EDP U 盘",
-                        systemImage: "externaldrive",
-                        description: Text("插入设备后会自动识别，也可以查看此前保存的设备。")
-                    )
+                Group {
+                    if let selectedDevice {
+                        EDPDeviceDetailView(device: selectedDevice, model: model)
+                            .id(selectedDevice.deviceID)
+                    } else {
+                        VStack(spacing: 14) {
+                            ContentUnavailableView(
+                                "未发现 EDP U 盘",
+                                systemImage: "externaldrive",
+                                description: Text(model.rawDeviceCandidates.isEmpty
+                                    ? "插入设备后会自动识别，也可以查看此前保存的设备。"
+                                    : "检测到外置磁盘，需要先授权读取 EDP 设备元数据。")
+                            )
+                            if !model.rawDeviceCandidates.isEmpty {
+                                Button("启用磁盘访问") { model.grantRawAccess() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(model.isBusy)
+                            }
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("设备")
         .toolbar {
@@ -529,11 +651,21 @@ struct EDPDevicesView: View {
             }
         }
         .onAppear {
-            if selectedDeviceID == nil { selectedDeviceID = model.snapshot.devices.first?.deviceID }
+            if selectedDeviceID == nil {
+                selectedDeviceID = model.snapshot.devices.first(where: \.connected)?.deviceID
+                    ?? model.snapshot.devices.first?.deviceID
+            }
         }
-        .onChange(of: model.snapshot.devices.map(\.deviceID)) { _, ids in
-            if selectedDeviceID == nil || !ids.contains(selectedDeviceID ?? "") {
-                selectedDeviceID = ids.first
+        .onChange(of: model.snapshot.devices.map { "\($0.deviceID):\($0.connected)" }) { _, _ in
+            let selectedIsConnected = model.snapshot.devices.first {
+                $0.deviceID == selectedDeviceID
+            }?.connected == true
+            if !selectedIsConnected,
+               let connected = model.snapshot.devices.first(where: \.connected) {
+                selectedDeviceID = connected.deviceID
+            } else if selectedDeviceID == nil
+                        || !model.snapshot.devices.contains(where: { $0.deviceID == selectedDeviceID }) {
+                selectedDeviceID = model.snapshot.devices.first?.deviceID
             }
         }
     }
@@ -840,17 +972,17 @@ struct EDPSettingsView: View {
                 }
                 LabeledContent {
                     Label(
-                        model.fuseTFSKitReady == true ? "已就绪" : "需要安装或批准",
-                        systemImage: model.fuseTFSKitReady == true
+                        model.transportRuntimeReady == true ? "已就绪" : "需要重新安装",
+                        systemImage: model.transportRuntimeReady == true
                             ? "checkmark.circle.fill" : "exclamationmark.circle"
                     )
-                    .foregroundStyle(model.fuseTFSKitReady == true ? .green : .orange)
+                    .foregroundStyle(model.transportRuntimeReady == true ? .green : .orange)
                 } label: {
-                    Text("FUSE-T FSKit")
+                    Text("macFUSE Local")
                 }
                 Text(model.setupReady
                      ? "首次设置已完成。后台服务会按需打开经校验的 EDP 整盘并把文件描述符交给降权桥进程；重启或重新插盘不再请求管理员密码。"
-                     : "请完成后台服务与 FUSE-T 的一次系统批准。完成后，日常挂载不需要再次输入管理员密码。")
+                     : "请完成后台服务批准，并确认安装器已安装 macFUSE Local 运行组件。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 if model.serviceStatus != "已启用" {
@@ -873,7 +1005,7 @@ struct EDPSettingsView: View {
                 LabeledContent("磁盘访问", value: "特权服务按需提供")
                 LabeledContent(
                     "文件系统运行组件",
-                    value: model.fuseTFSKitReady == true ? "已就绪" : "需要安装或批准"
+                    value: model.transportRuntimeReady == true ? "已就绪" : "需要重新安装"
                 )
                 if model.serviceStatus == "需要系统批准" {
                     Button("打开登录项与扩展设置") { model.openServiceSettings() }
@@ -965,6 +1097,10 @@ struct EDPMenuBarView: View {
 
         if model.snapshot.devices.filter(\.connected).isEmpty {
             Text("未连接 EDP U 盘").foregroundStyle(.secondary)
+            if !model.rawDeviceCandidates.isEmpty {
+                Button("启用磁盘访问") { model.grantRawAccess() }
+                    .disabled(model.isBusy)
+            }
         }
 
         Divider()
@@ -1021,6 +1157,51 @@ struct EDPUSBVaultApp: App {
     @StateObject private var model = EDPVaultViewModel()
 
     init() {
+        if let index = CommandLine.arguments.firstIndex(of: "--grant-raw-access-smoke"),
+           CommandLine.arguments.count > index + 1 {
+            let rawPath = CommandLine.arguments[index + 1]
+            do {
+                let capability = try makeRawDeviceAuthorization(for: rawPath)
+                defer { AuthorizationFree(capability.0, []) }
+                let connection = NSXPCConnection(
+                    machServiceName: edpVaultMachServiceName,
+                    options: .privileged
+                )
+                connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+                let result = EDPXPCSmokeResult()
+                let semaphore = DispatchSemaphore(value: 0)
+                guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                    result.set(passed: false, detail: error.localizedDescription)
+                    semaphore.signal()
+                }) as? EDPVaultXPCProtocol else {
+                    print("RESULT=RAW_ACCESS_XPC_PROXY_UNAVAILABLE")
+                    exit(1)
+                }
+                connection.resume()
+                proxy.grantRawAccess(rawPath: rawPath, authorization: capability.1) { errorMessage in
+                    result.set(
+                        passed: errorMessage == nil,
+                        detail: errorMessage ?? "raw authorization accepted"
+                    )
+                    semaphore.signal()
+                }
+                guard semaphore.wait(timeout: .now() + 20) == .success else {
+                    connection.invalidate()
+                    print("RESULT=RAW_ACCESS_XPC_TIMEOUT")
+                    exit(1)
+                }
+                connection.invalidate()
+                let captured = result.snapshot()
+                print("RAW_ACCESS_XPC_DETAIL=\(captured.1)")
+                print(captured.0 ? "RESULT=RAW_ACCESS_XPC_OK" : "RESULT=RAW_ACCESS_XPC_FAILED")
+                exit(captured.0 ? 0 : 1)
+            } catch {
+                print("RAW_ACCESS_AUTH_ERROR=\(error.localizedDescription)")
+                print("RESULT=RAW_ACCESS_XPC_FAILED")
+                exit(1)
+            }
+        }
+
         if let index = CommandLine.arguments.firstIndex(of: "--xpc-mount-smoke"),
            CommandLine.arguments.count > index + 2 {
             let deviceID = CommandLine.arguments[index + 2]

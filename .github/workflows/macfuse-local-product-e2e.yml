@@ -172,7 +172,9 @@ jobs:
           mkdir -p "${BUILD}"
           chmod +x installer/build-transport-backends.sh
           installer/build-transport-backends.sh "${BUILD}" | tee "${RUNNER_TEMP}/builder.txt"
-          cc -O2 -Wall -Wextra -Werror product/EDPConsoleExec.c -o "${BUILD}/edp-console-exec"
+          cc -O2 -Wall -Wextra -Werror product/EDPConsoleExec.c \
+            product/EDPRawReadWriteAuthorization.c -framework Security \
+            -o "${BUILD}/edp-console-exec"
           xcrun clang -fobjc-arc -fblocks native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
             -framework Foundation -o "${BUILD}/diskimages2-attach"
           cc -std=c17 -Wall -Wextra -Werror \

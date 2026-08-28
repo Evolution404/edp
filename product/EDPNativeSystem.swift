@@ -295,6 +295,12 @@ final class EDPDiskArbitrationController: @unchecked Sendable {
         }, bsdName: bsdName)
     }
 
+    func unmount(_ bsdName: String) throws {
+        try perform({ disk, context in
+            DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), daOperationCallback, context)
+        }, bsdName: bsdName)
+    }
+
     func mount(_ bsdName: String) throws -> String {
         try perform({ disk, context in
             DADiskMount(disk, nil, DADiskMountOptions(kDADiskMountOptionDefault), daOperationCallback, context)
@@ -348,6 +354,11 @@ enum EDPNativeMountTable {
         return entries().first { $0.source == source }?.mountpoint
     }
 
+    static func filesystem(forBSD bsdName: String) -> String? {
+        let source = "/dev/\(bsdName)"
+        return entries().first { $0.source == source }?.filesystem
+    }
+
     static func hasMountedBSDPrefix(_ bsdName: String) -> Bool {
         let prefix = "/dev/\(bsdName)"
         return entries().contains { $0.source.hasPrefix(prefix) }
@@ -369,6 +380,12 @@ enum EDPNativeMountTable {
 
 private func diskEventCallback(_ disk: DADisk, _ context: UnsafeMutableRawPointer?) {
     guard let context else { return }
+    guard let properties = DADiskCopyDescription(disk) as? [String: Any],
+          (properties[kDADiskDescriptionMediaWholeKey as String] as? Bool) == true,
+          let deviceProtocol = properties[kDADiskDescriptionDeviceProtocolKey as String] as? String,
+          deviceProtocol.caseInsensitiveCompare("USB") == .orderedSame else {
+        return
+    }
     let monitor = Unmanaged<EDPDiskEventMonitor>.fromOpaque(context).takeUnretainedValue()
     monitor.handleDiskEvent()
 }
@@ -377,7 +394,7 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
     private let session: DASession
     private let queue = DispatchQueue(label: "com.edp.usbvault.disk-events")
     private var reconciliationTimer: DispatchSourceTimer?
-    private var pendingEventReconciliation: DispatchWorkItem?
+    private var eventGeneration: UInt64 = 0
     private var onChange: (@Sendable () -> Void)?
 
     init() throws {
@@ -403,17 +420,18 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
     }
 
     fileprivate func handleDiskEvent() {
-        // One physical attach can emit callbacks for the whole disk, its
-        // partitions, and the filesystem mount. Coalesce that burst so raw
-        // metadata discovery runs once after the device graph settles.
-        pendingEventReconciliation?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.onChange?() }
-        pendingEventReconciliation = work
-        queue.asyncAfter(deadline: .now() + .milliseconds(250), execute: work)
+        // Only whole USB media reaches this point. Coalesce the remaining
+        // attach/disappear burst so raw metadata discovery runs once after the
+        // device graph settles.
+        eventGeneration &+= 1
+        let generation = eventGeneration
+        queue.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
+            guard let self, self.eventGeneration == generation else { return }
+            self.onChange?()
+        }
     }
 
     deinit {
-        pendingEventReconciliation?.cancel()
         reconciliationTimer?.cancel()
         DASessionSetDispatchQueue(session, nil)
     }

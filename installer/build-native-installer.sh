@@ -46,9 +46,18 @@ PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPVaultRuntime.swift"
 )
 
+/usr/bin/cc -O2 -Wall -Wextra -c \
+  "${REPO_ROOT}/product/EDPRawReadAuthorization.c" \
+  -o "${BUILD_ROOT}/EDPRawReadAuthorization.o"
+/usr/bin/cc -O2 -Wall -Wextra -c \
+  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
+  -o "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o"
+
 echo "Building native privileged service..."
 xcrun swiftc -O -framework CryptoKit -framework Security \
   "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
+  "${BUILD_ROOT}/EDPRawReadAuthorization.o" \
+  "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 
 echo "Building switchable transport backends (default macfuse-local)..."
@@ -61,9 +70,13 @@ MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   -o "${RUNTIME_STAGE}/bin/diskimages2-attach"
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPConsoleExec.c" \
+  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
+  -framework Security \
   -o "${RUNTIME_STAGE}/bin/edp-console-exec"
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
+  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
+  -framework Security \
   -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
 
 for item in "${RUNTIME_STAGE}/bin/"*; do

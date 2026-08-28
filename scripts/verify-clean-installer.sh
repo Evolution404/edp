@@ -89,20 +89,36 @@ echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
 [[ ! -e "${ROOT}/bin/ntfscp" ]]
 echo "RESULT=PRODUCTION_NTFS_RUNTIME_CONTAINS_NO_FIXTURE_TOOLS"
 
-# Current-only raw-device ownership: the signed App talks only to the privileged
-# XPC service. It must not resurrect the retired per-device AuthorizationDB /
-# AuthorizationExternalForm right. The root-owned console launcher opens only
-# whole /dev/rdiskN devices, pins the raw descriptor to fd 3, and then drops to
-# the console user before starting the selected transport backend.
+# macOS 26 denies direct raw opens from an SMAppService daemon even as root.
+# The foreground App therefore obtains exact-path sys.openfile rights, while
+# daemon/launcher surfaces still reject anything except whole /dev/rdiskN.
+/usr/bin/nm -u "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F '_AuthorizationCopyRights' >/dev/null
+/usr/bin/nm -u "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F '_AuthorizationMakeExternalForm' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+  | /usr/bin/grep -F 'macfuse-local.appex' >/dev/null
 if /usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
-  | /usr/bin/grep -F 'sys.openfile.readwrite.' >/dev/null; then
-  echo "production app unexpectedly contains retired raw-device AuthorizationDB right" >&2
-  exit 5
+  | /usr/bin/grep -F '/Applications/fuse-t.app' >/dev/null; then
+  echo "production App unexpectedly gates mounting on FUSE-T" >&2
+  exit 6
 fi
+/usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \
+  | /usr/bin/grep -F -- '--authorized-readwrite' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \
+  | /usr/bin/grep -F 'privilege drop failed' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \
+  | /usr/bin/grep -F 'EDP_READWRITE_AUTHOPEN_EXIT_STATUS' >/dev/null
 /usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
   | /usr/bin/grep -F 'edp-console-exec' >/dev/null
 /usr/bin/strings "${ROOT}/bin/edp-console-exec" \
   | /usr/bin/grep -F 'EDP_CONSOLE_EXEC_RAW_OPEN_FAILED' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-console-exec" \
+  | /usr/bin/grep -F 'EDP_CONSOLE_EXEC_RAW_AUTH_READ_FAILED' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-console-exec" \
+  | /usr/bin/grep -F 'EDP_CONSOLE_EXEC_DROP_FAILED' >/dev/null
+/usr/bin/strings "${ROOT}/bin/edp-console-exec" \
+  | /usr/bin/grep -F -- '-extauth' >/dev/null
 /usr/bin/strings "${ROOT}/bin/edp-console-exec" \
   | /usr/bin/grep -F '/dev/rdisk' >/dev/null
 /usr/bin/strings "${ROOT}/bin/edp-console-exec" \

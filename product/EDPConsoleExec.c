@@ -3,12 +3,30 @@
 #include <grp.h>
 #include <limits.h>
 #include <pwd.h>
+#include <Security/Authorization.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+int edp_authopen_readwrite_fd(const char *path,
+                              const void *authorization_bytes,
+                              size_t authorization_length);
+
+static int read_exact(int fd, void *buffer, size_t length) {
+    unsigned char *cursor = buffer;
+    size_t remaining = length;
+    while (remaining > 0) {
+        ssize_t count = read(fd, cursor, remaining);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return -1;
+        cursor += (size_t)count;
+        remaining -= (size_t)count;
+    }
+    return 0;
+}
 
 static int parse_id(const char *text, unsigned long *value) {
     if (!text || !*text || !value) return -1;
@@ -56,9 +74,35 @@ static int is_whole_raw_disk_path(const char *path) {
     return 1;
 }
 
+static int install_raw_fd(int raw_fd) {
+    if (raw_fd < 0) {
+        fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_OPEN_FAILED:%d\n", errno);
+        return -1;
+    }
+    struct stat raw_status;
+    if (fstat(raw_fd, &raw_status) != 0 || !S_ISCHR(raw_status.st_mode)) {
+        fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_TYPE_REFUSED\n");
+        close(raw_fd);
+        return -1;
+    }
+    if (raw_fd != 3) {
+        if (dup2(raw_fd, 3) < 0) {
+            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_DUP_FAILED:%d\n", errno);
+            close(raw_fd);
+            return -1;
+        }
+        close(raw_fd);
+    } else if (fcntl(raw_fd, F_SETFD, 0) != 0) {
+        fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_INHERIT_FAILED:%d\n", errno);
+        close(raw_fd);
+        return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 5) {
-        fprintf(stderr, "usage: edp-console-exec <uid> <gid> [--raw-device /dev/rdiskN] -- <executable> [args...]\n");
+        fprintf(stderr, "usage: edp-console-exec <uid> <gid> [--raw-device|--raw-device-auth /dev/rdiskN] -- <executable> [args...]\n");
         return 64;
     }
     if (geteuid() != 0) {
@@ -67,9 +111,12 @@ int main(int argc, char **argv) {
     }
 
     const char *raw_device = NULL;
+    int authorized_raw_open = 0;
     int separator = 3;
-    if (argc >= 7 && strcmp(argv[3], "--raw-device") == 0) {
+    if (argc >= 7 && (strcmp(argv[3], "--raw-device") == 0 ||
+                      strcmp(argv[3], "--raw-device-auth") == 0)) {
         raw_device = argv[4];
+        authorized_raw_open = strcmp(argv[3], "--raw-device-auth") == 0;
         separator = 5;
     }
     if (separator >= argc - 1 || strcmp(argv[separator], "--") != 0) {
@@ -98,51 +145,52 @@ int main(int argc, char **argv) {
         return 77;
     }
 
-    int raw_fd = -1;
+    AuthorizationExternalForm external;
+    memset(&external, 0, sizeof(external));
+    int has_external = 0;
     if (raw_device) {
         if (!is_raw_bridge_executable(resolved) || !is_whole_raw_disk_path(raw_device)) {
             fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_DEVICE_REFUSED\n");
             return 77;
         }
-        raw_fd = open(raw_device, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
-        if (raw_fd < 0) {
-            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_OPEN_FAILED:%d\n", errno);
-            return 77;
-        }
-        struct stat raw_status;
-        if (fstat(raw_fd, &raw_status) != 0 || !S_ISCHR(raw_status.st_mode)) {
-            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_TYPE_REFUSED\n");
-            close(raw_fd);
-            return 77;
-        }
-        if (raw_fd != 3) {
-            if (dup2(raw_fd, 3) < 0) {
-                fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_DUP_FAILED:%d\n", errno);
-                close(raw_fd);
+        if (authorized_raw_open) {
+            if (read_exact(STDIN_FILENO, &external, sizeof(external)) != 0) {
+                fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_AUTH_READ_FAILED:%d\n", errno);
                 return 77;
             }
-            close(raw_fd);
-            raw_fd = 3;
-        } else if (fcntl(raw_fd, F_SETFD, 0) != 0) {
-            fprintf(stderr, "EDP_CONSOLE_EXEC_RAW_INHERIT_FAILED:%d\n", errno);
-            close(raw_fd);
-            return 77;
+            has_external = 1;
+        } else {
+            int raw_fd = open(raw_device, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+            if (install_raw_fd(raw_fd) != 0) return 77;
         }
     }
 
     uid_t uid = (uid_t)uid_value;
     gid_t gid = (gid_t)gid_value;
     struct passwd *account = getpwuid(uid);
-    if (!account || account->pw_uid != uid || initgroups(account->pw_name, gid) != 0 ||
-        setgid(gid) != 0 || setuid(uid) != 0) {
+    gid_t operator_gid = 5;
+    int groups_result = has_external
+        ? setgroups(1, &operator_gid)
+        : (account ? initgroups(account->pw_name, gid) : -1);
+    gid_t target_gid = has_external ? operator_gid : gid;
+    if (!account || account->pw_uid != uid || groups_result != 0 ||
+        setgid(target_gid) != 0 || setuid(uid) != 0) {
         fprintf(stderr, "EDP_CONSOLE_EXEC_DROP_FAILED:%d\n", errno);
+        memset(&external, 0, sizeof(external));
         return 77;
     }
     if (setenv("HOME", account->pw_dir, 1) != 0 ||
         setenv("USER", account->pw_name, 1) != 0 ||
         setenv("LOGNAME", account->pw_name, 1) != 0) {
         fprintf(stderr, "EDP_CONSOLE_EXEC_ENV_FAILED:%d\n", errno);
+        memset(&external, 0, sizeof(external));
         return 77;
+    }
+
+    if (has_external) {
+        int raw_fd = edp_authopen_readwrite_fd(raw_device, &external, sizeof(external));
+        memset(&external, 0, sizeof(external));
+        if (install_raw_fd(raw_fd) != 0) return 77;
     }
 
     execv(resolved, &argv[executable_index]);

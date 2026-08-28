@@ -88,6 +88,13 @@ CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
 )
 
+/usr/bin/cc -O2 -Wall -Wextra -c \
+  "${REPO_ROOT}/product/EDPRawReadAuthorization.c" \
+  -o "${BUILD_ROOT}/EDPRawReadAuthorization.o"
+/usr/bin/cc -O2 -Wall -Wextra -c \
+  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
+  -o "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o"
+
 xcrun swiftc -O -framework CryptoKit -framework Security \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/product/EDPNTFSWriteSafety.swift" \
@@ -103,6 +110,8 @@ xcrun swiftc -O -framework CryptoKit -framework Security \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/EDPXPCSecurity.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \
+  "${BUILD_ROOT}/EDPRawReadAuthorization.o" \
+  "${BUILD_ROOT}/EDPRawReadWriteAuthorization.o" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 
 xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
@@ -132,10 +141,14 @@ FUSE_LIBS="$(pkg-config --libs fuse)"
 
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPConsoleExec.c" \
+  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
+  -framework Security \
   -o "${RUNTIME_STAGE}/bin/edp-console-exec"
 
 /usr/bin/cc -O2 -Wall -Wextra \
   "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
+  "${REPO_ROOT}/product/EDPRawReadWriteAuthorization.c" \
+  -framework Security \
   -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
 
 /usr/bin/cc -O2 -Wall -Wextra -c \
@@ -293,6 +306,11 @@ if [[ -f "${LEGACY_PLIST}" ]]; then
   /bin/launchctl bootstrap system "${LEGACY_PLIST}"
   /bin/launchctl enable system/com.edp.usbvault.mountd || true
   /bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
+fi
+if /bin/launchctl print system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1; then
+  # Registration remains owned by SMAppService. Restart the approved job so
+  # package upgrades immediately execute the newly installed daemon binary.
+  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd.v2 || true
 fi
 exit 0
 POSTINSTALL

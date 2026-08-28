@@ -256,6 +256,23 @@ Clean Installer run `33047939672` @ `116e77067bd200e9dc4d681a26f1fa3af21eaaca`�
 - snapshot 改为读取 event-driven discovery cache，不再因 UI polling 访问 raw device；
 - Disk Arbitration appeared/disappeared burst 以 250 ms 合并；
 - legacy → SMAppService 原地升级会被 macOS 26 后台项目数据库中的同名旧 label 阻塞；内嵌 daemon 升级为 `com.edp.usbvault.mountd.v2`，旧 `com.edp.usbvault.mountd` 只用于 bootout/删除 legacy plist，避免要求用户全局 reset background task database；
+- v2 daemon/XPC 曾尝试 root daemon → `launchctl asuser <console uid>` → helper 内部 drop 到 console uid + `operator`，但 0.5.4 实机诊断已证明该路径仍为 `EPERM`，不再作为产品授权方案；
+- 原 `DispatchWorkItem.cancel()` 无法可靠撤回已提交的初始 DADisk callback burst，改为 monotonic generation gate，仅最后一个 250 ms callback 执行 reconcile；
+- 0.5.3 实机重插后仍未识别：`disk4` 与 FAT16 启动区存在，v2 XPC 正常，但 snapshot 仍为空；因此 `launchctl asuser` 尚不能证明解决 raw-device 授权，停止继续试 shell unmount；
+- discovery 增加 raw helper 退出错误、扫描次数与时间的 XPC 诊断，并将 Disk Arbitration 回调收窄到 whole USB media，避免分区/挂载事件触发 helper fork 风暴；
+- clean/native installer 在覆盖升级时 `kickstart -k` 已获批的 `com.edp.usbvault.mountd.v2`，避免新 App 已落盘但旧 daemon 继续驻留；
+- 正式修复恢复 macOS 26 已验证的精确 capability：GUI 前台仅申请当前 whole `/dev/rdiskN` 的 `sys.openfile.readonly/readwrite` rights，daemon 以 `authopen -extauth` 读取元数据，transport launcher 以授权 `O_RDWR` fd 3 启动；`AuthorizationExternalForm` 只保存在内存，不写盘；
+- 0.5.6 实机进一步证明 mixed readonly/readwrite capability 用于 `authopen O_RDONLY` 会失败：`authopen: couldn't open /dev/rdisk4: Operation not permitted`，XPC 表面错误为 `errno=93`；对齐既有物理 E2E 基线，改为只申请精确 `sys.openfile.readwrite./dev/rdiskN`，Disk Arbitration whole-disk unmount 后以 `authopen O_RDWR` 取得 fd，但元数据 probe 仍严格只执行 LBA 4/7/11/12 的 `pread`、不写盘；
+- 0.5.7 继续从 root SMAppService daemon 调用同一 `authopen O_RDWR` 仍失败；与此同时，仓库既有 `ValidateAuthOpenFD` 在当前 console user 进程中对同一 `/dev/rdisk4`、同一 exact-path readwrite right 连续取得可读与 `O_RDWR` fd，输出 `RESULT=AUTHOPEN_RAW_DEVICE_READ_AND_RDWR_OPEN_OK`。这排除了 AuthorizationDB、介质和 right 名称错误，确认真实差异是调用者登录会话/uid 上下文；
+- 后续实现因此固定为：root daemon 只校验 whole USB raw path、目标二进制、console uid 并接收 32-byte `AuthorizationExternalForm`；`edp-raw-metadata` 与 `edp-console-exec` 均先降权到 console user，再调用 `/usr/libexec/authopen -extauth`。元数据 helper 只 `pread` 四个保留扇区；transport helper 将取得的 `O_RDWR` fd 固定继承为 fd 3。禁止再从 root daemon 直接调用 authopen；
+- 0.5.8 实机首次成功完成上述 metadata 授权链：XPC 返回 `raw authorization accepted`，snapshot 显示 `disk4`、`privilegedAccessReady=true`，诊断显示 `recognized_cached`，App 可见设备详情，FAT16 启动区已从 mount table 消失。随后界面挂载被另一个历史残留拦截：App 仍硬编码检查 `/Applications/fuse-t.app`，与正式默认 `macfuse-local` provider 不一致；UI gate 已改为检查安装包实际提供的 macFUSE Local host app、local FSKit module 和 `MFMount.framework`；
+- metadata helper 在 console uid + `operator` group 下 authopen 成功，而 transport launcher 原先恢复 console user groups、遗漏 `/dev/rdiskN` 所属的 `operator` group。authorized raw transport 现与成功 helper 精确对齐为 console uid + 单一 `operator` gid 后执行 authopen；非 raw/legacy launcher 仍恢复正常用户组。最终 bridge 仍以 console uid 运行；
+- 0.5.10 GUI 常驻授权验证还原了 CLI smoke 的生命周期差异：CLI 在 XPC 返回后退出并释放 `AuthorizationRef`，所以 external form 只能完成同步 metadata probe，不能代表后续 mount capability；正式 GUI 必须在 `rawAuthorizationRefs` 中持续持有 ref。GUI 持有后 transport 不再报 `AuthorizationCreate ... no user interaction`；
+- 同轮暴露启动区路由错误：partition 1 被送进只接受加密 partition 2/4 的 Direct MFMount adapter，进程以参数错误直接退出。启动区是物理 `/dev/diskNs1` FAT 分区，已改为由 Disk Arbitration 直接 mount/unmount，snapshot 从真实 mount table 读取 filesystem/mountpoint；只有 partition 2/4 进入 encrypted `macfuse-local → volume.raw → DiskImages2` 链；
+- 多条历史设备记录存在时，设备数组按 deviceID 排序曾导致 UI 默认选中离线旧设备；授权成功后即使当前 U 盘已识别，右侧仍显示“未连接”。设备页现在首次进入及连接状态变化时优先选择已连接设备，同时保留用户主动查看离线记录的能力；
+- 0.5.11 实机已证明物理启动区路由修复生效：App 显示当前 Lexar EDP U 盘已连接，启动区状态为“已挂载”，文件系统为 `msdos`。随后交换区“设置密码”在密码比对前失败，错误为 authorized `edp-raw-metadata` 的 `EDP_READWRITE_AUTHOPEN_EXIT_STATUS=1 / errno=13`；根因是启动区已挂载时再次申请 whole `/dev/rdiskN` 的 `O_RDWR` fd。密码验证现先记录启动区挂载状态，通过 Disk Arbitration whole-unmount 后读取 LBA12，并在成功或失败路径都恢复此前启动区状态；
+- 0.5.12 本机 Apple Development 签名 Clean package 已完成 build 与 `verify-clean-installer.sh` 全绿；覆盖安装已推进到 macOS `SecurityAgent` 管理员认证，因操作者离开电脑尚未完成，因此不得把 0.5.12 的交换区密码、mount 或 persistence 标记为实机通过；
+- 授权成功识别结果按当前 attachment 缓存，避免每次 UI/Disk Arbitration reconciliation 都重新打开 whole raw disk；设备消失后 cache 随 connected set 清除；
 - 本机正式修复包必须用有效 Apple Development/Developer ID 身份构建 `smappservice`，不能安装 CI legacy contract artifact。
 
 在 `5275b45` 基线上已通过：

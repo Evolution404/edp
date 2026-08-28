@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <Security/Authorization.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,22 @@
 #include <unistd.h>
 
 #define EDP_SECTOR_SIZE 512
+
+int edp_authopen_readwrite_fd(const char *path,
+                              const void *authorization_bytes,
+                              size_t authorization_length);
+
+static int read_exact(int fd, void *buffer, size_t length) {
+    unsigned char *cursor = buffer;
+    while (length > 0) {
+        ssize_t n = read(fd, cursor, length);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return -1;
+        cursor += n;
+        length -= (size_t)n;
+    }
+    return 0;
+}
 
 static int write_all(int fd, const void *buffer, size_t length) {
     const unsigned char *cursor = (const unsigned char *)buffer;
@@ -41,8 +58,8 @@ static int read_sector(int fd, uint64_t lba, unsigned char out[EDP_SECTOR_SIZE])
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s /dev/rdiskN console-uid\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "usage: %s /dev/rdiskN console-uid [--authorized-readwrite]\n", argv[0]);
         return 64;
     }
     if (geteuid() != 0) {
@@ -52,6 +69,17 @@ int main(int argc, char **argv) {
     if (strncmp(argv[1], "/dev/rdisk", 10) != 0) {
         fprintf(stderr, "refusing non-raw-device path\n");
         return 64;
+    }
+    int authorized = argc == 4 && strcmp(argv[3], "--authorized-readwrite") == 0;
+    if (argc == 4 && !authorized) {
+        fprintf(stderr, "unknown authorization mode\n");
+        return 64;
+    }
+    AuthorizationExternalForm external;
+    memset(&external, 0, sizeof(external));
+    if (authorized && read_exact(STDIN_FILENO, &external, sizeof(external)) != 0) {
+        fprintf(stderr, "authorization payload read failed: errno=%d %s\n", errno, strerror(errno));
+        return 77;
     }
 
     char *end = NULL;
@@ -68,7 +96,10 @@ int main(int argc, char **argv) {
         return 77;
     }
 
-    int fd = open(argv[1], O_RDONLY | O_CLOEXEC);
+    int fd = authorized
+        ? edp_authopen_readwrite_fd(argv[1], &external, sizeof(external))
+        : open(argv[1], O_RDONLY | O_CLOEXEC);
+    memset(&external, 0, sizeof(external));
     if (fd < 0) {
         fprintf(stderr, "raw open failed: errno=%d %s\n", errno, strerror(errno));
         return 74;
