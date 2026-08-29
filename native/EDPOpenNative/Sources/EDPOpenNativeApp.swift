@@ -26,7 +26,7 @@ struct NativeSettingsView: View {
             Section("原生迁移") {
                 LabeledContent("界面") { Text("SwiftUI + AppKit") }
                 LabeledContent("最低系统") { Text("macOS 26") }
-                LabeledContent("Raw Broker") { Text("FDA PoC 已验证 · 尚未接入") }
+                LabeledContent("Raw Broker") { Text("Swift XPC · FDA · 已接入") }
             }
         }
         .formStyle(.grouped)

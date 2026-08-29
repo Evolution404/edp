@@ -21,7 +21,7 @@ EDPOpen.app (SwiftUI + AppKit, macOS 26+)
     │       ├─ convert
     │       └─ editor
     │
-    └─ Raw Device Broker (后续)
+    └─ Raw Device Broker
         ├─ Swift system LaunchDaemon
         ├─ stable certificate-backed identity
         ├─ Full Disk Access
@@ -76,7 +76,7 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 
 ## Phase D — 只读实机接入
 
-- [ ] GUI 枚举真实 U 盘
+- [x] GUI 枚举真实 U 盘（broker 实时 IOKit + Disk Arbitration whole-disk 列表）
 - [ ] broker read-only metadata session
 - [ ] Overview / Map / Sector 使用真实数据
 - [ ] App 重启无授权
@@ -93,8 +93,8 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 
 ## Phase F — 安装与发布
 
-- [ ] 首次安装 privileged broker
-- [ ] FDA 设置页引导和 readiness 检测
-- [ ] App + broker 稳定签名
+- [x] 首次安装 privileged broker：`build-native.sh` 普通用户签名构建，`install-native.sh` root 仅安装已签名产物；固定路径/owner/mode/LaunchDaemon 均有 fail-closed 校验
+- [x] FDA 设置页引导和 readiness 检测
+- [x] App + broker 稳定签名：统一 `EDP Project Code Signing`，root 安装阶段不访问私钥
 - [ ] designated requirement 升级连续性测试
 - [ ] 5min / 30min / reboot / app upgrade 验收

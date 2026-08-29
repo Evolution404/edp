@@ -62,6 +62,16 @@ native/EDPOpenNative/Scripts/verify-peer-signing-contract.sh
 
 该测试不会修改用户 trust store，也不会创建或加入任何临时 signing keychain；它会生成一张仅存在于临时目录的 self-signed code-signing certificate/private key，通过 Security.framework 的显式 `SecIdentity` 生成真实 alternate certificate-backed App/Broker 签名，再确认 production leaf requirement 必须拒绝这些坏样本。测试退出时同时断言 DefaultKeychain/SearchList 与运行前完全一致。
 
+规范本机安装分两步：先以普通用户完成签名构建，再仅用 root 复制已签名产物；root 安装阶段不会访问签名私钥：
+
+```bash
+native/EDPOpenNative/Scripts/build-native.sh
+sudo /bin/bash native/EDPOpenNative/Scripts/install-native.sh
+/bin/bash native/EDPOpenNative/Scripts/verify-installed-native.sh
+```
+
+安装器固定 App 到 `/Applications/EDPOpen.app`，Raw Broker 到 `/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker`，LaunchDaemon 到 `/Library/LaunchDaemons/com.evolution404.edpopen.rawbroker.plist`。Broker 强制 `root:wheel 0755`、plist 强制 `root:wheel 0644`，复制前后都验证固定 bundle identifier + 精确 EDP leaf requirement，并拒绝旧 Apple Development Team ID。
+
 ## 参照与对拍基准
 
 算法与流程移植自 Python 版工具（另行保存），测试向量取自真实盘的

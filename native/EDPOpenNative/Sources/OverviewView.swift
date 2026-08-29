@@ -167,7 +167,7 @@ struct OverviewView: View {
                 .font(.headline)
 
             MigrationRow(icon: "macwindow", title: "原生 UI", detail: "SwiftUI + AppKit · macOS 26 Liquid Glass", done: true)
-            MigrationRow(icon: "externaldrive.badge.checkmark", title: "FDA Raw Broker", detail: "独立 PoC 已验证，正式 Swift broker 尚未接入", done: false)
+            MigrationRow(icon: "externaldrive.badge.checkmark", title: "FDA Raw Broker", detail: "Swift XPC broker 已接入 · 固定路径 + 同 leaf 双向校验", done: true)
             MigrationRow(icon: "shippingbox", title: "Rust EDP Core", detail: "保留现有 crypto / parser / convert / editor golden", done: true)
         }
         .padding(18)
