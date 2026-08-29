@@ -102,6 +102,7 @@ struct EDPXPCSnapshot: Codable, Sendable {
     func requestGracefulShutdown(withReply reply: @escaping (String?) -> Void)
     func snapshot(withReply reply: @escaping (Data) -> Void)
     func refreshRawAccess(withReply reply: @escaping (String?) -> Void)
+    func retryTransientAutomaticMounts(withReply reply: @escaping (String?) -> Void)
     func saveCredential(deviceID: String, partitionType: UInt32, password: Data, withReply reply: @escaping (String?) -> Void)
     func deleteCredential(deviceID: String, partitionType: UInt32, withReply reply: @escaping (String?) -> Void)
     func deleteDeviceRecord(deviceID: String, withReply reply: @escaping (String?) -> Void)

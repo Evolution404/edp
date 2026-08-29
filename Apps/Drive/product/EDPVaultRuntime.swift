@@ -1762,6 +1762,40 @@ private final class EDPDaemonController: @unchecked Sendable {
         reconcile()
     }
 
+    func retryTransientAutomaticMounts() throws {
+        let shouldReconcile = try queue.sync { () -> Bool in
+            let policyDocument = try policies.load()
+            guard policyDocument.globalAutoMountEnabled else { return false }
+
+            var clearedAny = false
+            for disk in connectedDisks where ejectingUSBRegistryIDs[disk.deviceID] == nil {
+                guard let devicePolicy = policyDocument.devices.first(
+                    where: { $0.deviceID == disk.deviceID }
+                ) else { continue }
+
+                for type in [UInt32(2), 4]
+                where devicePolicy.policy(for: type).autoMount {
+                    let partitionKey = key(disk.deviceID, type)
+                    guard !manualUnmountSuppressions.contains(partitionKey),
+                          let failure = failedMounts[partitionKey],
+                          failure.contains("File system extension not found")
+                            || failure.contains("File system extension not enabled") else {
+                        continue
+                    }
+                    failedMounts.removeValue(forKey: partitionKey)
+                    clearedAny = true
+                    addActivity(
+                        "macFUSE FSKit 已恢复，重试自动挂载",
+                        deviceID: disk.deviceID,
+                        partitionType: type
+                    )
+                }
+            }
+            return clearedAny
+        }
+        if shouldReconcile { reconcile() }
+    }
+
     func eject(deviceID: String) throws {
         try queue.sync {
             guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
@@ -1891,6 +1925,15 @@ private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCP
     func refreshRawAccess(withReply reply: @escaping (String?) -> Void) {
         do {
             try controller.refreshRawAccess()
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func retryTransientAutomaticMounts(withReply reply: @escaping (String?) -> Void) {
+        do {
+            try controller.retryTransientAutomaticMounts()
             reply(nil)
         } catch {
             reply(String(describing: error))

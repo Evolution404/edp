@@ -35,6 +35,10 @@ jobs:
           ! grep -Fq '<key>KeepAlive</key>' Apps/Drive/product/App/com.edp.drive.service.plist
           ! grep -Fq '<key>RunAtLoad</key>' Apps/Drive/product/App/com.edp.drive.service.plist
           grep -Fq 'requestGracefulShutdown' Apps/Drive/product/EDPXPCProtocol.swift
+          grep -Fq 'retryTransientAutomaticMounts' Apps/Drive/product/EDPXPCProtocol.swift
+          grep -Fq 'failure.contains("File system extension not found")' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'failure.contains("File system extension not enabled")' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'retryTransientAutomaticMounts()' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Button("启动")' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Button("停止")' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Button("重启")' Apps/Drive/product/App/EDPUSBVaultApp.swift

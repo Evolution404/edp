@@ -204,6 +204,9 @@ final class EDPVaultViewModel: ObservableObject {
         }
         refreshTransportRuntimeState()
         refresh()
+        if transportRuntimeReady == true {
+            retryTransientAutomaticMounts()
+        }
         Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
@@ -532,6 +535,17 @@ final class EDPVaultViewModel: ObservableObject {
                 guard let self else { return }
                 self.isBusy = false
                 self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    private func retryTransientAutomaticMounts() {
+        guard let proxy = proxy() else { return }
+        proxy.retryTransientAutomaticMounts { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                if let errorMessage { self.lastError = errorMessage }
                 self.refresh()
             }
         }

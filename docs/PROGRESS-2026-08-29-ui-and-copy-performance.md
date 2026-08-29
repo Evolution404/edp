@@ -132,10 +132,26 @@
 - 公司历年公开报告确认“北信源移动存储管理系统及安全U盘2.16.0”是长期产品，并列有“快速识别移动存储设备的方法和装置”等相关专利。
 - 当前未找到公开资料直接披露 type 1/2/4、LBA4/LBA7/LBA11/LBA12、`EDPF` record、CRC 字段、key derivation 或 SM4 block mapping；这些继续只以真实盘 capture + golden validator 为权威证据。
 
+## 2026-08-29 21:48 重启后最终验收继续
+
+- Mac 重启后旧 root Service `E` state 已彻底清除：launchd 初始 `state = not running`、`runs = 0`，无任何 EDP hidden/user mounts 或 transport process。
+- 仓库基线 `7a4cc01c69f86d25428003b062d57449b6c274d3 == origin/main`，exact-head Drive CI run `33255649709` success。
+- 从 exact-head 重新构建固定签名 clean combined installer，完整 `verify-clean-installer.sh` 通过；App/Service designated requirement 仍固定 certificate root `040b5488fb2b6c02b0786e76b674cb4460658ca2`。
+- 安装最终候选后首次 Service 扫描识别真实 Lexar `disk6` 为 `standardEncrypted`，raw access `privilegedAccessReady=true`，但 type 2/type 4 自动挂载均失败：
+  - type 2：macFUSE `File system extension not found`；
+  - type 4：macFUSE `File system extension not enabled`。
+- 根因进一步收敛：组合安装包重新安装 macFUSE 5.3.3 后，当前用户的 `~/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist` 被重写，只剩 Apple FSKit module；此时 UI App 尚未运行，root Service 先自动挂载并将失败写入 `failedMounts`，而产品策略 `automaticMountRetry=false` 会锁存该失败。
+- 启动 EDP Drive UI 后，现有 `ensureMacFUSELocalEnablement()` 能正确恢复 `io.macfuse.app.fsmodule.macfuse` 与 `io.macfuse.app.fsmodule.macfuse-local` 到 PluginKit + FSKit enabled settings；但旧 Service 不会自动清除失败锁存，因此仍保持 unmounted。
+- UI 恢复 enablement 后，使用 XPC 手动挂载 smoke 验证 type 2/type 4 均立即成功，分别挂载为可写 ExFAT `/Volumes/交换区`、`/Volumes/保密区`；说明底层 transport/crypto/raw-fd 路径健康，缺口仅是 enablement 恢复后的 bounded retry。
+- 已实现最小自动恢复设计：新增 `retryTransientAutomaticMounts` XPC，只清除当前连接设备、global/partition autoMount 开启、未被用户 manual-unmount suppression 的 type 2/4，并且仅当失败文本包含 `File system extension not found` 或 `File system extension not enabled` 时清锁；密码错误、raw access 错误、其他 mount 错误绝不自动重试。
+- EDP Drive UI 在 `ensureMacFUSELocalEnablement()` 成功且 runtime ready 后只触发一次 transient retry；Service 随后走既有 `reconcile()`，不引入周期自动重试。
+- 新协议/Service/UI 已通过 Swift 6 `-warnings-as-errors` 完整编译，CI ratchet 已加入 transient retry 边界约束。
+
 ## 下一步立即执行
 
-1. lifecycle hardening local gates / 独立 commit / exact-head CI 已完成；保留 reboot 后真实盘复验作为最终硬 gate。
-2. 将 Finder progress / EDP metadata 两份研究文档与计划/进度状态形成独立 docs commit。
-3. 更新 `docs/HANDOFF-2026-08-29.md` 与 Drive STATUS，明确约 3 秒 Finder 行为结论与 root Service 当前 E-state blocker。
-4. 当前 Mac 需要重启才能清除已 SIGKILL 但仍停留 E-state 的 root Service；重启后继续 type 2/type 4 自动挂载、第二轮 Stop/Start/Restart、安全推出整盘、App restart 最终验收。
-5. 最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。
+1. 提交/push transient macFUSE auto-mount recovery，等待 exact-head Drive CI。
+2. 当前 type 2/type 4 已挂载；先走 graceful Stop 完整卸载，再从新提交构建/安装候选包。
+3. 故意复现“macFUSE 组合安装重置 user FSKit settings”场景：安装后先允许 Service 失败一次，再启动 EDP Drive UI，确认无需手工点挂载即可自动恢复 type 2/type 4。
+4. 完成第二轮 Stop -> Start -> Restart；确认每轮 XPC responsive、两区恢复、无 controller queue 卡死。
+5. 完成安全推出整盘、App restart；随后物理拔插 / `diskN` 变化需要用户实际拔插动作时再提示。
+6. 更新 HANDOFF/STATUS/本 tracker，最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。
