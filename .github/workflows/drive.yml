@@ -70,6 +70,9 @@ jobs:
           grep -Fq 'state->flush_calls += 1;' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           grep -Fq 'DIRECT_IO_SUMMARY' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           grep -Fq 'EDP_FINAL_DURABILITY' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPAdapter.c
+          grep -Fq 'physical_fsync' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
+          grep -Fq 'skipped_fsync' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
+          grep -Fq 'write_generation == state->synced_generation' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           ! grep -Fq 'DIRECT_OPCODE opcode=' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh
           bash -n Tools/build-macos-icon.sh

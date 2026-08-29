@@ -42,7 +42,11 @@ struct direct_state {
     MFChannelRef channel;
     bool running;
     uint64_t write_calls;
+    uint64_t write_generation;
+    uint64_t synced_generation;
     uint64_t fsync_calls;
+    uint64_t physical_fsync_calls;
+    uint64_t skipped_fsync_calls;
     uint64_t flush_calls;
     uint64_t fsync_total_us;
     uint64_t fsync_max_us;
@@ -255,7 +259,7 @@ static int handle_read(const struct direct_state *state,
     return result;
 }
 
-static int handle_write(const struct direct_state *state,
+static int handle_write(struct direct_state *state,
                         const struct fuse_in_header *in,
                         const uint8_t *body,
                         size_t body_size) {
@@ -289,6 +293,9 @@ static int handle_write(const struct direct_state *state,
         written += (size_t)count;
     }
 
+    if (written > 0) {
+        state->write_generation += 1;
+    }
     struct fuse_write_out out = {
         .size = (uint32_t)written,
         .padding = 0,
@@ -499,10 +506,18 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
             break;
         case FUSE_FSYNC: {
             state->fsync_calls += 1;
+            if (state->write_generation == state->synced_generation) {
+                state->skipped_fsync_calls += 1;
+                result = send_payload(state->channel, in->unique, NULL, 0);
+                break;
+            }
+
             uint64_t started_us = monotonic_us();
             if (fsync(state->backing_fd) != 0) {
                 result = send_error(state->channel, in->unique, errno);
             } else {
+                state->physical_fsync_calls += 1;
+                state->synced_generation = state->write_generation;
                 result = send_payload(state->channel, in->unique, NULL, 0);
             }
             uint64_t ended_us = monotonic_us();
@@ -681,10 +696,13 @@ int main(int argc, char **argv) {
 
     fprintf(stderr,
             "DIRECT_IO_SUMMARY writes=%" PRIu64 " fsync=%" PRIu64
+            " physical_fsync=%" PRIu64 " skipped_fsync=%" PRIu64
             " flush=%" PRIu64 " fsync_total_us=%" PRIu64
             " fsync_max_us=%" PRIu64 "\n",
             state.write_calls,
             state.fsync_calls,
+            state.physical_fsync_calls,
+            state.skipped_fsync_calls,
             state.flush_calls,
             state.fsync_total_us,
             state.fsync_max_us);

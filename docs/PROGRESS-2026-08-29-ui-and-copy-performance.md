@@ -74,12 +74,18 @@
   - `spawnConsoleTransport` 遇到 `rawFD == 3` 时先 `F_DUPFD_CLOEXEC` 到高位 staging fd，再通过 spawn file action `dup2(staged,3)`；
   - `EDPConsoleExec.c` 在二次 `execv` 前验证 inherited fd3 为字符设备且具有 EDP metadata，并显式清 `FD_CLOEXEC`。
 - fd3 修复已通过 Swift 6 `-warnings-as-errors` Service 编译与 C `-Wall -Wextra -Werror` console-exec 编译；Drive CI ratchet 已加入对应约束。
+- fd3 修复提交：`082fdfbd6b36c5e6e8f27cd9e05de10673dd65bf`。候选 Native.pkg 已安装到真实机器，App、embedded Service、macFUSE Local runtime 和 console-exec 与候选 payload SHA-256 完全一致。
+- 实机 cold-start 验证通过：Service 重新启动后 `privilegedAccessReady=true`，type 2 交换区和 type 4 保密区均自动挂载为可写 ExFAT，不再出现 `EDP_DIRECT_INVALID_INHERITED_RAW_FD`。
+- 第一版 sync 分层实机 A/B：4 KiB fsync median 约 47.8 ms，8 MiB fsync median 约 93.4 ms，与旧版约 54 ms / 91 ms 接近；说明普通 raw USB `fsync` 本身仍是主要延迟，而不仅是 `F_FULLFSYNC`。
+- 真实交换区 600 MiB 普通文件系统复制基线：629,145,600 bytes / 12.093 s = 约 52.0 MB/s，源/目标 SHA-256 一致，临时目标已删除。
+- 基于 fixture 精确行为，新增加 dirty-generation fsync 去重：每次成功 `FUSE_WRITE` 增加 generation；`FUSE_FSYNC` 仅在 generation 尚未同步时执行物理 fsync；没有新 WRITE 的重复 FSYNC 直接 success。
+- Direct MFMount Local fixture 已验证：3 次上层 `fsync()` -> 6 次 `FUSE_FSYNC` request，但新逻辑为 `physical_fsync=3`、`skipped_fsync=3`、`flush=0`，准确消除 macFUSE Local 的重复同步放大。
 
 ## 下一步立即执行
 
-1. 提交/push fd3 cold-start 修复并等待 exact-head EDP Drive CI。
-2. 构建候选 App/runtime，先验证 Service 冷启动自动挂载不再出现 `EDP_DIRECT_INVALID_INHERITED_RAW_FD`。
-3. 安装候选 runtime 后对真实 Lexar 重新挂载交换区/保密区。
-4. 复测 Finder 复制进度条启动延迟、实际吞吐和 `DIRECT_IO_SUMMARY`。
+1. 完整编译 dirty-generation 去重候选，提交/push 并等待 exact-head EDP Drive CI。
+2. 构建并安装第二版候选 App/runtime，保持当前真实盘数据不变。
+3. 对真实 Lexar 重跑 4 KiB / 8 MiB fsync probe 与 600 MiB copy A/B，确认同步延迟和吞吐变化。
+4. 用 Finder 发起同尺寸大文件复制，观察不确定进度条持续时间/真正进度出现时间。
 5. 回归 TextEdit 原子保存、多文件复制删除、交换区/保密区卸载重挂、安全推出、Service Stop/Start/Restart。
 6. exact-head 全绿后更新 HANDOFF/STATUS 并收口工作树。
