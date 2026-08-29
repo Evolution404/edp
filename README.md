@@ -2,6 +2,8 @@
 
 EDP 是面向 macOS 26+ 的 EDP 加密 U 盘原生工具套件。仓库采用 monorepo，两个 App 共用同一个 EDP 格式/密码学核心。
 
+> **AI / 开发交接首读：** `docs/HANDOFF-2026-08-29.md`。开始工作前先 `git fetch` 并以实际 `main` 为准；不要从旧 FUSE-T / NTFS-3G / authopen 文档恢复已淘汰架构。
+
 ## 产品
 
 ### EDP Drive
@@ -13,8 +15,9 @@ EDP 是面向 macOS 26+ 的 EDP 加密 U 盘原生工具套件。仓库采用 mo
 正式数据链：
 
 ```text
-physical EDP USB
-  -> FDA Raw Access retained fd
+physical factory-standard encrypted EDP USB
+  -> LBA0/4/7/11/12 fail-closed classification
+  -> FDA embedded-service retained raw fd
   -> Packages/EDPCore
   -> macFUSE Local FSKit
   -> DiskImages2
@@ -56,7 +59,7 @@ Packages/
 .github/workflows/
 ```
 
-原 `edp-usb-vault`、`edpopen`、`edp-core` 三个仓库的历史均保留在本仓库 Git 图中；迁入时没有 squash 或改写原提交 SHA，每条历史顶部只增加了一次目录移动提交。
+原 `edp-usb-vault`、`edpopen`、`edp-core` 三个仓库的历史均保留在本仓库 Git 图中；必要的 tag-only / PR-only 历史也已附着到 monorepo。三个旧 GitHub 仓库均已删除，当前唯一开发真源是 `Evolution404/edp`。
 
 ## 品牌与产品身份
 

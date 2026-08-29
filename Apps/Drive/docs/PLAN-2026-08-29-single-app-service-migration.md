@@ -13,8 +13,8 @@ As of 2026-08-29:
 - Phase C: complete — Drive runtime identities are `com.edp.drive` / `com.edp.drive.service`, data and Keychain migration are implemented and regression-tested;
 - Phase D: complete — UI Start / graceful Stop / Restart is implemented; `KeepAlive` / `RunAtLoad` are removed and XPC disconnect races are hardened;
 - Phase E: complete — Studio is `EDP Studio.app`, `com.edp.studio`, `com.edp.studio.rawbroker`; native directory/project/target/scheme names are also migrated to `EDPStudioNative` / `EDPStudio`;
-- Phase F: partially complete — build, installer expansion, signing and synthetic/golden gates pass; remaining work requires local administrator authorization, one FDA grant and real-USB lifecycle/performance acceptance;
-- Phase G: partially complete — every old branch/tag commit is now represented in monorepo history and legacy USB Vault tags were copied; old repositories must not be deleted until Phase F real-machine acceptance passes and a final exact-head CI run is green.
+- Phase F: partially complete — build, installer expansion, signing, identity upgrade, one-time FDA grant, no-USB service lifecycle and synthetic/golden gates pass; remaining work is real-USB classification/type1-2-4/replug/reboot/performance acceptance after the latest classifier/UI changes;
+- Phase G: complete for repository retirement — old branch/tag/PR-only history was preserved, legacy tags were copied, exact-head gates were run, and the three old GitHub repositories were deleted. `Evolution404/edp` is now the sole development repository.
 
 ## Non-negotiable production topology
 

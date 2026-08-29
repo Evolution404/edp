@@ -220,29 +220,37 @@ com.edp.usbvault.*
 - real LBA11 / LBA12 golden；
 - 两只真实盘共 1024 个随机读 golden；
 - encrypted reader/writer boundary / persistence；
+- 五类 USB classifier 与真实 Lexar/SanDisk 标准盘 golden；
+- 每次扫描重新分类、禁止 cached-device 绕过标准盘判定；
 - 单 App + embedded Service installer build / expansion contract；
 - 包内无 `ntfs-3g`；
 - App ID `com.edp.drive`；
 - Service code/Mach ID `com.edp.drive.service`；
-- graceful shutdown API / UI Start-Stop-Restart 编译 gate；
+- 从旧身份升级到 `/Applications/EDP Drive.app`；
+- 新身份 Full Disk Access 已由用户手动授权一次；
+- graceful shutdown / UI Start-Stop-Restart 无 U 盘实机验收；
+- Stop 后 launchd `state = not running` 且不自动复活；
+- on-demand Start / graceful Restart 实机通过；
+- 单层菜单、`仅退出界面` / `完全退出` 生命周期；
+- Drive/Studio 原生 App Icon 与 Finder copyright metadata；
+- EDP Studio inspector 改为真实 `HSplitView`；
 - XPC disconnect race hardening；
-- monorepo exact-head Core / Drive / Studio GitHub Actions。
+- 当前 exact-head Drive / Studio GitHub Actions 通过；
+- 三个旧 GitHub 仓库历史已迁入 monorepo并已删除。
 
-仍需在真实本机完成：
+当前仍需真实 U 盘完成的发布验收：
 
-1. 从旧 `EDP USB Vault + Raw Access App` 升级安装到新 `EDP Drive.app`；
-2. 为新身份完成一次 Full Disk Access 授权；
-3. type 1 / 2 / 4 functional-all；
-4. UI Stop -> 确认所有 session 安全退出且 Service 不自动复活；
-5. UI Start；
-6. UI Restart；
+1. 普通 U 盘：必须完全交给 macOS，Drive 不接管；
+2. 旧版 NoPwd：必须识别为 `legacyNoPassword`，Drive 不接管；
+3. 最新 NoPwd：必须识别为 `currentNoPassword`，Drive 不接管；
+4. 标准加密 EDP：必须识别为 `standardEncrypted` 并进入 Drive；
+5. 标准盘 type 1 / 2 / 4 functional-all；
+6. safe eject、物理拔插与 `diskN` 变化；
 7. App restart；
-8. USB replug / diskN change；
+8. Service Stop / Start / Restart 在真实挂载 session 下复验；
 9. Mac reboot；
 10. 后续均不再出现管理员/Touch ID 授权；
 11. 真实 USB 性能 sanity check，确认约 160 MB/s 级基线未明显回退。
-
-以上实机验收完成前，不删除三个旧 GitHub 仓库。
 
 ## 8. 当前开发入口
 
@@ -260,7 +268,13 @@ Apps/Studio
 Packages/EDPCore
 ```
 
-当前身份迁移计划：
+当前完整交接入口：
+
+```text
+docs/HANDOFF-2026-08-29.md
+```
+
+身份迁移历史计划：
 
 ```text
 Apps/Drive/docs/PLAN-2026-08-29-single-app-service-migration.md
