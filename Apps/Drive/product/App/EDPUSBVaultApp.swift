@@ -1945,13 +1945,14 @@ struct EDPUSBVaultApp: App {
         if CommandLine.arguments.contains("--xpc-graceful-stop") {
             let result = EDPXPCSmokeResult()
             let replySemaphore = DispatchSemaphore(value: 0)
-            let invalidationSemaphore = DispatchSemaphore(value: 0)
+            let disconnectSemaphore = DispatchSemaphore(value: 0)
             let connection = NSXPCConnection(
                 machServiceName: edpVaultMachServiceName,
                 options: .privileged
             )
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-            connection.invalidationHandler = { invalidationSemaphore.signal() }
+            connection.interruptionHandler = { disconnectSemaphore.signal() }
+            connection.invalidationHandler = { disconnectSemaphore.signal() }
             guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
                 result.set(passed: false, detail: error.localizedDescription)
                 replySemaphore.signal()
@@ -1979,9 +1980,33 @@ struct EDPUSBVaultApp: App {
                 print("RESULT=EDP_SERVICE_GRACEFUL_STOP_FAILED")
                 exit(1)
             }
-            guard invalidationSemaphore.wait(timeout: .now() + 12) == .success else {
-                connection.invalidate()
-                print("RESULT=XPC_GRACEFUL_STOP_INVALIDATION_TIMEOUT")
+            var disconnected = false
+            let deadline = Date().addingTimeInterval(12)
+            while Date() < deadline {
+                if disconnectSemaphore.wait(timeout: .now() + 0.25) == .success {
+                    disconnected = true
+                    break
+                }
+                let launchctl = Process()
+                launchctl.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                launchctl.arguments = ["print", "system/com.edp.drive.service"]
+                launchctl.standardOutput = FileHandle.nullDevice
+                launchctl.standardError = FileHandle.nullDevice
+                do {
+                    try launchctl.run()
+                    launchctl.waitUntilExit()
+                    if launchctl.terminationStatus != 0 {
+                        disconnected = true
+                        break
+                    }
+                } catch {
+                    disconnected = true
+                    break
+                }
+            }
+            connection.invalidate()
+            guard disconnected else {
+                print("RESULT=XPC_GRACEFUL_STOP_EXIT_TIMEOUT")
                 exit(1)
             }
             print("XPC_GRACEFUL_STOP_DETAIL=\(snapshot.1)")
