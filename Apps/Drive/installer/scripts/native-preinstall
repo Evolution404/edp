@@ -1,12 +1,90 @@
 #!/bin/bash
-set -e
-for LABEL in com.edp.drive.service com.edp.usbvault.mountd com.edp.usbvault.mountd.v2; do
+set -euo pipefail
+
+SERVICE_LABEL="com.edp.drive.service"
+# macOS keeps `ucomm` even when an exiting process has lost its original argv.
+# These are the kernel-truncated names for the product service/transport.
+SERVICE_UCOMM="edp-drive-servic"
+TRANSPORT_UCOMM="edp-mfmount-loca"
+
+pids_for_ucomm() {
+  local process_name="$1"
+  /bin/ps -axo pid=,ucomm= \
+    | /usr/bin/awk -v process_name="${process_name}" '$2 == process_name { print $1 }'
+}
+
+wait_for_ucomm_to_exit() {
+  local process_name="$1"
+  local attempts="$2"
+  local i
+  for ((i = 0; i < attempts; i++)); do
+    if [[ -z "$(pids_for_ucomm "${process_name}")" ]]; then
+      return 0
+    fi
+    /bin/sleep 0.1
+  done
+  return 1
+}
+
+stop_unmounted_processes() {
+  local process_name="$1"
+  local description="$2"
+  local pids
+
+  pids="$(pids_for_ucomm "${process_name}")"
+  [[ -n "${pids}" ]] || return 0
+
+  /bin/kill -TERM ${pids} >/dev/null 2>&1 || true
+  if wait_for_ucomm_to_exit "${process_name}" 20; then
+    return 0
+  fi
+
+  pids="$(pids_for_ucomm "${process_name}")"
+  [[ -n "${pids}" ]] || return 0
+  /bin/kill -KILL ${pids} >/dev/null 2>&1 || true
+  if wait_for_ucomm_to_exit "${process_name}" 10; then
+    return 0
+  fi
+
+  echo "EDP Drive upgrade cannot stop stale ${description}; restart macOS and run the installer again." >&2
+  exit 1
+}
+
+# Never let a package upgrade tear down an active EDP block session. The user
+# must first stop EDP Drive or safely eject the device so filesystem durability
+# completes through the product lifecycle path.
+if /sbin/mount | /usr/bin/grep -Fq ' on /Volumes/.edp-block-'; then
+  echo "EDP Drive upgrade refused because an encrypted EDP session is still mounted. Stop EDP Drive or safely eject the device, then retry." >&2
+  exit 1
+fi
+
+# Remove the current launchd registration first. launchctl can report before a
+# process has fully left the kernel, so verify both the job and exact processes.
+/bin/launchctl bootout "system/${SERVICE_LABEL}" >/dev/null 2>&1 || true
+for _ in {1..50}; do
+  if ! /bin/launchctl print "system/${SERVICE_LABEL}" >/dev/null 2>&1; then
+    break
+  fi
+  /bin/sleep 0.1
+done
+if /bin/launchctl print "system/${SERVICE_LABEL}" >/dev/null 2>&1; then
+  echo "EDP Drive upgrade cannot remove the existing launchd job; restart macOS and run the installer again." >&2
+  exit 1
+fi
+
+# At this point no EDP hidden filesystem is mounted, so stale transport/service
+# processes are not serving a live filesystem and may be boundedly terminated.
+stop_unmounted_processes "${TRANSPORT_UCOMM}" "transport process"
+stop_unmounted_processes "${SERVICE_UCOMM}" "service process"
+
+for LABEL in com.edp.usbvault.mountd com.edp.usbvault.mountd.v2; do
   /bin/launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 done
 /bin/rm -f \
   /Library/LaunchDaemons/com.edp.drive.service.plist \
   /Library/LaunchDaemons/com.edp.usbvault.mountd.plist \
   /Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist
+
 OLD_ROOT="/Library/Application Support/EDP USB Vault"
 OLD_CTL="${OLD_ROOT}/bin/edp-vaultctl"
 if [[ -x "${OLD_CTL}" ]]; then
@@ -16,14 +94,22 @@ for RETIRED_RUNTIME in edp-readwrite-fuse edp-raw-sparse; do
   /bin/rm -f "${OLD_ROOT}/bin/${RETIRED_RUNTIME}"
 done
 /bin/rm -rf "${OLD_ROOT}"
+
 OLD_APP="/Applications/EDP USB Vault.app"
 OLD_RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
-if [[ -f "${OLD_APP}/Contents/Info.plist" ]] \
-  && [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_APP}/Contents/Info.plist" 2>/dev/null || true)" == "com.edp.usbvault.app" ]]; then
-  /bin/rm -rf "${OLD_APP}"
+if [[ -f "${OLD_APP}/Contents/Info.plist" ]]; then
+  OLD_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_APP}/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "${OLD_ID}" == "com.edp.usbvault" || "${OLD_ID}" == "com.edp.usbvault.app" ]]; then
+    /bin/rm -rf "${OLD_APP}"
+  fi
 fi
 if [[ -f "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" ]] \
   && [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" 2>/dev/null || true)" == "com.edp.usbvault.rawaccess" ]]; then
   /bin/rm -rf "${OLD_RAW_ACCESS_APP}"
 fi
+for RELOCATED_APP_DIR in /Applications/EDP\ USB\ Vault*.localized; do
+  [[ -e "${RELOCATED_APP_DIR}" ]] || continue
+  /bin/rm -rf "${RELOCATED_APP_DIR}"
+done
+
 exit 0

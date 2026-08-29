@@ -258,68 +258,8 @@ fi
 
 SCRIPTS="${BUILD_ROOT}/scripts"
 mkdir -p "${SCRIPTS}"
-cat > "${SCRIPTS}/preinstall" <<'PREINSTALL'
-#!/bin/bash
-set -e
-for LABEL in com.edp.drive.service com.edp.usbvault.mountd com.edp.usbvault.mountd.v2; do
-  /bin/launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
-done
-/bin/rm -f \
-  /Library/LaunchDaemons/com.edp.drive.service.plist \
-  /Library/LaunchDaemons/com.edp.usbvault.mountd.plist \
-  /Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist
-OLD_ROOT="/Library/Application Support/EDP USB Vault"
-OLD_CTL="${OLD_ROOT}/bin/edp-vaultctl"
-if [[ -x "${OLD_CTL}" ]]; then
-  "${OLD_CTL}" cleanup >/dev/null 2>&1 || true
-fi
-for RETIRED_RUNTIME in edp-readwrite-fuse edp-raw-sparse; do
-  /bin/rm -f "${OLD_ROOT}/bin/${RETIRED_RUNTIME}"
-done
-/bin/rm -rf "${OLD_ROOT}"
-OLD_APP="/Applications/EDP USB Vault.app"
-if [[ -f "${OLD_APP}/Contents/Info.plist" ]]; then
-  OLD_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_APP}/Contents/Info.plist" 2>/dev/null || true)"
-  if [[ "${OLD_ID}" == "com.edp.usbvault" || "${OLD_ID}" == "com.edp.usbvault.app" ]]; then
-    /bin/rm -rf "${OLD_APP}"
-  fi
-fi
-OLD_RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
-if [[ -f "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" ]]; then
-  OLD_RAW_ACCESS_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" 2>/dev/null || true)"
-  if [[ "${OLD_RAW_ACCESS_ID}" == "com.edp.usbvault.rawaccess" ]]; then
-    /bin/rm -rf "${OLD_RAW_ACCESS_APP}"
-  fi
-fi
-for RELOCATED_APP_DIR in /Applications/EDP\ USB\ Vault*.localized; do
-  [[ -e "${RELOCATED_APP_DIR}" ]] || continue
-  /bin/rm -rf "${RELOCATED_APP_DIR}"
-done
-exit 0
-PREINSTALL
-cat > "${SCRIPTS}/postinstall" <<'POSTINSTALL'
-#!/bin/bash
-set -e
-ROOT="/Library/Application Support/EDP Drive"
-APP="/Applications/EDP Drive.app"
-/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
-/bin/chmod -R go-w "${ROOT}" "${APP}"
-/bin/chmod 0755 "${ROOT}" "${ROOT}/bin"
-/bin/chmod 0755 "${ROOT}/bin/"*
-/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
-LEGACY_PLIST="/Library/LaunchDaemons/com.edp.drive.service.plist"
-if [[ -f "${LEGACY_PLIST}" ]]; then
-  /bin/launchctl bootstrap system "${LEGACY_PLIST}"
-  /bin/launchctl enable system/com.edp.drive.service || true
-  /bin/launchctl kickstart -k system/com.edp.drive.service || true
-fi
-if /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
-  # Registration remains owned by SMAppService. Restart the approved job so
-  # package upgrades immediately execute the newly installed daemon binary.
-  /bin/launchctl kickstart -k system/com.edp.drive.service || true
-fi
-exit 0
-POSTINSTALL
+cp "${REPO_ROOT}/installer/scripts/native-preinstall" "${SCRIPTS}/preinstall"
+cp "${REPO_ROOT}/installer/scripts/native-postinstall" "${SCRIPTS}/postinstall"
 chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
 
 APP_COMPONENT="${BUILD_ROOT}/components/ZZ-EDP-Drive.pkg"

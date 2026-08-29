@@ -161,12 +161,18 @@
 - 新增 CI ratchet：正式 ViewModel proxy/graceful-shutdown 与 CLI graceful-stop 均必须保留 `@Sendable`，并禁止重新出现未标注的 `remoteObjectProxyWithErrorHandler({ error in`。
 - 找到此前“Stop 后约 6 s 又自动复活”的外部触发源：`/private/tmp/EDP Drive UI.app/Contents/MacOS/EDP Drive`（PID 10716）是并行 UI 调试遗留测试 App，每约 2 s 连接 `com.edp.drive.service`。Service 因路径/签名安全边界正确拒绝该 peer，但 launchd 在 peer validation 前已因 `ipc (mach)` demand-launch Service；终止该临时测试进程后不再把此现象归因于产品 KeepAlive。
 - 当前旧 Service 的最后一次 teardown 已把所有用户卷/hidden mount 清到 0，但一个旧 secure transport 曾停留为无 mount 的 zombie child；这属于旧二进制异常收尾状态。由于没有挂载文件系统，后续可安全通过新候选安装升级替换。
+- 第一次安装 `5285ea8` Native 候选时，PackageKit 已成功替换 App/embedded Service payload，但 postinstall `launchctl bootstrap system /Library/LaunchDaemons/com.edp.drive.service.plist` 返回 `Bootstrap failed: 5: Input/output error`，最终 package result `PKInstallErrorDomain Code=112`。
+- 实机根因：旧 Service PID `10746` 在 launchd job 已被 `bootout` 后仍停留 `ps state ?Es`；原 argv 已丢失，`launchctl print system/com.edp.drive.service` 已无 job，但旧内核进程仍未退出，使新 Mach service 无法 bootstrap。旧 installer preinstall 原来对 `bootout` 结果完全忽略，也不等待旧 job/process 真正消失，造成 payload 已覆盖、postinstall 才失败的半安装状态。
+- installer 已改为 fail-closed lifecycle：有 `/Volumes/.edp-block-*` active mount 时拒绝升级；bootout 后 bounded wait job 消失；只有确认无 EDP hidden filesystem 后才允许 stale transport/service `TERM -> grace -> KILL`；KILL 后仍有残留则在 payload 覆盖前明确提示重启 macOS 并失败退出。
+- `E` state 进程已无法用完整 argv/`pgrep -f` 可靠识别；实机 `ps -o ucomm=` 仍保留 `edp-drive-servic`，因此 preinstall 改用 macOS kernel `ucomm` 检测 service/transport，当前 stuck PID `10746` 已被新检测器准确命中。
+- postinstall 新增 bounded `bootstrap_service()` retry；clean combined installer 删除重复内嵌 pre/post scripts，改为与 Native installer 统一复制 `installer/scripts/native-preinstall` / `native-postinstall`。
+- 新 installer scripts 已 `bash -n` 全绿；Native package 本地构建/expand 验证确认新 pre/post scripts 确实进入包内，结果 `RESULT=INSTALLER_LIFECYCLE_HARDENING_LOCAL_OK`。
 
 ## 下一步立即执行
 
-1. 提交/push CLI XPC `@Sendable` hardening，等待合并后 exact-head Drive/Studio CI。
-2. 从新 exact-head 构建 Native 候选；当前旧 Service 已无任何文件系统 mount，可通过安装器安全替换旧 stuck daemon/transport 状态。
-3. 安装新候选后复测正式 UI Start，确认不再出现 MainActor/XPC `SIGTRAP`；复测 `--xpc-graceful-stop`，确认 smoke harness 自身也不崩。
+1. 提交/push installer fail-closed lifecycle hardening，等待 exact-head Drive CI。
+2. 当前旧 Service PID `10746` 已进入无法清除的 `E` state；所有 EDP mounts 已为 0，需重启 macOS 清除该内核残留。重启后用新 installer 验证 pre/post 正常升级，不再出现 `Bootstrap failed: 5`。
+3. 安装新 exact-head 候选后复测正式 UI Start，确认合并后的 `@Sendable` ViewModel 不再出现 MainActor/XPC `SIGTRAP`；复测 `--xpc-graceful-stop`，确认 CLI smoke harness 也不崩。
 4. 清除所有临时测试 App 后，完成两轮 Stop -> Start -> Restart；确认每轮 Service 正常 exit/on-demand launch、两区恢复、无 controller queue 卡死或外部 Mach peer 干扰。
 5. 完成安全推出整盘、App restart；随后物理拔插 / `diskN` 变化需要用户实际拔插动作时再提示。
 6. 更新 HANDOFF/STATUS/本 tracker，最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。

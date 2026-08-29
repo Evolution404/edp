@@ -90,6 +90,16 @@ jobs:
           grep -Fq 'timeout: 15' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'process.forceTerminate()' Apps/Drive/product/EDPTransportProvider.swift
           test -f Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift
+          grep -Fq 'SERVICE_UCOMM="edp-drive-servic"' Apps/Drive/installer/scripts/native-preinstall
+          grep -Fq "on /Volumes/.edp-block-" Apps/Drive/installer/scripts/native-preinstall
+          grep -Fq 'restart macOS and run the installer again' Apps/Drive/installer/scripts/native-preinstall
+          grep -Fq 'bootstrap_service()' Apps/Drive/installer/scripts/native-postinstall
+          grep -Fq 'installer/scripts/native-preinstall' Apps/Drive/installer/build-clean-installer.sh
+          grep -Fq 'installer/scripts/native-postinstall' Apps/Drive/installer/build-clean-installer.sh
+          ! grep -Fq 'cat > "${SCRIPTS}/preinstall"' Apps/Drive/installer/build-clean-installer.sh
+          bash -n Apps/Drive/installer/scripts/native-preinstall
+          bash -n Apps/Drive/installer/scripts/native-postinstall
+          bash -n Apps/Drive/installer/build-clean-installer.sh
           bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh
           bash -n Tools/build-macos-icon.sh
           Tools/build-macos-icon.sh icns \
