@@ -124,6 +124,7 @@ struct SectorSnapshot: Hashable {
     let method: String
     let bytes: [UInt8]
     let semantics: [ByteSemantic]
+    let fields: [CoreField]
 }
 
 @MainActor
@@ -137,6 +138,7 @@ final class AppModel {
     var zoom: Double = 1.0
 
     let disk = SampleData.disk
+    let coreVersion = EDPCore.version
 
     var sector: SectorSnapshot {
         SampleData.sector(lba: selectedLBA)
@@ -150,6 +152,18 @@ final class AppModel {
     var selectedSemantic: ByteSemantic? {
         guard let selectedByteIndex, sector.semantics.indices.contains(selectedByteIndex) else { return nil }
         return sector.semantics[selectedByteIndex]
+    }
+
+    var selectedField: CoreField? {
+        guard let selectedByteIndex else { return nil }
+        return sector.fields.first { selectedByteIndex >= $0.off && selectedByteIndex < $0.off + $0.len }
+    }
+}
+
+extension FixedWidthInteger {
+    var littleEndianBytes: [UInt8] {
+        var value = self.littleEndian
+        return Swift.withUnsafeBytes(of: &value) { Array($0) }
     }
 }
 
@@ -177,6 +191,35 @@ enum SampleData {
     )
 
     static func sector(lba: UInt64) -> SectorSnapshot {
+        if lba == 0 {
+            var raw = [UInt8](repeating: 0, count: 512)
+            let part = 0x1BE
+            raw[part + 4] = 0x0E
+            raw.replaceSubrange(part + 8..<part + 12, with: UInt32(63).littleEndianBytes)
+            raw.replaceSubrange(part + 12..<part + 16, with: UInt32(20_417).littleEndianBytes)
+            raw[0x1FE] = 0x55
+            raw[0x1FF] = 0xAA
+
+            if let decoded = try? EDPCore.decodeSector(lba: 0, raw: raw) {
+                let view = decoded.decodedHex?.decodedHexBytes ?? raw
+                var semantics = view.map { $0 == 0 ? ByteSemantic.zero : .normal }
+                for field in decoded.fields {
+                    let lower = max(0, field.off)
+                    let upper = min(view.count, field.off + field.len)
+                    guard lower < upper else { continue }
+                    for index in lower..<upper { semantics[index] = field.semantic }
+                }
+                return SectorSnapshot(
+                    lba: 0,
+                    title: "LBA0 · MBR 分区表",
+                    method: decoded.method ?? "Rust Core · raw MBR",
+                    bytes: view,
+                    semantics: semantics,
+                    fields: decoded.fields
+                )
+            }
+        }
+
         var bytes = [UInt8](repeating: 0, count: 512)
         var semantics = [ByteSemantic](repeating: .zero, count: 512)
 
@@ -214,9 +257,10 @@ enum SampleData {
             return SectorSnapshot(
                 lba: lba,
                 title: "LBA12 · EDPF 分区表",
-                method: "A6B0(368B) · key = CRC32(device_id) · 尾 144B raw",
+                method: "视觉样例 · 实盘接入后由 Rust Core 解密",
                 bytes: bytes,
-                semantics: semantics
+                semantics: semantics,
+                fields: []
             )
         }
 
@@ -230,7 +274,8 @@ enum SampleData {
             title: "LBA\(lba)",
             method: "离线视觉样例",
             bytes: bytes,
-            semantics: semantics
+            semantics: semantics,
+            fields: []
         )
     }
 }

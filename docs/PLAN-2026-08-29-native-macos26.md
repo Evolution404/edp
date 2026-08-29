@@ -48,13 +48,13 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 
 ## Phase B — Rust EDP Core 收口
 
-- [ ] 从 Tauri 门面中抽离纯 EDP format engine
-- [ ] 建立稳定、窄 C ABI
-- [ ] Swift wrapper
-- [ ] 使用现有 golden 复核 crypto/parser/editor/convert
-- [ ] Native UI 用 Rust Core 驱动离线样例
+- [x] 从 Tauri 门面中抽离纯 EDP format engine：`crypto/parser/editor/convert/sector/Identity` 已进入 `core/edpopen-core`
+- [x] 建立稳定、窄 C ABI：独立 `core/edpopen-ffi` staticlib，当前公开 version/CRC32/sector decode JSON/free
+- [x] Swift wrapper：`CoreBridge.swift` + bridging header；Xcode build phase 自动构建 Rust release staticlib
+- [x] 使用现有 golden 复核 crypto/parser/editor/convert；旧 Tauri 继续通过同一份 core 源码回归
+- [x] Native UI 用 Rust Core 驱动离线样例：LBA0 的 MBR 字段/语义着色由 Rust parser 返回，Inspector 显示 core 字段和值
 
-原则：不重写已通过真实盘 golden 的密码学/重加密算法。
+原则：不重写已通过真实盘 golden 的密码学/重加密算法。旧 Tauri 中 `crypto.rs/parser.rs/editor.rs` 仅保留 re-export；`convert.rs` 仅保留授权、备份、还原和写事务，纯 ConvertPlan 已迁入 core。
 
 ## Phase C — Swift FDA Raw Broker
 

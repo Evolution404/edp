@@ -1,0 +1,13 @@
+[package]
+name = "edpopen-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+edpopen-core = { path = "../edpopen-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

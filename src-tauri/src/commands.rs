@@ -1,6 +1,7 @@
 //! commands.rs — Tauri 命令门面
 
 use crate::{disk, parser, crypto, editor};
+use edpopen_core::sector::{decode_sector, SectorDecodeContext};
 use serde::Serialize;
 
 #[tauri::command]
@@ -413,103 +414,24 @@ unsafe fn edpopen_getuid() -> u32 { edpopen_getuid_raw() }
 pub fn read_sector(disk_no: u32, lba: u64) -> Result<SectorView, String> {
     if disk_no < 2 { return Err("拒绝系统盘".into()); }
     let raw = disk::read_lba(disk_no, lba).map_err(|e| format!("读 LBA{lba} 失败: {e}"))?;
-    let mut sv = SectorView { disk: disk_no, lba, raw_hex: hexs(&raw), dec_hex: None, dec_method: None, fields: Vec::new() };
-
-    // 惰性身份识别(仅需要 device_id 的扇区)
-    let ident = || disk::identify(disk_no);
-    let lba11_params = || -> Option<(Vec<u8>, Vec<u8>, Vec<u64>)> {
-        let (vid, pid) = disk::usb_vid_pid(disk_no)?;
-        let size = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no)?.size_bytes;
-        let chs = (size / (255 * 63 * 512)) * 255 * 63 * 512;
-        Some((vid.into_bytes(), pid.into_bytes(), vec![size, chs]))
+    let identity = disk::identify(disk_no);
+    let usb = disk::list_usb_disks().into_iter().find(|d| d.disk == disk_no);
+    let vid_pid = disk::usb_vid_pid(disk_no);
+    let ctx = SectorDecodeContext {
+        identity: identity.as_ref(),
+        vid: vid_pid.as_ref().map(|x| x.0.as_str()),
+        pid: vid_pid.as_ref().map(|x| x.1.as_str()),
+        size_bytes: usb.as_ref().map(|d| d.size_bytes),
     };
-
-    match lba {
-        0 => { sv.fields = parser::lba0_fields(&raw); }
-        4 => {
-            if let Some((dec, serial)) = crypto::lba4_decode(&raw) {
-                sv.dec_method = Some(format!("XOR K0=0x{:04X}($$$serial={serial})", crypto::lba4_k0_from_serial(serial)));
-                sv.fields = parser::lba4_fields(&dec);
-                sv.dec_hex = Some(hexs(&dec));
-            }
-        }
-        6 => {
-            let dec = crypto::lba6_decode(&raw);
-            let crc = ident().map(|i| i.crc).unwrap_or(0);
-            sv.dec_method = Some("XOR K0=0x4DAA(SAFE6)".into());
-            sv.fields = parser::lba6_fields(&dec, crc);
-            sv.dec_hex = Some(hexs(&dec));
-        }
-        7 => {
-            if let Some(id) = ident() {
-                let dec = crypto::xor_rolling(&raw, id.k0);
-                if dec.starts_with(b"EDPF") {
-                    sv.dec_method = Some(format!("XOR K0=0x{:04X}(CRC32(device_id))", id.k0));
-                    sv.fields = parser::lba7_fields(&dec);
-                    sv.dec_hex = Some(hexs(&dec));
-                }
-            }
-        }
-        8 => {
-            if let Some(id) = ident() {
-                let mut dec = crypto::a6b0_full(&raw[..0x170], &id.crc.to_le_bytes(), 0);
-                dec.extend_from_slice(&raw[0x170..]);
-                sv.dec_method = Some("A6B0(368B) key=CRC32(device_id); 尾144B raw".into());
-                sv.fields = parser::lba8_fields(&dec);
-                sv.dec_hex = Some(hexs(&dec));
-            }
-        }
-        9 => {
-            if raw.iter().all(|&b| b == 0) {
-                sv.dec_method = Some("全零扇区(raw)".into());
-                sv.fields = parser::lba9_fields(&raw);
-                sv.dec_hex = Some(hexs(&raw));
-            } else if let Some(id) = ident() {
-                let mut dec = crypto::a6b0_full(&raw[..0x80], &id.crc.to_le_bytes(), 0);
-                dec.extend_from_slice(&raw[0x80..0x100]);
-                dec.extend(raw[0x100..0x120].iter().map(|b| b ^ 0x88));
-                dec.extend_from_slice(&raw[0x120..]);
-                sv.dec_method = Some("A6B0(128B)+raw(128B)+XOR0x88(32B)+raw(224B)".into());
-                sv.fields = parser::lba9_fields(&dec);
-                sv.dec_hex = Some(hexs(&dec));
-            }
-        }
-        11 => {
-            if let Some((vid, pid, sizes)) = lba11_params() {
-                let rand = &raw[..0x100];
-                for (size_index, &sz) in sizes.iter().enumerate() {
-                    let mut buf = rand.to_vec();
-                    buf.extend_from_slice(&vid);
-                    buf.extend_from_slice(&pid);
-                    buf.extend_from_slice(&sz.to_le_bytes());
-                    let key = crypto::crc32_bare(&buf).to_le_bytes();
-                    let pt = crypto::a6b0_full(&raw[0x100..], &key, 0);
-                    if pt.starts_with(b"PDKB") {
-                        let mut dec = rand.to_vec();
-                        dec.extend_from_slice(&pt);
-                        let label = if size_index == 0 { "DiskSize" } else { "CHS" };
-                        sv.dec_method = Some(format!("A6B0 key=crc32(rand+VID+PID+{label})"));
-                        sv.fields = parser::lba11_fields(&dec);
-                        sv.dec_hex = Some(hexs(&dec));
-                        break;
-                    }
-                }
-            }
-        }
-        12 => {
-            if let Some(id) = ident() {
-                let mut dec = crypto::a6b0_full(&raw[..0x170], &id.crc.to_le_bytes(), 0);
-                dec.extend_from_slice(&raw[0x170..]);
-                if dec.starts_with(b"EDPF") {
-                    sv.dec_method = Some("A6B0(368B) key=CRC32(device_id); 尾144B raw".into());
-                    sv.fields = parser::lba12_fields(&dec);
-                    sv.dec_hex = Some(hexs(&dec));
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(sv)
+    let decoded = decode_sector(lba, &raw, &ctx)?;
+    Ok(SectorView {
+        disk: disk_no,
+        lba,
+        raw_hex: hexs(&raw),
+        dec_hex: decoded.decoded.as_deref().map(hexs),
+        dec_method: decoded.method,
+        fields: decoded.fields,
+    })
 }
 
 fn build_sector_edit_preview(disk_no: u32, lba: u64, edited_hex: &str) -> Result<(editor::EditPreview, SectorView, disk::Identity, disk::UsbDisk), String> {

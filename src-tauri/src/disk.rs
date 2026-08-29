@@ -319,11 +319,7 @@ pub fn lba7_k0(crc: u32) -> u16 {
     ((crc & 0xFFFF) ^ ((crc >> 16) & 0xFFFF)) as u16
 }
 
-pub struct Identity {
-    pub device_id: String,
-    pub crc: u32,
-    pub k0: u16,
-}
+pub use edpopen_core::Identity;
 
 /// 严格身份识别：保留底层读取/授权失败原因，供 CLI 与改造流程准确报错。
 pub fn identify_checked(disk: u32) -> Result<Identity, String> {

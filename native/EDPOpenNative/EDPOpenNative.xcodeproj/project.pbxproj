@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4BA8774F4C8F2E91FE2B8D60 /* CoreBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247B457B6181771CDB71BB4E /* CoreBridge.swift */; };
 		A39B4CDF3A22BDE708A472E8 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669B11CA191CA98CEED05387 /* RootView.swift */; };
 		B9B1A758A97DC6B9B61FABD1 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AFE70F558B699851EBD304D /* OverviewView.swift */; };
 		C8A440215B2BAEE99556C89F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C091E369A899A47CD2F0F37 /* Models.swift */; };
@@ -17,6 +18,7 @@
 
 /* Begin PBXFileReference section */
 		0AFE70F558B699851EBD304D /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
+		247B457B6181771CDB71BB4E /* CoreBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreBridge.swift; sourceTree = "<group>"; };
 		669B11CA191CA98CEED05387 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EDPOpenNativeApp.swift; sourceTree = "<group>"; };
 		8F3E426A09A50A333BD06287 /* DiskMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskMapView.swift; sourceTree = "<group>"; };
@@ -45,6 +47,7 @@
 		CA3AE6F2525B89C8E194A477 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				247B457B6181771CDB71BB4E /* CoreBridge.swift */,
 				8F3E426A09A50A333BD06287 /* DiskMapView.swift */,
 				670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */,
 				9C091E369A899A47CD2F0F37 /* Models.swift */,
@@ -62,6 +65,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPOpen" */;
 			buildPhases = (
+				0B41737A278B56C1E97D80C2 /* Build Rust EDP Core */,
 				74CC5917F83D722E1F69E6D5 /* Sources */,
 			);
 			buildRules = (
@@ -108,11 +112,33 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		0B41737A278B56C1E97D80C2 /* Build Rust EDP Core */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust EDP Core";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Scripts/build-rust-core.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		74CC5917F83D722E1F69E6D5 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4BA8774F4C8F2E91FE2B8D60 /* CoreBridge.swift in Sources */,
 				D0FBFBCB6827CAAE656060AE /* DiskMapView.swift in Sources */,
 				EF0596281CD13A31E2481B20 /* EDPOpenNativeApp.swift in Sources */,
 				C8A440215B2BAEE99556C89F /* Models.swift in Sources */,
@@ -133,13 +159,17 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/target/release";
 				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = "$(inherited) -ledpopen_ffi";
 				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = Support/EDPOpenCoreBridge.h;
 			};
 			name = Debug;
 		};
@@ -280,13 +310,17 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/target/release";
 				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = "$(inherited) -ledpopen_ffi";
 				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = Support/EDPOpenCoreBridge.h;
 			};
 			name = Release;
 		};

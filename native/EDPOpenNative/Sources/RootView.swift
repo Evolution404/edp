@@ -138,6 +138,7 @@ struct InspectorView: View {
             InspectorLabel(title: "Label ID", value: model.disk.labelOnlyID)
             InspectorLabel(title: "CRC32", value: "0x\(model.disk.crc32)")
             InspectorLabel(title: "K0", value: "0x\(model.disk.k0)")
+            InspectorLabel(title: "Core", value: model.coreVersion)
         }
     }
 
@@ -154,6 +155,18 @@ struct InspectorView: View {
                 InspectorLabel(title: "Hex", value: String(format: "%02X", value))
                 InspectorLabel(title: "Decimal", value: "\(value)")
                 InspectorLabel(title: "语义", value: semantic.title)
+                if let field = model.selectedField {
+                    InspectorLabel(title: "字段", value: field.name)
+                    if !field.value.isEmpty {
+                        InspectorLabel(title: "值", value: field.value)
+                    }
+                    if !field.desc.isEmpty {
+                        Text(field.desc)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             } else {
                 Text("点击 Hex Viewer 中任意字节查看字段信息。")
                     .font(.caption)
