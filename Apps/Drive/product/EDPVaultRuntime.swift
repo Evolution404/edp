@@ -543,10 +543,18 @@ private final class EDPSpawnedProcess: EDPManagedProcess, @unchecked Sendable {
     }
 
     func terminate() {
+        signal(SIGTERM)
+    }
+
+    func forceTerminate() {
+        signal(SIGKILL)
+    }
+
+    private func signal(_ signal: Int32) {
         lock.lock()
         defer { lock.unlock() }
         guard !reaped else { return }
-        _ = kill(pid, SIGTERM)
+        _ = kill(pid, signal)
     }
 }
 

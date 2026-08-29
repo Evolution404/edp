@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum EDPTransportBackend: String, Codable, CaseIterable, Sendable {
@@ -25,9 +26,15 @@ struct EDPTransportSessionError: Error, CustomStringConvertible {
 protocol EDPManagedProcess: AnyObject {
     var isRunning: Bool { get }
     func terminate()
+    func forceTerminate()
 }
 
-extension Process: EDPManagedProcess {}
+extension Process: EDPManagedProcess {
+    func forceTerminate() {
+        guard isRunning else { return }
+        _ = Darwin.kill(processIdentifier, SIGKILL)
+    }
+}
 
 final class EDPTransportSession {
     let backend: EDPTransportBackend
@@ -63,12 +70,31 @@ final class EDPTransportSession {
             )
         }
 
-        let deadline = Date().addingTimeInterval(gracefulExitSeconds)
-        while process.isRunning && Date() < deadline {
+        let gracefulDeadline = Date().addingTimeInterval(gracefulExitSeconds)
+        while process.isRunning && Date() < gracefulDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        guard process.isRunning else { return }
+
+        process.terminate()
+        let terminateDeadline = Date().addingTimeInterval(2)
+        while process.isRunning && Date() < terminateDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        guard process.isRunning else { return }
+
+        // The VFS mount is already confirmed gone above, so a transport that
+        // ignores SIGTERM can no longer own a mounted user filesystem. Do not
+        // let that failed startup/teardown child wedge the daemon controller.
+        process.forceTerminate()
+        let killDeadline = Date().addingTimeInterval(1)
+        while process.isRunning && Date() < killDeadline {
             Thread.sleep(forTimeInterval: 0.05)
         }
         if process.isRunning {
-            process.terminate()
+            throw EDPTransportSessionError(
+                description: "transport process did not exit after SIGKILL: \(mountpoint)"
+            )
         }
     }
 }

@@ -29,6 +29,77 @@ struct EDPBlockDevicePublisherError: Error, CustomStringConvertible, Sendable {
     }
 }
 
+private struct EDPBoundedProcessResult {
+    let status: Int32
+    let stdout: Data
+    let stderr: Data
+}
+
+private func runBoundedProcess(
+    executable: String,
+    arguments: [String],
+    timeout: TimeInterval,
+    label: String
+) throws -> EDPBoundedProcessResult {
+    let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+    let token = UUID().uuidString
+    let stdoutURL = temporaryRoot.appendingPathComponent("edp-\(token).stdout")
+    let stderrURL = temporaryRoot.appendingPathComponent("edp-\(token).stderr")
+    _ = FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+    _ = FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+    defer {
+        try? FileManager.default.removeItem(at: stdoutURL)
+        try? FileManager.default.removeItem(at: stderrURL)
+    }
+
+    let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
+    let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+    defer {
+        try? stdoutHandle.close()
+        try? stderrHandle.close()
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = stdoutHandle
+    process.standardError = stderrHandle
+    try process.run()
+
+    let deadline = Date().addingTimeInterval(timeout)
+    while process.isRunning && Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    if process.isRunning {
+        process.terminate()
+        let terminateDeadline = Date().addingTimeInterval(1)
+        while process.isRunning && Date() < terminateDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+    }
+    if process.isRunning {
+        _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        let killDeadline = Date().addingTimeInterval(1)
+        while process.isRunning && Date() < killDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+    }
+    guard !process.isRunning else {
+        throw EDPBlockDevicePublisherError("\(label) remained alive after timeout and SIGKILL")
+    }
+    guard Date() < deadline else {
+        throw EDPBlockDevicePublisherError("\(label) timed out after \(Int(timeout)) seconds")
+    }
+
+    try? stdoutHandle.synchronize()
+    try? stderrHandle.synchronize()
+    return EDPBoundedProcessResult(
+        status: process.terminationStatus,
+        stdout: (try? Data(contentsOf: stdoutURL)) ?? Data(),
+        stderr: (try? Data(contentsOf: stderrURL)) ?? Data()
+    )
+}
+
 /// macFUSE Local briefly creates a root-owned 4 KiB DiskImages scratch device
 /// while asking FSKit to activate the Local filesystem module. A failed mount
 /// can leave that helper-owned device behind even after MFMount has returned.
@@ -221,18 +292,13 @@ enum EDPMacFUSEScratchImageCleanup {
     }
 
     private static func runHdiutil(_ arguments: [String]) throws -> (status: Int32, stdout: Data, stderr: Data) {
-        let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        process.arguments = arguments
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let stdout = output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, stdout, stderr)
+        let result = try runBoundedProcess(
+            executable: "/usr/bin/hdiutil",
+            arguments: arguments,
+            timeout: 8,
+            label: "hdiutil \(arguments.first ?? "operation")"
+        )
+        return (result.status, result.stdout, result.stderr)
     }
 }
 
@@ -253,25 +319,20 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
             throw EDPBlockDevicePublisherError("DiskImages2 adapter helper is missing: \(helperPath)")
         }
 
-        let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: helperPath)
-        process.arguments = ["--writable-noautomount", path]
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let stdout = output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
+        let result = try runBoundedProcess(
+            executable: helperPath,
+            arguments: ["--writable-noautomount", path],
+            timeout: 15,
+            label: "DiskImages2 writable attach"
+        )
+        guard result.status == 0 else {
             throw EDPBlockDevicePublisherError(
-                "DiskImages2 adapter failed (\(process.terminationStatus)): "
-                    + String(decoding: stderr, as: UTF8.self)
+                "DiskImages2 adapter failed (\(result.status)): "
+                    + String(decoding: result.stderr, as: UTF8.self)
             )
         }
 
-        let text = String(decoding: stdout, as: UTF8.self)
+        let text = String(decoding: result.stdout, as: UTF8.self)
         guard let bsdName = text.split(separator: "\n")
             .first(where: { $0.hasPrefix("DI_BSD_NAME=") })?
             .split(separator: "=", maxSplits: 1).last.map(String.init),

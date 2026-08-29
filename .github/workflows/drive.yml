@@ -74,6 +74,10 @@ jobs:
           grep -Fq 'skipped_fsync' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           grep -Fq 'write_generation == state->synced_generation' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           ! grep -Fq 'DIRECT_OPCODE opcode=' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
+          grep -Fq 'runBoundedProcess' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          grep -Fq 'timeout: 15' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          grep -Fq 'process.forceTerminate()' Apps/Drive/product/EDPTransportProvider.swift
+          test -f Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift
           bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh
           bash -n Tools/build-macos-icon.sh
           Tools/build-macos-icon.sh icns \
@@ -110,6 +114,14 @@ jobs:
           grep -Fq 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/native-core.txt"
           grep -Fq 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/native-core.txt"
           grep -Fq 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/native-core.txt"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            product/EDPTransportProvider.swift \
+            native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift \
+            -o "${RUNNER_TEMP}/validate-transport-lifecycle"
+          "${RUNNER_TEMP}/validate-transport-lifecycle" \
+            | tee "${RUNNER_TEMP}/transport-lifecycle.txt"
+          grep -Fq 'RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK' \
+            "${RUNNER_TEMP}/transport-lifecycle.txt"
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
             native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
             native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
