@@ -40,5 +40,8 @@ jobs:
           test "$(find "${RUNNER_TEMP}/bin" -maxdepth 1 -type f -name 'edp-*readwrite*' | wc -l | tr -d ' ')" -eq 1
           otool -L "${RUNNER_TEMP}/bin/edp-mfmount-local-readwrite" | tee "${RUNNER_TEMP}/otool.txt"
           grep -Fq 'MFMount.framework' "${RUNNER_TEMP}/otool.txt"
-          ! grep -Eiq 'libfuse|libosxfuse' "${RUNNER_TEMP}/otool.txt"
+          if grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${RUNNER_TEMP}/otool.txt"; then
+            echo 'unexpected libfuse-family dynamic dependency in macFUSE Local transport' >&2
+            exit 1
+          fi
           echo 'RESULT=MACFUSE_LOCAL_TRANSPORT_BUILDER_CONTRACT_OK'

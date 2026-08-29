@@ -198,7 +198,10 @@ jobs:
           echo "UNMOUNT_HELPER=${BUILD}/transport-unmount" >> "${GITHUB_ENV}"
           otool -L "${BIN}/edp-mfmount-local-readwrite" | tee "${RUNNER_TEMP}/local-otool.txt"
           grep -Fq 'MFMount.framework' "${RUNNER_TEMP}/local-otool.txt"
-          ! grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${RUNNER_TEMP}/local-otool.txt"
+          if grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${RUNNER_TEMP}/local-otool.txt"; then
+            echo 'unexpected libfuse-family dynamic dependency in staged macFUSE Local transport' >&2
+            exit 1
+          fi
 
       - name: Verify formal provider selects staged macfuse-local product backend
         run: |

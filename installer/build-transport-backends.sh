@@ -71,6 +71,9 @@ test -x "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
 
 otool -L "${OUTPUT_BIN}/edp-mfmount-local-readwrite" > "${BUILD_ROOT}/local-otool.txt"
 grep -Fq 'MFMount.framework' "${BUILD_ROOT}/local-otool.txt"
-! grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${BUILD_ROOT}/local-otool.txt"
+if grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${BUILD_ROOT}/local-otool.txt"; then
+  echo 'unexpected libfuse-family dynamic dependency in macFUSE Local transport' >&2
+  exit 1
+fi
 
 echo 'RESULT=EDP_MACFUSE_LOCAL_TRANSPORT_BUILT'
