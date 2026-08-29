@@ -149,9 +149,9 @@ jobs:
           grep -Fq 'EDP_APP_SIGN_KEYCHAIN' installer/build-native-installer.sh
           grep -Fq 'restore_signing_search_list' installer/build-clean-installer.sh
           grep -Fq 'restore_signing_search_list' installer/build-native-installer.sh
-          grep -Fq 'EDP Unified Local Code Signing' installer/build-self-signed-installer.sh
-          grep -Fq 'EA97420A16432AAB05E6E775E8E1698FD9A0E33B3F65CA66186A8AA683850F85' installer/build-self-signed-installer.sh
-          grep -Fq 'fda987d4d26950461a1f1810b3a66eb8bf8724c3' installer/build-self-signed-installer.sh
+          grep -Fq 'EDP Project Code Signing' installer/build-self-signed-installer.sh
+          grep -Fq 'D9142CE44ABCB5DD662DF9621D48A88C88EDBCB0392D3C74EBACBB1292B7B5A7' installer/build-self-signed-installer.sh
+          grep -Fq '040b5488fb2b6c02b0786e76b674cb4460658ca2' installer/build-self-signed-installer.sh
           if grep -E 'security[[:space:]]+default-keychain' \
             installer/build-clean-installer.sh installer/build-native-installer.sh; then
             echo 'installer build scripts must never mutate the user default keychain' >&2
