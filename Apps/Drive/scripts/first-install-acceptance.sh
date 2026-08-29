@@ -636,18 +636,56 @@ restart_app() {
   echo "RESULT=APP_RESTART_OK"
 }
 
-restart_daemon() {
-  require_root
-  if /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
-    /bin/launchctl kickstart -k system/com.edp.drive.service
-  else
-    fail "EDP daemon is not loaded"
+service_health() {
+  [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
+  "${APP_BIN}" --xpc-health
+  if ! /bin/launchctl print system/com.edp.drive.service 2>/dev/null \
+      | /usr/bin/grep -Eq 'state = running|[[:space:]]pid = '; then
+    fail "EDP service health check passed but launchd does not report a running service"
   fi
-  /bin/sleep 3
-  "${APP_BIN}" --xpc-smoke
   assert_user_keychain_safe
-  record "DAEMON_RESTART PASS"
-  echo "RESULT=DAEMON_RESTART_OK"
+  record "SERVICE_HEALTH PASS"
+  echo "RESULT=SERVICE_HEALTH_OK"
+}
+
+service_stop() {
+  [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
+  "${APP_BIN}" --xpc-graceful-stop
+  /bin/sleep 2
+  if /bin/launchctl print system/com.edp.drive.service 2>/dev/null \
+      | /usr/bin/grep -Eq 'state = running|[[:space:]]pid = '; then
+    fail "EDP service restarted after graceful stop"
+  fi
+  assert_user_keychain_safe
+  record "SERVICE_STOP PASS"
+  echo "RESULT=SERVICE_GRACEFUL_STOP_OK"
+}
+
+service_start() {
+  [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
+  "${APP_BIN}" --xpc-health
+  /bin/sleep 1
+  if ! /bin/launchctl print system/com.edp.drive.service 2>/dev/null \
+      | /usr/bin/grep -Eq 'state = running|[[:space:]]pid = '; then
+    fail "EDP service did not enter running state after on-demand XPC activation"
+  fi
+  assert_user_keychain_safe
+  record "SERVICE_START PASS"
+  echo "RESULT=SERVICE_ON_DEMAND_START_OK"
+}
+
+service_restart() {
+  service_stop
+  service_start
+  record "SERVICE_RESTART PASS"
+  echo "RESULT=SERVICE_GRACEFUL_RESTART_OK"
+}
+
+restart_daemon() {
+  # Compatibility alias for older acceptance notes. The implementation now
+  # exercises the product XPC lifecycle instead of launchctl kickstart -k.
+  service_restart
+  echo "RESULT=DAEMON_RESTART_COMPAT_ALIAS_OK"
 }
 
 final_check() {
@@ -710,7 +748,10 @@ Stages:
       XPC safe eject; verify volumes and retained raw access stay suppressed.
 
   restart-app
-  restart-daemon              (sudo)
+  service-health
+  service-stop
+  service-start
+  service-restart
   final-check
 
 Canonical first-install order:
@@ -731,9 +772,11 @@ Canonical first-install order:
  15. functional-all
  16. safe-eject -> physically unplug -> reinsert -> verify-fda-device
  17. restart-app -> verify-fda-device
- 18. sudo restart-daemon -> physically reinsert if raw lease cannot be reacquired -> verify-fda-device
- 19. reboot Mac -> verify-fda-device -> credential-checkpoint -> policy-smoke -> functional-all
- 20. final-check
+ 18. service-stop -> confirm service remains stopped
+ 19. service-start -> verify-fda-device
+ 20. service-restart -> verify-fda-device
+ 21. reboot Mac -> verify-fda-device -> credential-checkpoint -> policy-smoke -> functional-all
+ 22. final-check
 EOF
 }
 
@@ -755,6 +798,10 @@ case "${command}" in
   functional-all) shift; functional_all "${1:-}" ;;
   safe-eject) shift; safe_eject "${1:-}" ;;
   restart-app) restart_app ;;
+  service-health) service_health ;;
+  service-stop) service_stop ;;
+  service-start) service_start ;;
+  service-restart) service_restart ;;
   restart-daemon) restart_daemon ;;
   final-check) final_check ;;
   -h|--help|help|'') usage ;;

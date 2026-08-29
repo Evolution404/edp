@@ -98,22 +98,25 @@ Run the following sequence for each release candidate.
 20. verify-fda-device [VID:PID]
 21. restart-app
 22. verify-fda-device [VID:PID]
-23. sudo restart-daemon
-24. if the device was already open before daemon restart and raw lease cannot be reacquired, physically reinsert once
-25. verify-fda-device [VID:PID]
-26. reboot Mac
-27. verify-fda-device [VID:PID]
-28. credential-checkpoint
-29. policy-smoke
-30. functional-all
-31. final-check
+23. service-stop
+24. confirm the service remains stopped and is not relaunched by launchd
+25. service-start
+26. verify-fda-device [VID:PID]
+27. service-restart
+28. verify-fda-device [VID:PID]
+29. reboot Mac
+30. verify-fda-device [VID:PID]
+31. credential-checkpoint
+32. policy-smoke
+33. functional-all
+34. final-check
 ```
 
 ## What each stage proves
 
 ### `verify-installed`
 
-Confirms App/helper/macFUSE/runtime presence, code signatures, App/helper version agreement, LaunchDaemon state, privileged XPC round trip, and a clean keychain configuration with no USB attached.
+Confirms the single EDP Drive App, embedded service, macFUSE/runtime presence, code signatures, App/service version agreement, LaunchDaemon state, privileged XPC round trip, and a clean keychain configuration with no USB attached.
 
 ### `verify-fda-device`
 
@@ -167,11 +170,13 @@ This validates startup plaintext slicing and encrypted read/write paths through 
 
 Uses the same XPC `eject()` operation as the UI. It verifies all three user volumes disappear and retained raw access is not reacquired while the physically connected USB remains logically ejected.
 
-### App/daemon/reboot gates
+### App/service/reboot gates
 
 - `restart-app` proves foreground App lifecycle does not disturb a live service or FSKit configuration.
-- `restart-daemon` proves the privileged service can restart without requiring new authorization. A USB that has already entered a busy media-stack state may need one physical reinsertion to establish a fresh retained descriptor; this must not cause a new FDA/admin prompt.
-- The Mac reboot gate proves FDA, LaunchDaemon startup, macFUSE FSKit enablement, device discovery, credential access, policy state, and full three-partition mounting survive an actual system restart.
+- `service-stop` uses the product XPC graceful-shutdown contract. It must tear down every mount/transport/raw lease and the launchd job must remain stopped; `KeepAlive`/`RunAtLoad` may not silently revive it.
+- `service-start` proves a new privileged service instance can be activated on demand through its Mach service without administrator authorization.
+- `service-restart` is `service-stop -> service-start`; it validates the same lifecycle used by the UI Restart button and does not use `launchctl kickstart -k` as a substitute.
+- The Mac reboot gate proves FDA, LaunchDaemon registration, macFUSE FSKit enablement, device discovery, credential access, policy state, and full three-partition mounting survive an actual system restart.
 
 ## Evidence
 
