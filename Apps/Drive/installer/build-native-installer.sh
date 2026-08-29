@@ -153,6 +153,7 @@ cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -framework AppKit -framework FSKit -framework SwiftUI \
   -framework ServiceManagement \
+  "${REPO_ROOT}/../../Shared/UI/EDPDesignSystem.swift" \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
   -o "${APP_STAGE}/Contents/MacOS/EDP Drive"

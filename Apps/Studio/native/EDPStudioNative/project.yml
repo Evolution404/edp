@@ -21,11 +21,13 @@ targets:
   EDPStudio:
     type: application
     platform: macOS
+    productName: EDP Studio
     sources:
       - path: Sources
       - path: Shared
-    resources:
+      - path: ../../../../Shared/UI/EDPDesignSystem.swift
       - path: Resources/Assets.xcassets
+        buildPhase: resources
     preBuildScripts:
       - name: Build Shared Swift EDP Core
         script: |

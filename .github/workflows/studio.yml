@@ -34,6 +34,7 @@ jobs:
             Apps/Studio/native/EDPStudioNative/project.yml \
             Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/project.pbxproj
           grep -Fq 'EDP Studio' Apps/Studio/native/EDPStudioNative/Sources/EDPStudioApp.swift
+          grep -Fq '../../../../Shared/UI/EDPDesignSystem.swift' Apps/Studio/native/EDPStudioNative/project.yml
           grep -Fq 'HSplitView' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           ! grep -Fq '.inspector(' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           grep -Fq '.padding(8)' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift

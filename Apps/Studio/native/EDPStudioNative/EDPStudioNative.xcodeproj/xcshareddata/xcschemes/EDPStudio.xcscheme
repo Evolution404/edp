@@ -15,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "50438055B75C7A57E6437F51"
+               BlueprintIdentifier = "22F11DADCCA783DEF4CE89F5"
                BuildableName = "EDP Studio.app"
                BlueprintName = "EDPStudio"
                ReferencedContainer = "container:EDPStudioNative.xcodeproj">
@@ -32,7 +32,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "50438055B75C7A57E6437F51"
+            BlueprintIdentifier = "22F11DADCCA783DEF4CE89F5"
             BuildableName = "EDP Studio.app"
             BlueprintName = "EDPStudio"
             ReferencedContainer = "container:EDPStudioNative.xcodeproj">
@@ -57,7 +57,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "50438055B75C7A57E6437F51"
+            BlueprintIdentifier = "22F11DADCCA783DEF4CE89F5"
             BuildableName = "EDP Studio.app"
             BlueprintName = "EDPStudio"
             ReferencedContainer = "container:EDPStudioNative.xcodeproj">
@@ -76,7 +76,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "50438055B75C7A57E6437F51"
+            BlueprintIdentifier = "22F11DADCCA783DEF4CE89F5"
             BuildableName = "EDP Studio.app"
             BlueprintName = "EDPStudio"
             ReferencedContainer = "container:EDPStudioNative.xcodeproj">
