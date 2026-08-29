@@ -59,6 +59,7 @@ done
 /usr/bin/codesign --verify --strict "${APP}"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.drive" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "${APP}/Contents/Info.plist")" == "EDPDrive.icns" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :NSHumanReadableCopyright' "${APP}/Contents/Info.plist")" == "Copyright © 2026 EDP" ]]
 [[ -s "${APP}/Contents/Resources/EDPDrive.icns" ]]
 /usr/bin/file "${APP}/Contents/Resources/EDPDrive.icns" | /usr/bin/grep -F 'Mac OS X icon' >/dev/null
 [[ -x "${SERVICE}" ]]

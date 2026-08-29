@@ -34,6 +34,8 @@ jobs:
             Apps/Studio/native/EDPStudioNative/project.yml \
             Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/project.pbxproj
           grep -Fq 'EDP Studio' Apps/Studio/native/EDPStudioNative/Sources/EDPStudioApp.swift
+          grep -Fq 'HSplitView' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          ! grep -Fq '.inspector(' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           grep -Fq 'com.edp.studio' Apps/Studio/native/EDPStudioNative/project.yml
           grep -Fq 'com.edp.studio.rawbroker' Apps/Studio/native/EDPStudioNative/Shared/RawBrokerProtocol.swift
           grep -Fq 'Build EDP Studio App Icon' Apps/Studio/native/EDPStudioNative/project.yml

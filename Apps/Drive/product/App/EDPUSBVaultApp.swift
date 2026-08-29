@@ -1457,10 +1457,10 @@ struct EDPMenuBarView: View {
         Divider()
         Button("刷新") { model.refresh() }
         Divider()
-        Button("仅退出界面（后台继续运行）") {
+        Button("仅退出界面") {
             NSApplication.shared.terminate(nil)
         }
-        Button("完全退出（停止后台服务）") {
+        Button("完全退出") {
             model.stopService {
                 NSApplication.shared.terminate(nil)
             }

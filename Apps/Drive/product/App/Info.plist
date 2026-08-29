@@ -30,6 +30,8 @@
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © 2026 EDP</string>
   <key>NSRemovableVolumesUsageDescription</key>
   <string>EDP Drive 需要访问您插入的 EDP 加密U盘以完成识别、解锁和挂载。</string>
 </dict>

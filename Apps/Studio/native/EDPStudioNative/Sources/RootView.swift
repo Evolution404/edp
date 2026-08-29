@@ -14,7 +14,7 @@ struct RootView: View {
             .navigationTitle("EDP Studio")
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 260)
         } detail: {
-            detailView
+            detailWithInspector
                 .navigationTitle(model.selection.title)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
@@ -31,13 +31,24 @@ struct RootView: View {
                         .help("显示或隐藏检查器")
                     }
                 }
-                .inspector(isPresented: $model.inspectorVisible) {
-                    InspectorView()
-                        .environment(model)
-                        .inspectorColumnWidth(min: 240, ideal: 290, max: 360)
-                }
         }
         .navigationSplitViewStyle(.balanced)
+    }
+
+    @ViewBuilder
+    private var detailWithInspector: some View {
+        if model.inspectorVisible {
+            HSplitView {
+                detailView
+                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+
+                InspectorView()
+                    .environment(model)
+                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 360)
+            }
+        } else {
+            detailView
+        }
     }
 
     @ViewBuilder
