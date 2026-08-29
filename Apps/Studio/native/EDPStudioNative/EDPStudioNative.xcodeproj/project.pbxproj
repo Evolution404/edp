@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		07F9C07028CB8F16999DFCE5 /* EDPOpenRawBroker in Resources */ = {isa = PBXBuildFile; fileRef = FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		07F9C07028CB8F16999DFCE5 /* EDPStudioRawBroker in Resources */ = {isa = PBXBuildFile; fileRef = FF9FC90F3A0A1144E4C2E85E /* EDPStudioRawBroker */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3D0FFE67E2833673789741E5 /* RawDiskValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797504581BD23A4BE7C14743 /* RawDiskValidator.swift */; };
 		4BA8774F4C8F2E91FE2B8D60 /* CoreBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247B457B6181771CDB71BB4E /* CoreBridge.swift */; };
 		605B1BFE01D9442D61441DAF /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB15351222360442735730DF /* main.swift */; };
@@ -20,7 +20,7 @@
 		D0FBFBCB6827CAAE656060AE /* DiskMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3E426A09A50A333BD06287 /* DiskMapView.swift */; };
 		DE6F4ADCAF22DBEF6859892B /* SectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A5681A0D24E519417BC2AB /* SectorView.swift */; };
 		E229F116D5B8688258634FBF /* RawBrokerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 029C03BC5F96D762D3F3EC98 /* RawBrokerService.swift */; };
-		EF0596281CD13A31E2481B20 /* EDPOpenNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */; };
+		EF0596281CD13A31E2481B20 /* EDPStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 670ABDDF4975E5A4DA4385E1 /* EDPStudioApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -29,7 +29,7 @@
 			containerPortal = 2CC504DCD82751B9D40D4865 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 0CED6468A96E936DBF8E9CDC;
-			remoteInfo = EDPOpenRawBroker;
+			remoteInfo = EDPStudioRawBroker;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -40,7 +40,7 @@
 		379855998A3AAB6F5C8AF564 /* RawBrokerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawBrokerClient.swift; sourceTree = "<group>"; };
 		5AE8B68D4BE7A9F600A3FB41 /* RawBrokerProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawBrokerProtocol.swift; sourceTree = "<group>"; };
 		669B11CA191CA98CEED05387 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
-		670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EDPOpenNativeApp.swift; sourceTree = "<group>"; };
+		670ABDDF4975E5A4DA4385E1 /* EDPStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EDPStudioApp.swift; sourceTree = "<group>"; };
 		797504581BD23A4BE7C14743 /* RawDiskValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawDiskValidator.swift; sourceTree = "<group>"; };
 		8F3E426A09A50A333BD06287 /* DiskMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskMapView.swift; sourceTree = "<group>"; };
 		9C091E369A899A47CD2F0F37 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -62,8 +62,8 @@
 		20CCED1A314F195A900FF79B /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				D8CA6360E3557E5DDA8E9946 /* EDPOpen.app */,
-				FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */,
+				D8CA6360E3557E5DDA8E9946 /* EDP Studio.app */,
+				FF9FC90F3A0A1144E4C2E85E /* EDPStudioRawBroker */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -93,7 +93,7 @@
 			children = (
 				247B457B6181771CDB71BB4E /* CoreBridge.swift */,
 				8F3E426A09A50A333BD06287 /* DiskMapView.swift */,
-				670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */,
+				670ABDDF4975E5A4DA4385E1 /* EDPStudioApp.swift */,
 				9C091E369A899A47CD2F0F37 /* Models.swift */,
 				0AFE70F558B699851EBD304D /* OverviewView.swift */,
 				379855998A3AAB6F5C8AF564 /* RawBrokerClient.swift */,
@@ -106,9 +106,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		0CED6468A96E936DBF8E9CDC /* EDPOpenRawBroker */ = {
+		0CED6468A96E936DBF8E9CDC /* EDPStudioRawBroker */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = E6BD9416FCEE88643638D966 /* Build configuration list for PBXNativeTarget "EDPOpenRawBroker" */;
+			buildConfigurationList = E6BD9416FCEE88643638D966 /* Build configuration list for PBXNativeTarget "EDPStudioRawBroker" */;
 			buildPhases = (
 				6BE1137E0A3A670708CA6CDB /* Sources */,
 			);
@@ -116,16 +116,16 @@
 			);
 			dependencies = (
 			);
-			name = EDPOpenRawBroker;
+			name = EDPStudioRawBroker;
 			packageProductDependencies = (
 			);
-			productName = EDPOpenRawBroker;
-			productReference = FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */;
+			productName = EDPStudioRawBroker;
+			productReference = FF9FC90F3A0A1144E4C2E85E /* EDPStudioRawBroker */;
 			productType = "com.apple.product-type.tool";
 		};
 		50438055B75C7A57E6437F51 /* EDPOpen */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPOpen" */;
+			buildConfigurationList = 53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPStudio" */;
 			buildPhases = (
 				0B41737A278B56C1E97D80C2 /* Build Shared Swift EDP Core */,
 				74CC5917F83D722E1F69E6D5 /* Sources */,
@@ -136,11 +136,11 @@
 			dependencies = (
 				428F28BC1EBC4BCCE0697EE9 /* PBXTargetDependency */,
 			);
-			name = EDPOpen;
+			name = EDPStudio;
 			packageProductDependencies = (
 			);
-			productName = EDPOpen;
-			productReference = D8CA6360E3557E5DDA8E9946 /* EDPOpen.app */;
+			productName = EDPStudio;
+			productReference = D8CA6360E3557E5DDA8E9946 /* EDP Studio.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -160,7 +160,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 20847BC2FF7FF7D0E1891DF7 /* Build configuration list for PBXProject "EDPOpenNative" */;
+			buildConfigurationList = 20847BC2FF7FF7D0E1891DF7 /* Build configuration list for PBXProject "EDPStudioNative" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -175,7 +175,7 @@
 			projectRoot = "";
 			targets = (
 				50438055B75C7A57E6437F51 /* EDPOpen */,
-				0CED6468A96E936DBF8E9CDC /* EDPOpenRawBroker */,
+				0CED6468A96E936DBF8E9CDC /* EDPStudioRawBroker */,
 			);
 		};
 /* End PBXProject section */
@@ -185,7 +185,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				07F9C07028CB8F16999DFCE5 /* EDPOpenRawBroker in Resources */,
+				07F9C07028CB8F16999DFCE5 /* EDPStudioRawBroker in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -230,7 +230,7 @@
 			files = (
 				4BA8774F4C8F2E91FE2B8D60 /* CoreBridge.swift in Sources */,
 				D0FBFBCB6827CAAE656060AE /* DiskMapView.swift in Sources */,
-				EF0596281CD13A31E2481B20 /* EDPOpenNativeApp.swift in Sources */,
+				EF0596281CD13A31E2481B20 /* EDPStudioApp.swift in Sources */,
 				C8A440215B2BAEE99556C89F /* Models.swift in Sources */,
 				B9B1A758A97DC6B9B61FABD1 /* OverviewView.swift in Sources */,
 				876D14D8EDA3BAD1160DA814 /* RawBrokerClient.swift in Sources */,
@@ -245,7 +245,7 @@
 /* Begin PBXTargetDependency section */
 		428F28BC1EBC4BCCE0697EE9 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 0CED6468A96E936DBF8E9CDC /* EDPOpenRawBroker */;
+			target = 0CED6468A96E936DBF8E9CDC /* EDPStudioRawBroker */;
 			targetProxy = DACDB825477A56892F1889D7 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -473,7 +473,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		20847BC2FF7FF7D0E1891DF7 /* Build configuration list for PBXProject "EDPOpenNative" */ = {
+		20847BC2FF7FF7D0E1891DF7 /* Build configuration list for PBXProject "EDPStudioNative" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8B44FE3A09B1B4DA11316930 /* Debug */,
@@ -482,7 +482,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPOpen" */ = {
+		53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPStudio" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				4E3D31B9A387AF11CB592EAB /* Debug */,
@@ -491,7 +491,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
-		E6BD9416FCEE88643638D966 /* Build configuration list for PBXNativeTarget "EDPOpenRawBroker" */ = {
+		E6BD9416FCEE88643638D966 /* Build configuration list for PBXNativeTarget "EDPStudioRawBroker" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				508BEE80EEC42912EDBF5BF4 /* Debug */,

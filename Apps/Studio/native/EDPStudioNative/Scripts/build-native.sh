@@ -17,8 +17,8 @@ fail() {
 "${SCRIPT_DIR}/verify-signing-identity.sh"
 
 exec env DEVELOPER_DIR="${DEVELOPER_DIR}" /usr/bin/xcodebuild \
-  -project "${PROJECT_ROOT}/EDPOpenNative.xcodeproj" \
-  -scheme EDPOpen \
+  -project "${PROJECT_ROOT}/EDPStudioNative.xcodeproj" \
+  -scheme EDPStudio \
   -configuration "${CONFIGURATION}" \
   -derivedDataPath "${DERIVED_DATA}" \
   ARCHS=arm64 \

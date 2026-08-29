@@ -101,7 +101,7 @@ EDP Studio：
 
 ```bash
 cd Apps/Studio
-native/EDPOpenNative/Scripts/build-native.sh
+native/EDPStudioNative/Scripts/build-native.sh
 ```
 
 ## 开发原则

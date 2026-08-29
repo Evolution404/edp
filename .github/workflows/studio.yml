@@ -30,33 +30,40 @@ jobs:
           test ! -e Apps/Studio/core
           test ! -e Apps/Studio/src
           ! grep -R -E 'edpopen_ffi|Build Rust EDP Core|build-rust-core.sh' \
-            Apps/Studio/native/EDPOpenNative/Sources \
-            Apps/Studio/native/EDPOpenNative/project.yml \
-            Apps/Studio/native/EDPOpenNative/EDPOpenNative.xcodeproj/project.pbxproj
-          grep -Fq 'EDP Studio' Apps/Studio/native/EDPOpenNative/Sources/EDPOpenNativeApp.swift
-          grep -Fq 'com.edp.studio' Apps/Studio/native/EDPOpenNative/project.yml
-          grep -Fq 'com.edp.studio.rawbroker' Apps/Studio/native/EDPOpenNative/Shared/RawBrokerProtocol.swift
+            Apps/Studio/native/EDPStudioNative/Sources \
+            Apps/Studio/native/EDPStudioNative/project.yml \
+            Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/project.pbxproj
+          grep -Fq 'EDP Studio' Apps/Studio/native/EDPStudioNative/Sources/EDPStudioApp.swift
+          grep -Fq 'com.edp.studio' Apps/Studio/native/EDPStudioNative/project.yml
+          grep -Fq 'com.edp.studio.rawbroker' Apps/Studio/native/EDPStudioNative/Shared/RawBrokerProtocol.swift
+          grep -Fq '^  EDPStudio:$' Apps/Studio/native/EDPStudioNative/project.yml
+          grep -Fq '^  EDPStudioRawBroker:$' Apps/Studio/native/EDPStudioNative/project.yml
+          test -f Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/xcshareddata/xcschemes/EDPStudio.xcscheme
+          ! grep -R -E 'EDPOpenRawBroker|EDPOpenNativeApp|container:EDPOpenNative.xcodeproj' \
+            Apps/Studio/native/EDPStudioNative/project.yml \
+            Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/project.pbxproj \
+            Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/xcshareddata/xcschemes
           ! grep -R -F 'com.evolution404.edpopen' \
-            Apps/Studio/native/EDPOpenNative/Sources \
-            Apps/Studio/native/EDPOpenNative/BrokerSources \
-            Apps/Studio/native/EDPOpenNative/Shared \
-            Apps/Studio/native/EDPOpenNative/Installer \
-            Apps/Studio/native/EDPOpenNative/project.yml
+            Apps/Studio/native/EDPStudioNative/Sources \
+            Apps/Studio/native/EDPStudioNative/BrokerSources \
+            Apps/Studio/native/EDPStudioNative/Shared \
+            Apps/Studio/native/EDPStudioNative/Installer \
+            Apps/Studio/native/EDPStudioNative/project.yml
           grep -Fq 'OLD_BROKER="/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker"' \
-            Apps/Studio/native/EDPOpenNative/Scripts/install-native.sh
+            Apps/Studio/native/EDPStudioNative/Scripts/install-native.sh
           echo 'RESULT=EDP_STUDIO_PURE_NATIVE_CONTRACT_OK'
       - name: Build shared core
         run: |
           set -euo pipefail
           export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-          Apps/Studio/native/EDPOpenNative/Scripts/build-shared-core.sh
+          Apps/Studio/native/EDPStudioNative/Scripts/build-shared-core.sh
       - name: Compile native Studio without signing
         run: |
           set -euo pipefail
           export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
           xcodebuild \
-            -project Apps/Studio/native/EDPOpenNative/EDPOpenNative.xcodeproj \
-            -scheme EDPOpen \
+            -project Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj \
+            -scheme EDPStudio \
             -configuration Release \
             -derivedDataPath "${RUNNER_TEMP}/edp-studio-derived" \
             ARCHS=arm64 \

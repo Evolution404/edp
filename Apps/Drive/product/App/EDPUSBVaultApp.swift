@@ -221,16 +221,16 @@ final class EDPVaultViewModel: ObservableObject {
         if let connection { return connection }
         let newConnection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
         newConnection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-        newConnection.interruptionHandler = { [weak self] in
+        newConnection.interruptionHandler = { [weak self, weak newConnection] in
             Task { @MainActor in
-                self?.connection = nil
-                self?.serviceStatus = self?.serviceDesiredRunning == true ? "连接已中断" : "已停止"
+                guard let self, self.connection === newConnection else { return }
+                self.serviceConnectionEnded()
             }
         }
-        newConnection.invalidationHandler = { [weak self] in
+        newConnection.invalidationHandler = { [weak self, weak newConnection] in
             Task { @MainActor in
-                self?.connection = nil
-                self?.serviceDidInvalidate()
+                guard let self, self.connection === newConnection else { return }
+                self.serviceConnectionEnded()
             }
         }
         newConnection.resume()
@@ -300,17 +300,21 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    private func serviceDidInvalidate() {
+    private func serviceConnectionEnded() {
         connection = nil
         guard !serviceDesiredRunning else {
             serviceStatus = "连接已中断"
             return
         }
+
+        // A service exit can report both interruption and invalidation. Clear
+        // the lifecycle operation exactly once so an intentional restart can
+        // never be scheduled twice by the two NSXPCConnection callbacks.
+        let shouldRestart = restartAfterStop
+        restartAfterStop = false
         serviceOperationID = nil
         isBusy = false
         serviceStatus = "已停止"
-        let shouldRestart = restartAfterStop
-        restartAfterStop = false
         if shouldRestart {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.startService()

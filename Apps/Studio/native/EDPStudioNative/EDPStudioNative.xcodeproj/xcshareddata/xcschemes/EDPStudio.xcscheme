@@ -17,8 +17,8 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "50438055B75C7A57E6437F51"
                BuildableName = "EDP Studio.app"
-               BlueprintName = "EDPOpen"
-               ReferencedContainer = "container:EDPOpenNative.xcodeproj">
+               BlueprintName = "EDPStudio"
+               ReferencedContainer = "container:EDPStudioNative.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -34,8 +34,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50438055B75C7A57E6437F51"
             BuildableName = "EDP Studio.app"
-            BlueprintName = "EDPOpen"
-            ReferencedContainer = "container:EDPOpenNative.xcodeproj">
+            BlueprintName = "EDPStudio"
+            ReferencedContainer = "container:EDPStudioNative.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
@@ -59,8 +59,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50438055B75C7A57E6437F51"
             BuildableName = "EDP Studio.app"
-            BlueprintName = "EDPOpen"
-            ReferencedContainer = "container:EDPOpenNative.xcodeproj">
+            BlueprintName = "EDPStudio"
+            ReferencedContainer = "container:EDPStudioNative.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <CommandLineArguments>
@@ -78,8 +78,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50438055B75C7A57E6437F51"
             BuildableName = "EDP Studio.app"
-            BlueprintName = "EDPOpen"
-            ReferencedContainer = "container:EDPOpenNative.xcodeproj">
+            BlueprintName = "EDPStudio"
+            ReferencedContainer = "container:EDPStudioNative.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <CommandLineArguments>

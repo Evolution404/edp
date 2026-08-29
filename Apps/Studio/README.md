@@ -13,7 +13,7 @@ EDP Studio 是面向 macOS 26+ 的原生 EDP 磁盘分析、扇区查看与维�
 ## 架构
 
 ```text
-Apps/Studio/native/EDPOpenNative
+Apps/Studio/native/EDPStudioNative
         │
         ├── SwiftUI / AppKit UI
         ├── Raw Broker XPC client
@@ -42,7 +42,7 @@ Raw Broker path:          /Library/PrivilegedHelperTools/com.edp.studio.rawbroke
 LaunchDaemon plist:       /Library/LaunchDaemons/com.edp.studio.rawbroker.plist
 ```
 
-旧 `EDPOpen.app`、`com.evolution404.edpopen` 与 `com.evolution404.edpopen.rawbroker` 只存在于 Git 历史中。升级安装会先验证新的签名产物，再停用并清理旧身份。
+旧 `EDPOpen.app`、`com.evolution404.edpopen` 与 `com.evolution404.edpopen.rawbroker` 不再作为当前运行身份，仅保留在 Git 历史和升级清理兼容逻辑中。升级安装会先验证新的签名产物，再停用并清理旧身份。
 
 ## 统一本机签名
 
@@ -63,9 +63,9 @@ Validity: 2026-08-29 .. 2046-08-24
 
 ```bash
 cd Apps/Studio
-native/EDPOpenNative/Scripts/build-native.sh
-sudo /bin/bash native/EDPOpenNative/Scripts/install-native.sh
-/bin/bash native/EDPOpenNative/Scripts/verify-installed-native.sh
+native/EDPStudioNative/Scripts/build-native.sh
+sudo /bin/bash native/EDPStudioNative/Scripts/install-native.sh
+/bin/bash native/EDPStudioNative/Scripts/verify-installed-native.sh
 ```
 
 Release 构建产物：
@@ -80,7 +80,7 @@ Xcode build phase 会直接构建 monorepo 内的 `Packages/EDPCore`，不需要
 XPC signing contract 可单独验证：
 
 ```bash
-native/EDPOpenNative/Scripts/verify-peer-signing-contract.sh
+native/EDPStudioNative/Scripts/verify-peer-signing-contract.sh
 ```
 
 该测试不会修改用户 trust store 或 DefaultKeychain/SearchList。

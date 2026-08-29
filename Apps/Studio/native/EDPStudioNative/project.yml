@@ -18,7 +18,7 @@ settings:
     CODE_SIGN_IDENTITY: EDP Project Code Signing
     DEVELOPMENT_TEAM: ""
 targets:
-  EDPOpen:
+  EDPStudio:
     type: application
     platform: macOS
     sources:
@@ -40,10 +40,10 @@ targets:
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release"
         OTHER_LDFLAGS: "$(inherited) -lEDPCore"
     dependencies:
-      - target: EDPOpenRawBroker
+      - target: EDPStudioRawBroker
     scheme:
       testTargets: []
-  EDPOpenRawBroker:
+  EDPStudioRawBroker:
     type: tool
     platform: macOS
     sources:

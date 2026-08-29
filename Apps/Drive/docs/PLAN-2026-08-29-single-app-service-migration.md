@@ -4,6 +4,18 @@ This document is the Phase A audit and implementation contract for migrating the
 monorepo from the historical `EDP USB Vault` / `EDPOpen` identities to EDP Drive
 and EDP Studio.  The audited baseline is `56ed5fa0c42dc3a3a0924db487c1a73f2c1c8fbf`.
 
+## Current progress
+
+As of 2026-08-29:
+
+- Phase A: complete — architecture, FDA, XPC, installer and persisted-state audit recorded here;
+- Phase B: complete — Drive is one `/Applications/EDP Drive.app` plus one embedded `edp-drive-service`, with no Raw Access second App;
+- Phase C: complete — Drive runtime identities are `com.edp.drive` / `com.edp.drive.service`, data and Keychain migration are implemented and regression-tested;
+- Phase D: complete — UI Start / graceful Stop / Restart is implemented; `KeepAlive` / `RunAtLoad` are removed and XPC disconnect races are hardened;
+- Phase E: complete — Studio is `EDP Studio.app`, `com.edp.studio`, `com.edp.studio.rawbroker`; native directory/project/target/scheme names are also migrated to `EDPStudioNative` / `EDPStudio`;
+- Phase F: partially complete — build, installer expansion, signing and synthetic/golden gates pass; remaining work requires local administrator authorization, one FDA grant and real-USB lifecycle/performance acceptance;
+- Phase G: partially complete — every old branch/tag commit is now represented in monorepo history and legacy USB Vault tags were copied; old repositories must not be deleted until Phase F real-machine acceptance passes and a final exact-head CI run is green.
+
 ## Non-negotiable production topology
 
 Drive has one user-visible application and one embedded, signed service
