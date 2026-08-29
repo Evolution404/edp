@@ -181,12 +181,16 @@
 - teardown 同时改为严格 top-down fail-closed：用户文件系统未确认消失 -> 不 detach DiskImages2；published BSD device detach 失败 -> 不拆 hidden transport；hidden mount 未确认消失 -> 不 kill transport。`recoverPersistedSessions()` 同样采用这一安全顺序，删除旧 `try?` fail-open 链。
 - 新增 `ValidateBoundedVFS.swift`：正常 `/usr/bin/true` 路径 + 故意 `/bin/sleep 5` timeout 路径；本机 timeout probe 在约 `0.229 s` 返回，结果 `RESULT=BOUNDED_VFS_UNMOUNT_GUARD_OK`。
 - 完整 fixed-signing Native product build通过，结果 `RESULT=BOUNDED_VFS_FULL_PRODUCT_BUILD_OK`；CI 新增 ratchet：禁止恢复 `Darwin.unmount(`，强制 `/sbin/umount` bounded helper、top-down teardown 日志和 bounded VFS golden validator。
-- 当前旧 Service `4053` 仍停留内核 `U` state；可见交换区/保密区均已安全卸载，仅剩交换区 hidden macFUSE transport，因此当前没有用户文件系统写会话，但必须再重启一次才能安装新 VFS 修复候选并完成最后两轮生命周期验收。
+- `cd5bd49` 已提交/push，exact-head Drive CI run `33260540149` success。重启后旧 `4053 U` 已彻底消失；从 exact-head 重建 Native 包并安装成功，Service PID `2208` 首次启动后 type 2/type 4 在约 1 s 内自动恢复，可写 ExFAT、`privilegedAccessReady=true`。
+- `cd5bd49` 实机连续两轮 lifecycle 已 PASS：第一轮 Stop 约 1 s 完成，Service `not running / exit 0`、user/hidden/transport 全部为 0；第二轮 demand Start 后约 8 s 两区恢复，再 Stop 仍约 1 s 完成，无 `U` state、zombie、XPC timeout 或新 crash。
+- 正式 UI App restart 已 PASS：UI PID `2872 -> 2936`，Service PID 始终 `2674`，两区挂载持续存在，说明仅退出/重开界面不会重启后台服务或扰动已挂载卷。
+- 整盘安全推出前进一步收紧 fail-closed 边界：`EDPVaultManager.unmount(deviceID:partitionType:)` 和 `eject(deviceID:)` 改为 `throws`，只要 session 仍存在就明确失败；controller 的显式卸载、删除凭据前卸载、整盘推出均 `try` 传播，不再出现“底层 teardown 失败但 UI 继续报成功/继续释放 raw fd 或物理 eject”的路径。
+- CI 新增 ratchet：整盘 `eject` 必须 `throws`、controller 必须 `try manager.eject`、分区卸载必须 `throws` 并保留 `EDP partition could not be safely unmounted` guard。完整 fixed-signing Native product build已通过，结果 `RESULT=EJECT_FAIL_CLOSED_BUILD_OK`。
 
 ## 下一步立即执行
 
-1. 提交/push bounded VFS unmount + top-down fail-closed teardown，等待 exact-head Drive CI。
-2. 从 exact-head 构建最终 Native 候选；当前 `4053 U` 只能通过重启 macOS 清除，重启后立即安装。
-3. 连续执行至少两轮 Stop -> demand Start；要求每轮 graceful Stop 有 bounded result、Service 正常 exit、两区/hidden/transport 全清空，Start 后 type 2/type 4 自动恢复。
-4. 完成正式 UI App restart、整盘安全推出；随后物理拔插 / `diskN` 变化需要用户实际拔插动作时再提示。
+1. 提交/push explicit unmount/eject fail-closed propagation，等待 exact-head Drive CI。
+2. 先 graceful Stop 当前健康 Service，安装新 exact-head Native 候选，再 demand Start 并确认 type 2/type 4 恢复。
+3. 使用产品 XPC `eject(deviceID:)` 做整盘安全推出；要求 type 2/type 4/hidden transport 全部先清空，再卸载启动区并由 Disk Arbitration eject 物理 `diskN`，失败时必须保持 fail-closed。
+4. 安全推出成功后等待用户物理重新插入，验证 `diskN` 变化/重复插拔无需第二次管理员授权且自动挂载恢复。
 5. 更新 HANDOFF/STATUS/本 tracker，最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。

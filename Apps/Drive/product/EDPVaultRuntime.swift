@@ -805,13 +805,20 @@ private final class MountManager {
         ]
     }
 
-    func eject(deviceID: String) {
+    func eject(deviceID: String) throws {
         let keys = sessions.compactMap { $0.value.deviceID == deviceID ? $0.key : nil }
         for key in keys { unmount(key: key) }
+        guard !sessions.values.contains(where: { $0.deviceID == deviceID }) else {
+            throw fail("one or more EDP sessions could not be safely unmounted")
+        }
     }
 
-    func unmount(deviceID: String, partitionType: UInt32) {
-        unmount(key: "\(deviceID):\(partitionType)")
+    func unmount(deviceID: String, partitionType: UInt32) throws {
+        let sessionKey = "\(deviceID):\(partitionType)"
+        unmount(key: sessionKey)
+        guard sessions[sessionKey] == nil else {
+            throw fail("EDP partition could not be safely unmounted")
+        }
     }
 
     func mount(
@@ -1400,7 +1407,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 rawFD: rawLease.fd
             )
         } else {
-            manager.unmount(deviceID: disk.deviceID, partitionType: partitionType)
+            try manager.unmount(deviceID: disk.deviceID, partitionType: partitionType)
         }
     }
 
@@ -1731,7 +1738,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 }
                 try setBootMounted(false, disk: disk)
             } else {
-                manager.unmount(deviceID: deviceID, partitionType: partitionType)
+                try manager.unmount(deviceID: deviceID, partitionType: partitionType)
             }
             manualUnmountSuppressions.insert(key(deviceID, partitionType))
             addActivity("分区已卸载", deviceID: deviceID, partitionType: partitionType)
@@ -1740,7 +1747,7 @@ private final class EDPDaemonController: @unchecked Sendable {
 
     func deleteCredential(deviceID: String, partitionType: UInt32) throws {
         try queue.sync {
-            manager.unmount(deviceID: deviceID, partitionType: partitionType)
+            try manager.unmount(deviceID: deviceID, partitionType: partitionType)
             try store.remove(deviceID: deviceID, partitionType: partitionType)
             failedMounts.removeValue(forKey: key(deviceID, partitionType))
             manualUnmountSuppressions.remove(key(deviceID, partitionType))
@@ -1863,7 +1870,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 // daemon-owned whole-disk descriptor.  Keeping that retained
                 // O_RDWR fd open makes Disk Arbitration reject whole-device
                 // eject as busy.
-                manager.eject(deviceID: deviceID)
+                try manager.eject(deviceID: deviceID)
                 if let lease = rawAccessLeases.removeValue(forKey: deviceID) {
                     lease.invalidate()
                 }

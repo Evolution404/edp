@@ -94,6 +94,10 @@ jobs:
           ! grep -Fq 'Darwin.unmount(' Apps/Drive/product/EDPNativeSystem.swift
           grep -Fq 'EDP user-volume teardown failed' Apps/Drive/product/EDPVaultRuntime.swift
           grep -Fq 'EDP published-device teardown failed' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'func eject(deviceID: String) throws' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'try manager.eject(deviceID: deviceID)' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'func unmount(deviceID: String, partitionType: UInt32) throws' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'EDP partition could not be safely unmounted' Apps/Drive/product/EDPVaultRuntime.swift
           test -f Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift
           test -f Apps/Drive/native/EDPFSKitPoC/Tools/ValidateBoundedVFS.swift
           grep -Fq 'SERVICE_UCOMM="edp-drive-servic"' Apps/Drive/installer/scripts/native-preinstall
