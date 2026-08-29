@@ -36,8 +36,8 @@ jobs:
           grep -Fq 'EDP Studio' Apps/Studio/native/EDPStudioNative/Sources/EDPStudioApp.swift
           grep -Fq 'com.edp.studio' Apps/Studio/native/EDPStudioNative/project.yml
           grep -Fq 'com.edp.studio.rawbroker' Apps/Studio/native/EDPStudioNative/Shared/RawBrokerProtocol.swift
-          grep -Fq '^  EDPStudio:$' Apps/Studio/native/EDPStudioNative/project.yml
-          grep -Fq '^  EDPStudioRawBroker:$' Apps/Studio/native/EDPStudioNative/project.yml
+          grep -qx '  EDPStudio:' Apps/Studio/native/EDPStudioNative/project.yml
+          grep -qx '  EDPStudioRawBroker:' Apps/Studio/native/EDPStudioNative/project.yml
           test -f Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/xcshareddata/xcschemes/EDPStudio.xcscheme
           ! grep -R -E 'EDPOpenRawBroker|EDPOpenNativeApp|container:EDPOpenNative.xcodeproj' \
             Apps/Studio/native/EDPStudioNative/project.yml \
