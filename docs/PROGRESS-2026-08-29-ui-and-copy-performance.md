@@ -168,11 +168,25 @@
 - postinstall 新增 bounded `bootstrap_service()` retry；clean combined installer 删除重复内嵌 pre/post scripts，改为与 Native installer 统一复制 `installer/scripts/native-preinstall` / `native-postinstall`。
 - 新 installer scripts 已 `bash -n` 全绿；Native package 本地构建/expand 验证确认新 pre/post scripts 确实进入包内，结果 `RESULT=INSTALLER_LIFECYCLE_HARDENING_LOCAL_OK`。
 
+## 2026-08-29 23:15 后最终生命周期复验与 VFS 根因
+
+- 重启后旧 `10746 ?Es` / `10892 Z` 已全部消失，Service 基线 `not running / runs=0`，无 EDP mount；`main == origin/main == b8014d9`，exact-head Drive CI run `33259442868` success。
+- 从 `b8014d9` 重新构建 Native 包并安装：preinstall、payload、postinstall、receipt 全部成功，安装日志不再出现 `Bootstrap failed: 5`；installer lifecycle hardening 实机 PASS。
+- 安装后 Service PID `3745` 自动启动，type 2/type 4 均恢复为可写 ExFAT；CLI `--xpc-health` / `--xpc-snapshot` 均 rc=0，最近无新 crash，证明合并后的正式/CLI `@Sendable` XPC callbacks 已消除此前 Swift 6 MainActor `SIGTRAP`。
+- 第一轮 `--xpc-graceful-stop` 完整 PASS：Service `not running / exit 0`、用户卷 0、hidden mount 0、transport 0。
+- 随后正式 UI 启动并建立可信 XPC，Service PID `4053` demand-launch，type 2/type 4 在约 1 s 内恢复；UI 持续运行无 crash。
+- 第二轮 graceful Stop 再次真实复现 lifecycle hang：90 s timeout；Stop 已先成功卸载保密区，最终只剩交换区 user mount + hidden macFUSE，Service PID `4053` 进入 `ps state U`。Finder 可安全推出交换区 user mount，但 hidden macFUSE 的系统 `diskutil unmount force` 同样可以无限阻塞。
+- 根因最终确定：`EDPNativeMountTable.unmountPath()` 原来直接在 root Service 线程内执行 `Darwin.unmount(2)`。VFS/FSKit 一旦把该 syscall 放入不可中断内核等待，任何 Swift/Dispatch timeout 都无法救回 Service，因此 controller queue/XPC 一并冻结。
+- 修复：新增 `EDPNativeBoundedProcess`，VFS unmount 改由独立 `/sbin/umount` 子进程执行；普通卸载 15 s、forced hidden 卸载 8 s hard timeout，超时后 `TERM -> bounded grace -> SIGKILL -> bounded grace`，parent Service 必须在有限时间内返回错误而非进入 `U` state。
+- teardown 同时改为严格 top-down fail-closed：用户文件系统未确认消失 -> 不 detach DiskImages2；published BSD device detach 失败 -> 不拆 hidden transport；hidden mount 未确认消失 -> 不 kill transport。`recoverPersistedSessions()` 同样采用这一安全顺序，删除旧 `try?` fail-open 链。
+- 新增 `ValidateBoundedVFS.swift`：正常 `/usr/bin/true` 路径 + 故意 `/bin/sleep 5` timeout 路径；本机 timeout probe 在约 `0.229 s` 返回，结果 `RESULT=BOUNDED_VFS_UNMOUNT_GUARD_OK`。
+- 完整 fixed-signing Native product build通过，结果 `RESULT=BOUNDED_VFS_FULL_PRODUCT_BUILD_OK`；CI 新增 ratchet：禁止恢复 `Darwin.unmount(`，强制 `/sbin/umount` bounded helper、top-down teardown 日志和 bounded VFS golden validator。
+- 当前旧 Service `4053` 仍停留内核 `U` state；可见交换区/保密区均已安全卸载，仅剩交换区 hidden macFUSE transport，因此当前没有用户文件系统写会话，但必须再重启一次才能安装新 VFS 修复候选并完成最后两轮生命周期验收。
+
 ## 下一步立即执行
 
-1. 提交/push installer fail-closed lifecycle hardening，等待 exact-head Drive CI。
-2. 当前旧 Service PID `10746` 已进入无法清除的 `E` state；所有 EDP mounts 已为 0，需重启 macOS 清除该内核残留。重启后用新 installer 验证 pre/post 正常升级，不再出现 `Bootstrap failed: 5`。
-3. 安装新 exact-head 候选后复测正式 UI Start，确认合并后的 `@Sendable` ViewModel 不再出现 MainActor/XPC `SIGTRAP`；复测 `--xpc-graceful-stop`，确认 CLI smoke harness 也不崩。
-4. 清除所有临时测试 App 后，完成两轮 Stop -> Start -> Restart；确认每轮 Service 正常 exit/on-demand launch、两区恢复、无 controller queue 卡死或外部 Mach peer 干扰。
-5. 完成安全推出整盘、App restart；随后物理拔插 / `diskN` 变化需要用户实际拔插动作时再提示。
-6. 更新 HANDOFF/STATUS/本 tracker，最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。
+1. 提交/push bounded VFS unmount + top-down fail-closed teardown，等待 exact-head Drive CI。
+2. 从 exact-head 构建最终 Native 候选；当前 `4053 U` 只能通过重启 macOS 清除，重启后立即安装。
+3. 连续执行至少两轮 Stop -> demand Start；要求每轮 graceful Stop 有 bounded result、Service 正常 exit、两区/hidden/transport 全清空，Start 后 type 2/type 4 自动恢复。
+4. 完成正式 UI App restart、整盘安全推出；随后物理拔插 / `diskN` 变化需要用户实际拔插动作时再提示。
+5. 更新 HANDOFF/STATUS/本 tracker，最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。

@@ -299,6 +299,53 @@ struct RuntimeNativeError: Error, CustomStringConvertible, Sendable {
     var description: String { message }
 }
 
+enum EDPNativeBoundedProcess {
+    static func run(
+        executable: String,
+        arguments: [String],
+        timeout: TimeInterval,
+        label: String,
+        terminateGrace: TimeInterval = 0.75,
+        killGrace: TimeInterval = 0.75
+    ) throws -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let pid = process.processIdentifier
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if !process.isRunning {
+            return process.terminationStatus
+        }
+
+        process.terminate()
+        let terminateDeadline = Date().addingTimeInterval(terminateGrace)
+        while process.isRunning && Date() < terminateDeadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            _ = Darwin.kill(pid, SIGKILL)
+            let killDeadline = Date().addingTimeInterval(killGrace)
+            while process.isRunning && Date() < killDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+        }
+
+        if process.isRunning {
+            throw RuntimeNativeError(
+                "\(label) timed out after \(Int(timeout)) seconds and helper remained alive after SIGKILL"
+            )
+        }
+        throw RuntimeNativeError("\(label) timed out after \(Int(timeout)) seconds")
+    }
+}
+
 private final class DAOperationBox: @unchecked Sendable {
     let semaphore = DispatchSemaphore(value: 0)
     var status: DAReturn = DAReturn(kDAReturnSuccess)
@@ -519,9 +566,25 @@ enum EDPNativeMountTable {
 
     static func unmountPath(_ path: String, force: Bool = false) throws {
         guard isMountpoint(path) else { return }
-        let flags = force ? MNT_FORCE : 0
-        guard Darwin.unmount(path, flags) == 0 else {
-            throw RuntimeNativeError("unmount(2) failed for \(path): errno=\(errno)")
+        let arguments = force ? ["-f", path] : [path]
+        do {
+            let status = try EDPNativeBoundedProcess.run(
+                executable: "/sbin/umount",
+                arguments: arguments,
+                timeout: force ? 8 : 15,
+                label: force ? "forced VFS unmount \(path)" : "VFS unmount \(path)"
+            )
+            if status != 0 && isMountpoint(path) {
+                throw RuntimeNativeError(
+                    "umount helper failed for \(path): status=\(status)"
+                )
+            }
+        } catch {
+            if !isMountpoint(path) { return }
+            throw error
+        }
+        guard !isMountpoint(path) else {
+            throw RuntimeNativeError("mount remained active after unmount helper: \(path)")
         }
     }
 }

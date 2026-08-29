@@ -701,16 +701,51 @@ private final class MountManager {
         }
         for item in items {
             if let mountpoint = item["mountpoint"], !mountpoint.isEmpty {
-                try? EDPNativeMountTable.unmountPath(mountpoint)
+                do {
+                    try EDPNativeMountTable.unmountPath(mountpoint)
+                } catch {
+                    NSLog(
+                        "EDP persisted-session recovery stopped at user mount %@: %@",
+                        mountpoint,
+                        String(describing: error)
+                    )
+                    continue
+                }
+                guard !EDPNativeMountTable.isMountpoint(mountpoint) else {
+                    NSLog("EDP persisted-session recovery kept active user mount %@", mountpoint)
+                    continue
+                }
                 try? FileManager.default.removeItem(atPath: mountpoint)
             }
             if let exposed = item["exposedBSD"], !exposed.isEmpty {
-                try? blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: exposed))
+                do {
+                    try blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: exposed))
+                } catch {
+                    NSLog(
+                        "EDP persisted-session recovery kept published device %@: %@",
+                        exposed,
+                        String(describing: error)
+                    )
+                    continue
+                }
             }
             if let bridge = item["bridgeMount"], !bridge.isEmpty {
-                try? EDPNativeMountTable.unmountPath(bridge)
-                if EDPNativeMountTable.isMountpoint(bridge) {
-                    try? EDPNativeMountTable.unmountPath(bridge, force: true)
+                do {
+                    try EDPNativeMountTable.unmountPath(bridge)
+                    if EDPNativeMountTable.isMountpoint(bridge) {
+                        try EDPNativeMountTable.unmountPath(bridge, force: true)
+                    }
+                } catch {
+                    NSLog(
+                        "EDP persisted-session recovery kept transport mount %@: %@",
+                        bridge,
+                        String(describing: error)
+                    )
+                    continue
+                }
+                guard !EDPNativeMountTable.isMountpoint(bridge) else {
+                    NSLog("EDP persisted-session recovery kept active transport mount %@", bridge)
+                    continue
                 }
                 try? FileManager.default.removeItem(atPath: bridge)
             }
@@ -1030,13 +1065,33 @@ private final class MountManager {
     private func unmount(key: String) {
         guard let session = sessions[key] else { return }
         missingSince.removeValue(forKey: key)
-        if let userMount = session.userMount {
-            try? EDPNativeMountTable.unmountPath(userMount)
+
+        if let userMount = session.userMount, EDPNativeMountTable.isMountpoint(userMount) {
+            do {
+                try EDPNativeMountTable.unmountPath(userMount)
+            } catch {
+                NSLog("EDP user-volume teardown failed for %@: %@", key, String(describing: error))
+                persistSessions()
+                return
+            }
+            guard !EDPNativeMountTable.isMountpoint(userMount) else {
+                NSLog("EDP user-volume teardown kept mounted path for %@: %@", key, userMount)
+                persistSessions()
+                return
+            }
         }
+
         session.filesystemProcess?.terminate()
         if !session.exposedBSD.isEmpty {
-            try? blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: session.exposedBSD))
+            do {
+                try blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: session.exposedBSD))
+            } catch {
+                NSLog("EDP published-device teardown failed for %@: %@", key, String(describing: error))
+                persistSessions()
+                return
+            }
         }
+
         do {
             try session.transport.stop(
                 unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },

@@ -89,7 +89,13 @@ jobs:
           grep -Fq 'runBoundedProcess' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'timeout: 15' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'process.forceTerminate()' Apps/Drive/product/EDPTransportProvider.swift
+          grep -Fq 'EDPNativeBoundedProcess.run' Apps/Drive/product/EDPNativeSystem.swift
+          grep -Fq 'executable: "/sbin/umount"' Apps/Drive/product/EDPNativeSystem.swift
+          ! grep -Fq 'Darwin.unmount(' Apps/Drive/product/EDPNativeSystem.swift
+          grep -Fq 'EDP user-volume teardown failed' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'EDP published-device teardown failed' Apps/Drive/product/EDPVaultRuntime.swift
           test -f Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift
+          test -f Apps/Drive/native/EDPFSKitPoC/Tools/ValidateBoundedVFS.swift
           grep -Fq 'SERVICE_UCOMM="edp-drive-servic"' Apps/Drive/installer/scripts/native-preinstall
           grep -Fq "on /Volumes/.edp-block-" Apps/Drive/installer/scripts/native-preinstall
           grep -Fq 'restart macOS and run the installer again' Apps/Drive/installer/scripts/native-preinstall
@@ -144,6 +150,17 @@ jobs:
             | tee "${RUNNER_TEMP}/transport-lifecycle.txt"
           grep -Fq 'RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK' \
             "${RUNNER_TEMP}/transport-lifecycle.txt"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
+            "${EDP_CORE_SWIFTC_FLAGS[@]}" \
+            "${CORE_SOURCES[@]}" \
+            product/EDPNativeSystem.swift \
+            native/EDPFSKitPoC/Tools/ValidateBoundedVFS.swift \
+            -o "${RUNNER_TEMP}/validate-bounded-vfs"
+          "${RUNNER_TEMP}/validate-bounded-vfs" \
+            | tee "${RUNNER_TEMP}/bounded-vfs.txt"
+          grep -Fq 'RESULT=BOUNDED_VFS_UNMOUNT_GUARD_OK' \
+            "${RUNNER_TEMP}/bounded-vfs.txt"
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
             native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
             native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
