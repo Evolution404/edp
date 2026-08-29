@@ -162,6 +162,7 @@ final class EDPVaultViewModel: ObservableObject {
     private var connection: NSXPCConnection?
     private var serviceOperationID: UUID?
     private var restartAfterStop = false
+    private var stopCompletion: (() -> Void)?
 
     var needsFullDiskAccess: Bool {
         snapshot.devices.contains { $0.connected && !$0.privilegedAccessReady }
@@ -295,6 +296,7 @@ final class EDPVaultViewModel: ObservableObject {
                 self.persistServicePreference()
             }
             self.restartAfterStop = false
+            self.stopCompletion = nil
             self.lastError = "后台服务\(operation)超时"
             self.refreshServiceStatus()
         }
@@ -311,7 +313,9 @@ final class EDPVaultViewModel: ObservableObject {
         // the lifecycle operation exactly once so an intentional restart can
         // never be scheduled twice by the two NSXPCConnection callbacks.
         let shouldRestart = restartAfterStop
+        let completion = stopCompletion
         restartAfterStop = false
+        stopCompletion = nil
         serviceOperationID = nil
         isBusy = false
         serviceStatus = "已停止"
@@ -319,11 +323,14 @@ final class EDPVaultViewModel: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.startService()
             }
+        } else {
+            completion?()
         }
     }
 
     func startService() {
         restartAfterStop = false
+        stopCompletion = nil
         serviceDesiredRunning = true
         persistServicePreference()
         ensureServiceRegistration()
@@ -371,7 +378,7 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    func stopService(restart: Bool = false) {
+    func stopService(restart: Bool = false, completion: (() -> Void)? = nil) {
         let activeConnection = connection ?? connectIfNeeded()
         guard let activeConnection,
               let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ [weak self] error in
@@ -380,6 +387,7 @@ final class EDPVaultViewModel: ObservableObject {
                       self.serviceDesiredRunning = true
                       self.persistServicePreference()
                       self.restartAfterStop = false
+                      self.stopCompletion = nil
                       self.serviceOperationID = nil
                       self.isBusy = false
                       self.lastError = "后台服务停止失败：\(error.localizedDescription)"
@@ -390,6 +398,7 @@ final class EDPVaultViewModel: ObservableObject {
                 serviceDesiredRunning = true
                 persistServicePreference()
                 restartAfterStop = false
+                stopCompletion = nil
                 serviceStatus = "运行中（XPC 不可用）"
                 lastError = "后台服务仍在运行，但无法建立安全 XPC 连接；未执行强制终止。"
                 return
@@ -397,13 +406,16 @@ final class EDPVaultViewModel: ObservableObject {
             serviceDesiredRunning = false
             persistServicePreference()
             restartAfterStop = false
+            stopCompletion = nil
             serviceStatus = "已停止"
             if restart { startService() }
+            else { completion?() }
             return
         }
         serviceDesiredRunning = false
         persistServicePreference()
         restartAfterStop = restart
+        stopCompletion = restart ? nil : completion
         isBusy = true
         serviceStatus = restart ? "正在重启…" : "正在停止…"
         lastError = nil
@@ -417,6 +429,7 @@ final class EDPVaultViewModel: ObservableObject {
                     self.serviceDesiredRunning = true
                     self.persistServicePreference()
                     self.restartAfterStop = false
+                    self.stopCompletion = nil
                     self.serviceOperationID = nil
                     self.isBusy = false
                     self.lastError = "后台服务停止失败：\(errorMessage)"
@@ -1379,6 +1392,10 @@ struct EDPMenuBarView: View {
     @ObservedObject var model: EDPVaultViewModel
     @Environment(\.openWindow) private var openWindow
 
+    private var connectedDevices: [EDPXPCDevice] {
+        model.snapshot.devices.filter(\.connected)
+    }
+
     var body: some View {
         Button("打开 EDP Drive") {
             openWindow(id: "main")
@@ -1387,27 +1404,34 @@ struct EDPMenuBarView: View {
         .keyboardShortcut("o")
 
         Divider()
-        Label(model.serviceStatus, systemImage: "gearshape.2")
+        Label("后台服务：\(model.serviceStatus)", systemImage: "gearshape.2")
         Button(model.snapshot.globalAutoMountEnabled ? "暂停自动挂载" : "恢复自动挂载") {
             model.setGlobalAutoMount(!model.snapshot.globalAutoMountEnabled)
         }
 
-        ForEach(model.snapshot.devices.filter(\.connected)) { device in
-            Menu(device.displayName) {
-                ForEach(device.partitions) { partition in
-                    Menu(partition.displayName) {
+        if connectedDevices.isEmpty {
+            Divider()
+            Text("未连接标准 EDP 加密盘")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(connectedDevices) { device in
+                Divider()
+                Section(device.displayName) {
+                    ForEach(device.partitions) { partition in
                         if partition.mountState == .mounted {
                             if partition.mountPoint != nil {
-                                Button("在 Finder 中显示") { model.openInFinder(partition) }
+                                Button("\(partition.displayName) · 在 Finder 中显示") {
+                                    model.openInFinder(partition)
+                                }
                             }
-                            Button("卸载") {
+                            Button("\(partition.displayName) · 卸载") {
                                 model.unmountPartition(
                                     deviceID: device.deviceID,
                                     partitionType: partition.partitionType
                                 )
                             }
                         } else {
-                            Button("挂载") {
+                            Button("\(partition.displayName) · 挂载") {
                                 model.mountPartition(
                                     deviceID: device.deviceID,
                                     partitionType: partition.partitionType
@@ -1416,18 +1440,15 @@ struct EDPMenuBarView: View {
                             .disabled(partition.encrypted && partition.credentialStatus != .saved)
                         }
                     }
+                    Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
                 }
-                Divider()
-                Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
             }
         }
 
-        if model.snapshot.devices.filter(\.connected).isEmpty {
-            Text("未连接 EDP U 盘").foregroundStyle(.secondary)
-        } else if model.needsFullDiskAccess {
-            Text("加密分区需要为“EDP Drive 磁盘访问”开启一次完全磁盘访问。")
+        if !connectedDevices.isEmpty && model.needsFullDiskAccess {
+            Divider()
+            Text("需要为 EDP Drive 开启完全磁盘访问")
                 .foregroundStyle(.secondary)
-            Button("显示磁盘访问组件") { model.revealRawAccessHelper() }
             Button("打开完全磁盘访问") { model.openFullDiskAccessSettings() }
             Button("重新检测权限") { model.refreshRawAccess() }
                 .disabled(model.isBusy)
@@ -1435,7 +1456,16 @@ struct EDPMenuBarView: View {
 
         Divider()
         Button("刷新") { model.refresh() }
-        Button("退出菜单栏应用") { NSApplication.shared.terminate(nil) }
+        Divider()
+        Button("仅退出界面（后台继续运行）") {
+            NSApplication.shared.terminate(nil)
+        }
+        Button("完全退出（停止后台服务）") {
+            model.stopService {
+                NSApplication.shared.terminate(nil)
+            }
+        }
+        .disabled(model.isBusy)
     }
 }
 

@@ -7,3 +7,4 @@
 **/xcuserdata/
 *.swp
 *.tmp
+Apps/Studio/native/EDPStudioNative/Resources/Assets.xcassets/AppIcon.appiconset/*.png

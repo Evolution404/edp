@@ -10,6 +10,8 @@
   <string>EDP Drive</string>
   <key>CFBundleIdentifier</key>
   <string>com.edp.drive</string>
+  <key>CFBundleIconFile</key>
+  <string>EDPDrive.icns</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

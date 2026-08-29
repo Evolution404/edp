@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		07F9C07028CB8F16999DFCE5 /* EDPStudioRawBroker in Resources */ = {isa = PBXBuildFile; fileRef = FF9FC90F3A0A1144E4C2E85E /* EDPStudioRawBroker */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A1C04D7E9B5F4A2C8E617003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B2D15E8F0C6A4B3D9F728114 /* Assets.xcassets */; };
 		3D0FFE67E2833673789741E5 /* RawDiskValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797504581BD23A4BE7C14743 /* RawDiskValidator.swift */; };
 		4BA8774F4C8F2E91FE2B8D60 /* CoreBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247B457B6181771CDB71BB4E /* CoreBridge.swift */; };
 		605B1BFE01D9442D61441DAF /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB15351222360442735730DF /* main.swift */; };
@@ -46,6 +47,7 @@
 		9C091E369A899A47CD2F0F37 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A8A5681A0D24E519417BC2AB /* SectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectorView.swift; sourceTree = "<group>"; };
 		AB15351222360442735730DF /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		B2D15E8F0C6A4B3D9F728114 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D8CA6360E3557E5DDA8E9946 /* EDP Studio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "EDP Studio.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF9FC90F3A0A1144E4C2E85E /* EDPStudioRawBroker */ = {isa = PBXFileReference; includeInIndex = 0; path = EDPStudioRawBroker; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -84,8 +86,17 @@
 				358AE5EE590A3ADC275C5671 /* BrokerSources */,
 				10026CE1B4EB81841CCA2E44 /* Shared */,
 				CA3AE6F2525B89C8E194A477 /* Sources */,
+				C3E26F901D7B5C4EA0839225 /* Resources */,
 				20CCED1A314F195A900FF79B /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		C3E26F901D7B5C4EA0839225 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				B2D15E8F0C6A4B3D9F728114 /* Assets.xcassets */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		CA3AE6F2525B89C8E194A477 /* Sources */ = {
@@ -128,6 +139,7 @@
 			buildConfigurationList = 53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPStudio" */;
 			buildPhases = (
 				0B41737A278B56C1E97D80C2 /* Build Shared Swift EDP Core */,
+				D4F370A12E8C6D5FB194A336 /* Build EDP Studio App Icon */,
 				74CC5917F83D722E1F69E6D5 /* Sources */,
 				A87EB0F0C9DDC24802197ED6 /* Resources */,
 			);
@@ -186,6 +198,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				07F9C07028CB8F16999DFCE5 /* EDPStudioRawBroker in Resources */,
+				A1C04D7E9B5F4A2C8E617003 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -209,6 +222,24 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/Scripts/build-shared-core.sh\"\n";
+		};
+		D4F370A12E8C6D5FB194A336 /* Build EDP Studio App Icon */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build EDP Studio App Icon";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/../../../../Tools/build-macos-icon.sh\" appiconset \\\n  \"$SRCROOT/Resources/EDPStudioIcon.svg\" \\\n  \"$SRCROOT/Resources/Assets.xcassets/AppIcon.appiconset\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

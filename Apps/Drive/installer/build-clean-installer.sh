@@ -184,6 +184,9 @@ mkdir -p "${APP_STAGE}/Contents/MacOS" "${APP_STAGE}/Contents/Resources" \
   "${APP_STAGE}/Contents/Library/LaunchDaemons" \
   "${APP_STAGE}/Contents/Library/LaunchServices"
 cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
+"${REPO_ROOT}/../../Tools/build-macos-icon.sh" icns \
+  "${REPO_ROOT}/product/App/EDPDriveIcon.svg" \
+  "${APP_STAGE}/Contents/Resources/EDPDrive.icns"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"

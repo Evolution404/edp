@@ -24,16 +24,24 @@ targets:
     sources:
       - path: Sources
       - path: Shared
+    resources:
+      - path: Resources/Assets.xcassets
     preBuildScripts:
       - name: Build Shared Swift EDP Core
         script: |
           "$SRCROOT/Scripts/build-shared-core.sh"
+      - name: Build EDP Studio App Icon
+        script: |
+          "$SRCROOT/../../../../Tools/build-macos-icon.sh" appiconset \
+            "$SRCROOT/Resources/EDPStudioIcon.svg" \
+            "$SRCROOT/Resources/Assets.xcassets/AppIcon.appiconset"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.edp.studio
         MARKETING_VERSION: 0.2.0
         CURRENT_PROJECT_VERSION: 1
         ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release/Modules"
         HEADER_SEARCH_PATHS: "$(SRCROOT)/../../../../Packages/EDPCore/Sources/CEDPCore/include"

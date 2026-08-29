@@ -58,6 +58,9 @@ done
 [[ -x "${APP}/Contents/MacOS/EDP Drive" ]]
 /usr/bin/codesign --verify --strict "${APP}"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.drive" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "${APP}/Contents/Info.plist")" == "EDPDrive.icns" ]]
+[[ -s "${APP}/Contents/Resources/EDPDrive.icns" ]]
+/usr/bin/file "${APP}/Contents/Resources/EDPDrive.icns" | /usr/bin/grep -F 'Mac OS X icon' >/dev/null
 [[ -x "${SERVICE}" ]]
 /usr/bin/codesign --verify --strict "${SERVICE}"
 /usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \
@@ -117,6 +120,7 @@ esac
 echo "RESULT=USER_STOPPABLE_ON_DEMAND_SERVICE_PLIST"
 echo "SERVICE_MODE=${SERVICE_MODE}"
 echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
+echo "RESULT=DRIVE_APP_ICON_PACKAGED"
 
 [[ ! -e "${ROOT}/test-tools" ]]
 [[ ! -e "${ROOT}/bin/ntfs-3g" ]]

@@ -20,6 +20,11 @@ fail() {
 [[ -f "${APP_BIN}" && ! -L "${APP_BIN}" ]] || fail "installed App executable missing or symlinked"
 [[ -f "${BROKER}" && ! -L "${BROKER}" ]] || fail "installed Raw Broker missing or symlinked"
 [[ -f "${PLIST}" && ! -L "${PLIST}" ]] || fail "installed LaunchDaemon plist missing or symlinked"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "${APP}/Contents/Info.plist" 2>/dev/null)" == "AppIcon" ]] \
+  || fail "installed App icon metadata missing"
+[[ -s "${APP}/Contents/Resources/AppIcon.icns" ]] || fail "installed AppIcon.icns missing"
+/usr/bin/file "${APP}/Contents/Resources/AppIcon.icns" | /usr/bin/grep -F 'Mac OS X icon' >/dev/null \
+  || fail "installed AppIcon.icns is invalid"
 
 /usr/bin/codesign --verify --strict -R="${APP_REQUIREMENT}" "${APP}"
 /usr/bin/codesign --verify --strict -R="${BROKER_REQUIREMENT}" "${BROKER}"
@@ -59,4 +64,5 @@ fi
 [[ ! -e "/Library/LaunchDaemons/com.evolution404.edpopen.rawbroker.plist" ]] \
   || fail "retired EDPOpen LaunchDaemon still exists"
 
+echo "RESULT=EDP_STUDIO_APP_ICON_INSTALLED"
 echo "RESULT=EDP_STUDIO_INSTALLED_SHARED_SIGNING_TRUST_OK"

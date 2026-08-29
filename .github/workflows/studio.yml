@@ -36,6 +36,12 @@ jobs:
           grep -Fq 'EDP Studio' Apps/Studio/native/EDPStudioNative/Sources/EDPStudioApp.swift
           grep -Fq 'com.edp.studio' Apps/Studio/native/EDPStudioNative/project.yml
           grep -Fq 'com.edp.studio.rawbroker' Apps/Studio/native/EDPStudioNative/Shared/RawBrokerProtocol.swift
+          grep -Fq 'Build EDP Studio App Icon' Apps/Studio/native/EDPStudioNative/project.yml
+          grep -Fq 'Assets.xcassets' Apps/Studio/native/EDPStudioNative/project.yml
+          test -f Apps/Studio/native/EDPStudioNative/Resources/EDPStudioIcon.svg
+          test -f Apps/Studio/native/EDPStudioNative/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json
+          test -x Tools/build-macos-icon.sh
+          bash -n Tools/build-macos-icon.sh
           grep -qx '  EDPStudio:' Apps/Studio/native/EDPStudioNative/project.yml
           grep -qx '  EDPStudioRawBroker:' Apps/Studio/native/EDPStudioNative/project.yml
           test -f Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj/xcshareddata/xcschemes/EDPStudio.xcscheme
@@ -72,5 +78,11 @@ jobs:
             build
           test -x "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDP Studio.app/Contents/MacOS/EDP Studio"
           test -x "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDPStudioRawBroker"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDP Studio.app/Contents/Info.plist")" = 'com.edp.studio'
+          APP="${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDP Studio.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" = 'com.edp.studio'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "${APP}/Contents/Info.plist")" = 'AppIcon'
+          test -s "${APP}/Contents/Resources/AppIcon.icns"
+          test -s "${APP}/Contents/Resources/Assets.car"
+          /usr/bin/file "${APP}/Contents/Resources/AppIcon.icns" | grep -Fq 'Mac OS X icon'
+          echo 'RESULT=EDP_STUDIO_APP_ICON_PACKAGED'
           echo 'RESULT=EDP_STUDIO_NATIVE_BUILD_OK'

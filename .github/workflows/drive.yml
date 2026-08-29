@@ -38,6 +38,12 @@ jobs:
           grep -Fq 'Button("启动")' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Button("停止")' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Button("重启")' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq '仅退出界面（后台继续运行）' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq '完全退出（停止后台服务）' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq 'Menu(' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq '<string>EDPDrive.icns</string>' Apps/Drive/product/App/Info.plist
+          test -f Apps/Drive/product/App/EDPDriveIcon.svg
+          test -x Tools/build-macos-icon.sh
           grep -Fq 'service-stop' Apps/Drive/scripts/first-install-acceptance.sh
           grep -Fq 'service-start' Apps/Drive/scripts/first-install-acceptance.sh
           grep -Fq 'service-restart' Apps/Drive/scripts/first-install-acceptance.sh
@@ -48,6 +54,11 @@ jobs:
           ! grep -Fq 'cachedDisks' Apps/Drive/product/EDPVaultRuntime.swift
           ! grep -Fq 'recognized_cached' Apps/Drive/product/EDPVaultRuntime.swift
           bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh
+          bash -n Tools/build-macos-icon.sh
+          Tools/build-macos-icon.sh icns \
+            Apps/Drive/product/App/EDPDriveIcon.svg \
+            "${RUNNER_TEMP}/EDPDrive.icns"
+          /usr/bin/file "${RUNNER_TEMP}/EDPDrive.icns" | grep -Fq 'Mac OS X icon'
           bash -n Apps/Drive/installer/build-native-installer.sh
           bash -n Apps/Drive/installer/build-transport-backends.sh
           echo 'RESULT=EDP_DRIVE_MONOREPO_CONTRACT_OK'
