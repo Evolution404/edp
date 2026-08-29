@@ -40,6 +40,10 @@ require_root() {
   [[ "$(id -u)" -eq 0 ]] || fail "this stage must be run with sudo"
 }
 
+require_non_root() {
+  [[ "$(id -u)" -ne 0 ]] || fail "this stage must run as the logged-in user, not with sudo"
+}
+
 target_user() {
   if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
     printf '%s\n' "${SUDO_USER}"
@@ -176,18 +180,19 @@ preflight() {
 }
 
 remove_fskit_module_preferences() {
+  require_non_root
   local home settings
   home="$(target_home)"
   settings="${home}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
 
-  as_target_user /usr/bin/pluginkit -e ignore -i "${MACFUSE_GENERIC_ID}" >/dev/null 2>&1 || true
-  as_target_user /usr/bin/pluginkit -e ignore -i "${MACFUSE_LOCAL_ID}" >/dev/null 2>&1 || true
+  /usr/bin/pluginkit -e ignore -i "${MACFUSE_GENERIC_ID}" >/dev/null 2>&1 || true
+  /usr/bin/pluginkit -e ignore -i "${MACFUSE_LOCAL_ID}" >/dev/null 2>&1 || true
 
   if [[ -f "${settings}" && -x /usr/bin/python3 ]]; then
     SETTINGS_PATH="${settings}" \
     MODULE_A="${MACFUSE_GENERIC_ID}" \
     MODULE_B="${MACFUSE_LOCAL_ID}" \
-    as_target_user /usr/bin/python3 -c '
+    /usr/bin/python3 -c '
 import os, plistlib
 p=os.environ["SETTINGS_PATH"]
 with open(p,"rb") as f: value=plistlib.load(f)
@@ -203,6 +208,68 @@ if isinstance(value,list):
     "${home}/Library/Containers/io.macfuse.app" \
     "${home}/Library/Containers/io.macfuse.app.fsmodule.macfuse" \
     "${home}/Library/Containers/io.macfuse.app.fsmodule.macfuse-local"
+}
+
+assert_user_cleanup_state_clean() {
+  local home settings path
+  home="$(target_home)"
+  settings="${home}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
+
+  for path in \
+    "${home}/Library/Group Containers/3T5GSNBU6W.io.macfuse.app" \
+    "${home}/Library/Containers/io.macfuse.app" \
+    "${home}/Library/Containers/io.macfuse.app.fsmodule.macfuse" \
+    "${home}/Library/Containers/io.macfuse.app.fsmodule.macfuse-local" \
+    "${home}/Library/Preferences/com.edp.usbvault.app.plist" \
+    "${home}/Library/Caches/com.edp.usbvault.app" \
+    "${home}/Library/Saved Application State/com.edp.usbvault.app.savedState"; do
+    [[ ! -e "${path}" ]] || fail "user cleanup still contains ${path}"
+  done
+
+  if [[ -f "${settings}" ]] \
+     && /usr/bin/plutil -p "${settings}" 2>/dev/null \
+       | /usr/bin/grep -Eq "${MACFUSE_GENERIC_ID}|${MACFUSE_LOCAL_ID}"; then
+    fail "macFUSE FSKit module enablement remains in the logged-in user's settings"
+  fi
+  echo "RESULT=USER_TCC_SCOPED_STATE_CLEAN"
+}
+
+user_cleanup_marker() {
+  printf '%s/user-cleanup.done\n' "$(session_dir)"
+}
+
+assert_user_cleanup_prepared() {
+  local marker expected
+  marker="$(user_cleanup_marker)"
+  [[ ! -L "${marker}" ]] || fail "user cleanup marker must not be a symlink"
+  [[ -f "${marker}" ]] || fail "run '$0 user-cleanup' as the logged-in user before the sudo cleanup stage"
+  expected="USER_CLEANUP_UID=$(target_uid)"
+  /usr/bin/grep -Fxq "${expected}" "${marker}" \
+    || fail "user cleanup marker does not match the current console user"
+  echo "RESULT=USER_CLEANUP_PREPARED"
+}
+
+user_cleanup() {
+  require_non_root
+  assert_no_external_physical_disk
+  assert_no_mounted_macfuse_volume
+  assert_user_keychain_safe
+
+  remove_fskit_module_preferences
+
+  local home marker
+  home="$(target_home)"
+  /bin/rm -f "${home}/Library/Preferences/com.edp.usbvault.app.plist"
+  /bin/rm -rf "${home}/Library/Caches/com.edp.usbvault.app"
+  /bin/rm -rf "${home}/Library/Saved Application State/com.edp.usbvault.app.savedState"
+
+  assert_user_cleanup_state_clean
+  marker="$(user_cleanup_marker)"
+  /usr/bin/printf 'USER_CLEANUP_UID=%s\nCOMPLETED_AT_UTC=%s\n' \
+    "$(target_uid)" "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')" > "${marker}"
+  /bin/chmod 0600 "${marker}"
+  record "USER_CLEANUP PASS"
+  echo "RESULT=USER_TCC_SCOPED_STATE_REMOVED"
 }
 
 forget_scoped_receipts() {
@@ -244,7 +311,6 @@ uninstall_macfuse() {
 
   /bin/rm -rf "${MACFUSE_ROOT}" "${MACFUSE_PREFPANE}"
   /bin/rm -f /Library/LaunchDaemons/io.macfuse.* 2>/dev/null || true
-  remove_fskit_module_preferences
 }
 
 clean_common() {
@@ -252,6 +318,7 @@ clean_common() {
   assert_no_external_physical_disk
   assert_no_mounted_macfuse_volume
   assert_user_keychain_safe
+  assert_user_cleanup_prepared
 
   if [[ -x "${PRODUCT_ROOT}/bin/edp-vaultctl" ]]; then
     "${PRODUCT_ROOT}/bin/edp-vaultctl" cleanup >/dev/null 2>&1 || true
@@ -274,12 +341,6 @@ clean_common() {
   remove_edp_system_keychain_credentials
   uninstall_macfuse
   forget_scoped_receipts
-
-  local home
-  home="$(target_home)"
-  /bin/rm -f "${home}/Library/Preferences/com.edp.usbvault.app.plist"
-  /bin/rm -rf "${home}/Library/Caches/com.edp.usbvault.app"
-  /bin/rm -rf "${home}/Library/Saved Application State/com.edp.usbvault.app.savedState"
 
   assert_user_keychain_safe
   echo "RESULT=EDP_AND_MACFUSE_INSTALLED_STATE_REMOVED"
@@ -304,9 +365,11 @@ factory_first_install() {
 }
 
 verify_clean() {
+  require_non_root
   assert_no_external_physical_disk
   assert_no_mounted_macfuse_volume
   assert_user_keychain_safe
+  assert_user_cleanup_state_clean
 
   local path
   for path in "${APP}" "${RAW_ACCESS_APP}" "${PRODUCT_ROOT}" "${DATA_ROOT}" \
@@ -597,8 +660,12 @@ Stages:
   preflight
       Refuse cleanup if a physical USB disk is connected; capture host/keychain baseline.
 
+  user-cleanup
+      Remove TCC-protected per-user EDP/macFUSE container, preference, cache, and FSKit enablement state.
+      Must run as the logged-in user before either sudo cleanup stage.
+
   factory-first-install        (sudo)
-      Reset only EDP Raw Access FDA, then remove EDP + macFUSE + EDP credentials/state.
+      Require completed user-cleanup, reset only EDP Raw Access FDA, then remove system EDP + macFUSE + EDP credentials/state.
 
   clean-install               (sudo)
       Same installed-state cleanup but preserve FDA for reinstall/upgrade continuity tests.
@@ -640,30 +707,32 @@ Stages:
 
 Canonical first-install order:
   1. preflight
-  2. sudo factory-first-install
-  3. verify-clean
-  4. reboot Mac
-  5. verify-clean
-  6. sudo install <pkg>
-  7. verify-installed
-  8. open-fda -> user grants EDP Raw Access FDA exactly once
-  9. insert real EDP USB
- 10. verify-fda-device [VID:PID]
- 11. save exchange/secret credentials once in UI (never pass passwords to this script)
- 12. credential-checkpoint
- 13. policy-smoke
- 14. functional-all
- 15. safe-eject -> physically unplug -> reinsert -> verify-fda-device
- 16. restart-app -> verify-fda-device
- 17. sudo restart-daemon -> physically reinsert if raw lease cannot be reacquired -> verify-fda-device
- 18. reboot Mac -> verify-fda-device -> credential-checkpoint -> policy-smoke -> functional-all
- 19. final-check
+  2. user-cleanup
+  3. sudo factory-first-install
+  4. verify-clean
+  5. reboot Mac
+  6. verify-clean
+  7. sudo install <pkg>
+  8. verify-installed
+  9. open-fda -> user grants EDP Raw Access FDA exactly once
+ 10. insert real EDP USB
+ 11. verify-fda-device [VID:PID]
+ 12. save exchange/secret credentials once in UI (never pass passwords to this script)
+ 13. credential-checkpoint
+ 14. policy-smoke
+ 15. functional-all
+ 16. safe-eject -> physically unplug -> reinsert -> verify-fda-device
+ 17. restart-app -> verify-fda-device
+ 18. sudo restart-daemon -> physically reinsert if raw lease cannot be reacquired -> verify-fda-device
+ 19. reboot Mac -> verify-fda-device -> credential-checkpoint -> policy-smoke -> functional-all
+ 20. final-check
 EOF
 }
 
 command="${1:-}"
 case "${command}" in
   preflight) preflight ;;
+  user-cleanup) user_cleanup ;;
   factory-first-install) factory_first_install ;;
   clean-install) clean_install ;;
   verify-clean) verify_clean ;;

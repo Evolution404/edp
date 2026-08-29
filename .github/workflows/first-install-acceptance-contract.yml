@@ -35,6 +35,7 @@ jobs:
           HELP="$(scripts/first-install-acceptance.sh --help)"
           for stage in \
             preflight \
+            user-cleanup \
             factory-first-install \
             clean-install \
             verify-clean \
@@ -58,6 +59,8 @@ jobs:
           grep -Fq -- '--xpc-policy-smoke' scripts/first-install-acceptance.sh
           grep -Fq -- '--xpc-eject-smoke' scripts/first-install-acceptance.sh
           grep -Fq '0700' scripts/first-install-acceptance.sh
+          grep -Fq 'USER_TCC_SCOPED_STATE_REMOVED' scripts/first-install-acceptance.sh
+          grep -Fq 'USER_CLEANUP_PREPARED' scripts/first-install-acceptance.sh
           echo 'RESULT=FIRST_INSTALL_ACCEPTANCE_STAGES_PRESENT'
 
       - name: Reject destructive raw-media operations and secret transport
@@ -117,6 +120,7 @@ jobs:
           set -euo pipefail
           DOC=docs/FIRST-INSTALL-ACCEPTANCE.md
           for phrase in \
+            'user-cleanup' \
             'factory-first-install' \
             'credential-checkpoint' \
             'policy-smoke' \

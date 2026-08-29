@@ -34,6 +34,7 @@ The cleanup harness is intentionally fail-closed.
 - Cleanup refuses to run while `diskutil list external physical` contains any physical external disk.
 - It never calls disk formatting, partitioning, erase, zeroing, or raw-sector write commands.
 - Real exchange/secret passwords are never accepted as script arguments, environment variables, files, or log content. Password validation and storage occur only in the App UI and System Keychain.
+- `user-cleanup` runs without `sudo` so macOS TCC permits the logged-in user to remove their own macFUSE/EDP Containers, Group Containers, preferences, caches, saved state, and FSKit enablement state. Privileged cleanup must not try to bypass these user-domain TCC boundaries.
 - `factory-first-install` resets only the Raw Access helper Full Disk Access entry with Apple's `tccutil`; it does not modify the TCC database directly.
 - The user's DefaultKeychain must remain `login.keychain`; temporary EDP signing keychains are treated as a hard failure.
 - Acceptance result storage rejects symlinked report roots/session pointers and is mode `0700`.
@@ -48,11 +49,12 @@ Use this for a true "never installed before" acceptance run:
 
 ```bash
 ./scripts/first-install-acceptance.sh preflight
+./scripts/first-install-acceptance.sh user-cleanup
 sudo ./scripts/first-install-acceptance.sh factory-first-install
 ./scripts/first-install-acceptance.sh verify-clean
 ```
 
-This removes EDP App/helper/runtime/state/credentials/receipts, uninstalls macFUSE, removes its per-user FSKit enablement state, and resets the Raw Access helper FDA entry.
+`user-cleanup` must run in the logged-in user's normal TCC context. The sudo stage requires its session marker, then removes EDP App/helper/runtime/system state/credentials/receipts, uninstalls the system macFUSE runtime, and resets the Raw Access helper FDA entry. This split is required on macOS 26 because a root shell launched through an authorization context is not automatically allowed to traverse the logged-in user's protected Containers/Group Containers.
 
 Reboot after `verify-clean`, then run `verify-clean` again before installing the release candidate.
 
@@ -62,11 +64,12 @@ Use this to test reinstall/upgrade FDA continuity:
 
 ```bash
 ./scripts/first-install-acceptance.sh preflight
+./scripts/first-install-acceptance.sh user-cleanup
 sudo ./scripts/first-install-acceptance.sh clean-install
 ./scripts/first-install-acceptance.sh verify-clean
 ```
 
-This removes installed state but deliberately preserves the Raw Access FDA grant.
+This removes installed state but deliberately preserves the Raw Access FDA grant. The same non-root `user-cleanup` gate is required before the privileged stage.
 
 ## Canonical first-install sequence
 
@@ -74,35 +77,36 @@ Run the following sequence for each release candidate.
 
 ```text
 1.  preflight
-2.  sudo factory-first-install
-3.  verify-clean
-4.  reboot Mac
-5.  verify-clean
-6.  sudo install <candidate.pkg>
-7.  verify-installed
-8.  open-fda
-9.  user grants FDA once to EDP USB Vault Raw Access
-10. insert one real EDP USB
-11. verify-fda-device [VID:PID]
-12. save/validate exchange and secret passwords in the App UI
-13. credential-checkpoint
-14. policy-smoke
-15. functional-all
-16. safe-eject
-17. physically unplug the USB
-18. physically reinsert the USB
-19. verify-fda-device [VID:PID]
-20. restart-app
-21. verify-fda-device [VID:PID]
-22. sudo restart-daemon
-23. if the device was already open before daemon restart and raw lease cannot be reacquired, physically reinsert once
-24. verify-fda-device [VID:PID]
-25. reboot Mac
-26. verify-fda-device [VID:PID]
-27. credential-checkpoint
-28. policy-smoke
-29. functional-all
-30. final-check
+2.  user-cleanup
+3.  sudo factory-first-install
+4.  verify-clean
+5.  reboot Mac
+6.  verify-clean
+7.  sudo install <candidate.pkg>
+8.  verify-installed
+9.  open-fda
+10. user grants FDA once to EDP USB Vault Raw Access
+11. insert one real EDP USB
+12. verify-fda-device [VID:PID]
+13. save/validate exchange and secret passwords in the App UI
+14. credential-checkpoint
+15. policy-smoke
+16. functional-all
+17. safe-eject
+18. physically unplug the USB
+19. physically reinsert the USB
+20. verify-fda-device [VID:PID]
+21. restart-app
+22. verify-fda-device [VID:PID]
+23. sudo restart-daemon
+24. if the device was already open before daemon restart and raw lease cannot be reacquired, physically reinsert once
+25. verify-fda-device [VID:PID]
+26. reboot Mac
+27. verify-fda-device [VID:PID]
+28. credential-checkpoint
+29. policy-smoke
+30. functional-all
+31. final-check
 ```
 
 ## What each stage proves
