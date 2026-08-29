@@ -5,4 +5,12 @@ if [[ -f "${PLIST}" ]]; then
   /bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
   /bin/rm -f "${PLIST}"
 fi
+OLD_ROOT="/Library/Application Support/EDP USB Vault"
+OLD_CTL="${OLD_ROOT}/bin/edp-vaultctl"
+if [[ -x "${OLD_CTL}" ]]; then
+  "${OLD_CTL}" cleanup >/dev/null 2>&1 || true
+fi
+for RETIRED_RUNTIME in edp-readwrite-fuse edp-raw-sparse; do
+  /bin/rm -f "${OLD_ROOT}/bin/${RETIRED_RUNTIME}"
+done
 exit 0

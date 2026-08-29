@@ -136,6 +136,19 @@ private func rawAccessBrokerPath() -> String {
     return defaultRawAccessBrokerPath
 }
 
+private func installedProductVersion() -> String {
+    if let override = ProcessInfo.processInfo.environment["EDP_SERVICE_VERSION"],
+       !override.isEmpty {
+        return override
+    }
+    if let bundle = Bundle(path: "/Applications/EDP USB Vault.app"),
+       let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+       !version.isEmpty {
+        return version
+    }
+    return "development"
+}
+
 private func isRawAccessPermissionFailure(_ error: Error) -> Bool {
     let detail = String(describing: error)
     return detail.contains("EDP_RAW_BROKER_OPEN_FAILED:1")
@@ -1208,7 +1221,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 return try JSONEncoder().encode(EDPXPCSnapshot(
                     devices: devices,
                     activities: activities,
-                    serviceVersion: "0.6.0",
+                    serviceVersion: installedProductVersion(),
                     timestamp: ISO8601DateFormatter().string(from: Date()),
                     globalAutoMountEnabled: policyDocument.globalAutoMountEnabled
                 ))

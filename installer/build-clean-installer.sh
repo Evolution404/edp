@@ -316,10 +316,14 @@ if [[ -f "${LEGACY_PLIST}" ]]; then
   /bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
   /bin/rm -f "${LEGACY_PLIST}"
 fi
-OLD_CTL="/Library/Application Support/EDP USB Vault/bin/edp-vaultctl"
+OLD_ROOT="/Library/Application Support/EDP USB Vault"
+OLD_CTL="${OLD_ROOT}/bin/edp-vaultctl"
 if [[ -x "${OLD_CTL}" ]]; then
   "${OLD_CTL}" cleanup >/dev/null 2>&1 || true
 fi
+for RETIRED_RUNTIME in edp-readwrite-fuse edp-raw-sparse; do
+  /bin/rm -f "${OLD_ROOT}/bin/${RETIRED_RUNTIME}"
+done
 OLD_APP="/Applications/EDP USB Vault.app"
 if [[ -f "${OLD_APP}/Contents/Info.plist" ]]; then
   OLD_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_APP}/Contents/Info.plist" 2>/dev/null || true)"

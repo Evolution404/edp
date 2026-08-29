@@ -28,6 +28,7 @@ ROOT="${PAYLOAD}/Library/Application Support/EDP USB Vault"
 APP="${PAYLOAD}/Applications/EDP USB Vault.app"
 RAW_ACCESS_APP="${PAYLOAD}/Applications/EDP USB Vault Raw Access.app"
 PACKAGE_INFO="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/PackageInfo"
+PREINSTALL="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Scripts/preinstall"
 DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
 LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 for path in \
@@ -187,7 +188,10 @@ printf '%s  %s\n' \
 "${ROOT}/bin/ntfs-3g.probe" --help >/dev/null
 [[ ! -e "${ROOT}/bin/edp-readwrite-fuse" ]]
 [[ ! -e "${ROOT}/bin/edp-raw-sparse" ]]
+/usr/bin/grep -F 'edp-readwrite-fuse' "${PREINSTALL}" >/dev/null
+/usr/bin/grep -F 'edp-raw-sparse' "${PREINSTALL}" >/dev/null
 echo "RESULT=LEGACY_AUTHOPEN_RUNTIME_REMOVED"
+echo "RESULT=LEGACY_AUTHOPEN_UPGRADE_CLEANUP_PACKAGED"
 
 if [[ "${EDP_INSTALLER_SYSTEM_TESTS:-0}" == "1" ]]; then
   IMAGE="${VERIFY_ROOT}/raw.img"
