@@ -14,7 +14,7 @@ settings:
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
     INFOPLIST_KEY_NSHumanReadableCopyright: Copyright © 2026 Evolution404
     CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: EDP Unified Local Code Signing
+    CODE_SIGN_IDENTITY: EDP Project Code Signing
     DEVELOPMENT_TEAM: ""
 targets:
   EDPOpen:

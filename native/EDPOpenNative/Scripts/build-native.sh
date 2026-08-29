@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-IDENTITY="EDP Unified Local Code Signing"
+IDENTITY="${EDP_CODE_SIGN_IDENTITY:-EDP Project Code Signing}"
 DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 CONFIGURATION="${EDPOPEN_CONFIGURATION:-Debug}"
 DERIVED_DATA="${EDPOPEN_DERIVED_DATA:-/private/tmp/edpopen-native-derived-data}"
