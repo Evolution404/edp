@@ -1,0 +1,4 @@
+module CEDPCore {
+    header "edp_core.h"
+    export *
+}
