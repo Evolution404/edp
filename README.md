@@ -52,7 +52,7 @@ Validity: 2026-08-29 .. 2036-08-26
 native/EDPOpenNative/Scripts/build-native.sh
 ```
 
-该脚本会在构建前校验证书 SHA-256、私钥可用性和 certificate root，防止同名错误证书被误用。
+该脚本会在构建前校验证书 SHA-256、私钥可用性和 certificate root，防止同名错误证书被误用；Xcode 的既有 Rust pre-build phase 也会调用同一校验脚本，因此直接在 Xcode 点 Build 同样受此约束。
 
 ## 参照与对拍基准
 
