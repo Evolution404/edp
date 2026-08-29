@@ -1691,7 +1691,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 ejectingUSBRegistryIDs.removeValue(forKey: deviceID)
                 diskArbitration.allowAutomount(usbRegistryEntryID: disk.usbRegistryEntryID)
                 // If eject failed for an unrelated reason, return the device
-                // to an operational state without asking for authopen/admin.
+                // to an operational state without asking for interactive administrator authorization.
                 if (try? wholeUSBMediaStillMatches(disk)) == true {
                     try? rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
                     restoreBootPolicy(disk: disk)
