@@ -13,8 +13,9 @@ settings:
     INFOPLIST_KEY_CFBundleDisplayName: EDPOpen
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
     INFOPLIST_KEY_NSHumanReadableCopyright: Copyright © 2026 Evolution404
-    CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: W82WPH8HY7
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: EDP Unified Local Code Signing
+    DEVELOPMENT_TEAM: ""
 targets:
   EDPOpen:
     type: application

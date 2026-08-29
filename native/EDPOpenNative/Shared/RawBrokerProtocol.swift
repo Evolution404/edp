@@ -4,10 +4,10 @@ enum RawBrokerConstants {
     static let machServiceName = "com.evolution404.edpopen.rawbroker"
     static let helperIdentifier = "com.evolution404.edpopen.rawbroker"
     static let appIdentifier = "com.evolution404.edpopen"
-    static let teamIdentifier = "W82WPH8HY7"
+    static let signingCertificateRootSHA1 = "fda987d4d26950461a1f1810b3a66eb8bf8724c3"
 
-    static let appCodeSigningRequirement = "identifier \"\(appIdentifier)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(teamIdentifier)\""
-    static let brokerCodeSigningRequirement = "identifier \"\(helperIdentifier)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(teamIdentifier)\""
+    static let appCodeSigningRequirement = "identifier \"\(appIdentifier)\" and certificate root = H\"\(signingCertificateRootSHA1)\""
+    static let brokerCodeSigningRequirement = "identifier \"\(helperIdentifier)\" and certificate root = H\"\(signingCertificateRootSHA1)\""
 }
 
 @objc protocol EDPRawBrokerProtocol {

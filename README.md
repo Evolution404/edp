@@ -33,6 +33,27 @@ EDPOpen 先尝试直接只读；受保护时使用系统 `/usr/libexec/authopen`
 LBA0-13 备份 → LBA0 最后写 → `sync` → 逐扇回读校验。GUI 不再依赖
 `osascript → root → open(/dev/rdiskN)`；该 direct-open 路径已在 macOS 26 实测为 EPERM。
 
+## 统一本机签名
+
+`EDPOpenNative` 与 `edp-usb-vault` 统一使用同一张长期 self-signed Code Signing 证书：
+
+```text
+Identity: EDP Unified Local Code Signing
+Certificate SHA-256: EA97420A16432AAB05E6E775E8E1698FD9A0E33B3F65CA66186A8AA683850F85
+Certificate root (DR SHA-1): fda987d4d26950461a1f1810b3a66eb8bf8724c3
+Validity: 2026-08-29 .. 2036-08-26
+```
+
+私钥只保存在当前用户 `login.keychain-db`，仓库不保存 PEM/P12。原生 App 和 Raw Broker 使用 Manual Signing，XPC 双向 requirement 固定 bundle identifier + 该 certificate root，不再依赖 Apple Development Team ID。
+
+规范本机构建入口：
+
+```bash
+native/EDPOpenNative/Scripts/build-native.sh
+```
+
+该脚本会在构建前校验证书 SHA-256、私钥可用性和 certificate root，防止同名错误证书被误用。
+
 ## 参照与对拍基准
 
 算法与流程移植自 Python 版工具（另行保存），测试向量取自真实盘的

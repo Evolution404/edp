@@ -106,7 +106,8 @@ final class RawBrokerService: NSObject, EDPRawBrokerProtocol {
 final class RawBrokerListenerDelegate: NSObject, NSXPCListenerDelegate {
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
         // The privileged daemon never trusts caller-supplied paths. It additionally binds
-        // every XPC message to the signed EDPOpen GUI identity from the same Apple team.
+        // every XPC message to the fixed EDPOpen GUI bundle ID signed by the shared EDP
+        // self-signed certificate used by both EDP macOS projects.
         connection.setCodeSigningRequirement(RawBrokerConstants.appCodeSigningRequirement)
         connection.exportedInterface = NSXPCInterface(with: EDPRawBrokerProtocol.self)
         connection.exportedObject = RawBrokerService()
