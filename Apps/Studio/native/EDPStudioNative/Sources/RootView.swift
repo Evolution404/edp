@@ -44,7 +44,8 @@ struct RootView: View {
 
                 InspectorView()
                     .environment(model)
-                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 360)
+                    .padding(8)
+                    .frame(minWidth: 256, idealWidth: 306, maxWidth: 376)
             }
         } else {
             detailView
@@ -136,7 +137,17 @@ struct InspectorView: View {
             }
             .padding(18)
         }
-        .background(.background)
+        // Keep the inspector as a real HSplitView column so it never overlays scrollable
+        // content, but render the column itself as a floating macOS 26 glass sidebar.
+        // The outer padding is applied by RootView so the rounded glass surface has the
+        // same detached-from-window-edge character as NavigationSplitView's sidebar.
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(.separator.opacity(0.34), lineWidth: 0.5)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var inspectorHeader: some View {

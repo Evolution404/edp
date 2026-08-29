@@ -11,7 +11,6 @@ struct DiskMapView: View {
             VStack(alignment: .leading, spacing: 20) {
                 mapHeader
                 fullDiskMap
-                    .frame(width: 960 * model.zoom, height: 170)
                     .animation(.smooth(duration: 0.28), value: model.zoom)
                 metadataGrid
                 regionDetails
@@ -37,24 +36,84 @@ struct DiskMapView: View {
     }
 
     private var fullDiskMap: some View {
-        GeometryReader { proxy in
-            let total = Double(model.disk.regions.map(\.sectorCount).reduce(0, +))
-            let available = max(proxy.size.width, 1)
+        let layout = diskMapLayout
 
-            HStack(spacing: 4) {
-                ForEach(model.disk.regions) { region in
-                    let ratio = Double(region.sectorCount) / max(total, 1)
-                    let width = max(available * ratio, minimumWidth(for: region.kind))
-                    regionBlock(region, width: width)
-                }
-            }
-            .padding(10)
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(.separator.opacity(0.45), lineWidth: 0.5)
+        return HStack(spacing: layout.spacing) {
+            ForEach(Array(model.disk.regions.enumerated()), id: \.element.id) { index, region in
+                regionBlock(region, width: layout.regionWidths[index])
             }
         }
+        .padding(layout.inset)
+        // The ScrollView must own the real rendered extent. The previous GeometryReader
+        // reported only the nominal 960×zoom width even after per-region minimum widths
+        // pushed Boot/Secret/metadata past that boundary, so the final Secret block was
+        // painted outside the scrollable content and could never be reached.
+        .frame(width: layout.totalWidth, height: 170, alignment: .leading)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(.separator.opacity(0.45), lineWidth: 0.5)
+        }
+    }
+
+    private var diskMapLayout: DiskMapLayout {
+        let regions = model.disk.regions
+        let spacing: CGFloat = 4
+        let inset: CGFloat = 10
+        let chromeWidth = inset * 2 + spacing * CGFloat(max(regions.count - 1, 0))
+        let minimums = regions.map { minimumWidth(for: $0.kind) }
+        let minimumRegionWidth = minimums.reduce(0, +)
+        let nominalTotalWidth = max(960 * model.zoom, chromeWidth + minimumRegionWidth)
+        let targetRegionWidth = nominalTotalWidth - chromeWidth
+
+        guard !regions.isEmpty else {
+            return DiskMapLayout(regionWidths: [], totalWidth: nominalTotalWidth, spacing: spacing, inset: inset)
+        }
+
+        var widths = Array(repeating: CGFloat.zero, count: regions.count)
+        var unresolved = Array(regions.indices)
+        var remainingWidth = targetRegionWidth
+
+        // Allocate tiny structural regions at their readable minimum first, then
+        // distribute the remaining width proportionally. This preserves the full-disk
+        // scale without allowing minimum-width clamping to overflow the declared extent.
+        while !unresolved.isEmpty {
+            let totalWeight = unresolved.reduce(0.0) { partial, index in
+                partial + Double(regions[index].sectorCount)
+            }
+            guard totalWeight > 0 else {
+                let equalWidth = remainingWidth / CGFloat(unresolved.count)
+                for index in unresolved { widths[index] = max(equalWidth, minimums[index]) }
+                break
+            }
+
+            let constrained = unresolved.filter { index in
+                let proportional = remainingWidth * CGFloat(Double(regions[index].sectorCount) / totalWeight)
+                return proportional < minimums[index]
+            }
+
+            if constrained.isEmpty {
+                for index in unresolved {
+                    widths[index] = remainingWidth * CGFloat(Double(regions[index].sectorCount) / totalWeight)
+                }
+                break
+            }
+
+            let constrainedSet = Set(constrained)
+            for index in constrained {
+                widths[index] = minimums[index]
+                remainingWidth -= minimums[index]
+            }
+            unresolved.removeAll { constrainedSet.contains($0) }
+        }
+
+        let renderedWidth = widths.reduce(0, +) + chromeWidth
+        return DiskMapLayout(
+            regionWidths: widths,
+            totalWidth: max(renderedWidth, nominalTotalWidth),
+            spacing: spacing,
+            inset: inset
+        )
     }
 
     private func regionBlock(_ region: DiskRegion, width: CGFloat) -> some View {
@@ -200,6 +259,13 @@ struct DiskMapView: View {
         default: "Metadata"
         }
     }
+}
+
+private struct DiskMapLayout {
+    let regionWidths: [CGFloat]
+    let totalWidth: CGFloat
+    let spacing: CGFloat
+    let inset: CGFloat
 }
 
 private struct DiagonalPattern: View {

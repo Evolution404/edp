@@ -36,6 +36,12 @@ jobs:
           grep -Fq 'EDP Studio' Apps/Studio/native/EDPStudioNative/Sources/EDPStudioApp.swift
           grep -Fq 'HSplitView' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           ! grep -Fq '.inspector(' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          grep -Fq '.padding(8)' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          grep -Fq '.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          grep -Fq '.glassEffect(.regular, in: .rect(cornerRadius: 22))' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          ! grep -Fq '.background(.background)' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          grep -Fq 'diskMapLayout' Apps/Studio/native/EDPStudioNative/Sources/DiskMapView.swift
+          grep -Fq '.frame(width: layout.totalWidth' Apps/Studio/native/EDPStudioNative/Sources/DiskMapView.swift
           grep -Fq 'com.edp.studio' Apps/Studio/native/EDPStudioNative/project.yml
           grep -Fq 'com.edp.studio.rawbroker' Apps/Studio/native/EDPStudioNative/Shared/RawBrokerProtocol.swift
           grep -Fq 'Build EDP Studio App Icon' Apps/Studio/native/EDPStudioNative/project.yml
