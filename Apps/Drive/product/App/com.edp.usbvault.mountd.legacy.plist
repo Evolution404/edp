@@ -5,7 +5,7 @@
   <key>Label</key><string>com.edp.usbvault.mountd</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd</string>
+    <string>/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service</string>
     <string>daemon</string>
   </array>
   <key>EnvironmentVariables</key>

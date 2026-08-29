@@ -173,23 +173,8 @@ for item in "${RUNTIME_STAGE}/bin/"*; do
   sign_app_code "${item}"
 done
 
-RAW_ACCESS_APP_STAGE="${BUILD_ROOT}/EDP USB Vault Raw Access.app"
-mkdir -p "${RAW_ACCESS_APP_STAGE}/Contents/MacOS"
-cp "${REPO_ROOT}/product/RawAccessHelper/Info.plist" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-usbvaultd"
-sign_app_code \
-  --identifier com.edp.usbvault.rawaccess \
-  "${RAW_ACCESS_APP_STAGE}"
-/usr/bin/codesign --verify --strict "${RAW_ACCESS_APP_STAGE}"
-
 echo "Building SwiftUI app..."
-APP_STAGE="${BUILD_ROOT}/EDP USB Vault.app"
+APP_STAGE="${BUILD_ROOT}/EDP Drive.app"
 mkdir -p "${APP_STAGE}/Contents/MacOS" "${APP_STAGE}/Contents/Resources" \
   "${APP_STAGE}/Contents/Library/LaunchDaemons" \
   "${APP_STAGE}/Contents/Library/LaunchServices"
@@ -201,9 +186,9 @@ xcrun swiftc -O \
   -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
-  -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"
+  -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
 cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
-  "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
+  "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
 if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
 cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -213,10 +198,10 @@ cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.pl
   <key>Label</key>
   <string>com.edp.usbvault.mountd.v2</string>
   <key>BundleProgram</key>
-  <string>Contents/Library/LaunchServices/edp-usbvaultd</string>
+  <string>Contents/Library/LaunchServices/edp-drive-service</string>
   <key>ProgramArguments</key>
   <array>
-    <string>edp-usbvaultd</string>
+    <string>edp-drive-service</string>
     <string>daemon</string>
   </array>
   <key>EnvironmentVariables</key>
@@ -240,7 +225,7 @@ PLIST
 fi
 sign_app_code \
   --identifier com.edp.usbvault.mountd.v2 \
-  "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
+  "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
 sign_app_code --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
 if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
@@ -255,15 +240,12 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   }
 
   APP_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}" 2>&1)"
-  RAW_REQUIREMENT="$(/usr/bin/codesign -dr - "${RAW_ACCESS_APP_STAGE}" 2>&1)"
-  DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${RUNTIME_STAGE}/bin/edp-vaultctl" 2>&1)"
+  DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service" 2>&1)"
   /usr/bin/grep -Fq 'identifier "com.edp.usbvault.app"' <<<"${APP_REQUIREMENT}"
-  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.rawaccess"' <<<"${RAW_REQUIREMENT}"
   APP_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${APP_REQUIREMENT}")"
-  RAW_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${RAW_REQUIREMENT}")"
   DAEMON_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${DAEMON_REQUIREMENT}")"
-  [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${RAW_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
-    echo "self-signed App, raw-access helper, and daemon must share one stable certificate root for FDA/XPC continuity" >&2
+  [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
+    echo "self-signed App and embedded service must share one stable certificate root for FDA/XPC continuity" >&2
     exit 2
   }
 fi
@@ -288,9 +270,7 @@ PAYLOAD="${BUILD_ROOT}/payload"
 PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
 mkdir -p "${PRODUCT_DIR}" "${PAYLOAD}/usr/local/bin" "${PAYLOAD}/Applications"
 cp -R "${RUNTIME_STAGE}/." "${PRODUCT_DIR}/"
-cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP USB Vault.app"
-cp -R "${RAW_ACCESS_APP_STAGE}" \
-  "${PAYLOAD}/Applications/EDP USB Vault Raw Access.app"
+cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP Drive.app"
 ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
   "${PAYLOAD}/usr/local/bin/edp-vaultctl"
 if [[ "${SERVICE_MODE}" == "legacy" ]]; then
@@ -304,7 +284,7 @@ if [[ "${SERVICE_MODE}" == "legacy" ]]; then
   <string>com.edp.usbvault.mountd</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd</string>
+    <string>/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service</string>
     <string>daemon</string>
   </array>
   <key>EnvironmentVariables</key>
@@ -352,6 +332,13 @@ if [[ -f "${OLD_APP}/Contents/Info.plist" ]]; then
     /bin/rm -rf "${OLD_APP}"
   fi
 fi
+OLD_RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
+if [[ -f "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" ]]; then
+  OLD_RAW_ACCESS_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "${OLD_RAW_ACCESS_ID}" == "com.edp.usbvault.rawaccess" ]]; then
+    /bin/rm -rf "${OLD_RAW_ACCESS_APP}"
+  fi
+fi
 for RELOCATED_APP_DIR in /Applications/EDP\ USB\ Vault*.localized; do
   [[ -e "${RELOCATED_APP_DIR}" ]] || continue
   /bin/rm -rf "${RELOCATED_APP_DIR}"
@@ -362,13 +349,12 @@ cat > "${SCRIPTS}/postinstall" <<'POSTINSTALL'
 #!/bin/bash
 set -e
 ROOT="/Library/Application Support/EDP USB Vault"
-APP="/Applications/EDP USB Vault.app"
-RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
-/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
-/bin/chmod -R go-w "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
+APP="/Applications/EDP Drive.app"
+/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
+/bin/chmod -R go-w "${ROOT}" "${APP}"
 /bin/chmod 0755 "${ROOT}" "${ROOT}/bin"
 /bin/chmod 0755 "${ROOT}/bin/"*
-/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" "${RAW_ACCESS_APP}" >/dev/null 2>&1 || true
+/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
 LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 if [[ -f "${LEGACY_PLIST}" ]]; then
   /bin/launchctl bootstrap system "${LEGACY_PLIST}"
@@ -388,11 +374,8 @@ APP_COMPONENT="${BUILD_ROOT}/components/ZZ-EDP-USB-Vault.pkg"
 COMPONENT_PLIST="${BUILD_ROOT}/edp-component.plist"
 mkdir -p "${BUILD_ROOT}/components"
 /usr/bin/pkgbuild --analyze --root "${PAYLOAD}" "${COMPONENT_PLIST}"
-# Keep the main App as ordinary payload, but make the FDA Raw Access helper a
-# fixed-location bundle. Full Disk Access is tied to a stable code identity at
-# /Applications/EDP USB Vault Raw Access.app, so PackageKit must never chase a
-# relocated copy with the same bundle identifier.
-/usr/libexec/PlistBuddy -c 'Delete :0' "${COMPONENT_PLIST}"
+# The one installed App owns the foreground executable and embedded FDA service.
+# PackageKit must not relocate it away from the fixed /Applications path.
 /usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "${COMPONENT_PLIST}"
 /usr/libexec/PlistBuddy -c 'Set :0:BundleHasStrictIdentifier true' "${COMPONENT_PLIST}"
 /usr/libexec/PlistBuddy -c 'Set :0:BundleIsVersionChecked true' "${COMPONENT_PLIST}"

@@ -1,27 +1,29 @@
 #!/bin/bash
 set -euo pipefail
 
-# Repeatable first-install acceptance harness for EDP USB Vault.
+# Repeatable first-install acceptance harness for EDP Drive.
 #
 # Destructive scope is deliberately narrow:
-# - EDP USB Vault installed apps/runtime/state/receipts/credentials
+# - EDP Drive installed app/runtime/state/receipts/credentials
 # - macFUSE runtime and its per-user containers/settings
-# - EDP Raw Access FDA entry when factory-first-install mode is requested
+# - EDP embedded service FDA entry when factory-first-install mode is requested
 #
 # The cleanup commands refuse to run while any external physical disk is
 # connected. They never format, partition, erase, or write raw disk sectors.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-APP="/Applications/EDP USB Vault.app"
-RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
-APP_BIN="${APP}/Contents/MacOS/EDP USB Vault"
+APP="/Applications/EDP Drive.app"
+OLD_APP="/Applications/EDP USB Vault.app"
+OLD_RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
+APP_BIN="${APP}/Contents/MacOS/EDP Drive"
+SERVICE_BIN="${APP}/Contents/Library/LaunchServices/edp-drive-service"
 PRODUCT_ROOT="/Library/Application Support/EDP USB Vault"
 DATA_ROOT="/var/db/com.edp.usbvault"
 LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 MACFUSE_ROOT="/Library/Filesystems/macfuse.fs"
 MACFUSE_PREFPANE="/Library/PreferencePanes/macFUSE.prefPane"
-RAW_ACCESS_BUNDLE_ID="com.edp.usbvault.rawaccess"
+RAW_ACCESS_BUNDLE_ID="com.edp.usbvault.mountd.v2"
 MACFUSE_GENERIC_ID="io.macfuse.app.fsmodule.macfuse"
 MACFUSE_LOCAL_ID="io.macfuse.app.fsmodule.macfuse-local"
 REPORT_ROOT="${EDP_ACCEPTANCE_REPORT_ROOT:-/Users/Shared/EDP USB Vault Acceptance}"
@@ -298,8 +300,8 @@ reset_edp_fda() {
   uid="$(target_uid)"
   /bin/launchctl asuser "${uid}" /usr/bin/sudo -u "${user}" \
     /usr/bin/tccutil reset SystemPolicyAllFiles "${RAW_ACCESS_BUNDLE_ID}" \
-    >/dev/null 2>&1 || fail "tccutil could not reset EDP Raw Access Full Disk Access"
-  echo "RESULT=EDP_RAW_ACCESS_FDA_RESET"
+    >/dev/null 2>&1 || fail "tccutil could not reset EDP service Full Disk Access"
+  echo "RESULT=EDP_SERVICE_FDA_RESET"
 }
 
 uninstall_macfuse() {
@@ -326,14 +328,15 @@ clean_common() {
 
   /bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
   /bin/launchctl bootout system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1 || true
-  /usr/bin/pkill -f '/Applications/EDP USB Vault.app/Contents/MacOS/EDP USB Vault' \
+  /usr/bin/pkill -f '/Applications/EDP Drive.app/Contents/MacOS/EDP Drive' \
     >/dev/null 2>&1 || true
-  /usr/bin/pkill -f '/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd' \
+  /usr/bin/pkill -f '/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service' \
     >/dev/null 2>&1 || true
 
   /bin/rm -rf \
     "${APP}" \
-    "${RAW_ACCESS_APP}" \
+    "${OLD_APP}" \
+    "${OLD_RAW_ACCESS_APP}" \
     "${PRODUCT_ROOT}" \
     "${DATA_ROOT}"
   /bin/rm -f "${LEGACY_PLIST}"
@@ -372,7 +375,7 @@ verify_clean() {
   assert_user_cleanup_state_clean
 
   local path
-  for path in "${APP}" "${RAW_ACCESS_APP}" "${PRODUCT_ROOT}" "${DATA_ROOT}" \
+  for path in "${APP}" "${OLD_APP}" "${OLD_RAW_ACCESS_APP}" "${PRODUCT_ROOT}" "${DATA_ROOT}" \
               "${LEGACY_PLIST}" "${MACFUSE_ROOT}" "${MACFUSE_PREFPANE}"; do
     [[ ! -e "${path}" ]] || fail "clean baseline still contains ${path}"
   done
@@ -410,22 +413,20 @@ verify_installed() {
   assert_no_external_physical_disk
   assert_user_keychain_safe
 
-  [[ -x "${APP_BIN}" ]] || fail "EDP USB Vault app is not installed"
-  [[ -x "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" ]] \
-    || fail "Raw Access helper is not installed"
+  [[ -x "${APP_BIN}" ]] || fail "EDP Drive app is not installed"
+  [[ -x "${SERVICE_BIN}" ]] || fail "embedded EDP Drive service is not installed"
+  [[ ! -e "${OLD_APP}" && ! -e "${OLD_RAW_ACCESS_APP}" ]] \
+    || fail "obsolete EDP application bundle remains installed"
   [[ -d "${MACFUSE_ROOT}" ]] || fail "macFUSE runtime is not installed"
   [[ -x "${PRODUCT_ROOT}/bin/edp-mfmount-local-readwrite" ]] \
     || fail "macFUSE Local EDP transport is missing"
 
   /usr/bin/codesign --verify --strict "${APP}"
-  /usr/bin/codesign --verify --strict "${RAW_ACCESS_APP}"
+  /usr/bin/codesign --verify --strict "${SERVICE_BIN}"
   /usr/bin/codesign --verify --strict "${PRODUCT_ROOT}/bin/edp-mfmount-local-readwrite"
 
-  local app_version helper_version
+  local app_version
   app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP}/Contents/Info.plist")"
-  helper_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${RAW_ACCESS_APP}/Contents/Info.plist")"
-  [[ "${app_version}" == "${helper_version}" ]] \
-    || fail "App/helper version mismatch: ${app_version} vs ${helper_version}"
 
   if ! /bin/launchctl print system/com.edp.usbvault.mountd >/dev/null 2>&1 \
      && ! /bin/launchctl print system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1; then
@@ -440,9 +441,9 @@ verify_installed() {
 }
 
 open_fda() {
-  [[ -d "${RAW_ACCESS_APP}" ]] || fail "Raw Access helper is not installed"
+  [[ -x "${SERVICE_BIN}" ]] || fail "embedded EDP Drive service is not installed"
   as_target_user /usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'
-  as_target_user /usr/bin/open -R "${RAW_ACCESS_APP}"
+  as_target_user /usr/bin/open -R "${APP}"
   record "FDA_SETTINGS_OPENED"
   echo "RESULT=FDA_SETTINGS_OPENED"
 }
@@ -616,9 +617,9 @@ safe_eject() {
 
 restart_app() {
   [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
-  /usr/bin/pkill -f '/Applications/EDP USB Vault.app/Contents/MacOS/EDP USB Vault' >/dev/null 2>&1 || true
+  /usr/bin/pkill -f '/Applications/EDP Drive.app/Contents/MacOS/EDP Drive' >/dev/null 2>&1 || true
   /bin/sleep 1
-  as_target_user /usr/bin/open -a 'EDP USB Vault'
+  as_target_user /usr/bin/open -a 'EDP Drive'
   /bin/sleep 3
   "${APP_BIN}" --xpc-smoke
   assert_user_keychain_safe

@@ -27,9 +27,11 @@ jobs:
         run: |
           set -euo pipefail
           grep -Fq '<string>EDP Drive</string>' Apps/Drive/product/App/Info.plist
-          grep -Fq 'EDP Drive 磁盘访问' Apps/Drive/product/RawAccessHelper/Info.plist
+          ! grep -Fq 'EDP USB Vault Raw Access.app' Apps/Drive/installer/build-native-installer.sh
           grep -Fq 'com.edp.usbvault.app' Apps/Drive/product/App/Info.plist
-          grep -Fq '/Applications/EDP USB Vault.app/Contents/MacOS/EDP USB Vault' Apps/Drive/product/EDPXPCSecurity.swift
+          grep -Fq '/Applications/EDP Drive.app/Contents/MacOS/EDP Drive' Apps/Drive/product/EDPXPCSecurity.swift
+          grep -Fq '/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service' Apps/Drive/product/App/com.edp.usbvault.mountd.legacy.plist
+          ! test -e Apps/Drive/product/RawAccessHelper/Info.plist
           ! grep -Fq 'EDP_CORE_EXPECTED_REV' Apps/Drive/scripts/prepare-shared-edp-core.sh
           grep -Fq 'Packages/EDPCore' Apps/Drive/scripts/prepare-shared-edp-core.sh
           bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh

@@ -4,7 +4,9 @@ import Foundation
 import ServiceManagement
 import SwiftUI
 
-private let edpRawAccessHelperAppPath = "/Applications/EDP USB Vault Raw Access.app"
+private let edpDriveAppPath = "/Applications/EDP Drive.app"
+private let edpDriveServicePath = edpDriveAppPath
+    + "/Contents/Library/LaunchServices/edp-drive-service"
 
 private let edpMacFUSEModuleIDs = [
     "io.macfuse.app.fsmodule.macfuse",
@@ -162,7 +164,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     var rawAccessHelperInstalled: Bool {
-        FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath)
+        FileManager.default.isExecutableFile(atPath: edpDriveServicePath)
     }
 
     var rawAccessStatusText: String {
@@ -316,7 +318,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func openFullDiskAccessSettings() {
-        guard FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath) else {
+        guard FileManager.default.isExecutableFile(atPath: edpDriveServicePath) else {
             lastError = "磁盘访问组件尚未安装，请重新运行 EDP Drive 安装器。"
             return
         }
@@ -328,12 +330,12 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func revealRawAccessHelper() {
-        guard FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath) else {
+        guard FileManager.default.isExecutableFile(atPath: edpDriveServicePath) else {
             lastError = "磁盘访问组件尚未安装，请重新运行 EDP Drive 安装器。"
             return
         }
         NSWorkspace.shared.activateFileViewerSelecting([
-            URL(fileURLWithPath: edpRawAccessHelperAppPath)
+            URL(fileURLWithPath: edpDriveAppPath)
         ])
     }
 

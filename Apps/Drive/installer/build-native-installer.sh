@@ -82,7 +82,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 RUNTIME_STAGE="${BUILD_ROOT}/runtime"
-APP_STAGE="${BUILD_ROOT}/EDP USB Vault.app"
+APP_STAGE="${BUILD_ROOT}/EDP Drive.app"
 mkdir -p "${OUTPUT_DIR}" "${RUNTIME_STAGE}/bin" \
   "${APP_STAGE}/Contents/MacOS" \
   "${APP_STAGE}/Contents/Resources" \
@@ -138,21 +138,6 @@ for item in "${RUNTIME_STAGE}/bin/"*; do
   sign_app_code "${item}"
 done
 
-RAW_ACCESS_APP_STAGE="${BUILD_ROOT}/EDP USB Vault Raw Access.app"
-mkdir -p "${RAW_ACCESS_APP_STAGE}/Contents/MacOS"
-cp "${REPO_ROOT}/product/RawAccessHelper/Info.plist" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-usbvaultd"
-sign_app_code \
-  --identifier com.edp.usbvault.rawaccess \
-  "${RAW_ACCESS_APP_STAGE}"
-/usr/bin/codesign --verify --strict "${RAW_ACCESS_APP_STAGE}"
-
 echo "Building native menu-bar app..."
 cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_STAGE}/Contents/Info.plist"
@@ -163,9 +148,9 @@ xcrun swiftc -O \
   -framework ServiceManagement \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
-  -o "${APP_STAGE}/Contents/MacOS/EDP USB Vault"
+  -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
 cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
-  "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
+  "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
 
 if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
   cp "${REPO_ROOT}/product/App/com.edp.usbvault.mountd.v2.plist" \
@@ -173,7 +158,7 @@ if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
 fi
 sign_app_code \
   --identifier com.edp.usbvault.mountd.v2 \
-  "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
+  "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
 sign_app_code \
   --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
@@ -183,15 +168,12 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   /usr/bin/grep -Fq 'Authority=' <<<"${SIGNING_INFO}"
 
   APP_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}" 2>&1)"
-  RAW_REQUIREMENT="$(/usr/bin/codesign -dr - "${RAW_ACCESS_APP_STAGE}" 2>&1)"
-  DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${RUNTIME_STAGE}/bin/edp-vaultctl" 2>&1)"
+  DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service" 2>&1)"
   /usr/bin/grep -Fq 'identifier "com.edp.usbvault.app"' <<<"${APP_REQUIREMENT}"
-  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.rawaccess"' <<<"${RAW_REQUIREMENT}"
   APP_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${APP_REQUIREMENT}")"
-  RAW_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${RAW_REQUIREMENT}")"
   DAEMON_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${DAEMON_REQUIREMENT}")"
-  [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${RAW_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
-    echo "self-signed App, raw-access helper, and daemon must share one stable certificate root for FDA/XPC continuity" >&2
+  [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
+    echo "self-signed App and embedded service must share one stable certificate root for FDA/XPC continuity" >&2
     exit 2
   }
 fi
@@ -200,9 +182,7 @@ PAYLOAD="${BUILD_ROOT}/payload"
 PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
 mkdir -p "${PRODUCT_DIR}/bin" "${PAYLOAD}/Applications" "${PAYLOAD}/usr/local/bin"
 cp -R "${RUNTIME_STAGE}/bin/." "${PRODUCT_DIR}/bin/"
-cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP USB Vault.app"
-cp -R "${RAW_ACCESS_APP_STAGE}" \
-  "${PAYLOAD}/Applications/EDP USB Vault Raw Access.app"
+cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP Drive.app"
 ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
   "${PAYLOAD}/usr/local/bin/edp-vaultctl"
 
@@ -221,15 +201,12 @@ chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
 COMPONENT="${BUILD_ROOT}/EDP-USB-Vault-Native.pkg"
 COMPONENT_PLIST="${BUILD_ROOT}/native-component.plist"
 /usr/bin/pkgbuild --analyze --root "${PAYLOAD}" "${COMPONENT_PLIST}"
-# Both installed application bundles have fixed /Applications paths. In
-# particular, relocating com.edp.usbvault.rawaccess would break the stable FDA
-# identity/path contract used by the privileged daemon.
-for INDEX in 0 1; do
-  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleIsRelocatable false" "${COMPONENT_PLIST}"
-  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleHasStrictIdentifier true" "${COMPONENT_PLIST}"
-  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleIsVersionChecked true" "${COMPONENT_PLIST}"
-  /usr/libexec/PlistBuddy -c "Set :${INDEX}:BundleOverwriteAction upgrade" "${COMPONENT_PLIST}"
-done
+# The one installed App owns both the foreground executable and the FDA service,
+# so PackageKit must never relocate it away from its fixed /Applications path.
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c "Set :0:BundleHasStrictIdentifier true" "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c "Set :0:BundleIsVersionChecked true" "${COMPONENT_PLIST}"
+/usr/libexec/PlistBuddy -c "Set :0:BundleOverwriteAction upgrade" "${COMPONENT_PLIST}"
 /usr/bin/pkgbuild \
   --root "${PAYLOAD}" \
   --identifier com.edp.usbvault.native \

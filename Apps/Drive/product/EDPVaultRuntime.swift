@@ -256,7 +256,7 @@ private func runtimeBinaryRoot() -> String {
 }
 
 private let defaultRawAccessDaemonPath =
-    "/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd"
+    "/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service"
 
 private func rawAccessDaemonPath() -> String {
     if let override = ProcessInfo.processInfo.environment["EDP_RAW_ACCESS_DAEMON"],
@@ -271,7 +271,7 @@ private func installedProductVersion() -> String {
        !override.isEmpty {
         return override
     }
-    if let bundle = Bundle(path: "/Applications/EDP USB Vault.app"),
+    if let bundle = Bundle(path: "/Applications/EDP Drive.app"),
        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
        !version.isEmpty {
         return version

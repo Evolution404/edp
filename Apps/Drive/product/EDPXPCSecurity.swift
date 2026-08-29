@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 private let edpTrustedAppIdentifier = "com.edp.usbvault.app"
-private let edpTrustedAppExecutable = "/Applications/EDP USB Vault.app/Contents/MacOS/EDP USB Vault"
+private let edpTrustedAppExecutable = "/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"
 
 enum EDPXPCPeerValidator {
     private struct SigningAuthority {

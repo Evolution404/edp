@@ -25,8 +25,8 @@ done
 
 PAYLOAD="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Payload"
 ROOT="${PAYLOAD}/Library/Application Support/EDP USB Vault"
-APP="${PAYLOAD}/Applications/EDP USB Vault.app"
-RAW_ACCESS_APP="${PAYLOAD}/Applications/EDP USB Vault Raw Access.app"
+APP="${PAYLOAD}/Applications/EDP Drive.app"
+SERVICE="${APP}/Contents/Library/LaunchServices/edp-drive-service"
 PACKAGE_INFO="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/PackageInfo"
 PREINSTALL="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Scripts/preinstall"
 DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
@@ -56,37 +56,43 @@ for item in "${ROOT}/bin/"*; do
   /usr/bin/codesign --verify --strict "${item}"
 done
 
-[[ -x "${APP}/Contents/MacOS/EDP USB Vault" ]]
+[[ -x "${APP}/Contents/MacOS/EDP Drive" ]]
 /usr/bin/codesign --verify --strict "${APP}"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.usbvault.app" ]]
-[[ -x "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" ]]
-/usr/bin/codesign --verify --strict "${RAW_ACCESS_APP}"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${RAW_ACCESS_APP}/Contents/Info.plist")" == "com.edp.usbvault.rawaccess" ]]
-/usr/bin/codesign -dv --verbose=4 "${RAW_ACCESS_APP}" 2>&1 \
-  | /usr/bin/grep -F 'Identifier=com.edp.usbvault.rawaccess' >/dev/null
+[[ -x "${SERVICE}" ]]
+/usr/bin/codesign --verify --strict "${SERVICE}"
+/usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \
+  | /usr/bin/grep -F 'Identifier=com.edp.usbvault.mountd.v2' >/dev/null
+APP_COUNT="$(/usr/bin/find "${PAYLOAD}/Applications" -maxdepth 1 -type d -name '*.app' | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+[[ "${APP_COUNT}" == "1" ]]
+[[ ! -e "${PAYLOAD}/Applications/EDP USB Vault.app" ]]
+[[ ! -e "${PAYLOAD}/Applications/EDP USB Vault Raw Access.app" ]]
+[[ ! -e "${PAYLOAD}/Applications/EDP Drive Service.app" ]]
+[[ ! -e "${PAYLOAD}/Applications/EDP Drive Raw Access.app" ]]
 /usr/bin/grep -F '<relocate/>' "${PACKAGE_INFO}" >/dev/null
 if /usr/bin/grep -A 4 '<relocate>' "${PACKAGE_INFO}" \
-  | /usr/bin/grep -F 'com.edp.usbvault.rawaccess' >/dev/null; then
-  echo "Raw Access helper must not be relocatable; FDA requires its fixed /Applications path" >&2
+  | /usr/bin/grep -F 'com.edp.usbvault.app' >/dev/null; then
+  echo "EDP Drive must not be relocatable; FDA requires its fixed /Applications path" >&2
   exit 5
 fi
-echo "RESULT=RAW_ACCESS_HELPER_FIXED_INSTALL_PATH"
+echo "RESULT=SINGLE_DRIVE_APP_WITH_EMBEDDED_SERVICE"
+echo "RESULT=DRIVE_APP_FIXED_INSTALL_PATH"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${APP}/Contents/Info.plist")" == "26.0" ]]
 SERVICE_MODE="$(/usr/libexec/PlistBuddy -c 'Print :EDPServiceMode' "${APP}/Contents/Info.plist")"
-[[ -x "${APP}/Contents/Library/LaunchServices/edp-usbvaultd" ]]
+[[ -x "${SERVICE}" ]]
 case "${SERVICE_MODE}" in
   smappservice)
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${DAEMON_PLIST}")" == "true" ]]
-    [[ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "${DAEMON_PLIST}")" == "Contents/Library/LaunchServices/edp-usbvaultd" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "${DAEMON_PLIST}")" == "Contents/Library/LaunchServices/edp-drive-service" ]]
     [[ ! -e "${LEGACY_DAEMON_PLIST}" ]]
     /usr/bin/codesign -dv --verbose=4 \
-      "${APP}/Contents/Library/LaunchServices/edp-usbvaultd" 2>&1 \
+      "${SERVICE}" 2>&1 \
       | /usr/bin/grep -F 'Identifier=com.edp.usbvault.mountd.v2' >/dev/null
     echo "RESULT=SMAPPSERVICE_DAEMON_EMBEDDED"
     ;;
   legacy)
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${LEGACY_DAEMON_PLIST}")" == "true" ]]
-    [[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "${LEGACY_DAEMON_PLIST}")" == "/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "${LEGACY_DAEMON_PLIST}")" == "/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service" ]]
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:EDP_RUNTIME_BIN_ROOT' "${LEGACY_DAEMON_PLIST}")" == "/Library/Application Support/EDP USB Vault/bin" ]]
     [[ ! -e "${DAEMON_PLIST}" ]]
     echo "RESULT=LEGACY_FDA_DAEMON_PACKAGED"
@@ -109,27 +115,27 @@ echo "RESULT=NTFS3G_RUNTIME_ABSENT"
 
 # The stable Raw Access helper is the only writable raw-device broker. The
 # foreground App never creates AuthorizationExternalForm/sys.openfile rights.
-if /usr/bin/nm -u "${APP}/Contents/MacOS/EDP USB Vault" \
+if /usr/bin/nm -u "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F '_AuthorizationCopyRights' >/dev/null; then
   echo "foreground App unexpectedly contains Authorization Services raw access" >&2
   exit 6
 fi
-if /usr/bin/nm -u "${APP}/Contents/MacOS/EDP USB Vault" \
+if /usr/bin/nm -u "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F '_AuthorizationMakeExternalForm' >/dev/null; then
   echo "foreground App unexpectedly externalizes AuthorizationRef" >&2
   exit 6
 fi
-/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F 'Privacy_AllFiles' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
-  | /usr/bin/grep -F '/Applications/EDP USB Vault Raw Access.app' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+  | /usr/bin/grep -F '/Applications/EDP Drive.app' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F 'macfuse-local.appex' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F 'io.macfuse.app.fsmodule.macfuse-local' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F 'group.com.apple.fskit.settings' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F 'fskit_agent' >/dev/null
 echo "RESULT=CONSOLE_USER_MACFUSE_FSKIT_ENABLEMENT_PACKAGED"
 /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \
@@ -140,14 +146,14 @@ if /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" | /usr/bin/grep -F 'authopen'
   echo "raw metadata helper unexpectedly contains authopen" >&2
   exit 6
 fi
-/usr/bin/strings "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" \
+/usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F 'persistent Full Disk Access daemon + retained raw fd + inherited transport fd' >/dev/null
-/usr/bin/strings "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" \
+/usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F 'EDP_RAW_LEASE_METADATA_REFUSED' >/dev/null
-/usr/bin/nm -u "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" \
+/usr/bin/nm -u "${SERVICE}" \
   | /usr/bin/grep -F '_posix_spawn' >/dev/null
-/usr/bin/codesign -dv --verbose=4 "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" 2>&1 \
-  | /usr/bin/grep -F 'Identifier=com.edp.usbvault.rawaccess' >/dev/null
+/usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \
+  | /usr/bin/grep -F 'Identifier=com.edp.usbvault.mountd.v2' >/dev/null
 for BROKER in \
   "${ROOT}/bin/edp-console-exec"; do
   /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_TARGET_REFUSED' >/dev/null

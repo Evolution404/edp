@@ -1,11 +1,10 @@
 #!/bin/bash
 set -e
 ROOT="/Library/Application Support/EDP USB Vault"
-APP="/Applications/EDP USB Vault.app"
-RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
-/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
-/bin/chmod -R go-w "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
-/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" "${RAW_ACCESS_APP}" >/dev/null 2>&1 || true
+APP="/Applications/EDP Drive.app"
+/usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
+/bin/chmod -R go-w "${ROOT}" "${APP}"
+/usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
 /bin/chmod 0755 "${ROOT}" "${ROOT}/bin" "${ROOT}/bin/"*
 PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 if [[ -f "${PLIST}" ]]; then

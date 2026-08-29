@@ -52,9 +52,11 @@ MFMount.framework 和 Local FSKit module；前台 App 只负责当前控制台�
 FSKit module enablement，root daemon 不修改用户的 FSKit 设置。
 
 原始磁盘访问不保存 `AuthorizationExternalForm`，也不修改 AuthorizationDB。
-首次配置时，用户只需要为稳定签名的 `EDP Drive 磁盘访问`
-（`com.edp.usbvault.rawaccess`）开启一次 Full Disk Access。root 后台服务先通过
-IOKit 与只读 metadata helper 识别 EDP whole USB，再由该 FDA helper 对当前
+安装包只部署 `/Applications/EDP Drive.app`；无 UI 的签名服务位于
+`Contents/Library/LaunchServices/edp-drive-service`，不会作为第二个 App 出现在
+应用列表。首次配置时，用户只需要为这一固定 App/embedded-service 组合开启一次
+Full Disk Access。root 后台服务先通过 IOKit 与只读 metadata helper 识别 EDP
+whole USB，再由 embedded service 对当前
 `/dev/rdiskN` 进行二次 whole-USB、字符设备、device-node 一致性以及 LBA4/LBA7
 EDP 元数据校验。校验通过后才以 `O_RDWR` 打开整盘，将 fd 固定继承为 3，随后
 降权到当前控制台用户并启动加密 transport。正式路径不再使用

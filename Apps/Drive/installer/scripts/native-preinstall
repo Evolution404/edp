@@ -13,4 +13,14 @@ fi
 for RETIRED_RUNTIME in edp-readwrite-fuse edp-raw-sparse; do
   /bin/rm -f "${OLD_ROOT}/bin/${RETIRED_RUNTIME}"
 done
+OLD_APP="/Applications/EDP USB Vault.app"
+OLD_RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
+if [[ -f "${OLD_APP}/Contents/Info.plist" ]] \
+  && [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_APP}/Contents/Info.plist" 2>/dev/null || true)" == "com.edp.usbvault.app" ]]; then
+  /bin/rm -rf "${OLD_APP}"
+fi
+if [[ -f "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" ]] \
+  && [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_RAW_ACCESS_APP}/Contents/Info.plist" 2>/dev/null || true)" == "com.edp.usbvault.rawaccess" ]]; then
+  /bin/rm -rf "${OLD_RAW_ACCESS_APP}"
+fi
 exit 0
