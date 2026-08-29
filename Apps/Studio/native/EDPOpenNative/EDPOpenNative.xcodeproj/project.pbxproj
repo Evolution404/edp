@@ -46,8 +46,8 @@
 		9C091E369A899A47CD2F0F37 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A8A5681A0D24E519417BC2AB /* SectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectorView.swift; sourceTree = "<group>"; };
 		AB15351222360442735730DF /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
-		D8CA6360E3557E5DDA8E9946 /* EDPOpen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EDPOpen.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */ = {isa = PBXFileReference; includeInIndex = 0; path = EDPOpenRawBroker; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8CA6360E3557E5DDA8E9946 /* EDP Studio.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "EDP Studio.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FF9FC90F3A0A1144E4C2E85E /* EDPStudioRawBroker */ = {isa = PBXFileReference; includeInIndex = 0; path = EDPStudioRawBroker; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -263,8 +263,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen.rawbroker;
-				PRODUCT_NAME = EDPOpenRawBroker;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edp.studio.rawbroker;
+				PRODUCT_NAME = EDPStudioRawBroker;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;
@@ -287,7 +287,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release";
 				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
-				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edp.studio;
 				SDKROOT = macosx;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release/Modules";
 			};
@@ -305,8 +305,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen.rawbroker;
-				PRODUCT_NAME = EDPOpenRawBroker;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edp.studio.rawbroker;
+				PRODUCT_NAME = EDPStudioRawBroker;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;
@@ -365,11 +365,11 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "EDP Studio";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Evolution404";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 EDP";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = EDPOpen;
+				PRODUCT_NAME = "EDP Studio";
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
@@ -435,12 +435,12 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "EDP Studio";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Evolution404";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 EDP";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_NAME = EDPOpen;
+				PRODUCT_NAME = "EDP Studio";
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -464,7 +464,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release";
 				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
-				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edp.studio;
 				SDKROOT = macosx;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release/Modules";
 			};

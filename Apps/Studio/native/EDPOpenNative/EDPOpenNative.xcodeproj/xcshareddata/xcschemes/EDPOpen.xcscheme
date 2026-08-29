@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "50438055B75C7A57E6437F51"
-               BuildableName = "EDPOpen.app"
+               BuildableName = "EDP Studio.app"
                BlueprintName = "EDPOpen"
                ReferencedContainer = "container:EDPOpenNative.xcodeproj">
             </BuildableReference>
@@ -33,7 +33,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50438055B75C7A57E6437F51"
-            BuildableName = "EDPOpen.app"
+            BuildableName = "EDP Studio.app"
             BlueprintName = "EDPOpen"
             ReferencedContainer = "container:EDPOpenNative.xcodeproj">
          </BuildableReference>
@@ -58,7 +58,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50438055B75C7A57E6437F51"
-            BuildableName = "EDPOpen.app"
+            BuildableName = "EDP Studio.app"
             BlueprintName = "EDPOpen"
             ReferencedContainer = "container:EDPOpenNative.xcodeproj">
          </BuildableReference>
@@ -77,7 +77,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "50438055B75C7A57E6437F51"
-            BuildableName = "EDPOpen.app"
+            BuildableName = "EDP Studio.app"
             BlueprintName = "EDPOpen"
             ReferencedContainer = "container:EDPOpenNative.xcodeproj">
          </BuildableReference>

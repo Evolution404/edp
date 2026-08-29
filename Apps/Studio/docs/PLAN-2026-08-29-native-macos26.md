@@ -6,7 +6,7 @@
 ## 目标架构
 
 ```text
-EDPOpen.app (SwiftUI + AppKit, macOS 26+)
+EDP Studio.app (SwiftUI + AppKit, macOS 26+)
     │
     ├─ Native UI
     │   ├─ NavigationSplitView / Inspector / Toolbar
@@ -60,14 +60,14 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 
 前置 PoC 证据：`poc/fda-raw-broker/RESULTS-2026-08-29.md`。
 
-- [x] 独立 Swift broker target：`EDPOpenRawBroker`
-- [x] system LaunchDaemon / stable install path 已实机安装：`/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker`，Mach service 按需由已签名 App 拉起
-- [x] stable certificate-backed signing identity：App=`com.evolution404.edpopen`、Broker=`com.evolution404.edpopen.rawbroker`，统一使用 `EDP Project Code Signing` 自签证书 + Hardened Runtime；certificate leaf/root SHA-1=`040b5488fb2b6c02b0786e76b674cb4460658ca2`，DR 均非 CDHash
+- [x] 独立 Swift broker target，产物名 `EDPStudioRawBroker`
+- [x] system LaunchDaemon / stable install path：`/Library/PrivilegedHelperTools/com.edp.studio.rawbroker`，Mach service 按需由已签名 App 拉起
+- [x] stable certificate-backed signing identity：App=`com.edp.studio`、Broker=`com.edp.studio.rawbroker`，统一使用 `EDP Project Code Signing` 自签证书 + Hardened Runtime；certificate leaf/root SHA-1=`040b5488fb2b6c02b0786e76b674cb4460658ca2`，DR 均非 CDHash
 - [x] FDA readiness probe 代码：仅 `open(O_RDONLY|O_CLOEXEC) → fstat → close`，不读取扇区
 - [x] Disk Arbitration + IOKit external/physical/USB/whole-disk gate
 - [ ] EDP metadata verification before exposing device session
 - [x] narrow NSXPC IPC, no arbitrary path API；broker 只接受数字 `diskN`
-- [x] broker peer/process hardening：App 必须来自固定 `/Applications/EDPOpen.app/Contents/MacOS/EDPOpen`；Broker 必须从固定 privileged-helper 路径以 root 启动，且 broker executable 必须 root-owned、group/world 不可写
+- [x] broker peer/process hardening：App 必须来自固定 `/Applications/EDP Studio.app/Contents/MacOS/EDP Studio`；Broker 必须从固定 privileged-helper 路径以 root 启动，且 broker executable 必须 root-owned、group/world 不可写
 - [x] peer signing contract：正式 leaf requirement 通过；随机另一张 self-signed code-signing certificate/private key 通过显式 `SecIdentity` 真实签出 alternate App/Broker，production leaf requirement 必须拒绝；测试不修改用户 trust store、不创建临时 signing keychain，且 DefaultKeychain / SearchList 前后完全一致
 - [x] App/broker 双向 `setCodeSigningRequirement()`，绑定固定 bundle identifier + 精确同一 EDP self-signed leaf certificate；不依赖 Apple Team ID
 - [ ] 同一 open fd/session 复用

@@ -4,14 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IDENTITY="${EDP_CODE_SIGN_IDENTITY:-EDP Project Code Signing}"
 LEAF_SHA1="040b5488fb2b6c02b0786e76b674cb4460658ca2"
-APP_ID="com.evolution404.edpopen"
-BROKER_ID="com.evolution404.edpopen.rawbroker"
+APP_ID="com.edp.studio"
+BROKER_ID="com.edp.studio.rawbroker"
 APP_REQUIREMENT="identifier \"${APP_ID}\" and certificate leaf = H\"${LEAF_SHA1}\""
 BROKER_REQUIREMENT="identifier \"${BROKER_ID}\" and certificate leaf = H\"${LEAF_SHA1}\""
 LOGIN_KEYCHAIN="${HOME}/Library/Keychains/login.keychain-db"
 DEFAULT_BEFORE="$(/usr/bin/security default-keychain -d user)"
 SEARCH_BEFORE="$(/usr/bin/security list-keychains -d user)"
-TMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/private/tmp}/edpopen-peer-signing.XXXXXX")"
+TMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/private/tmp}/edp-studio-peer-signing.XXXXXX")"
 
 cleanup() {
   /bin/rm -rf "${TMP_ROOT}"
@@ -46,7 +46,7 @@ GOOD_BROKER="${TMP_ROOT}/good-broker"
 # Generate a completely separate self-signed code-signing identity and use it to sign
 # real negative-test binaries. The identity is constructed directly from temporary DER
 # certificate/private-key material, so no trust settings or keychain state are changed.
-ALT_IDENTITY="EDPOpen Alternate Test Signing"
+ALT_IDENTITY="EDP Studio Alternate Test Signing"
 EXPLICIT_SIGNER="${TMP_ROOT}/explicit-identity-sign"
 /usr/bin/cc -std=c17 -Wall -Wextra \
   "${SCRIPT_DIR}/explicit-identity-sign.c" \
@@ -99,8 +99,8 @@ if /usr/bin/codesign --verify --strict -R="${BROKER_REQUIREMENT}" "${BAD_BROKER}
   fail "production Broker requirement accepted a different self-signed leaf"
 fi
 
-APP_PATH="${EDPOPEN_APP_PATH:-/private/tmp/edpopen-native-derived-data/Build/Products/Debug/EDPOpen.app}"
-BROKER_PATH="${EDPOPEN_BROKER_PATH:-/private/tmp/edpopen-native-derived-data/Build/Products/Debug/EDPOpenRawBroker}"
+APP_PATH="${EDPSTUDIO_APP_PATH:-${EDPOPEN_APP_PATH:-/private/tmp/edp-studio-native-derived-data/Build/Products/Debug/EDP Studio.app}}"
+BROKER_PATH="${EDPSTUDIO_BROKER_PATH:-${EDPOPEN_BROKER_PATH:-/private/tmp/edp-studio-native-derived-data/Build/Products/Debug/EDPStudioRawBroker}}"
 if [[ -e "${APP_PATH}" ]]; then
   /usr/bin/codesign --verify --strict -R="${APP_REQUIREMENT}" "${APP_PATH}"
 fi
@@ -108,4 +108,4 @@ if [[ -e "${BROKER_PATH}" ]]; then
   /usr/bin/codesign --verify --strict -R="${BROKER_REQUIREMENT}" "${BROKER_PATH}"
 fi
 
-echo "RESULT=EDPOPEN_SHARED_LEAF_PEER_TRUST_OK"
+echo "RESULT=EDP_STUDIO_SHARED_LEAF_PEER_TRUST_OK"

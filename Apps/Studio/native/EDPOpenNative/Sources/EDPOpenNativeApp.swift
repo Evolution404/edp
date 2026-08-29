@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct EDPOpenNativeApp: App {
+struct EDPStudioApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {

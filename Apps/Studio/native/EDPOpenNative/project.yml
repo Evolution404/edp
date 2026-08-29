@@ -1,6 +1,6 @@
-name: EDPOpenNative
+name: EDPStudioNative
 options:
-  bundleIdPrefix: com.evolution404
+  bundleIdPrefix: com.edp
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
@@ -9,11 +9,11 @@ settings:
     ARCHS: arm64
     MACOSX_DEPLOYMENT_TARGET: "26.0"
     SWIFT_VERSION: "6.0"
-    PRODUCT_NAME: EDPOpen
+    PRODUCT_NAME: "EDP Studio"
     GENERATE_INFOPLIST_FILE: YES
     INFOPLIST_KEY_CFBundleDisplayName: EDP Studio
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-    INFOPLIST_KEY_NSHumanReadableCopyright: Copyright © 2026 Evolution404
+    INFOPLIST_KEY_NSHumanReadableCopyright: Copyright © 2026 EDP
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: EDP Project Code Signing
     DEVELOPMENT_TEAM: ""
@@ -30,7 +30,7 @@ targets:
           "$SRCROOT/Scripts/build-shared-core.sh"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.evolution404.edpopen
+        PRODUCT_BUNDLE_IDENTIFIER: com.edp.studio
         MARKETING_VERSION: 0.2.0
         CURRENT_PROJECT_VERSION: 1
         ENABLE_HARDENED_RUNTIME: YES
@@ -51,8 +51,8 @@ targets:
       - path: Shared
     settings:
       base:
-        PRODUCT_NAME: EDPOpenRawBroker
-        PRODUCT_BUNDLE_IDENTIFIER: com.evolution404.edpopen.rawbroker
+        PRODUCT_NAME: EDPStudioRawBroker
+        PRODUCT_BUNDLE_IDENTIFIER: com.edp.studio.rawbroker
         GENERATE_INFOPLIST_FILE: YES
         CREATE_INFOPLIST_SECTION_IN_BINARY: YES
         MACOSX_DEPLOYMENT_TARGET: "26.0"

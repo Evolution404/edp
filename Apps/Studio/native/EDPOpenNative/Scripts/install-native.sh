@@ -3,18 +3,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CONFIGURATION="${EDPOPEN_CONFIGURATION:-Release}"
-DERIVED_DATA="${EDPOPEN_DERIVED_DATA:-/private/tmp/edpopen-native-derived-data}"
-APP_SOURCE="${EDPOPEN_APP_SOURCE:-${DERIVED_DATA}/Build/Products/${CONFIGURATION}/EDPOpen.app}"
-BROKER_SOURCE="${EDPOPEN_BROKER_SOURCE:-${DERIVED_DATA}/Build/Products/${CONFIGURATION}/EDPOpenRawBroker}"
-APP_DEST="/Applications/EDPOpen.app"
-BROKER_DEST="/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker"
-PLIST_SOURCE="${PROJECT_ROOT}/Installer/com.evolution404.edpopen.rawbroker.plist"
-PLIST_DEST="/Library/LaunchDaemons/com.evolution404.edpopen.rawbroker.plist"
-SERVICE="system/com.evolution404.edpopen.rawbroker"
+CONFIGURATION="${EDPSTUDIO_CONFIGURATION:-${EDPOPEN_CONFIGURATION:-Release}}"
+DERIVED_DATA="${EDPSTUDIO_DERIVED_DATA:-${EDPOPEN_DERIVED_DATA:-/private/tmp/edp-studio-native-derived-data}}"
+APP_SOURCE="${EDPSTUDIO_APP_SOURCE:-${EDPOPEN_APP_SOURCE:-${DERIVED_DATA}/Build/Products/${CONFIGURATION}/EDP Studio.app}}"
+BROKER_SOURCE="${EDPSTUDIO_BROKER_SOURCE:-${EDPOPEN_BROKER_SOURCE:-${DERIVED_DATA}/Build/Products/${CONFIGURATION}/EDPStudioRawBroker}}"
+APP_DEST="/Applications/EDP Studio.app"
+BROKER_DEST="/Library/PrivilegedHelperTools/com.edp.studio.rawbroker"
+PLIST_SOURCE="${PROJECT_ROOT}/Installer/com.edp.studio.rawbroker.plist"
+PLIST_DEST="/Library/LaunchDaemons/com.edp.studio.rawbroker.plist"
+SERVICE="system/com.edp.studio.rawbroker"
+OLD_APP="/Applications/EDPOpen.app"
+OLD_BROKER="/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker"
+OLD_PLIST="/Library/LaunchDaemons/com.evolution404.edpopen.rawbroker.plist"
+OLD_SERVICE="system/com.evolution404.edpopen.rawbroker"
 LEAF_SHA1="040b5488fb2b6c02b0786e76b674cb4460658ca2"
-APP_REQUIREMENT="identifier \"com.evolution404.edpopen\" and certificate leaf = H\"${LEAF_SHA1}\""
-BROKER_REQUIREMENT="identifier \"com.evolution404.edpopen.rawbroker\" and certificate leaf = H\"${LEAF_SHA1}\""
+APP_REQUIREMENT="identifier \"com.edp.studio\" and certificate leaf = H\"${LEAF_SHA1}\""
+BROKER_REQUIREMENT="identifier \"com.edp.studio.rawbroker\" and certificate leaf = H\"${LEAF_SHA1}\""
 
 fail() {
   echo "ERROR=$*" >&2
@@ -33,6 +37,8 @@ fail() {
 /usr/bin/plutil -lint "${PLIST_SOURCE}" >/dev/null
 
 /bin/launchctl bootout "${SERVICE}" >/dev/null 2>&1 || true
+/bin/launchctl bootout "${OLD_SERVICE}" >/dev/null 2>&1 || true
+/usr/bin/pkill -f '^/Applications/EDP Studio.app/Contents/MacOS/EDP Studio$' >/dev/null 2>&1 || true
 /usr/bin/pkill -f '^/Applications/EDPOpen.app/Contents/MacOS/EDPOpen$' >/dev/null 2>&1 || true
 
 /bin/rm -rf "${APP_DEST}"
@@ -49,5 +55,10 @@ fail() {
 /usr/bin/codesign --verify --strict -R="${BROKER_REQUIREMENT}" "${BROKER_DEST}"
 /bin/launchctl bootstrap system "${PLIST_DEST}"
 
+# The new identity is copied, signature-verified and bootstrapped before the
+# retired EDPOpen installation is removed.
+/bin/rm -rf "${OLD_APP}"
+/bin/rm -f "${OLD_BROKER}" "${OLD_PLIST}"
+
 /bin/bash "${SCRIPT_DIR}/verify-installed-native.sh"
-echo "RESULT=EDPOPEN_NATIVE_INSTALL_OK"
+echo "RESULT=EDP_STUDIO_NATIVE_INSTALL_OK"

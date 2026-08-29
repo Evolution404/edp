@@ -1,13 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-APP="/Applications/EDPOpen.app"
-APP_BIN="${APP}/Contents/MacOS/EDPOpen"
-BROKER="/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker"
-PLIST="/Library/LaunchDaemons/com.evolution404.edpopen.rawbroker.plist"
+APP="/Applications/EDP Studio.app"
+APP_BIN="${APP}/Contents/MacOS/EDP Studio"
+BROKER="/Library/PrivilegedHelperTools/com.edp.studio.rawbroker"
+PLIST="/Library/LaunchDaemons/com.edp.studio.rawbroker.plist"
 LEAF_SHA1="040b5488fb2b6c02b0786e76b674cb4460658ca2"
-APP_ID="com.evolution404.edpopen"
-BROKER_ID="com.evolution404.edpopen.rawbroker"
+APP_ID="com.edp.studio"
+BROKER_ID="com.edp.studio.rawbroker"
 APP_REQUIREMENT="identifier \"${APP_ID}\" and certificate leaf = H\"${LEAF_SHA1}\""
 BROKER_REQUIREMENT="identifier \"${BROKER_ID}\" and certificate leaf = H\"${LEAF_SHA1}\""
 
@@ -39,7 +39,11 @@ if (( (8#${APP_MODE} & 022) != 0 )); then
 fi
 
 /usr/bin/plutil -lint "${PLIST}" >/dev/null
-/bin/launchctl print system/com.evolution404.edpopen.rawbroker >/dev/null \
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :Label' "${PLIST}")" == "${BROKER_ID}" ]] \
+  || fail "LaunchDaemon label mismatch"
+[[ "$(/usr/libexec/PlistBuddy -c "Print :MachServices:${BROKER_ID}" "${PLIST}")" == "true" ]] \
+  || fail "LaunchDaemon Mach service mismatch"
+/bin/launchctl print system/com.edp.studio.rawbroker >/dev/null \
   || fail "Raw Broker LaunchDaemon is not bootstrapped"
 
 if /usr/bin/codesign -dv --verbose=4 "${APP}" 2>&1 | /usr/bin/grep -Fq 'TeamIdentifier=W82WPH8HY7'; then
@@ -49,4 +53,10 @@ if /usr/bin/codesign -dv --verbose=4 "${BROKER}" 2>&1 | /usr/bin/grep -Fq 'TeamI
   fail "installed Raw Broker still uses retired Apple Development Team ID"
 fi
 
-echo "RESULT=EDPOPEN_INSTALLED_SHARED_SIGNING_TRUST_OK"
+[[ ! -e "/Applications/EDPOpen.app" ]] || fail "retired EDPOpen.app still exists"
+[[ ! -e "/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker" ]] \
+  || fail "retired EDPOpen Raw Broker still exists"
+[[ ! -e "/Library/LaunchDaemons/com.evolution404.edpopen.rawbroker.plist" ]] \
+  || fail "retired EDPOpen LaunchDaemon still exists"
+
+echo "RESULT=EDP_STUDIO_INSTALLED_SHARED_SIGNING_TRUST_OK"

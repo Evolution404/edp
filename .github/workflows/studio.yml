@@ -34,7 +34,16 @@ jobs:
             Apps/Studio/native/EDPOpenNative/project.yml \
             Apps/Studio/native/EDPOpenNative/EDPOpenNative.xcodeproj/project.pbxproj
           grep -Fq 'EDP Studio' Apps/Studio/native/EDPOpenNative/Sources/EDPOpenNativeApp.swift
-          grep -Fq 'com.evolution404.edpopen' Apps/Studio/native/EDPOpenNative/project.yml
+          grep -Fq 'com.edp.studio' Apps/Studio/native/EDPOpenNative/project.yml
+          grep -Fq 'com.edp.studio.rawbroker' Apps/Studio/native/EDPOpenNative/Shared/RawBrokerProtocol.swift
+          ! grep -R -F 'com.evolution404.edpopen' \
+            Apps/Studio/native/EDPOpenNative/Sources \
+            Apps/Studio/native/EDPOpenNative/BrokerSources \
+            Apps/Studio/native/EDPOpenNative/Shared \
+            Apps/Studio/native/EDPOpenNative/Installer \
+            Apps/Studio/native/EDPOpenNative/project.yml
+          grep -Fq 'OLD_BROKER="/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker"' \
+            Apps/Studio/native/EDPOpenNative/Scripts/install-native.sh
           echo 'RESULT=EDP_STUDIO_PURE_NATIVE_CONTRACT_OK'
       - name: Build shared core
         run: |
@@ -54,5 +63,7 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO \
             build
-          test -x "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDPOpen.app/Contents/MacOS/EDPOpen"
+          test -x "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDP Studio.app/Contents/MacOS/EDP Studio"
+          test -x "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDPStudioRawBroker"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDP Studio.app/Contents/Info.plist")" = 'com.edp.studio'
           echo 'RESULT=EDP_STUDIO_NATIVE_BUILD_OK'

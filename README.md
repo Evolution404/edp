@@ -58,16 +58,14 @@ Packages/
 
 原 `edp-usb-vault`、`edpopen`、`edp-core` 三个仓库的历史均保留在本仓库 Git 图中；迁入时没有 squash 或改写原提交 SHA，每条历史顶部只增加了一次目录移动提交。
 
-## 品牌与兼容身份
+## 品牌与产品身份
 
-用户产品名称已经统一为：
+两个产品统一为：
 
-- **EDP Drive**
-- **EDP Studio**
+- **EDP Drive**：`com.edp.drive`，内嵌后台服务 `com.edp.drive.service`；系统中只有 `/Applications/EDP Drive.app` 一个 Drive App。
+- **EDP Studio**：`com.edp.studio`，Raw Broker / Mach service 为 `com.edp.studio.rawbroker`，安装到 `/Applications/EDP Studio.app`。
 
-第一阶段只迁移显示名称和源码目录。为保持 Full Disk Access、XPC trust、Keychain 与已安装 helper 的连续性，既有 bundle ID、Mach service ID 和部分固定安装路径暂时保持兼容值。例如 EDP Studio 目前仍安装到 `/Applications/EDPOpen.app`，EDP Drive 的主 App/Raw Access helper 仍沿用既有固定路径。
-
-内部身份迁移如有需要，将作为独立变更处理，不与 monorepo 迁移混合。
+旧 `com.edp.usbvault.*`、`com.evolution404.edpopen*`、`EDP USB Vault.app`、`EDPOpen.app` 仅用于升级清理和历史追溯，不再是当前产品身份。
 
 ## 统一本机签名
 

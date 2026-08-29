@@ -28,18 +28,21 @@ Packages/EDPCore
 
 `EDPCore` 是 EDP 格式和密码学的唯一共享真源；EDP Studio 不再维护第二份 Rust/Crypto 实现。
 
-## 产品名称与兼容身份
-
-用户显示名称已经改为 **EDP Studio**。为避免一次改名同时破坏既有 XPC/FDA/安装信任链，第一阶段继续保留以下兼容身份：
+## 产品身份
 
 ```text
-Bundle ID: com.evolution404.edpopen
-Installed App path: /Applications/EDPOpen.app
-Raw Broker ID: com.evolution404.edpopen.rawbroker
-Raw Broker path: /Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker
+App display/product name: EDP Studio
+Bundle ID:                com.edp.studio
+Installed App path:       /Applications/EDP Studio.app
+App executable:           /Applications/EDP Studio.app/Contents/MacOS/EDP Studio
+
+Raw Broker ID:            com.edp.studio.rawbroker
+Mach service:             com.edp.studio.rawbroker
+Raw Broker path:          /Library/PrivilegedHelperTools/com.edp.studio.rawbroker
+LaunchDaemon plist:       /Library/LaunchDaemons/com.edp.studio.rawbroker.plist
 ```
 
-这些内部 identifier/path 后续如需迁移，将单独做带回归测试的身份迁移，不与 monorepo/品牌改名混在一起。
+旧 `EDPOpen.app`、`com.evolution404.edpopen` 与 `com.evolution404.edpopen.rawbroker` 只存在于 Git 历史中。升级安装会先验证新的签名产物，再停用并清理旧身份。
 
 ## 统一本机签名
 
@@ -52,7 +55,7 @@ Certificate leaf/root SHA-1: 040b5488fb2b6c02b0786e76b674cb4460658ca2
 Validity: 2026-08-29 .. 2046-08-24
 ```
 
-私钥只保存在当前用户 `login.keychain-db`，仓库不保存 PEM/P12。App 与 Raw Broker 使用固定 bundle identifier + 同一 leaf certificate 的双向 XPC requirement；Broker 同时校验固定安装路径、root owner 和 group/world 不可写。
+私钥只保存在当前用户 `login.keychain-db`，仓库不保存 PEM/P12。App 与 Raw Broker 使用固定 identifier + 同一 leaf certificate 的双向 XPC requirement；Broker 同时校验固定安装路径、root owner 和 group/world 不可写。
 
 ## 构建与安装
 
@@ -63,6 +66,13 @@ cd Apps/Studio
 native/EDPOpenNative/Scripts/build-native.sh
 sudo /bin/bash native/EDPOpenNative/Scripts/install-native.sh
 /bin/bash native/EDPOpenNative/Scripts/verify-installed-native.sh
+```
+
+Release 构建产物：
+
+```text
+EDP Studio.app
+EDPStudioRawBroker
 ```
 
 Xcode build phase 会直接构建 monorepo 内的 `Packages/EDPCore`，不需要跨仓库 checkout、Git revision pin 或 Deploy Key。
@@ -77,4 +87,4 @@ native/EDPOpenNative/Scripts/verify-peer-signing-contract.sh
 
 ## 历史
 
-旧 EDPOpen 的 Tauri/WebView/Rust 实现已经从当前树删除，但完整历史仍保留在 monorepo Git 图中，可通过 Git 历史追溯。当前开发只以原生 macOS 路径为准。
+旧 EDPOpen 的 Tauri/WebView/Rust 实现和旧 FDA Raw Broker POC 已从当前树删除，但完整历史仍保留在 monorepo Git 图中，可通过 Git 历史追溯。当前开发只以原生 macOS 路径为准。

@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 if let startupError = RawBrokerProcessSecurity.validateBrokerStartup() {
-    fputs("EDPOpen raw broker refused startup: \(startupError)\n", stderr)
+    fputs("EDP Studio raw broker refused startup: \(startupError)\n", stderr)
     exit(EXIT_FAILURE)
 }
 

@@ -21,7 +21,7 @@ ACTUAL_CERT_SHA256="$(/usr/bin/printf '%s' "${CERT_PEM}" \
 [[ "${ACTUAL_CERT_SHA256}" == "${EXPECTED_CERT_SHA256}" ]] \
   || fail "unexpected unified EDP signing certificate fingerprint: ${ACTUAL_CERT_SHA256}"
 
-PROBE="$(/usr/bin/mktemp /private/tmp/edpopen-signing-probe.XXXXXX)"
+PROBE="$(/usr/bin/mktemp /private/tmp/edp-studio-signing-probe.XXXXXX)"
 cleanup() { /bin/rm -f "${PROBE}"; }
 trap cleanup EXIT INT TERM
 /bin/cp /usr/bin/true "${PROBE}"
