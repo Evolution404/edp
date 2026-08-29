@@ -91,8 +91,8 @@ cp "${REPO_ROOT}/product/RawAccessHelper/Info.plist" \
   "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" \
   "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-cp "${RUNTIME_STAGE}/bin/edp-console-exec" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-console-exec"
+cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-usbvaultd"
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
   --identifier com.edp.usbvault.rawaccess \
   "${RAW_ACCESS_APP_STAGE}"

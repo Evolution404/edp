@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Compile FDA broker and read-only metadata helper
+      - name: Compile console launcher and read-only metadata helper
         run: |
           set -euo pipefail
           cc -std=c17 -O2 -Wall -Wextra -Werror \
@@ -46,7 +46,7 @@ jobs:
           grep -Fq 'status.st_rdev != path_after.st_rdev' product/EDPConsoleExec.c
           grep -Fq 'idVendor' product/EDPConsoleExec.c
           grep -Fq 'idProduct' product/EDPConsoleExec.c
-          echo 'RESULT=FDA_RAW_BROKER_C_CONTRACT_OK'
+          echo 'RESULT=FDA_CONSOLE_LAUNCHER_C_CONTRACT_OK'
 
       - name: Strict Swift 6 daemon build without Authorization Services objects
         run: |
@@ -118,7 +118,12 @@ jobs:
           fi
           grep -Fq 'com.edp.usbvault.rawaccess' product/RawAccessHelper/Info.plist
           grep -Fq 'Privacy_AllFiles' product/App/EDPUSBVaultApp.swift
-          grep -Fq 'persistent Full Disk Access broker + inherited raw fd' product/EDPVaultRuntime.swift
+          grep -Fq 'if pluginsWereEnabled && settingsWereEnabled {' product/App/EDPUSBVaultApp.swift
+          grep -Fq 'if !pluginsWereEnabled {' product/App/EDPUSBVaultApp.swift
+          grep -Fq -- '--xpc-unmount-smoke' product/App/EDPUSBVaultApp.swift
+          grep -Fq 'persistent Full Disk Access daemon + retained raw fd + inherited transport fd' product/EDPVaultRuntime.swift
+          grep -Fq 'EDP_RAW_LEASE_METADATA_REFUSED' product/EDPVaultRuntime.swift
+          grep -Fq 'posix_spawn_file_actions_adddup2' product/EDPVaultRuntime.swift
           grep -Fq 'no authenticated console user is available' product/EDPVaultRuntime.swift
           echo 'RESULT=FDA_PRODUCTION_AUTHORIZATION_SERVICES_REMOVED'
 
@@ -133,6 +138,8 @@ jobs:
           grep -Fq 'BundleIsRelocatable false' installer/build-clean-installer.sh
           grep -Fq 'BundleIsRelocatable false' installer/build-native-installer.sh
           grep -Fq 'RAW_ACCESS_HELPER_FIXED_INSTALL_PATH' scripts/verify-clean-installer.sh
+          grep -Fq '<string>edp-usbvaultd</string>' product/RawAccessHelper/Info.plist
+          grep -Fq '/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd' product/App/com.edp.usbvault.mountd.legacy.plist
           grep -Fq 'certificate root' installer/build-clean-installer.sh
           grep -Fq 'certificate root' installer/build-native-installer.sh
           echo 'RESULT=FDA_INSTALLER_FIXED_IDENTITY_CONTRACT_OK'

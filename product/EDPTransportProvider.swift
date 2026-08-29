@@ -23,17 +23,24 @@ struct EDPTransportSessionError: Error, CustomStringConvertible {
     let description: String
 }
 
+protocol EDPManagedProcess: AnyObject {
+    var isRunning: Bool { get }
+    func terminate()
+}
+
+extension Process: EDPManagedProcess {}
+
 final class EDPTransportSession {
     let backend: EDPTransportBackend
     let mountpoint: String
     let capabilities: EDPTransportCapabilities
-    private let process: Process
+    private let process: any EDPManagedProcess
 
     init(
         backend: EDPTransportBackend,
         mountpoint: String,
         capabilities: EDPTransportCapabilities,
-        process: Process
+        process: any EDPManagedProcess
     ) {
         self.backend = backend
         self.mountpoint = mountpoint

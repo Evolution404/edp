@@ -59,7 +59,7 @@ done
 [[ -x "${APP}/Contents/MacOS/EDP USB Vault" ]]
 /usr/bin/codesign --verify --strict "${APP}"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.usbvault.app" ]]
-[[ -x "${RAW_ACCESS_APP}/Contents/MacOS/edp-console-exec" ]]
+[[ -x "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" ]]
 /usr/bin/codesign --verify --strict "${RAW_ACCESS_APP}"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${RAW_ACCESS_APP}/Contents/Info.plist")" == "com.edp.usbvault.rawaccess" ]]
 /usr/bin/codesign -dv --verbose=4 "${RAW_ACCESS_APP}" 2>&1 \
@@ -86,7 +86,10 @@ case "${SERVICE_MODE}" in
     ;;
   legacy)
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${LEGACY_DAEMON_PLIST}")" == "true" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "${LEGACY_DAEMON_PLIST}")" == "/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:EDP_RUNTIME_BIN_ROOT' "${LEGACY_DAEMON_PLIST}")" == "/Library/Application Support/EDP USB Vault/bin" ]]
     [[ ! -e "${DAEMON_PLIST}" ]]
+    echo "RESULT=LEGACY_FDA_DAEMON_PACKAGED"
     echo "RESULT=LEGACY_XPC_DAEMON_PACKAGED"
     ;;
   *)
@@ -140,13 +143,16 @@ if /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" | /usr/bin/grep -F 'authopen'
   echo "raw metadata helper unexpectedly contains authopen" >&2
   exit 6
 fi
-/usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
-  | /usr/bin/grep -F 'persistent Full Disk Access broker + inherited raw fd' >/dev/null
-/usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
-  | /usr/bin/grep -F '/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-console-exec' >/dev/null
+/usr/bin/strings "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" \
+  | /usr/bin/grep -F 'persistent Full Disk Access daemon + retained raw fd + inherited transport fd' >/dev/null
+/usr/bin/strings "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" \
+  | /usr/bin/grep -F 'EDP_RAW_LEASE_METADATA_REFUSED' >/dev/null
+/usr/bin/nm -u "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" \
+  | /usr/bin/grep -F '_posix_spawn' >/dev/null
+/usr/bin/codesign -dv --verbose=4 "${RAW_ACCESS_APP}/Contents/MacOS/edp-usbvaultd" 2>&1 \
+  | /usr/bin/grep -F 'Identifier=com.edp.usbvault.rawaccess' >/dev/null
 for BROKER in \
-  "${ROOT}/bin/edp-console-exec" \
-  "${RAW_ACCESS_APP}/Contents/MacOS/edp-console-exec"; do
+  "${ROOT}/bin/edp-console-exec"; do
   /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_TARGET_REFUSED' >/dev/null
   /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_METADATA_REFUSED' >/dev/null
   /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_PROBE_OK' >/dev/null

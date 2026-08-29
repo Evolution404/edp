@@ -72,14 +72,20 @@ private func ensureMacFUSELocalEnablement() throws {
                     && line.contains(moduleID))
         }
     }
-
-    let launchServices = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-    _ = try runUserTool(launchServices, ["-f", "-R", "-trusted", edpMacFUSEHostPath])
-    for modulePath in [genericModule, localModule] {
-        _ = try runUserTool(pluginKit, ["-a", modulePath])
+    let settingsWereEnabled = macFUSEModulesEnabledInSettings()
+    if pluginsWereEnabled && settingsWereEnabled {
+        return
     }
-    for moduleID in edpMacFUSEModuleIDs {
-        _ = try runUserTool(pluginKit, ["-e", "use", "-i", moduleID])
+
+    if !pluginsWereEnabled {
+        let launchServices = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+        _ = try runUserTool(launchServices, ["-f", "-R", "-trusted", edpMacFUSEHostPath])
+        for modulePath in [genericModule, localModule] {
+            _ = try runUserTool(pluginKit, ["-a", modulePath])
+        }
+        for moduleID in edpMacFUSEModuleIDs {
+            _ = try runUserTool(pluginKit, ["-e", "use", "-i", moduleID])
+        }
     }
 
     var enabledModules = [String]()
@@ -1364,6 +1370,38 @@ struct EDPUSBVaultApp: App {
             print("XPC_MOUNT_SMOKE_DETAIL=\(mounted.1)")
             print(mounted.0 ? "RESULT=XPC_MOUNT_SMOKE_OK" : "RESULT=XPC_MOUNT_SMOKE_FAILED")
             exit(mounted.0 ? 0 : 1)
+        }
+
+        if let index = CommandLine.arguments.firstIndex(of: "--xpc-unmount-smoke"),
+           CommandLine.arguments.count > index + 2 {
+            let deviceID = CommandLine.arguments[index + 2]
+            let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            connection.resume()
+            defer { connection.invalidate() }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                fputs("XPC_UNMOUNT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_UNMOUNT_SMOKE_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            let unmountResult = EDPXPCSmokeResult()
+            let unmountSemaphore = DispatchSemaphore(value: 0)
+            proxy.unmountPartition(
+                deviceID: deviceID,
+                partitionType: EDPPartitionKind.exchange.rawValue
+            ) { errorMessage in
+                unmountResult.set(passed: errorMessage == nil, detail: errorMessage ?? "unmount completed")
+                unmountSemaphore.signal()
+            }
+            guard unmountSemaphore.wait(timeout: .now() + 90) == .success else {
+                print("RESULT=XPC_UNMOUNT_SMOKE_TIMEOUT")
+                exit(1)
+            }
+            let unmounted = unmountResult.snapshot()
+            print("XPC_UNMOUNT_SMOKE_DETAIL=\(unmounted.1)")
+            print(unmounted.0 ? "RESULT=XPC_UNMOUNT_SMOKE_OK" : "RESULT=XPC_UNMOUNT_SMOKE_FAILED")
+            exit(unmounted.0 ? 0 : 1)
         }
 
         if CommandLine.arguments.contains("--xpc-diagnostics") {

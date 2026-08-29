@@ -159,7 +159,7 @@ jobs:
           RAW_HELPER='/Applications/EDP USB Vault Raw Access.app'
           DAEMON='/Library/Application Support/EDP USB Vault/bin/edp-vaultctl'
           test -x "${APP}/Contents/MacOS/EDP USB Vault"
-          test -x "${RAW_HELPER}/Contents/MacOS/edp-console-exec"
+          test -x "${RAW_HELPER}/Contents/MacOS/edp-usbvaultd"
           test -x "${DAEMON}"
           test "$(stat -f '%u' "${APP}")" -eq 0
           test "$(stat -f '%u' "${RAW_HELPER}")" -eq 0
@@ -184,7 +184,11 @@ jobs:
           test "${APP_ROOT}" = "${RAW_ROOT}"
           test "${APP_ROOT}" = "${DAEMON_ROOT}"
           echo 'RESULT=CLEAN_INSTALL_CERTIFICATE_FALLBACK_READY'
-          echo 'RESULT=FDA_HELPER_STABLE_SELF_SIGNED_IDENTITY_READY'
+          /usr/bin/codesign -dv --verbose=4 "${RAW_HELPER}/Contents/MacOS/edp-usbvaultd" 2>&1 \
+            | /usr/bin/grep -F 'Identifier=com.edp.usbvault.rawaccess'
+          /bin/launchctl print system/com.edp.usbvault.mountd \
+            | /usr/bin/grep -F '/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd'
+          echo 'RESULT=FDA_DAEMON_STABLE_SELF_SIGNED_IDENTITY_READY'
 
           # The installed product must not depend on the maintainer's signing
           # keychain being present on the end user's Mac. Remove the ephemeral

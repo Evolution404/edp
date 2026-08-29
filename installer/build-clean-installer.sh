@@ -165,8 +165,8 @@ cp "${REPO_ROOT}/product/RawAccessHelper/Info.plist" \
   "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" \
   "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
-cp "${RUNTIME_STAGE}/bin/edp-console-exec" \
-  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-console-exec"
+cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
+  "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-usbvaultd"
 /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
   --identifier com.edp.usbvault.rawaccess \
   "${RAW_ACCESS_APP_STAGE}"
@@ -288,9 +288,14 @@ if [[ "${SERVICE_MODE}" == "legacy" ]]; then
   <string>com.edp.usbvault.mountd</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Library/Application Support/EDP USB Vault/bin/edp-vaultctl</string>
+    <string>/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd</string>
     <string>daemon</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>EDP_RUNTIME_BIN_ROOT</key>
+    <string>/Library/Application Support/EDP USB Vault/bin</string>
+  </dict>
   <key>MachServices</key>
   <dict>
     <key>com.edp.usbvault.xpc</key><true/>

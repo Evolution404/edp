@@ -7,7 +7,7 @@
   <key>CFBundleDisplayName</key>
   <string>EDP USB Vault 磁盘访问</string>
   <key>CFBundleExecutable</key>
-  <string>edp-console-exec</string>
+  <string>edp-usbvaultd</string>
   <key>CFBundleIdentifier</key>
   <string>com.edp.usbvault.rawaccess</string>
   <key>CFBundleInfoDictionaryVersion</key>

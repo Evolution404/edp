@@ -117,6 +117,118 @@ private struct EDPRawMetadataSnapshot {
     let lba12: Data
 }
 
+private final class EDPRawAccessLease: @unchecked Sendable {
+    let deviceID: String
+    let registryEntryID: UInt64
+    let rawPath: String
+    let fd: Int32
+
+    init(deviceID: String, registryEntryID: UInt64, rawPath: String, fd: Int32) {
+        self.deviceID = deviceID
+        self.registryEntryID = registryEntryID
+        self.rawPath = rawPath
+        self.fd = fd
+    }
+
+    deinit {
+        if fd >= 0 { close(fd) }
+    }
+}
+
+private func preadExact(fd: Int32, offset: UInt64, length: Int) throws -> Data {
+    guard offset <= UInt64(Int64.max) else { throw fail("raw read offset exceeds off_t") }
+    var data = Data(count: length)
+    try data.withUnsafeMutableBytes { buffer in
+        guard let base = buffer.baseAddress else { return }
+        var completed = 0
+        while completed < length {
+            let result = Darwin.pread(
+                fd,
+                base.advanced(by: completed),
+                length - completed,
+                off_t(offset + UInt64(completed))
+            )
+            if result < 0 {
+                if errno == EINTR { continue }
+                throw fail("raw pread failed: errno=\(errno)")
+            }
+            guard result > 0 else { throw fail("raw pread reached EOF") }
+            completed += result
+        }
+    }
+    return data
+}
+
+private func wholeUSBMediaStillMatches(_ disk: PhysicalDisk) throws -> Bool {
+    try EDPNativeDeviceDiscovery.allWholeUSBMedia().contains {
+        $0.bsdName == disk.bsdName
+            && $0.size == disk.sizeBytes
+            && $0.vid == disk.vidHex
+            && $0.pid == disk.pidHex
+            && $0.registryEntryID == disk.registryEntryID
+    }
+}
+
+private func openPersistentRawAccess(for disk: PhysicalDisk) throws -> EDPRawAccessLease {
+    guard geteuid() == 0, try wholeUSBMediaStillMatches(disk) else {
+        throw fail("EDP_RAW_LEASE_TARGET_REFUSED")
+    }
+    var before = stat()
+    guard lstat(disk.rawPath, &before) == 0, (before.st_mode & S_IFMT) == S_IFCHR else {
+        throw fail("EDP_RAW_LEASE_PATH_REFUSED")
+    }
+
+    let fd = Darwin.open(disk.rawPath, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+    guard fd >= 0 else {
+        throw fail("EDP_RAW_LEASE_OPEN_FAILED:\(errno)")
+    }
+    do {
+        var opened = stat()
+        var after = stat()
+        guard fstat(fd, &opened) == 0,
+              (opened.st_mode & S_IFMT) == S_IFCHR,
+              lstat(disk.rawPath, &after) == 0,
+              (after.st_mode & S_IFMT) == S_IFCHR,
+              opened.st_rdev == before.st_rdev,
+              opened.st_rdev == after.st_rdev,
+              try wholeUSBMediaStillMatches(disk) else {
+            throw fail("EDP_RAW_LEASE_TYPE_REFUSED")
+        }
+
+        let sector = Int(EDPMetadataProbe.legacySectorByteLength)
+        let lba4 = try preadExact(fd: fd, offset: EDPMetadataProbe.lba4ByteOffset, length: sector)
+        let lba7 = try preadExact(fd: fd, offset: EDPMetadataProbe.lba7ByteOffset, length: sector)
+        let lba11 = try preadExact(fd: fd, offset: EDPVolumeMetadata.lba11ByteOffset, length: sector)
+        guard EDPMetadataProbe.recognizeReservedSectors(
+                  lba4: [UInt8](lba4),
+                  lba7: [UInt8](lba7)
+              ) != nil,
+              let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+                  [UInt8](lba11),
+                  vidHex: disk.vidHex,
+                  pidHex: disk.pidHex,
+                  sizeBytes: disk.sizeBytes
+              ),
+              EDPVolumeMetadata.stablePhysicalDeviceID(
+                  metadataDeviceID: metadataDeviceID,
+                  vidHex: disk.vidHex,
+                  pidHex: disk.pidHex,
+                  sizeBytes: disk.sizeBytes
+              ) == disk.deviceID else {
+            throw fail("EDP_RAW_LEASE_METADATA_REFUSED")
+        }
+        return EDPRawAccessLease(
+            deviceID: disk.deviceID,
+            registryEntryID: disk.registryEntryID,
+            rawPath: disk.rawPath,
+            fd: fd
+        )
+    } catch {
+        close(fd)
+        throw error
+    }
+}
+
 private func runtimeBinaryRoot() -> String {
     if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
         return configuredRoot
@@ -125,15 +237,15 @@ private func runtimeBinaryRoot() -> String {
         .resolvingSymlinksInPath().deletingLastPathComponent().path
 }
 
-private let defaultRawAccessBrokerPath =
-    "/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-console-exec"
+private let defaultRawAccessDaemonPath =
+    "/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd"
 
-private func rawAccessBrokerPath() -> String {
-    if let override = ProcessInfo.processInfo.environment["EDP_RAW_ACCESS_BROKER"],
+private func rawAccessDaemonPath() -> String {
+    if let override = ProcessInfo.processInfo.environment["EDP_RAW_ACCESS_DAEMON"],
        !override.isEmpty {
         return override
     }
-    return defaultRawAccessBrokerPath
+    return defaultRawAccessDaemonPath
 }
 
 private func installedProductVersion() -> String {
@@ -152,6 +264,7 @@ private func installedProductVersion() -> String {
 private func isRawAccessPermissionFailure(_ error: Error) -> Bool {
     let detail = String(describing: error)
     return detail.contains("EDP_RAW_BROKER_OPEN_FAILED:1")
+        || detail.contains("EDP_RAW_LEASE_OPEN_FAILED:1")
         || detail.contains("Operation not permitted")
         || detail.contains("操作不被允许")
 }
@@ -288,23 +401,95 @@ private func consoleIdentity() throws -> (uid_t, gid_t) {
     return (status.st_uid, status.st_gid)
 }
 
-private func configureConsoleProcess(
-    _ process: Process,
+private final class EDPSpawnedProcess: EDPManagedProcess, @unchecked Sendable {
+    private let lock = NSLock()
+    private var pid: pid_t
+    private var reaped = false
+
+    init(pid: pid_t) {
+        self.pid = pid
+    }
+
+    var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if reaped { return false }
+        var status: Int32 = 0
+        let result = waitpid(pid, &status, WNOHANG)
+        if result == 0 { return true }
+        if result == pid || (result < 0 && errno == ECHILD) {
+            reaped = true
+            return false
+        }
+        return true
+    }
+
+    func terminate() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !reaped else { return }
+        _ = kill(pid, SIGTERM)
+    }
+}
+
+private func withMutableCStringArray<R>(
+    _ strings: [String],
+    _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) throws -> R
+) rethrows -> R {
+    let pointers = strings.map { strdup($0) }
+    defer { pointers.forEach { free($0) } }
+    var values = pointers + [nil]
+    return try values.withUnsafeMutableBufferPointer { buffer in
+        try body(buffer.baseAddress!)
+    }
+}
+
+private func spawnConsoleTransport(
     binaryRoot: String,
     identity: (uid_t, gid_t),
     executable: String,
     arguments: [String],
-    rawDevice: String? = nil
-) {
-    let launcher = rawDevice == nil
-        ? binaryRoot + "/edp-console-exec"
-        : rawAccessBrokerPath()
-    process.executableURL = URL(fileURLWithPath: launcher)
-    var launcherArguments = [String(identity.0), String(identity.1)]
-    if let rawDevice {
-        launcherArguments += ["--raw-device", rawDevice]
+    environment: [String: String],
+    rawFD: Int32,
+    stdinFD: Int32,
+    logFD: Int32
+) throws -> EDPSpawnedProcess {
+    let launcher = binaryRoot + "/edp-console-exec"
+    let argv = [launcher, String(identity.0), String(identity.1), "--", executable] + arguments
+    let env = environment.map { "\($0.key)=\($0.value)" }
+
+    var actions: posix_spawn_file_actions_t?
+    guard posix_spawn_file_actions_init(&actions) == 0 else {
+        throw fail("posix_spawn_file_actions_init failed")
     }
-    process.arguments = launcherArguments + ["--", executable] + arguments
+    defer { posix_spawn_file_actions_destroy(&actions) }
+    for (source, destination) in [(stdinFD, STDIN_FILENO), (logFD, STDOUT_FILENO), (logFD, STDERR_FILENO), (rawFD, 3)] {
+        let rc = posix_spawn_file_actions_adddup2(&actions, source, destination)
+        guard rc == 0 else { throw fail("posix_spawn dup2 failed: \(rc)") }
+    }
+
+    var attributes: posix_spawnattr_t?
+    guard posix_spawnattr_init(&attributes) == 0 else {
+        throw fail("posix_spawnattr_init failed")
+    }
+    defer { posix_spawnattr_destroy(&attributes) }
+    let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
+    guard posix_spawnattr_setflags(&attributes, flags) == 0 else {
+        throw fail("posix_spawnattr_setflags failed")
+    }
+
+    var child: pid_t = 0
+    let status = launcher.withCString { executablePath in
+        withMutableCStringArray(argv) { argvPointer in
+            withMutableCStringArray(env) { envPointer in
+                posix_spawn(&child, executablePath, &actions, &attributes, argvPointer, envPointer)
+            }
+        }
+    }
+    guard status == 0 else {
+        throw fail("posix_spawn transport failed: \(status) \(String(cString: strerror(status)))")
+    }
+    return EDPSpawnedProcess(pid: child)
 }
 
 private func safeName(_ value: String) -> String {
@@ -458,7 +643,8 @@ private final class MountManager {
     func mount(
         disk: PhysicalDisk,
         partitionType: UInt32,
-        password: [UInt8]
+        password: [UInt8],
+        rawFD: Int32
     ) throws {
         let runtimeStatus = try EDPTransportRuntimePolicy.verifySelectedRuntime(
             requireFinderHidden: true
@@ -510,29 +696,26 @@ private final class MountManager {
             ? EDPMacFUSEScratchImageCleanup.captureBaseline()
             : nil
         let passwordPipe = Pipe()
-        let transportProcess = Process()
-        configureConsoleProcess(
-            transportProcess,
-            binaryRoot: binaryRoot,
-            identity: identity,
-            executable: launchSpec.executable,
-            arguments: launchSpec.arguments,
-            rawDevice: disk.rawPath
-        )
-        transportProcess.standardInput = passwordPipe
         let logPath = sessionRoot + "/\(suffix).bridge.log"
         try FileManager.default.createDirectory(atPath: sessionRoot, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: logPath, contents: nil)
         let log = try FileHandle(forWritingTo: URL(fileURLWithPath: logPath))
-        transportProcess.standardOutput = log
-        transportProcess.standardError = log
         var environment = ProcessInfo.processInfo.environment
         environment["DYLD_LIBRARY_PATH"] = binaryRoot
         for (key, value) in launchSpec.environment {
             environment[key] = value
         }
-        transportProcess.environment = environment
-        try transportProcess.run()
+        let transportProcess = try spawnConsoleTransport(
+            binaryRoot: binaryRoot,
+            identity: identity,
+            executable: launchSpec.executable,
+            arguments: launchSpec.arguments,
+            environment: environment,
+            rawFD: rawFD,
+            stdinFD: passwordPipe.fileHandleForReading.fileDescriptor,
+            logFD: log.fileDescriptor
+        )
+        try passwordPipe.fileHandleForReading.close()
         passwordPipe.fileHandleForWriting.write(Data(password))
         try passwordPipe.fileHandleForWriting.close()
 
@@ -889,6 +1072,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
+    private var rawAccessLeases = [String: EDPRawAccessLease]()
     private var rawAccessReadyByDeviceID = [String: Bool]()
     private var rawAccessErrorsByDeviceID = [String: String]()
     private var lastDiscoveryDiagnostics = ["discovery_not_started"]
@@ -954,10 +1138,20 @@ private final class EDPDaemonController: @unchecked Sendable {
         }
     }
 
+    private func rawAccessLeaseLocked(for disk: PhysicalDisk) -> EDPRawAccessLease? {
+        guard let lease = rawAccessLeases[disk.deviceID],
+              lease.registryEntryID == disk.registryEntryID,
+              lease.rawPath == disk.rawPath else {
+            return nil
+        }
+        return lease
+    }
+
     private func rawAccessProbeLocked(for disk: PhysicalDisk, temporarilyUnmount: Bool) throws {
-        let broker = rawAccessBrokerPath()
-        guard FileManager.default.isExecutableFile(atPath: broker) else {
-            throw fail("EDP 磁盘访问组件未安装：\(broker)")
+        if rawAccessLeaseLocked(for: disk) != nil {
+            rawAccessReadyByDeviceID[disk.deviceID] = true
+            rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
+            return
         }
         let bootBSD = try? bootPartitionBSD(for: disk)
         let bootWasMounted = bootBSD.flatMap { EDPNativeMountTable.mountPoint(forBSD: $0) } != nil
@@ -973,17 +1167,25 @@ private final class EDPDaemonController: @unchecked Sendable {
             }
         }
         do {
-            let result = try run(broker, ["--probe-raw-device", disk.rawPath])
-            guard result.stdoutText.contains("EDP_RAW_BROKER_PROBE_OK") else {
-                throw fail("EDP 磁盘访问组件返回了未知结果")
-            }
+            let lease = try openPersistentRawAccess(for: disk)
+            rawAccessLeases[disk.deviceID] = lease
             rawAccessReadyByDeviceID[disk.deviceID] = true
             rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
         } catch {
+            rawAccessLeases.removeValue(forKey: disk.deviceID)
             rawAccessReadyByDeviceID[disk.deviceID] = false
             rawAccessErrorsByDeviceID[disk.deviceID] = String(describing: error)
             throw userFacingRawAccessError(error)
         }
+    }
+
+    private func requireRawAccessLeaseLocked(for disk: PhysicalDisk) throws -> EDPRawAccessLease {
+        if let lease = rawAccessLeaseLocked(for: disk) { return lease }
+        try rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
+        guard let lease = rawAccessLeaseLocked(for: disk) else {
+            throw fail("EDP raw access lease was not retained")
+        }
+        return lease
     }
 
     private func bootPartitionBSD(for disk: PhysicalDisk) throws -> String {
@@ -1047,7 +1249,13 @@ private final class EDPDaemonController: @unchecked Sendable {
                     ? ["no whole USB media scanned"]
                     : scanDiagnostics
                 connectedDisks = disks
-                for disk in disks where rawAccessReadyByDeviceID[disk.deviceID] == nil {
+                let currentByDeviceID = Dictionary(uniqueKeysWithValues: disks.map { ($0.deviceID, $0) })
+                rawAccessLeases = rawAccessLeases.filter { deviceID, lease in
+                    guard let disk = currentByDeviceID[deviceID] else { return false }
+                    return lease.registryEntryID == disk.registryEntryID && lease.rawPath == disk.rawPath
+                }
+                for disk in disks where rawAccessReadyByDeviceID[disk.deviceID] == nil
+                    || rawAccessLeaseLocked(for: disk) == nil {
                     do {
                         try rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
                     } catch {
@@ -1120,10 +1328,12 @@ private final class EDPDaemonController: @unchecked Sendable {
                                 partitionType: type
                             )
                             defer { secureZero(&password) }
+                            let rawLease = try requireRawAccessLeaseLocked(for: disk)
                             try manager.mount(
                                 disk: disk,
                                 partitionType: type,
-                                password: password
+                                password: password,
+                                rawFD: rawLease.fd
                             )
                             rawAccessReadyByDeviceID[disk.deviceID] = true
                             rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
@@ -1138,7 +1348,9 @@ private final class EDPDaemonController: @unchecked Sendable {
                             restoreBootPolicy(disk: disk)
                             NSLog("EDP auto-mount failed for %@ type %u; automatic retry paused until explicit user action or device reconnect: %@", disk.deviceID, type, String(describing: error))
                             let detail = String(describing: error)
-                            if detail.contains("EDP_RAW_BROKER_") || isRawAccessPermissionFailure(error) {
+                            if detail.contains("EDP_RAW_BROKER_")
+                                || detail.contains("EDP_RAW_LEASE_")
+                                || isRawAccessPermissionFailure(error) {
                                 rawAccessReadyByDeviceID[disk.deviceID] = false
                                 rawAccessErrorsByDeviceID[disk.deviceID] = detail
                             }
@@ -1298,17 +1510,21 @@ private final class EDPDaemonController: @unchecked Sendable {
         )
         defer { secureZero(&password) }
         do {
+            let rawLease = try requireRawAccessLeaseLocked(for: disk)
             try manager.mount(
                 disk: disk,
                 partitionType: partitionType,
-                password: password
+                password: password,
+                rawFD: rawLease.fd
             )
             rawAccessReadyByDeviceID[disk.deviceID] = true
             rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
         } catch {
             restoreBootPolicy(disk: disk)
             let detail = String(describing: error)
-            if detail.contains("EDP_RAW_BROKER_") || isRawAccessPermissionFailure(error) {
+            if detail.contains("EDP_RAW_BROKER_")
+                || detail.contains("EDP_RAW_LEASE_")
+                || isRawAccessPermissionFailure(error) {
                 rawAccessReadyByDeviceID[disk.deviceID] = false
                 rawAccessErrorsByDeviceID[disk.deviceID] = detail
             }
@@ -1429,8 +1645,8 @@ private final class EDPDaemonController: @unchecked Sendable {
                 "mounts": manager.mountedSummaries(),
                 "failedMounts": failedMounts,
                 "manualUnmountSuppressions": manualUnmountSuppressions.sorted(),
-                "rawAccessMode": "persistent Full Disk Access broker + inherited raw fd",
-                "rawAccessBroker": rawAccessBrokerPath(),
+                "rawAccessMode": "persistent Full Disk Access daemon + retained raw fd + inherited transport fd",
+                "rawAccessDaemon": rawAccessDaemonPath(),
                 "rawAccessReadyDeviceIDs": rawAccessReadyByDeviceID
                     .filter { $0.value }.map(\.key).sorted(),
                 "rawAccessErrors": rawAccessErrorsByDeviceID,
@@ -1651,11 +1867,11 @@ private func doctor() -> Int32 {
         print("TOOL_\(tool.uppercased().replacingOccurrences(of: ".", with: "_"))=\(present ? "OK" : "MISSING")")
         ok = ok && present
     }
-    let rawBroker = rawAccessBrokerPath()
-    let rawBrokerPresent = FileManager.default.isExecutableFile(atPath: rawBroker)
-    print("RAW_ACCESS_BROKER=\(rawBrokerPresent ? rawBroker : "MISSING")")
-    print("RAW_ACCESS_MODEL=FULL_DISK_ACCESS")
-    ok = ok && rawBrokerPresent
+    let rawDaemon = rawAccessDaemonPath()
+    let rawDaemonPresent = FileManager.default.isExecutableFile(atPath: rawDaemon)
+    print("RAW_ACCESS_DAEMON=\(rawDaemonPresent ? rawDaemon : "MISSING")")
+    print("RAW_ACCESS_MODEL=FULL_DISK_ACCESS_RETAINED_FD")
+    ok = ok && rawDaemonPresent
     if geteuid() == 0 {
         let count = (try? discoverEDPDisks().count) ?? 0
         print("EDP_DISKS=\(count)")
