@@ -38,13 +38,13 @@ LBA0-13 备份 → LBA0 最后写 → `sync` → 逐扇回读校验。GUI 不再
 `EDPOpenNative` 与 `edp-usb-vault` 统一使用同一张长期 self-signed Code Signing 证书：
 
 ```text
-Identity: EDP Unified Local Code Signing
-Certificate SHA-256: EA97420A16432AAB05E6E775E8E1698FD9A0E33B3F65CA66186A8AA683850F85
-Certificate root (DR SHA-1): fda987d4d26950461a1f1810b3a66eb8bf8724c3
-Validity: 2026-08-29 .. 2036-08-26
+Identity: EDP Project Code Signing
+Certificate SHA-256: D9142CE44ABCB5DD662DF9621D48A88C88EDBCB0392D3C74EBACBB1292B7B5A7
+Certificate leaf/root SHA-1: 040b5488fb2b6c02b0786e76b674cb4460658ca2
+Validity: 2026-08-29 .. 2046-08-24
 ```
 
-私钥只保存在当前用户 `login.keychain-db`，仓库不保存 PEM/P12。原生 App 和 Raw Broker 使用 Manual Signing，XPC 双向 requirement 固定 bundle identifier + 该 certificate root，不再依赖 Apple Development Team ID。
+私钥只保存在当前用户 `login.keychain-db`，仓库不保存 PEM/P12。原生 App 和 Raw Broker 使用 Manual Signing，XPC 双向 requirement 固定 bundle identifier + 精确同一 leaf certificate；Broker 还校验 App 固定安装路径，Broker 启动时校验自身固定 privileged-helper 路径、root owner 和 group/world 不可写，不再依赖 Apple Development Team ID。
 
 规范本机构建入口：
 
@@ -53,6 +53,14 @@ native/EDPOpenNative/Scripts/build-native.sh
 ```
 
 该脚本会在构建前校验证书 SHA-256、私钥可用性和 certificate root，防止同名错误证书被误用；Xcode 的既有 Rust pre-build phase 也会调用同一校验脚本，因此直接在 Xcode 点 Build 同样受此约束。
+
+XPC peer signing contract 可单独验证：
+
+```bash
+native/EDPOpenNative/Scripts/verify-peer-signing-contract.sh
+```
+
+该测试不会修改用户 trust store，也不会把临时 keychain 加入 SearchList；它会生成一张不导入钥匙串的临时 self-signed code-signing certificate，用不同 leaf SHA-1 对拍 requirement，确认固定 leaf requirement 不会接受其他自签证书。
 
 ## 参照与对拍基准
 

@@ -62,12 +62,14 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 
 - [x] 独立 Swift broker target：`EDPOpenRawBroker`
 - [x] system LaunchDaemon / stable install path 已实机安装：`/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker`，Mach service 按需由已签名 App 拉起
-- [x] stable certificate-backed signing identity：App=`com.evolution404.edpopen`、Broker=`com.evolution404.edpopen.rawbroker`，统一使用 `EDP Unified Local Code Signing` 自签证书 + Hardened Runtime；certificate root=`fda987d4d26950461a1f1810b3a66eb8bf8724c3`，DR 均非 CDHash
+- [x] stable certificate-backed signing identity：App=`com.evolution404.edpopen`、Broker=`com.evolution404.edpopen.rawbroker`，统一使用 `EDP Project Code Signing` 自签证书 + Hardened Runtime；certificate leaf/root SHA-1=`040b5488fb2b6c02b0786e76b674cb4460658ca2`，DR 均非 CDHash
 - [x] FDA readiness probe 代码：仅 `open(O_RDONLY|O_CLOEXEC) → fstat → close`，不读取扇区
 - [x] Disk Arbitration + IOKit external/physical/USB/whole-disk gate
 - [ ] EDP metadata verification before exposing device session
 - [x] narrow NSXPC IPC, no arbitrary path API；broker 只接受数字 `diskN`
-- [x] App/broker 双向 `setCodeSigningRequirement()`，绑定固定 bundle identifier + 统一 EDP self-signed certificate root；不依赖 Apple Team ID
+- [x] broker peer/process hardening：App 必须来自固定 `/Applications/EDPOpen.app/Contents/MacOS/EDPOpen`；Broker 必须从固定 privileged-helper 路径以 root 启动，且 broker executable 必须 root-owned、group/world 不可写
+- [x] peer signing contract：正式 leaf requirement 通过；随机另一张 self-signed code-signing certificate 的不同 leaf SHA-1 被拒绝；测试不修改用户 trust store / DefaultKeychain / SearchList
+- [x] App/broker 双向 `setCodeSigningRequirement()`，绑定固定 bundle identifier + 精确同一 EDP self-signed leaf certificate；不依赖 Apple Team ID
 - [ ] 同一 open fd/session 复用
 - [x] broker 实时 IOKit + Disk Arbitration 枚举 external physical USB whole disk；App 不再使用视觉 sample 的 stale `diskN` 作为权限目标
 - [x] 原生 FDA 状态卡：启动只 `ping + enumerate`，raw `open/fstat/close` 仅由用户明确点击“检测当前盘权限”触发
