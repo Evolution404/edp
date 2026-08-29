@@ -93,8 +93,9 @@ jobs:
             product/EDPXPCProtocol.swift \
             product/App/EDPUSBVaultApp.swift \
             -o "${RUNNER_TEMP}/EDPUSBVaultAcceptanceApp"
-          strings "${RUNNER_TEMP}/EDPUSBVaultAcceptanceApp" | grep -Fq 'RESULT=XPC_POLICY_SMOKE_OK'
-          strings "${RUNNER_TEMP}/EDPUSBVaultAcceptanceApp" | grep -Fq 'SNAPSHOT_PARTITION='
+          strings "${RUNNER_TEMP}/EDPUSBVaultAcceptanceApp" > "${RUNNER_TEMP}/acceptance-app.strings"
+          grep -Fq 'RESULT=XPC_POLICY_SMOKE_OK' "${RUNNER_TEMP}/acceptance-app.strings"
+          grep -Fq 'SNAPSHOT_PARTITION=' "${RUNNER_TEMP}/acceptance-app.strings"
           echo 'RESULT=FIRST_INSTALL_ACCEPTANCE_APP_STRICT_BUILD_OK'
 
       - name: Verify documented canonical order
