@@ -62,7 +62,7 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 
 - [x] 独立 Swift broker target：`EDPOpenRawBroker`
 - [x] system LaunchDaemon plist / 固定目标路径已定义；尚未正式安装验证
-- [ ] stable certificate-backed signing identity（下一步实机签名）
+- [x] stable certificate-backed signing identity：App=`com.evolution404.edpopen`、Broker=`com.evolution404.edpopen.rawbroker`，Team=`W82WPH8HY7`，Apple Development + Hardened Runtime，DR 均非 CDHash
 - [x] FDA readiness probe 代码：仅 `open(O_RDONLY|O_CLOEXEC) → fstat → close`，不读取扇区
 - [x] Disk Arbitration + IOKit external/physical/USB/whole-disk gate
 - [ ] EDP metadata verification before exposing device session
