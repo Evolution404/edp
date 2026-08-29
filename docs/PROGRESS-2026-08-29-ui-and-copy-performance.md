@@ -146,6 +146,11 @@
 - 已实现最小自动恢复设计：新增 `retryTransientAutomaticMounts` XPC，只清除当前连接设备、global/partition autoMount 开启、未被用户 manual-unmount suppression 的 type 2/4，并且仅当失败文本包含 `File system extension not found` 或 `File system extension not enabled` 时清锁；密码错误、raw access 错误、其他 mount 错误绝不自动重试。
 - EDP Drive UI 在 `ensureMacFUSELocalEnablement()` 成功且 runtime ready 后只触发一次 transient retry；Service 随后走既有 `reconcile()`，不引入周期自动重试。
 - 新协议/Service/UI 已通过 Swift 6 `-warnings-as-errors` 完整编译，CI ratchet 已加入 transient retry 边界约束。
+- `02e9ad883f9b4219c4d38a7d52e96fb4ceb933a8` 已提交/push，exact-head Drive CI run `33256361893` success。
+- 真实安装复现表明失败窗口不仅来自 `enabledModules.plist`：即使该 plist 已包含 macFUSE IDs，macFUSE 组合安装后的 ExtensionKit/FSKit 注册仍可能尚未稳定，Service 仍可先得到 `not found/not enabled`；因此 bounded transient retry 仍必要。
+- 初次启动 UI 未自动恢复是因为用户此前持久化 `com.edp.drive.service.desired-running=false`；这是正确的“用户明确停止”语义，App 不应绕过该意图偷偷连接 Service。
+- 将该 preference 恢复为 true（等价于用户点击“启动”的第一步）并重新打开已安装 `02e9ad8` UI 后，真实 Lexar 在约 10 s 内无需手工 mount 即恢复 type 2/type 4，可写 ExFAT 两区均 mounted，`failedMounts` 清空；证明 transient retry 核心逻辑实机 PASS。
+- follow-up 已把同一 retry 接入 `startService()` health-check success 路径；因此“用户曾 Stop -> 后续显式 Start”也能在尊重用户意图的前提下恢复 transient FSKit 自动挂载失败。
 
 ## 下一步立即执行
 

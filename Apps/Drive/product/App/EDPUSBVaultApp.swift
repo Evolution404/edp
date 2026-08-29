@@ -376,6 +376,7 @@ final class EDPVaultViewModel: ObservableObject {
                 self.serviceOperationID = nil
                 self.isBusy = false
                 self.serviceStatus = "运行中"
+                self.retryTransientAutomaticMounts()
                 self.refresh()
             }
         }
