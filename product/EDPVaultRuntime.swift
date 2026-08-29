@@ -165,6 +165,17 @@ private func preadExact(fd: Int32, offset: UInt64, length: Int) throws -> Data {
     return data
 }
 
+private func rawMetadataSnapshot(fd: Int32) throws -> EDPRawMetadataSnapshot {
+    guard fd >= 0 else { throw fail("EDP raw access lease is closed") }
+    let sector = Int(EDPMetadataProbe.legacySectorByteLength)
+    return EDPRawMetadataSnapshot(
+        lba4: try preadExact(fd: fd, offset: EDPMetadataProbe.lba4ByteOffset, length: sector),
+        lba7: try preadExact(fd: fd, offset: EDPMetadataProbe.lba7ByteOffset, length: sector),
+        lba11: try preadExact(fd: fd, offset: EDPVolumeMetadata.lba11ByteOffset, length: sector),
+        lba12: try preadExact(fd: fd, offset: EDPVolumeMetadata.lba12ByteOffset, length: sector)
+    )
+}
+
 private func wholeUSBMediaStillMatches(_ disk: PhysicalDisk) throws -> Bool {
     try EDPNativeDeviceDiscovery.allWholeUSBMedia().contains {
         $0.bsdName == disk.bsdName
@@ -1018,9 +1029,15 @@ private func selectDisk(_ argument: String?, from disks: [PhysicalDisk]) throws 
 
 private func verifiedPartitionTypes(
     disk: PhysicalDisk,
-    password: [UInt8]
+    password: [UInt8],
+    rawFD: Int32? = nil
 ) throws -> [UInt32] {
-    let metadata = try rawMetadataSnapshot(for: disk.rawPath)
+    let metadata: EDPRawMetadataSnapshot
+    if let rawFD {
+        metadata = try rawMetadataSnapshot(fd: rawFD)
+    } else {
+        metadata = try rawMetadataSnapshot(for: disk.rawPath)
+    }
     guard let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
         [UInt8](metadata.lba11),
         vidHex: disk.vidHex,
@@ -1042,14 +1059,16 @@ private func verifiedPartitionTypes(
 private func verifyPartitionType(
     disk: PhysicalDisk,
     partitionType: UInt32,
-    password: [UInt8]
+    password: [UInt8],
+    rawFD: Int32? = nil
 ) throws {
     guard [UInt32(2), 4].contains(partitionType) else {
         throw fail("password validation is only valid for partition 2 or 4")
     }
     guard try verifiedPartitionTypes(
         disk: disk,
-        password: password
+        password: password,
+        rawFD: rawFD
     ).contains(partitionType) else {
         throw fail("password did not unlock partition \(partitionType)")
     }
@@ -1481,21 +1500,12 @@ private final class EDPDaemonController: @unchecked Sendable {
             guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 throw fail("EDP device is no longer connected")
             }
-            let bootBSD = try bootPartitionBSD(for: disk)
-            let bootWasMounted = EDPNativeMountTable.mountPoint(forBSD: bootBSD) != nil
-            if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
-                try diskArbitration.unmountWhole(disk.bsdName)
-            }
-            defer {
-                if bootWasMounted,
-                   EDPNativeMountTable.mountPoint(forBSD: bootBSD) == nil {
-                    _ = try? diskArbitration.mount(bootBSD)
-                }
-            }
+            let rawLease = try requireRawAccessLeaseLocked(for: disk)
             try verifyPartitionType(
                 disk: disk,
                 partitionType: partitionType,
-                password: password
+                password: password,
+                rawFD: rawLease.fd
             )
             try store.put(
                 deviceID: deviceID,
