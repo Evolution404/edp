@@ -112,7 +112,8 @@ int main(int argc, char **argv) {
     }
     char *direct_argv[] = { argv[0], "EDP_ENCRYPTED_FIXTURE", argv[3], argv[4], NULL };
     int result = edp_direct_raw_main(4, direct_argv);
-    (void)edp_rw_sync(g_edp_handle);
+    /* edp_rw_close owns the final strong durability barrier, matching the
+     * production inherited-raw-fd adapter. */
     edp_rw_close(g_edp_handle);
     g_edp_handle = NULL;
     g_mountpoint = NULL;

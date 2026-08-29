@@ -576,12 +576,25 @@ private func spawnConsoleTransport(
     let argv = [launcher, String(identity.0), String(identity.1), "--", executable] + arguments
     let env = environment.map { "\($0.key)=\($0.value)" }
 
+    var inheritedRawFD = rawFD
+    if rawFD == 3 {
+        inheritedRawFD = fcntl(rawFD, F_DUPFD_CLOEXEC, 64)
+        guard inheritedRawFD >= 0 else {
+            throw fail("cannot stage raw fd 3 for child inheritance: errno=\(errno)")
+        }
+    }
+    defer {
+        if inheritedRawFD != rawFD {
+            close(inheritedRawFD)
+        }
+    }
+
     var actions: posix_spawn_file_actions_t?
     guard posix_spawn_file_actions_init(&actions) == 0 else {
         throw fail("posix_spawn_file_actions_init failed")
     }
     defer { posix_spawn_file_actions_destroy(&actions) }
-    for (source, destination) in [(stdinFD, STDIN_FILENO), (logFD, STDOUT_FILENO), (logFD, STDERR_FILENO), (rawFD, 3)] {
+    for (source, destination) in [(stdinFD, STDIN_FILENO), (logFD, STDOUT_FILENO), (logFD, STDERR_FILENO), (inheritedRawFD, 3)] {
         let rc = posix_spawn_file_actions_adddup2(&actions, source, destination)
         guard rc == 0 else { throw fail("posix_spawn dup2 failed: \(rc)") }
     }

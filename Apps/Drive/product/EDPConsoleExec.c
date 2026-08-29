@@ -308,6 +308,26 @@ static int install_raw_fd(int raw_fd) {
     return 0;
 }
 
+static int prepare_inherited_raw_fd(void) {
+    int descriptor_flags = fcntl(3, F_GETFD);
+    struct stat status;
+    if (descriptor_flags < 0 || fstat(3, &status) != 0 || !S_ISCHR(status.st_mode)) {
+        fprintf(stderr, "EDP_CONSOLE_EXEC_INHERITED_RAW_INVALID:%d\n", errno);
+        return -1;
+    }
+    if (!fd_has_edp_metadata(3)) {
+        fprintf(stderr, "EDP_CONSOLE_EXEC_INHERITED_RAW_METADATA_REFUSED\n");
+        errno = EPERM;
+        return -1;
+    }
+    if ((descriptor_flags & FD_CLOEXEC) != 0 &&
+        fcntl(3, F_SETFD, descriptor_flags & ~FD_CLOEXEC) != 0) {
+        fprintf(stderr, "EDP_CONSOLE_EXEC_INHERITED_RAW_INHERIT_FAILED:%d\n", errno);
+        return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (geteuid() != 0) {
         fprintf(stderr, "EDP_CONSOLE_EXEC_REQUIRES_ROOT\n");
@@ -368,6 +388,8 @@ int main(int argc, char **argv) {
     if (raw_device) {
         raw_fd = open_validated_edp_raw(raw_device);
         if (raw_fd < 0 || install_raw_fd(raw_fd) != 0) return 77;
+    } else if (is_raw_bridge_executable(resolved) && prepare_inherited_raw_fd() != 0) {
+        return 77;
     }
 
     uid_t uid = (uid_t)uid_value;

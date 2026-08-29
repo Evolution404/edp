@@ -8,9 +8,9 @@
 - Phase A：完成
 - Phase B：代码完成，已本地 Release build/安装，待用户视觉验收
 - Phase C：代码完成，已 Swift 6 `-warnings-as-errors` 编译，待本地安装交互验收
-- Phase D：完成调用链归因与真实 fsync 延迟基线；当前继续补 A/B 观测
-- Phase E：进行中，已完成 lightweight sync / final durability barrier 第一版代码，待编译与真实盘验证
-- Phase F：未开始
+- Phase D：完成，已用 Direct MFMount Local fixture 精确验证 FUSE write/fsync/flush 行为并加入汇总 instrumentation
+- Phase E：进行中，sync 分层、fixture 验证与本地编译/golden 已完成；真实盘 A/B 前发现并修复 cold-start fd3 继承 blocker
+- Phase F：待安装候选 App/runtime 后开始真实 Lexar A/B
 - Phase G：未开始
 
 ## 已确认事实
@@ -60,12 +60,26 @@
   - `FUSE_FSYNC` 继续进入普通 `fsync`；transport 关闭时保留最终强 durability。
 - 性能候选版已补低噪声观测：移除每个 FUSE 请求的 `DIRECT_OPCODE` 热路径日志，改为 transport 退出时输出 `DIRECT_IO_SUMMARY`（write/fsync/flush 计数和 fsync 累计/最大耗时）；最终强 barrier 输出 `EDP_FINAL_DURABILITY elapsed_us=...`。
 - native-core golden 已通过，包含 boot/encrypted block 对 `synchronize()` 与 `forceDurability()` 两条独立转发语义的回归断言；macFUSE Local transport 已用 Swift 6 / C `-Werror` 成功构建。
-- 当前这些性能修改尚未提交；下一步先跑完整 Drive 本地编译 gate，再形成独立性能 commit。真实盘 A/B 需要把候选 runtime 安装到受保护的 `/Library/Application Support/EDP Drive/bin` 后进行。
+- 性能修改已提交为 `71922cc2e7d1bc1b6615b35110c639e1d0dfd7f1`，exact-head EDP Drive CI run `33253069407` success。
+
+## 2026-08-29 20:48 后继续推进
+
+- 新建 32 MiB 临时加密 fixture，通过 Direct MFMount + macFUSE Local FSKit 挂载到 `/tmp/edp-direct-sync-fixture/mount`；整个实验未使用真实 U 盘数据。
+- fixture 实测 10 次 write+close 与 3 次 write+`fsync()`：`writes=13`、`flush=0`、`fsync=6`。这说明当前 macFUSE Local 下 close 不产生 `FUSE_FLUSH`，而一次用户态 `fsync()` 会产生两次 `FUSE_FSYNC`。
+- fixture 延迟：close-only median 约 4.4 ms，显式 fsync median 约 6.5 ms。该 backing 是临时文件，只用于协议语义确认，不代表 USB 物理盘性能。
+- 因此根因判断进一步收敛：Finder 首写延迟的关键不是 `FUSE_FLUSH`，而是旧实现把每个 `FUSE_FSYNC` 都升级成 `fsync + F_FULLFSYNC`；新的 regular sync / final durability 分层仍是正确优化方向。
+- 准备真实 Lexar A/B 时，XPC diagnostics 暴露 cold-start blocker：Service 冷启动自动挂载 type 2/4 均失败，错误 `EDP_DIRECT_INVALID_INHERITED_RAW_FD`。
+- 根因已定位：raw lease 用 `O_CLOEXEC` 打开；冷启动时 retained raw fd 可能正好是 3。`posix_spawn_file_actions_adddup2(3, 3)` 不会可靠清除 CLOEXEC，随后 `edp-console-exec -> execv(transport)` 时 fd3 被关闭。Service 运行久后 raw fd >3 时 `dup2(N,3)` 会清 CLOEXEC，所以此前表现为非稳定复现。
+- 已实施双层修复：
+  - `spawnConsoleTransport` 遇到 `rawFD == 3` 时先 `F_DUPFD_CLOEXEC` 到高位 staging fd，再通过 spawn file action `dup2(staged,3)`；
+  - `EDPConsoleExec.c` 在二次 `execv` 前验证 inherited fd3 为字符设备且具有 EDP metadata，并显式清 `FD_CLOEXEC`。
+- fd3 修复已通过 Swift 6 `-warnings-as-errors` Service 编译与 C `-Wall -Wextra -Werror` console-exec 编译；Drive CI ratchet 已加入对应约束。
 
 ## 下一步立即执行
 
-1. 跑 native-core golden、Swift 6 `-warnings-as-errors`、macFUSE Local transport build，修正任何同步接口回归。
-2. 给 FLUSH / FSYNC / final durability 增加低噪声计数/耗时观测，确认 Finder 首写阶段实际请求分布。
-3. 安装性能候选版并用当前 Lexar 真实交换区做相同 fsync probe 和约 600 MB Finder 复制 A/B。
-4. 回归 TextEdit 原子保存、多文件复制删除、交换区/保密区卸载重挂、安全推出、Service Stop/Start/Restart。
-5. 性能修复独立 commit + push，检查 exact-head Drive CI，并实时更新本文件/HANDOFF。
+1. 提交/push fd3 cold-start 修复并等待 exact-head EDP Drive CI。
+2. 构建候选 App/runtime，先验证 Service 冷启动自动挂载不再出现 `EDP_DIRECT_INVALID_INHERITED_RAW_FD`。
+3. 安装候选 runtime 后对真实 Lexar 重新挂载交换区/保密区。
+4. 复测 Finder 复制进度条启动延迟、实际吞吐和 `DIRECT_IO_SUMMARY`。
+5. 回归 TextEdit 原子保存、多文件复制删除、交换区/保密区卸载重挂、安全推出、Service Stop/Start/Restart。
+6. exact-head 全绿后更新 HANDOFF/STATUS 并收口工作树。

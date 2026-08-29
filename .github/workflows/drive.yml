@@ -56,6 +56,9 @@ jobs:
           grep -Fq 'service-stop' Apps/Drive/scripts/first-install-acceptance.sh
           grep -Fq 'service-start' Apps/Drive/scripts/first-install-acceptance.sh
           grep -Fq 'service-restart' Apps/Drive/scripts/first-install-acceptance.sh
+          grep -Fq 'F_DUPFD_CLOEXEC' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'prepare_inherited_raw_fd' Apps/Drive/product/EDPConsoleExec.c
+          grep -Fq 'FD_CLOEXEC' Apps/Drive/product/EDPConsoleExec.c
           ! grep -Fq 'kickstart -k system/com.edp.drive.service' Apps/Drive/scripts/first-install-acceptance.sh
           ! test -e Apps/Drive/product/RawAccessHelper/Info.plist
           ! grep -Fq 'EDP_CORE_EXPECTED_REV' Apps/Drive/scripts/prepare-shared-edp-core.sh
