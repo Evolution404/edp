@@ -1,0 +1,102 @@
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+
+ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+ARTIFACTS ?= $(ROOT)/artifacts
+DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
+EDP_APP_SIGN_IDENTITY ?= EDP Project Code Signing
+DRIVE_REV := $(shell git -C "$(ROOT)" rev-parse --short HEAD)
+DRIVE_UI_PKG := $(ARTIFACTS)/EDP-Drive-UI-$(DRIVE_REV).pkg
+DRIVE_UI_BINARY := $(ARTIFACTS)/edp-drive-ui
+STUDIO_DERIVED_DATA := $(ARTIFACTS)/DerivedData/EDPStudio
+STUDIO_PROJECT := $(ROOT)/Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj
+
+.PHONY: help status check build core-test drive-check drive-build drive-restart \
+	drive-ui-package drive-ui-install drive-ui-deploy drive-installer \
+	studio-generate studio-build
+
+help:
+	@echo "EDP common targets"
+	@echo "  make check              Swift core tests + Drive strict check"
+	@echo "  make build              Build Drive UI and Studio Release"
+	@echo "  make drive-ui-deploy    Build, install and restart UI only (sudo)"
+	@echo "  make drive-ui-package   Build signed UI-only update package"
+	@echo "  make drive-ui-install   Install an existing UI package (sudo)"
+	@echo "  make drive-restart      Restart the foreground UI only"
+	@echo "  make drive-installer    Build the full Drive native installer"
+	@echo "  make studio-generate    Regenerate the Studio Xcode project"
+	@echo "  make studio-build       Build Studio Release without signing"
+	@echo "  make status             Show branch and recent commits"
+
+status:
+	@git -C "$(ROOT)" status --short --branch
+	@git -C "$(ROOT)" log --oneline -5
+
+core-test:
+	@DEVELOPER_DIR="$(DEVELOPER_DIR)" xcrun swift test \
+		--package-path "$(ROOT)/Packages/EDPCore" -c release
+
+drive-check:
+	@DEVELOPER_DIR="$(DEVELOPER_DIR)" xcrun swiftc \
+		-typecheck -swift-version 6 -warnings-as-errors \
+		-framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
+		"$(ROOT)/Shared/UI/EDPDesignSystem.swift" \
+		"$(ROOT)/Apps/Drive/product/EDPXPCProtocol.swift" \
+		"$(ROOT)/Apps/Drive/product/App/EDPUSBVaultApp.swift"
+
+check: core-test drive-check
+
+drive-build:
+	@mkdir -p "$(ARTIFACTS)"
+	@DEVELOPER_DIR="$(DEVELOPER_DIR)" xcrun swiftc \
+		-O -swift-version 6 -warnings-as-errors \
+		-framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
+		"$(ROOT)/Shared/UI/EDPDesignSystem.swift" \
+		"$(ROOT)/Apps/Drive/product/EDPXPCProtocol.swift" \
+		"$(ROOT)/Apps/Drive/product/App/EDPUSBVaultApp.swift" \
+		-o "$(DRIVE_UI_BINARY)"
+	@echo "OUTPUT=$(DRIVE_UI_BINARY)"
+
+drive-ui-package:
+	@DEVELOPER_DIR="$(DEVELOPER_DIR)" \
+		EDP_APP_SIGN_IDENTITY="$(EDP_APP_SIGN_IDENTITY)" \
+		"$(ROOT)/Tools/build-drive-ui-update.sh" "$(ARTIFACTS)"
+
+drive-ui-install:
+	@"$(ROOT)/Tools/install-drive-ui-update.sh" "$(DRIVE_UI_PKG)"
+
+drive-ui-deploy: drive-ui-package
+	@"$(ROOT)/Tools/install-drive-ui-update.sh" "$(DRIVE_UI_PKG)"
+
+drive-restart:
+	@pids="$$(pgrep -f '^/Applications/EDP Drive.app/Contents/MacOS/EDP Drive$$' || true)"; \
+	if [[ -n "$$pids" ]]; then kill $$pids; fi; \
+	for _ in {1..30}; do \
+		[[ -z "$$(pgrep -f '^/Applications/EDP Drive.app/Contents/MacOS/EDP Drive$$' || true)" ]] && break; \
+		sleep 0.1; \
+	done; \
+	open '/Applications/EDP Drive.app'
+
+drive-installer:
+	@mkdir -p "$(ARTIFACTS)"
+	@cd "$(ROOT)/Apps/Drive" && \
+		DEVELOPER_DIR="$(DEVELOPER_DIR)" \
+		EDP_APP_SIGN_IDENTITY="$(EDP_APP_SIGN_IDENTITY)" \
+		EDP_SELF_SIGNED_DISTRIBUTION=1 \
+		EDP_SERVICE_MODE=legacy \
+		./installer/build-native-installer.sh "$(ARTIFACTS)"
+
+studio-generate:
+	@cd "$(ROOT)/Apps/Studio/native/EDPStudioNative" && \
+		xcodegen generate --spec project.yml
+
+studio-build:
+	@mkdir -p "$(STUDIO_DERIVED_DATA)"
+	@DEVELOPER_DIR="$(DEVELOPER_DIR)" xcodebuild \
+		-project "$(STUDIO_PROJECT)" \
+		-scheme EDPStudio \
+		-configuration Release \
+		-derivedDataPath "$(STUDIO_DERIVED_DATA)" \
+		ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
+
+build: drive-build studio-build

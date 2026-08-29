@@ -84,6 +84,24 @@ Certificate leaf/root SHA-1: 040b5488fb2b6c02b0786e76b674cb4460658ca2
 
 ## 本机构建
 
+推荐从仓库根目录使用统一 Makefile：
+
+```bash
+make help
+make check
+make build
+make drive-ui-deploy   # 仅更新前台 UI，保留后台服务和挂载；需要管理员授权
+make drive-installer   # 服务、transport 或安装逻辑变化时才构建完整安装器
+make studio-build
+```
+
+`drive-ui-deploy` 会复用 `/Applications/EDP Drive.app` 中已安装的服务与资源，
+重新编译前台二进制、校验签名证书根、生成 UI-only pkg、安装并重启界面。
+它不会停止后台服务或主动卸载磁盘。单独构建或安装可分别使用
+`make drive-ui-package` 和 `make drive-ui-install`。
+
+底层命令仍可直接使用：
+
 EDPCore：
 
 ```bash

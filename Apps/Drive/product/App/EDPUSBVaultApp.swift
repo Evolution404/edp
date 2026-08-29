@@ -977,8 +977,8 @@ struct EDPMainView: View {
             .listStyle(.sidebar)
             .navigationTitle("EDP Drive")
             // Keep the primary navigation readable even when AppKit restores an
-            // old split-view position. A ranged width can be compressed below its
-            // declared minimum by the nested device split view.
+            // Keep the primary navigation identical across Devices, Activity,
+            // and Settings instead of letting detail content resize the column.
             .frame(width: 180)
             .navigationSplitViewColumnWidth(180)
         } detail: {
@@ -1033,39 +1033,24 @@ struct EDPDevicesView: View {
                 .padding(EDPTheme.Spacing.sm)
             }
 
-            HSplitView {
-                List(selection: $selectedDeviceID) {
-                    Section("已连接") {
-                        ForEach(model.snapshot.devices.filter(\.connected)) { device in
-                            deviceLabel(device).tag(device.deviceID)
-                        }
-                    }
-                    let offline = model.snapshot.devices.filter { !$0.connected }
-                    if !offline.isEmpty {
-                        Section("已保存") {
-                            ForEach(offline) { device in
-                                deviceLabel(device).tag(device.deviceID)
-                            }
-                        }
-                    }
-                }
-                .listStyle(.sidebar)
-                .frame(minWidth: 180, idealWidth: 200, maxWidth: 220)
-
-                Group {
-                    if let selectedDevice {
-                        EDPDeviceDetailView(device: selectedDevice, model: model)
-                            .id(selectedDevice.deviceID)
-                    } else {
-                        EDPEmptyState(
-                            "未发现 EDP U 盘",
-                            message: "插入设备后会自动识别，也可以查看此前保存的设备。",
-                            systemImage: "externaldrive.badge.questionmark"
-                        )
-                    }
-                }
-                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+            if model.snapshot.devices.count > 1 {
+                deviceSelector
+                Divider()
             }
+
+            Group {
+                if let selectedDevice {
+                    EDPDeviceDetailView(device: selectedDevice, model: model)
+                        .id(selectedDevice.deviceID)
+                } else {
+                    EDPEmptyState(
+                        "未发现 EDP U 盘",
+                        message: "插入设备后会自动识别，也可以查看此前保存的设备。",
+                        systemImage: "externaldrive.badge.questionmark"
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("设备")
         .background { EDPWindowBackdrop() }
@@ -1097,18 +1082,50 @@ struct EDPDevicesView: View {
         }
     }
 
-    private func deviceLabel(_ device: EDPXPCDevice) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
-                .foregroundStyle(device.connected ? Color.accentColor : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(device.displayName).lineLimit(1)
-                Text(device.connected ? "已连接" : "未连接")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private var deviceSelector: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: EDPTheme.Spacing.xs) {
+                ForEach(model.snapshot.devices) { device in
+                    Button {
+                        selectedDeviceID = device.deviceID
+                    } label: {
+                        HStack(spacing: EDPTheme.Spacing.xs) {
+                            Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
+                                .foregroundStyle(device.connected ? Color.accentColor : .secondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(device.displayName)
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                                Text(device.connected ? "已连接" : "已保存")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 8)
+                        .background(
+                            selectedDeviceID == device.deviceID
+                                ? EDPTheme.selectedFill
+                                : EDPTheme.quietFill,
+                            in: RoundedRectangle(cornerRadius: EDPTheme.Radius.row, style: .continuous)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: EDPTheme.Radius.row, style: .continuous)
+                                .stroke(
+                                    selectedDeviceID == device.deviceID
+                                        ? Color.accentColor.opacity(0.30)
+                                        : EDPTheme.cardStroke,
+                                    lineWidth: 0.5
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
-        .padding(.vertical, 3)
+        .scrollIndicators(.never)
+        .padding(.horizontal, EDPTheme.Spacing.lg)
+        .padding(.vertical, EDPTheme.Spacing.sm)
     }
 }
 

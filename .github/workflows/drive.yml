@@ -7,11 +7,17 @@ on:
     paths:
       - "Apps/Drive/**"
       - "Packages/EDPCore/**"
+      - "Tools/build-drive-ui-update.sh"
+      - "Tools/install-drive-ui-update.sh"
+      - "Makefile"
       - ".github/workflows/drive.yml"
   pull_request:
     paths:
       - "Apps/Drive/**"
       - "Packages/EDPCore/**"
+      - "Tools/build-drive-ui-update.sh"
+      - "Tools/install-drive-ui-update.sh"
+      - "Makefile"
       - ".github/workflows/drive.yml"
 
 permissions:
@@ -59,6 +65,12 @@ jobs:
           grep -Fq 'partitionRow(device: device, partition: partition)' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq '.frame(width: 390)' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'EDPMenuNavigationRow' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq 'HSplitView {' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'private var deviceSelector: some View' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          test -x Tools/build-drive-ui-update.sh
+          test -x Tools/install-drive-ui-update.sh
+          bash -n Tools/build-drive-ui-update.sh Tools/install-drive-ui-update.sh
+          grep -Fq 'drive-ui-deploy:' Makefile
           grep -Fq 'Shared/UI/EDPDesignSystem.swift' Apps/Drive/installer/build-native-installer.sh
           grep -Fq 'Shared/UI/EDPDesignSystem.swift' Apps/Drive/installer/build-clean-installer.sh
           grep -Fq '<string>EDPDrive.icns</string>' Apps/Drive/product/App/Info.plist
