@@ -464,7 +464,24 @@ struct ValidateEDPMetadataProbe {
             lba7: standardLBA7,
             lba12Plain: standardLBA12
         ) == .unrecognizedEDP else {
-            throw ValidationError.mismatch("EDP evidence with inconsistent geometry was not classified as unrecognizedEDP")
+            throw ValidationError.mismatch("EDP evidence with inconsistent MBR geometry was not classified as unrecognizedEDP")
+        }
+
+        let mismatchedLBA7 = encodeOldFormatLBA7(makeEDPFTable(
+            stride: 0x40,
+            entries: [
+                (1, 64, bootBytes),
+                (2, shareStart, shareBytes),
+                (4, secureStart, secureBytes),
+            ]
+        ))
+        guard EDPMetadataProbe.classifyMedia(
+            lba0: standardMBR,
+            lba4: lba4,
+            lba7: mismatchedLBA7,
+            lba12Plain: standardLBA12
+        ) == .unrecognizedEDP else {
+            throw ValidationError.mismatch("EDP evidence with inconsistent LBA7/LBA12 geometry was claimed as standard")
         }
 
         let zeros = [UInt8](repeating: 0, count: 512)

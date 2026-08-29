@@ -200,8 +200,12 @@ enum EDPMetadataProbe {
         // partition rather than a widened plaintext Share partition.
         if entryTypes(lba7Entries) == [1, 2, 4],
            entryTypes(lba12Entries) == [1, 2, 4],
+           let first7 = lba7Entries.first,
            let first12 = lba12Entries.first,
+           first7.type == 1,
            first12.type == 1,
+           first7.startSector == first12.startSector,
+           first7.sizeBytes == first12.sizeBytes,
            let mbrFirst,
            mbrFirst.startSector == first12.startSector,
            mbrFirst.sizeBytes == first12.sizeBytes {

@@ -415,7 +415,6 @@ private func decodeRawMetadataOutput(_ output: Data) throws -> EDPRawMetadataSna
 }
 
 private func discoverEDPDisks(
-    cachedDisks: [PhysicalDisk] = [],
     diagnostic: ((String) -> Void)? = nil
 ) throws -> [PhysicalDisk] {
     var answer: [PhysicalDisk] = []
@@ -423,18 +422,6 @@ private func discoverEDPDisks(
         let rawPath = "/dev/r\(media.bsdName)"
         guard FileManager.default.fileExists(atPath: rawPath) else {
             diagnostic?("bsd=\(media.bsdName);result=raw_device_missing;path=\(rawPath)")
-            continue
-        }
-        if let cached = cachedDisks.first(where: {
-            $0.rawPath == rawPath
-                && $0.sizeBytes == media.size
-                && $0.vidHex == media.vid
-                && $0.pidHex == media.pid
-                && $0.registryEntryID == media.registryEntryID
-                && $0.usbRegistryEntryID == media.usbRegistryEntryID
-        }) {
-            diagnostic?("bsd=\(media.bsdName);result=recognized_cached;deviceID=\(cached.deviceID)")
-            answer.append(cached)
             continue
         }
         let metadata: EDPRawMetadataSnapshot
@@ -1361,7 +1348,6 @@ private final class EDPDaemonController: @unchecked Sendable {
             do {
                 var scanDiagnostics = [String]()
                 let disks = try discoverEDPDisks(
-                    cachedDisks: connectedDisks,
                     diagnostic: { scanDiagnostics.append($0) }
                 )
                 discoveryScanCount &+= 1

@@ -45,6 +45,8 @@ jobs:
           ! test -e Apps/Drive/product/RawAccessHelper/Info.plist
           ! grep -Fq 'EDP_CORE_EXPECTED_REV' Apps/Drive/scripts/prepare-shared-edp-core.sh
           grep -Fq 'Packages/EDPCore' Apps/Drive/scripts/prepare-shared-edp-core.sh
+          ! grep -Fq 'cachedDisks' Apps/Drive/product/EDPVaultRuntime.swift
+          ! grep -Fq 'recognized_cached' Apps/Drive/product/EDPVaultRuntime.swift
           bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh
           bash -n Apps/Drive/installer/build-native-installer.sh
           bash -n Apps/Drive/installer/build-transport-backends.sh
