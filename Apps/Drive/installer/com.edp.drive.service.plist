@@ -11,8 +11,6 @@
   <key>EnvironmentVariables</key>
   <dict><key>EDP_RUNTIME_BIN_ROOT</key><string>/Library/Application Support/EDP Drive/bin</string></dict>
   <key>MachServices</key><dict><key>com.edp.drive.service</key><true/></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Interactive</string>
   <key>StandardOutPath</key><string>/var/log/edp-drive.log</string>
   <key>StandardErrorPath</key><string>/var/log/edp-drive.log</string>

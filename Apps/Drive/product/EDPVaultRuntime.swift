@@ -1801,13 +1801,44 @@ private final class EDPDaemonController: @unchecked Sendable {
             return (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         }
     }
+
+    func shutdownGracefully() throws {
+        try queue.sync {
+            manager.unmountAll()
+            guard manager.mountedSummaries().isEmpty else {
+                throw fail("one or more EDP sessions could not be safely unmounted")
+            }
+            for lease in rawAccessLeases.values { lease.invalidate() }
+            rawAccessLeases.removeAll()
+            rawAccessReadyByDeviceID.removeAll()
+            rawAccessErrorsByDeviceID.removeAll()
+            connectedDisks.removeAll()
+            addActivity("后台服务已安全停止")
+        }
+    }
 }
 
 private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol {
     private let controller: EDPDaemonController
+    private let didRequestShutdown: @Sendable () -> Void
 
-    init(controller: EDPDaemonController) {
+    init(controller: EDPDaemonController, didRequestShutdown: @escaping @Sendable () -> Void) {
         self.controller = controller
+        self.didRequestShutdown = didRequestShutdown
+    }
+
+    func healthCheck(withReply reply: @escaping (String) -> Void) {
+        reply("com.edp.drive.service:running")
+    }
+
+    func requestGracefulShutdown(withReply reply: @escaping (String?) -> Void) {
+        do {
+            try controller.shutdownGracefully()
+            reply(nil)
+            didRequestShutdown()
+        } catch {
+            reply(String(describing: error))
+        }
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
@@ -1957,21 +1988,35 @@ private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCP
     }
 }
 
+private final class EDPXPCListenerBox: @unchecked Sendable {
+    let listener: NSXPCListener
+    init(_ listener: NSXPCListener) { self.listener = listener }
+}
+
 private func daemon() throws -> Never {
     try requireRoot()
     let controller = try EDPDaemonController()
     let monitor = try EDPDiskEventMonitor()
-    let xpcService = EDPXPCService(controller: controller)
+    let stopped = DispatchSemaphore(value: 0)
     let listener = NSXPCListener(machServiceName: edpVaultMachServiceName)
+    let listenerBox = EDPXPCListenerBox(listener)
+    let xpcService = EDPXPCService(controller: controller) {
+        monitor.stop()
+        // Let the shutdown reply drain before invalidating the connection.
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
+            listenerBox.listener.invalidate()
+            stopped.signal()
+        }
+    }
     listener.delegate = xpcService
     listener.resume()
     Darwin.signal(SIGTERM, runtimeSignalHandler)
     Darwin.signal(SIGINT, runtimeSignalHandler)
     monitor.start { controller.reconcile() }
-    withExtendedLifetime((monitor, listener, xpcService)) {
-        DispatchSemaphore(value: 0).wait()
+    withExtendedLifetime((monitor, listenerBox, xpcService)) {
+        stopped.wait()
     }
-    fatalError("EDP daemon event loop unexpectedly returned")
+    Darwin.exit(EXIT_SUCCESS)
 }
 
 private func runtimeSignalHandler(_ signalNumber: Int32) {

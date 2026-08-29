@@ -152,12 +152,16 @@ final class EDPVaultViewModel: ObservableObject {
     @Published var diagnostics = ""
     @Published var isBusy = false
     @Published var transportRuntimeReady: Bool?
+    @Published private(set) var serviceDesiredRunning = true
 
     private let serviceMode: String
     private let daemonService: SMAppService?
     private let daemonPlistName = "com.edp.drive.service.plist"
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.drive.service.plist")
+    private let servicePreferenceKey = "com.edp.drive.service.desired-running"
     private var connection: NSXPCConnection?
+    private var serviceOperationID: UUID?
+    private var restartAfterStop = false
 
     var needsFullDiskAccess: Bool {
         snapshot.devices.contains { $0.connected && !$0.privilegedAccessReady }
@@ -177,7 +181,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     var setupReady: Bool {
-        currentServiceStatus() == .enabled
+        serviceStatus == "运行中"
             && transportRuntimeReady == true
             && rawAccessHelperInstalled
             && snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
@@ -188,6 +192,9 @@ final class EDPVaultViewModel: ObservableObject {
         daemonService = serviceMode == "smappservice"
             ? SMAppService.daemon(plistName: daemonPlistName)
             : nil
+        if UserDefaults.standard.object(forKey: servicePreferenceKey) != nil {
+            serviceDesiredRunning = UserDefaults.standard.bool(forKey: servicePreferenceKey)
+        }
         ensureServiceRegistration()
         do {
             try ensureMacFUSELocalEnablement()
@@ -210,20 +217,20 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     private func connectIfNeeded() -> NSXPCConnection? {
-        guard currentServiceStatus() == .enabled else { return nil }
+        guard serviceDesiredRunning, currentServiceStatus() == .enabled else { return nil }
         if let connection { return connection }
         let newConnection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
         newConnection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
         newConnection.interruptionHandler = { [weak self] in
             Task { @MainActor in
                 self?.connection = nil
-                self?.lastError = "后台服务连接已中断"
+                self?.serviceStatus = self?.serviceDesiredRunning == true ? "连接已中断" : "已停止"
             }
         }
         newConnection.invalidationHandler = { [weak self] in
             Task { @MainActor in
                 self?.connection = nil
-                self?.lastError = "后台服务连接已失效"
+                self?.serviceDidInvalidate()
             }
         }
         newConnection.resume()
@@ -253,12 +260,172 @@ final class EDPVaultViewModel: ObservableObject {
 
     func refreshServiceStatus() {
         switch currentServiceStatus() {
-        case .enabled: serviceStatus = "已启用"
+        case .enabled:
+            if !serviceDesiredRunning {
+                serviceStatus = launchdServiceIsRunning() ? "正在停止…" : "已停止"
+            } else if connection == nil {
+                serviceStatus = launchdServiceIsRunning() ? "正在连接…" : "等待按需启动"
+            }
         case .requiresApproval: serviceStatus = "需要系统批准"
         case .notRegistered: serviceStatus = "未注册"
         case .notFound: serviceStatus = "未安装"
         @unknown default: serviceStatus = "未知"
         }
+    }
+
+    private func launchdServiceIsRunning() -> Bool {
+        guard let output = try? runUserTool(
+            "/bin/launchctl",
+            ["print", "system/com.edp.drive.service"]
+        ) else { return false }
+        return output.contains("state = running") || output.contains("\n\tpid = ")
+    }
+
+    private func persistServicePreference() {
+        UserDefaults.standard.set(serviceDesiredRunning, forKey: servicePreferenceKey)
+    }
+
+    private func armServiceTimeout(id: UUID, operation: String, seconds: Double = 12) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.serviceOperationID == id else { return }
+            self.serviceOperationID = nil
+            self.isBusy = false
+            if operation == "重启" {
+                self.serviceDesiredRunning = true
+                self.persistServicePreference()
+            }
+            self.restartAfterStop = false
+            self.lastError = "后台服务\(operation)超时"
+            self.refreshServiceStatus()
+        }
+    }
+
+    private func serviceDidInvalidate() {
+        connection = nil
+        guard !serviceDesiredRunning else {
+            serviceStatus = "连接已中断"
+            return
+        }
+        serviceOperationID = nil
+        isBusy = false
+        serviceStatus = "已停止"
+        let shouldRestart = restartAfterStop
+        restartAfterStop = false
+        if shouldRestart {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.startService()
+            }
+        }
+    }
+
+    func startService() {
+        restartAfterStop = false
+        serviceDesiredRunning = true
+        persistServicePreference()
+        ensureServiceRegistration()
+        guard currentServiceStatus() == .enabled else {
+            lastError = "后台服务尚未注册、启用或批准"
+            return
+        }
+        connection?.invalidate()
+        connection = nil
+        isBusy = true
+        serviceStatus = "正在启动…"
+        lastError = nil
+        let operationID = UUID()
+        serviceOperationID = operationID
+        armServiceTimeout(id: operationID, operation: "启动")
+        guard let connection = connectIfNeeded(),
+              let proxy = connection.remoteObjectProxyWithErrorHandler({ [weak self] error in
+                  Task { @MainActor in
+                      guard let self, self.serviceOperationID == operationID else { return }
+                      self.serviceOperationID = nil
+                      self.isBusy = false
+                      self.lastError = "后台服务启动失败：\(error.localizedDescription)"
+                      self.refreshServiceStatus()
+                  }
+              }) as? EDPVaultXPCProtocol else {
+            serviceOperationID = nil
+            isBusy = false
+            lastError = "无法建立后台服务连接"
+            return
+        }
+        proxy.healthCheck { [weak self] response in
+            Task { @MainActor in
+                guard let self, self.serviceOperationID == operationID else { return }
+                guard response == "com.edp.drive.service:running" else {
+                    self.lastError = "后台服务返回了无效健康状态"
+                    self.isBusy = false
+                    self.serviceOperationID = nil
+                    return
+                }
+                self.serviceOperationID = nil
+                self.isBusy = false
+                self.serviceStatus = "运行中"
+                self.refresh()
+            }
+        }
+    }
+
+    func stopService(restart: Bool = false) {
+        let activeConnection = connection ?? connectIfNeeded()
+        guard let activeConnection,
+              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ [weak self] error in
+                  Task { @MainActor in
+                      guard let self else { return }
+                      self.serviceDesiredRunning = true
+                      self.persistServicePreference()
+                      self.restartAfterStop = false
+                      self.serviceOperationID = nil
+                      self.isBusy = false
+                      self.lastError = "后台服务停止失败：\(error.localizedDescription)"
+                      self.refreshServiceStatus()
+                  }
+              }) as? EDPVaultXPCProtocol else {
+            if launchdServiceIsRunning() {
+                serviceDesiredRunning = true
+                persistServicePreference()
+                restartAfterStop = false
+                serviceStatus = "运行中（XPC 不可用）"
+                lastError = "后台服务仍在运行，但无法建立安全 XPC 连接；未执行强制终止。"
+                return
+            }
+            serviceDesiredRunning = false
+            persistServicePreference()
+            restartAfterStop = false
+            serviceStatus = "已停止"
+            if restart { startService() }
+            return
+        }
+        serviceDesiredRunning = false
+        persistServicePreference()
+        restartAfterStop = restart
+        isBusy = true
+        serviceStatus = restart ? "正在重启…" : "正在停止…"
+        lastError = nil
+        let operationID = UUID()
+        serviceOperationID = operationID
+        armServiceTimeout(id: operationID, operation: restart ? "重启" : "停止")
+        proxy.requestGracefulShutdown { [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self, self.serviceOperationID == operationID else { return }
+                if let errorMessage {
+                    self.serviceDesiredRunning = true
+                    self.persistServicePreference()
+                    self.restartAfterStop = false
+                    self.serviceOperationID = nil
+                    self.isBusy = false
+                    self.lastError = "后台服务停止失败：\(errorMessage)"
+                    self.refreshServiceStatus()
+                }
+                // Success completes through XPC invalidation after the service
+                // has torn down every session and exited normally.
+            }
+        }
+    }
+
+    func restartService() {
+        stopService(restart: true)
     }
 
     func openServiceSettings() {
@@ -309,6 +476,7 @@ final class EDPVaultViewModel: ObservableObject {
                 guard let self else { return }
                 do {
                     self.snapshot = try JSONDecoder().decode(EDPXPCSnapshot.self, from: data)
+                    self.serviceStatus = "运行中"
                 } catch {
                     self.lastError = String(data: data, encoding: .utf8) ?? error.localizedDescription
                 }
@@ -1107,10 +1275,10 @@ struct EDPSettingsView: View {
                 LabeledContent {
                     Label(
                         model.serviceStatus,
-                        systemImage: model.serviceStatus == "已启用"
+                        systemImage: model.serviceStatus == "运行中"
                             ? "checkmark.circle.fill" : "exclamationmark.circle"
                     )
-                    .foregroundStyle(model.serviceStatus == "已启用" ? .green : .orange)
+                    .foregroundStyle(model.serviceStatus == "运行中" ? .green : .orange)
                 } label: {
                     Text("特权后台服务")
                 }
@@ -1132,7 +1300,7 @@ struct EDPSettingsView: View {
                         : "请完成后台服务、macFUSE Local 和磁盘访问组件设置；完全磁盘访问会在连接 EDP U 盘后进行验证。"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                if model.serviceStatus != "已启用" {
+                if model.serviceStatus != "运行中" {
                     Button("打开登录项与扩展设置") { model.openServiceSettings() }
                 }
             }
@@ -1154,6 +1322,14 @@ struct EDPSettingsView: View {
                     "文件系统运行组件",
                     value: model.transportRuntimeReady == true ? "已就绪" : "需要重新安装"
                 )
+                HStack {
+                    Button("启动") { model.startService() }
+                        .disabled(model.isBusy || model.serviceStatus == "运行中")
+                    Button("停止") { model.stopService() }
+                        .disabled(model.isBusy || model.serviceStatus == "已停止")
+                    Button("重启") { model.restartService() }
+                        .disabled(model.isBusy || model.serviceStatus != "运行中")
+                }
                 if model.serviceStatus == "需要系统批准" {
                     Button("打开登录项与扩展设置") { model.openServiceSettings() }
                 }
@@ -1726,6 +1902,86 @@ struct EDPUSBVaultApp: App {
             }
             print("SNAPSHOT_GLOBAL_AUTOMOUNT=\(snapshot.globalAutoMountEnabled)")
             print("RESULT=PRIVILEGED_XPC_SNAPSHOT_OK")
+            exit(0)
+        }
+
+        if CommandLine.arguments.contains("--xpc-health") {
+            let result = EDPXPCSmokeResult()
+            let semaphore = DispatchSemaphore(value: 0)
+            let connection = NSXPCConnection(
+                machServiceName: edpVaultMachServiceName,
+                options: .privileged
+            )
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                result.set(passed: false, detail: error.localizedDescription)
+                semaphore.signal()
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_HEALTH_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            connection.resume()
+            proxy.healthCheck { response in
+                let valid = response == "com.edp.drive.service:running"
+                result.set(passed: valid, detail: response)
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 12) == .success else {
+                connection.invalidate()
+                print("RESULT=XPC_HEALTH_TIMEOUT")
+                exit(1)
+            }
+            connection.invalidate()
+            let snapshot = result.snapshot()
+            print("XPC_HEALTH_DETAIL=\(snapshot.1)")
+            print(snapshot.0 ? "RESULT=EDP_SERVICE_HEALTH_OK" : "RESULT=EDP_SERVICE_HEALTH_FAILED")
+            exit(snapshot.0 ? 0 : 1)
+        }
+
+        if CommandLine.arguments.contains("--xpc-graceful-stop") {
+            let result = EDPXPCSmokeResult()
+            let replySemaphore = DispatchSemaphore(value: 0)
+            let invalidationSemaphore = DispatchSemaphore(value: 0)
+            let connection = NSXPCConnection(
+                machServiceName: edpVaultMachServiceName,
+                options: .privileged
+            )
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            connection.invalidationHandler = { invalidationSemaphore.signal() }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                result.set(passed: false, detail: error.localizedDescription)
+                replySemaphore.signal()
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_GRACEFUL_STOP_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            connection.resume()
+            proxy.requestGracefulShutdown { errorMessage in
+                result.set(
+                    passed: errorMessage == nil,
+                    detail: errorMessage ?? "graceful teardown completed"
+                )
+                replySemaphore.signal()
+            }
+            guard replySemaphore.wait(timeout: .now() + 90) == .success else {
+                connection.invalidate()
+                print("RESULT=XPC_GRACEFUL_STOP_TIMEOUT")
+                exit(1)
+            }
+            let snapshot = result.snapshot()
+            guard snapshot.0 else {
+                connection.invalidate()
+                print("XPC_GRACEFUL_STOP_DETAIL=\(snapshot.1)")
+                print("RESULT=EDP_SERVICE_GRACEFUL_STOP_FAILED")
+                exit(1)
+            }
+            guard invalidationSemaphore.wait(timeout: .now() + 12) == .success else {
+                connection.invalidate()
+                print("RESULT=XPC_GRACEFUL_STOP_INVALIDATION_TIMEOUT")
+                exit(1)
+            }
+            print("XPC_GRACEFUL_STOP_DETAIL=\(snapshot.1)")
+            print("RESULT=EDP_SERVICE_GRACEFUL_STOP_OK")
             exit(0)
         }
 

@@ -32,6 +32,12 @@ jobs:
           grep -Fq '/Applications/EDP Drive.app/Contents/MacOS/EDP Drive' Apps/Drive/product/EDPXPCSecurity.swift
           grep -Fq 'com.edp.drive.service' Apps/Drive/product/App/com.edp.drive.service.plist
           grep -Fq '/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service' Apps/Drive/installer/com.edp.drive.service.plist
+          ! grep -Fq '<key>KeepAlive</key>' Apps/Drive/product/App/com.edp.drive.service.plist
+          ! grep -Fq '<key>RunAtLoad</key>' Apps/Drive/product/App/com.edp.drive.service.plist
+          grep -Fq 'requestGracefulShutdown' Apps/Drive/product/EDPXPCProtocol.swift
+          grep -Fq 'Button("启动")' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'Button("停止")' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'Button("重启")' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! test -e Apps/Drive/product/RawAccessHelper/Info.plist
           ! grep -Fq 'EDP_CORE_EXPECTED_REV' Apps/Drive/scripts/prepare-shared-edp-core.sh
           grep -Fq 'Packages/EDPCore' Apps/Drive/scripts/prepare-shared-edp-core.sh

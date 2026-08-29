@@ -79,6 +79,11 @@ echo "RESULT=DRIVE_APP_FIXED_INSTALL_PATH"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "${APP}/Contents/Info.plist")" == "26.0" ]]
 SERVICE_MODE="$(/usr/libexec/PlistBuddy -c 'Print :EDPServiceMode' "${APP}/Contents/Info.plist")"
 [[ -x "${SERVICE}" ]]
+if /usr/libexec/PlistBuddy -c 'Print :KeepAlive' "${DAEMON_PLIST}" >/dev/null 2>&1 \
+   || /usr/libexec/PlistBuddy -c 'Print :RunAtLoad' "${DAEMON_PLIST}" >/dev/null 2>&1; then
+  echo "embedded service plist must be on-demand and user-stoppable" >&2
+  exit 5
+fi
 case "${SERVICE_MODE}" in
   smappservice)
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :Label' "${DAEMON_PLIST}")" == "com.edp.drive.service" ]]
@@ -96,6 +101,11 @@ case "${SERVICE_MODE}" in
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "${LEGACY_DAEMON_PLIST}")" == "/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service" ]]
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:EDP_RUNTIME_BIN_ROOT' "${LEGACY_DAEMON_PLIST}")" == "/Library/Application Support/EDP Drive/bin" ]]
     [[ -e "${DAEMON_PLIST}" ]]
+    if /usr/libexec/PlistBuddy -c 'Print :KeepAlive' "${LEGACY_DAEMON_PLIST}" >/dev/null 2>&1 \
+       || /usr/libexec/PlistBuddy -c 'Print :RunAtLoad' "${LEGACY_DAEMON_PLIST}" >/dev/null 2>&1; then
+      echo "installer-managed service plist must be on-demand and user-stoppable" >&2
+      exit 5
+    fi
     echo "RESULT=LEGACY_FDA_DAEMON_PACKAGED"
     echo "RESULT=LEGACY_XPC_DAEMON_PACKAGED"
     ;;
@@ -104,6 +114,7 @@ case "${SERVICE_MODE}" in
     exit 4
     ;;
 esac
+echo "RESULT=USER_STOPPABLE_ON_DEMAND_SERVICE_PLIST"
 echo "SERVICE_MODE=${SERVICE_MODE}"
 echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
 
@@ -151,6 +162,10 @@ fi
   | /usr/bin/grep -F 'persistent Full Disk Access daemon + retained raw fd + inherited transport fd' >/dev/null
 /usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F 'EDP_RAW_LEASE_METADATA_REFUSED' >/dev/null
+/usr/bin/strings "${SERVICE}" \
+  | /usr/bin/grep -F 'com.edp.drive.service:running' >/dev/null
+/usr/bin/strings "${SERVICE}" \
+  | /usr/bin/grep -F 'one or more EDP sessions could not be safely unmounted' >/dev/null
 /usr/bin/nm -u "${SERVICE}" \
   | /usr/bin/grep -F '_posix_spawn' >/dev/null
 /usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \

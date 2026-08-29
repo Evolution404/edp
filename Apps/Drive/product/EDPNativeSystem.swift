@@ -552,6 +552,16 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
         queue.async { [weak self] in self?.onChange?() }
     }
 
+    func stop() {
+        queue.sync {
+            reconciliationTimer?.cancel()
+            reconciliationTimer = nil
+            onChange = nil
+            eventGeneration &+= 1
+            DASessionSetDispatchQueue(session, nil)
+        }
+    }
+
     fileprivate func handleDiskEvent() {
         // Only whole USB media reaches this point. Coalesce the remaining
         // attach/disappear burst so raw metadata discovery runs once after the
@@ -565,7 +575,6 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
     }
 
     deinit {
-        reconciliationTimer?.cancel()
-        DASessionSetDispatchQueue(session, nil)
+        stop()
     }
 }
