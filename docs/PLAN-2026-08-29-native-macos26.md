@@ -60,13 +60,14 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 
 前置 PoC 证据：`poc/fda-raw-broker/RESULTS-2026-08-29.md`。
 
-- [ ] 独立 Swift broker target
-- [ ] system LaunchDaemon / stable install path
-- [ ] stable certificate-backed signing identity
-- [ ] FDA readiness probe
-- [ ] Disk Arbitration + IOKit external/physical/USB/whole-disk gate
+- [x] 独立 Swift broker target：`EDPOpenRawBroker`
+- [x] system LaunchDaemon plist / 固定目标路径已定义；尚未正式安装验证
+- [ ] stable certificate-backed signing identity（下一步实机签名）
+- [x] FDA readiness probe 代码：仅 `open(O_RDONLY|O_CLOEXEC) → fstat → close`，不读取扇区
+- [x] Disk Arbitration + IOKit external/physical/USB/whole-disk gate
 - [ ] EDP metadata verification before exposing device session
-- [ ] narrow IPC, no arbitrary path API
+- [x] narrow NSXPC IPC, no arbitrary path API；broker 只接受数字 `diskN`
+- [x] App/broker 双向 `setCodeSigningRequirement()`，绑定 bundle identifier + Team `W82WPH8HY7`
 - [ ] 同一 open fd/session 复用
 
 ## Phase D — 只读实机接入

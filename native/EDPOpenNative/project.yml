@@ -20,6 +20,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: Shared
     preBuildScripts:
       - name: Build Rust EDP Core
         script: |
@@ -35,5 +36,21 @@ targets:
         HEADER_SEARCH_PATHS: "$(SRCROOT)/../../core/edpopen-ffi/include"
         LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../core/edpopen-ffi/target/release"
         OTHER_LDFLAGS: "$(inherited) -ledpopen_ffi"
+    dependencies:
+      - target: EDPOpenRawBroker
     scheme:
       testTargets: []
+  EDPOpenRawBroker:
+    type: tool
+    platform: macOS
+    sources:
+      - path: BrokerSources
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_NAME: EDPOpenRawBroker
+        PRODUCT_BUNDLE_IDENTIFIER: com.evolution404.edpopen.rawbroker
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        SWIFT_VERSION: "6.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
