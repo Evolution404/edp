@@ -1,0 +1,103 @@
+name: EDP Drive
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "Apps/Drive/**"
+      - "Packages/EDPCore/**"
+      - ".github/workflows/drive.yml"
+  pull_request:
+    paths:
+      - "Apps/Drive/**"
+      - "Packages/EDPCore/**"
+      - ".github/workflows/drive.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify monorepo and branding contract
+        run: |
+          set -euo pipefail
+          grep -Fq '<string>EDP Drive</string>' Apps/Drive/product/App/Info.plist
+          grep -Fq 'EDP Drive 磁盘访问' Apps/Drive/product/RawAccessHelper/Info.plist
+          grep -Fq 'com.edp.usbvault.app' Apps/Drive/product/App/Info.plist
+          grep -Fq '/Applications/EDP USB Vault.app/Contents/MacOS/EDP USB Vault' Apps/Drive/product/EDPXPCSecurity.swift
+          ! grep -Fq 'EDP_CORE_EXPECTED_REV' Apps/Drive/scripts/prepare-shared-edp-core.sh
+          grep -Fq 'Packages/EDPCore' Apps/Drive/scripts/prepare-shared-edp-core.sh
+          bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh
+          bash -n Apps/Drive/installer/build-native-installer.sh
+          bash -n Apps/Drive/installer/build-transport-backends.sh
+          echo 'RESULT=EDP_DRIVE_MONOREPO_CONTRACT_OK'
+      - name: Build core and run EDP golden validation
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+          cd Apps/Drive
+          REPO_ROOT="$PWD"
+          . scripts/prepare-shared-edp-core.sh
+          CORE_SOURCES=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+          )
+          xcrun swiftc -O -framework CryptoKit -framework Security \
+            "${EDP_CORE_SWIFTC_FLAGS[@]}" \
+            "${CORE_SOURCES[@]}" \
+            native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
+            -o "${RUNNER_TEMP}/validate-edp-native-core"
+          "${RUNNER_TEMP}/validate-edp-native-core" fixtures/golden/disks.json \
+            | tee "${RUNNER_TEMP}/native-core.txt"
+          grep -Fq 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/native-core.txt"
+          grep -Fq 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/native-core.txt"
+          grep -Fq 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/native-core.txt"
+          echo 'RESULT=EDP_DRIVE_GOLDEN_GATE_OK'
+      - name: Compile native daemon and SwiftUI app
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+          cd Apps/Drive
+          REPO_ROOT="$PWD"
+          . scripts/prepare-shared-edp-core.sh
+          CORE_SOURCES=(
+            native/EDPFSKitPoC/Extension/EDPRawIO.swift
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+            native/EDPFSKitPoC/Extension/EDPCrypto.swift
+            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+          )
+          PRODUCT_SOURCES=(
+            product/EDPCredentialStore.swift
+            product/EDPDevicePolicyStore.swift
+            product/EDPMacFUSERuntimePolicy.swift
+            product/EDPTransportProvider.swift
+            product/EDPTransportRuntimePolicy.swift
+            product/EDPFinderVolumeDefaults.swift
+            product/EDPNativeSystem.swift
+            product/EDPBlockDevicePublisher.swift
+            product/EDPXPCProtocol.swift
+            product/EDPXPCSecurity.swift
+            product/EDPVaultRuntime.swift
+          )
+          xcrun swiftc -O -framework CryptoKit -framework Security \
+            "${EDP_CORE_SWIFTC_FLAGS[@]}" \
+            "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
+            -o "${RUNNER_TEMP}/edp-vaultctl"
+          xcrun swiftc -O \
+            -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
+            product/EDPXPCProtocol.swift product/App/EDPUSBVaultApp.swift \
+            -o "${RUNNER_TEMP}/edp-drive-app"
+          echo 'RESULT=EDP_DRIVE_NATIVE_BUILD_OK'

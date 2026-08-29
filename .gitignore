@@ -1,0 +1,9 @@
+.DS_Store
+**/.DS_Store
+**/.build/
+**/DerivedData/
+**/artifacts/
+**/*.xcuserstate
+**/xcuserdata/
+*.swp
+*.tmp

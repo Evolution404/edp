@@ -1,10 +1,10 @@
-# edp-core
+# EDPCore
 
-Shared native EDP format/crypto core for `edp-usb-vault` and `edpopen`.
+Shared native EDP format/crypto package for **EDP Drive** and **EDP Studio** in this monorepo.
 
 ## Scope
 
-`edp-core` is platform-neutral format/crypto code. It must not own macOS raw-device authorization, Disk Arbitration, XPC, macFUSE/FSKit, Finder integration, Keychain storage, or app UI.
+`EDPCore` is platform-neutral format/crypto code. It must not own macOS raw-device authorization, Disk Arbitration, XPC, macFUSE/FSKit, Finder integration, Keychain storage, or app UI.
 
 Current shared surface:
 
@@ -17,7 +17,7 @@ Current shared surface:
 - native 512-byte sector decoder for LBA0/4/6/7/8/9/11/12 with structured field semantics
 - static `libEDPCore.a` + Swift module for direct `swiftc` consumers
 
-Product-local crypto implementations may remain temporarily only as differential migration references. Production hot paths must link the pinned shared core and fail closed if it is unavailable.
+Production App code must consume this package as the single EDP format/crypto implementation. Cross-repository revision pins and Deploy Keys are no longer part of the architecture.
 
 ## Performance contract
 
@@ -34,8 +34,8 @@ The Swift API decrypts/encrypts caller-owned buffers in place, so the product ho
 Run:
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test -c release
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift run -c release edp-core-bench
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path Packages/EDPCore -c release
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift run --package-path Packages/EDPCore -c release edp-core-bench
 ```
 
 ## Direct static linking
@@ -43,7 +43,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift run -c release ed
 Build the static product:
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build -c release --product EDPCore
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build --package-path Packages/EDPCore -c release --product EDPCore
 ```
 
 For Apple Silicon the outputs are under:

@@ -300,7 +300,7 @@ private func daMountApprovalCallback(
     let dissenter = DADissenterCreate(
         kCFAllocatorDefault,
         DAReturn(kDAReturnNotPermitted),
-        "EDP USB Vault safely ejected this device" as CFString
+        "EDP Drive safely ejected this device" as CFString
     )
     return Unmanaged.passRetained(dissenter)
 }

@@ -11,7 +11,7 @@ settings:
     SWIFT_VERSION: "6.0"
     PRODUCT_NAME: EDPOpen
     GENERATE_INFOPLIST_FILE: YES
-    INFOPLIST_KEY_CFBundleDisplayName: EDPOpen
+    INFOPLIST_KEY_CFBundleDisplayName: EDP Studio
     INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
     INFOPLIST_KEY_NSHumanReadableCopyright: Copyright © 2026 Evolution404
     CODE_SIGN_STYLE: Manual
@@ -35,9 +35,9 @@ targets:
         CURRENT_PROJECT_VERSION: 1
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
-        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules"
-        HEADER_SEARCH_PATHS: "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include"
-        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release/Modules"
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/../../../../Packages/EDPCore/Sources/CEDPCore/include"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release"
         OTHER_LDFLAGS: "$(inherited) -lEDPCore"
     dependencies:
       - target: EDPOpenRawBroker

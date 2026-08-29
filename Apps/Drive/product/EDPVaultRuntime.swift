@@ -290,7 +290,7 @@ private func isRawAccessPermissionFailure(_ error: Error) -> Bool {
 private func userFacingRawAccessError(_ error: Error) -> Error {
     guard isRawAccessPermissionFailure(error) else { return error }
     return fail(
-        "需要为“EDP USB Vault 磁盘访问”开启完全磁盘访问："
+        "需要为“EDP Drive 磁盘访问”开启完全磁盘访问："
             + "系统设置 → 隐私与安全性 → 完全磁盘访问"
     )
 }

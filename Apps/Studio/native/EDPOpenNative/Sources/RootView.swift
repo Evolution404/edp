@@ -11,7 +11,7 @@ struct RootView: View {
                 Label(item.title, systemImage: item.systemImage)
                     .tag(item)
             }
-            .navigationTitle("EDPOpen")
+            .navigationTitle("EDP Studio")
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 260)
         } detail: {
             detailView

@@ -280,7 +280,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     private func requireTransportRuntime() -> Bool {
         guard transportRuntimeReady == true else {
-            lastError = "macFUSE Local 运行组件未安装或尚未启用，请重新打开 EDP USB Vault 或运行安装器。"
+            lastError = "macFUSE Local 运行组件未安装或尚未启用，请重新打开 EDP Drive 或运行安装器。"
             return false
         }
         return true
@@ -317,7 +317,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     func openFullDiskAccessSettings() {
         guard FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath) else {
-            lastError = "磁盘访问组件尚未安装，请重新运行 EDP USB Vault 安装器。"
+            lastError = "磁盘访问组件尚未安装，请重新运行 EDP Drive 安装器。"
             return
         }
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
@@ -329,7 +329,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     func revealRawAccessHelper() {
         guard FileManager.default.fileExists(atPath: edpRawAccessHelperAppPath) else {
-            lastError = "磁盘访问组件尚未安装，请重新运行 EDP USB Vault 安装器。"
+            lastError = "磁盘访问组件尚未安装，请重新运行 EDP Drive 安装器。"
             return
         }
         NSWorkspace.shared.activateFileViewerSelecting([
@@ -570,7 +570,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("EDP USB Vault").font(.title2.bold())
+                    Text("EDP Drive").font(.title2.bold())
                     Text("后台服务：\(model.serviceStatus) · v\(model.snapshot.serviceVersion)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -681,7 +681,7 @@ struct EDPMainView: View {
             List(EDPMainSection.allCases, selection: $section) { item in
                 Label(item.rawValue, systemImage: item.icon).tag(item)
             }
-            .navigationTitle("EDP USB Vault")
+            .navigationTitle("EDP Drive")
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 220)
         } detail: {
             switch section ?? .devices {
@@ -719,7 +719,7 @@ struct EDPDevicesView: View {
             if model.needsFullDiskAccess {
                 HStack(spacing: 12) {
                     Label(
-                        "EDP U 盘已识别。请为“EDP USB Vault 磁盘访问”开启一次完全磁盘访问。",
+                        "EDP U 盘已识别。请为“EDP Drive 磁盘访问”开启一次完全磁盘访问。",
                         systemImage: "externaldrive.badge.exclamationmark"
                     )
                     Spacer()
@@ -1126,7 +1126,7 @@ struct EDPSettingsView: View {
                 Text(model.setupReady
                      ? "首次设置已完成。后台服务会按需打开经校验的 EDP 整盘并把文件描述符交给降权桥进程；重启或重新插盘不再请求管理员密码。"
                      : (model.needsFullDiskAccess
-                        ? "请为“EDP USB Vault 磁盘访问”开启一次完全磁盘访问，然后点击重新检测。"
+                        ? "请为“EDP Drive 磁盘访问”开启一次完全磁盘访问，然后点击重新检测。"
                         : "请完成后台服务、macFUSE Local 和磁盘访问组件设置；完全磁盘访问会在连接 EDP U 盘后进行验证。"))
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -1198,7 +1198,7 @@ struct EDPMenuBarView: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("打开 EDP USB Vault") {
+        Button("打开 EDP Drive") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -1243,7 +1243,7 @@ struct EDPMenuBarView: View {
         if model.snapshot.devices.filter(\.connected).isEmpty {
             Text("未连接 EDP U 盘").foregroundStyle(.secondary)
         } else if model.needsFullDiskAccess {
-            Text("加密分区需要为“EDP USB Vault 磁盘访问”开启一次完全磁盘访问。")
+            Text("加密分区需要为“EDP Drive 磁盘访问”开启一次完全磁盘访问。")
                 .foregroundStyle(.secondary)
             Button("显示磁盘访问组件") { model.revealRawAccessHelper() }
             Button("打开完全磁盘访问") { model.openFullDiskAccessSettings() }
@@ -1850,7 +1850,7 @@ struct EDPUSBVaultApp: App {
     }
 
     var body: some Scene {
-        Window("EDP USB Vault", id: "main") {
+        Window("EDP Drive", id: "main") {
             EDPMainView(model: model)
         }
         .defaultSize(width: 980, height: 680)
@@ -1859,7 +1859,7 @@ struct EDPUSBVaultApp: App {
             EDPMenuBarView(model: model)
         } label: {
             Label(
-                "EDP USB Vault",
+                "EDP Drive",
                 systemImage: model.snapshot.devices.contains(where: { $0.connected })
                     ? "externaldrive.fill.badge.checkmark"
                     : "externaldrive"

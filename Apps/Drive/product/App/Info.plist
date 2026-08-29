@@ -5,7 +5,7 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>zh_CN</string>
   <key>CFBundleDisplayName</key>
-  <string>EDP USB Vault</string>
+  <string>EDP Drive</string>
   <key>CFBundleExecutable</key>
   <string>EDP USB Vault</string>
   <key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>EDP USB Vault</string>
+  <string>EDP Drive</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -29,6 +29,6 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSRemovableVolumesUsageDescription</key>
-  <string>EDP USB Vault 需要访问您插入的 EDP 加密U盘以完成识别、解锁和挂载。</string>
+  <string>EDP Drive 需要访问您插入的 EDP 加密U盘以完成识别、解锁和挂载。</string>
 </dict>
 </plist>

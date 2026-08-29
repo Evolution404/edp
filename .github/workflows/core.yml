@@ -1,0 +1,31 @@
+name: EDPCore
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "Packages/EDPCore/**"
+      - ".github/workflows/core.yml"
+  pull_request:
+    paths:
+      - "Packages/EDPCore/**"
+      - ".github/workflows/core.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test shared EDP core
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+          swift test --package-path Packages/EDPCore -c release
+          swift build --package-path Packages/EDPCore -c release --product EDPCore
+          test -f Packages/EDPCore/.build/arm64-apple-macosx/release/libEDPCore.a
+          echo 'RESULT=EDP_CORE_MONOREPO_GATE_OK'

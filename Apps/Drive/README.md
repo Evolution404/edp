@@ -1,4 +1,4 @@
-# EDP USB Vault — macOS 26
+# EDP Drive — macOS 26
 
 本分支维护 **macOS 26+ 原生菜单栏产品方向**。
 
@@ -24,7 +24,7 @@ Dock 图标；菜单栏可以打开完整的“设备 / 活动 / 设置”主界
 physical EDP USB
   -> FDA daemon retains one validated O_RDWR whole-disk fd
   -> type 1: plaintext writable MBR/FAT slice
-  -> type 2/4: per-partition Swift SM4 block adapter
+  -> type 2/4: shared EDPCore SM4 block adapter
   -> macFUSE 5.3.3 Local FSKit transport (local,nobrowse)
   -> hidden writable volume.raw
   -> DiskImages2 writable virtual media
@@ -52,7 +52,7 @@ MFMount.framework 和 Local FSKit module；前台 App 只负责当前控制台�
 FSKit module enablement，root daemon 不修改用户的 FSKit 设置。
 
 原始磁盘访问不保存 `AuthorizationExternalForm`，也不修改 AuthorizationDB。
-首次配置时，用户只需要为稳定签名的 `EDP USB Vault 磁盘访问`
+首次配置时，用户只需要为稳定签名的 `EDP Drive 磁盘访问`
 （`com.edp.usbvault.rawaccess`）开启一次 Full Disk Access。root 后台服务先通过
 IOKit 与只读 metadata helper 识别 EDP whole USB，再由该 FDA helper 对当前
 `/dev/rdiskN` 进行二次 whole-USB、字符设备、device-node 一致性以及 LBA4/LBA7
@@ -65,7 +65,7 @@ EDP 元数据校验。校验通过后才以 `O_RDWR` 打开整盘，将 fd 固�
 当前本机统一签名身份为 `EDP Project Code Signing`，证书 SHA-256 为
 `D9142CE44ABCB5DD662DF9621D48A88C88EDBCB0392D3C74EBACBB1292B7B5A7`，
 designated requirement 的 certificate root 为
-`040b5488fb2b6c02b0786e76b674cb4460658ca2`。`edp-usb-vault` 与 `edpopen`
+`040b5488fb2b6c02b0786e76b674cb4460658ca2`。EDP Drive 与 EDP Studio
 统一使用这张证书；本地 self-signed 包必须通过
 `./installer/build-self-signed-installer.sh` 构建，该入口会校验证书 fingerprint
 和私钥匹配关系，不再使用 Apple Development identity。
@@ -139,7 +139,7 @@ macFUSE 当前许可允许二进制再分发，但禁止未经书面许可随商
 ```text
 real EDP USB
   -> LBA11/LBA12 / password / derived key
-  -> Swift SM4 transparent block translation
+  -> shared EDPCore SM4 transparent block translation
   -> EDPBlockReadable
   -> macFUSE 5.x (backend=fskit)
   -> hidden volume.raw
@@ -149,7 +149,7 @@ real EDP USB
   -> Finder
 ```
 
-EDP USB Vault **不自行实现 exFAT/APFS/FAT/NTFS 等任何具体文件系统**。项目只负责 EDP metadata、身份/密码校验、key derivation、SM4、offset/length block translation 和 mount lifecycle。
+EDP Drive **不自行实现 exFAT/APFS/FAT/NTFS 等任何具体文件系统**。应用只负责 raw-device 生命周期、挂载和系统集成；EDP metadata、身份/密码校验、key derivation 与 SM4 由 monorepo 的 `Packages/EDPCore` 统一提供。
 
 产品 runtime 不使用 `hdiutil`，不使用 DriverKit block-storage entitlement，不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
 

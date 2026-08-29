@@ -1,0 +1,58 @@
+name: EDP Studio
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "Apps/Studio/**"
+      - "Packages/EDPCore/**"
+      - ".github/workflows/studio.yml"
+  pull_request:
+    paths:
+      - "Apps/Studio/**"
+      - "Packages/EDPCore/**"
+      - ".github/workflows/studio.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify pure-native source contract
+        run: |
+          set -euo pipefail
+          test ! -e Apps/Studio/src-tauri
+          test ! -e Apps/Studio/core
+          test ! -e Apps/Studio/src
+          ! grep -R -E 'edpopen_ffi|Build Rust EDP Core|build-rust-core.sh' \
+            Apps/Studio/native/EDPOpenNative/Sources \
+            Apps/Studio/native/EDPOpenNative/project.yml \
+            Apps/Studio/native/EDPOpenNative/EDPOpenNative.xcodeproj/project.pbxproj
+          grep -Fq 'EDP Studio' Apps/Studio/native/EDPOpenNative/Sources/EDPOpenNativeApp.swift
+          grep -Fq 'com.evolution404.edpopen' Apps/Studio/native/EDPOpenNative/project.yml
+          echo 'RESULT=EDP_STUDIO_PURE_NATIVE_CONTRACT_OK'
+      - name: Build shared core
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+          Apps/Studio/native/EDPOpenNative/Scripts/build-shared-core.sh
+      - name: Compile native Studio without signing
+        run: |
+          set -euo pipefail
+          export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+          xcodebuild \
+            -project Apps/Studio/native/EDPOpenNative/EDPOpenNative.xcodeproj \
+            -scheme EDPOpen \
+            -configuration Release \
+            -derivedDataPath "${RUNNER_TEMP}/edp-studio-derived" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          test -x "${RUNNER_TEMP}/edp-studio-derived/Build/Products/Release/EDPOpen.app/Contents/MacOS/EDPOpen"
+          echo 'RESULT=EDP_STUDIO_NATIVE_BUILD_OK'

@@ -279,17 +279,17 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/Sources/CEDPCore/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release";
 				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
 				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
 				SDKROOT = macosx;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release/Modules";
 			};
 			name = Debug;
 		};
@@ -363,7 +363,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = EDPOpen;
+				INFOPLIST_KEY_CFBundleDisplayName = "EDP Studio";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Evolution404";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -433,7 +433,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = EDPOpen;
+				INFOPLIST_KEY_CFBundleDisplayName = "EDP Studio";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Evolution404";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -456,17 +456,17 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/Sources/CEDPCore/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release";
 				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
 				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
 				SDKROOT = macosx;
-				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../../Packages/EDPCore/.build/arm64-apple-macosx/release/Modules";
 			};
 			name = Release;
 		};

@@ -1,41 +1,49 @@
-# EDPOpen
+# EDP Studio
 
-cems 加密 U 盘分析与免密改造的桌面工具（Tauri 2：Rust 后端 + WebView 前端）。
+EDP Studio 是面向 macOS 26+ 的原生 EDP 磁盘分析、扇区查看与维护工具。正式产品使用 SwiftUI/AppKit、原生 XPC Raw Broker 和共享 `Packages/EDPCore`，当前树不再包含 Tauri/WebView/Rust 产品实现。
 
-> EDP = 目标盘的加密分区格式（EDPF），Open = 解开 / 开放。
+## 产品职责
 
-## 功能
-
-- **盘识别**：USB 外置盘枚举、device_id 自动识别、盘状态判定（标准加密盘 / 免密盘 / 已改造）
-- **盘地图**：全盘区域色块缩略 + LBA0-13 元数据区方格网格，字段分类着色，悬停显示含义，点击跳转扇区
-- **扇区浏览器**：任意 LBA hexdump，字段级着色 + hover 释义，raw / 解密视图切换
-- **字节级编辑器**：点击字节修改、diff/撤销、重加密预览、raw 导出、敏感区警告；LBA4/6/7/8/9/11/12 在明文视图编辑后由 Rust 重加密，保存前做 expected-raw 防竞态、整盘身份复核、自动备份与回读；支持 Encrypted/NoPwd 编辑，禁止保存会改变 LBA4 labelOnlyId 的编辑
-- **免密改造**：预览 → 管理员授权写入（自动备份 → 写 5 扇 → 回读校验）
-- **备份管理**：7168B/MD5 校验、LBA4 labelOnlyId 当前盘匹配、来源 EDPF+Encrypted 二次验证；还原前自动再备份当前状态并使用同一 authopen O_RDWR FD 回读验证
-- **离线模式**：拖入备份 / 镜像文件全流程分析，不插盘
+- 识别 EDP 外置磁盘与设备身份。
+- 浏览磁盘布局和 LBA0–13 元数据区域。
+- 以 raw / 解码视图查看扇区和字段语义。
+- 为后续编辑、备份、恢复和格式转换提供原生工作台。
+- 通过 root-owned Raw Broker 获取受控 raw-device 能力，App 本身不以 root 身份运行。
 
 ## 架构
 
-```
-src/            前端(原生 JS, 无框架)
-src-tauri/src/  Rust 后端
-  crypto.rs     crc32_bare / AES-128 变体(A6B0/a7f0) / 滚动 XOR / LBA6 校验和
-  parser.rs     LBA4/6/7/8/9/11/12 解析 + EDPF entry + ELABEL(GBK) + MBR
-  disk.rs       盘枚举(diskutil) / device_id 识别 / authopen raw-device FD
-  convert.rs    免密改造 5 扇生成 / 目标盘复核 / 备份与授权写入
-  commands.rs   Tauri 命令门面
+```text
+Apps/Studio/native/EDPOpenNative
+        │
+        ├── SwiftUI / AppKit UI
+        ├── Raw Broker XPC client
+        └── import EDPCore
+                 │
+                 ▼
+Packages/EDPCore
+        ├── EDP crypto
+        ├── metadata / identity
+        └── sector decoder
 ```
 
-macOS 26 下 raw 设备节点可能是 `root:operator`，普通进程不能直接读取。
-EDPOpen 先尝试直接只读；受保护时使用系统 `/usr/libexec/authopen` 获取已授权 FD。
-写盘在再次核验 VID/PID、容量、device_id、LBA4 唯一 ID 和加密盘状态后，先卸载卷，
-再通过 `authopen -stdoutpipe -o O_RDWR` 获取单个读写 FD，使用同一 FD 完成
-LBA0-13 备份 → LBA0 最后写 → `sync` → 逐扇回读校验。GUI 不再依赖
-`osascript → root → open(/dev/rdiskN)`；该 direct-open 路径已在 macOS 26 实测为 EPERM。
+`EDPCore` 是 EDP 格式和密码学的唯一共享真源；EDP Studio 不再维护第二份 Rust/Crypto 实现。
+
+## 产品名称与兼容身份
+
+用户显示名称已经改为 **EDP Studio**。为避免一次改名同时破坏既有 XPC/FDA/安装信任链，第一阶段继续保留以下兼容身份：
+
+```text
+Bundle ID: com.evolution404.edpopen
+Installed App path: /Applications/EDPOpen.app
+Raw Broker ID: com.evolution404.edpopen.rawbroker
+Raw Broker path: /Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker
+```
+
+这些内部 identifier/path 后续如需迁移，将单独做带回归测试的身份迁移，不与 monorepo/品牌改名混在一起。
 
 ## 统一本机签名
 
-`EDPOpenNative` 与 `edp-usb-vault` 统一使用同一张长期 self-signed Code Signing 证书：
+EDP Studio 与 EDP Drive 使用同一张长期 self-signed Code Signing 证书：
 
 ```text
 Identity: EDP Project Code Signing
@@ -44,41 +52,29 @@ Certificate leaf/root SHA-1: 040b5488fb2b6c02b0786e76b674cb4460658ca2
 Validity: 2026-08-29 .. 2046-08-24
 ```
 
-私钥只保存在当前用户 `login.keychain-db`，仓库不保存 PEM/P12。原生 App 和 Raw Broker 使用 Manual Signing，XPC 双向 requirement 固定 bundle identifier + 精确同一 leaf certificate；Broker 还校验 App 固定安装路径，Broker 启动时校验自身固定 privileged-helper 路径、root owner 和 group/world 不可写，不再依赖 Apple Development Team ID。
+私钥只保存在当前用户 `login.keychain-db`，仓库不保存 PEM/P12。App 与 Raw Broker 使用固定 bundle identifier + 同一 leaf certificate 的双向 XPC requirement；Broker 同时校验固定安装路径、root owner 和 group/world 不可写。
 
-规范本机构建入口：
+## 构建与安装
 
-```bash
-native/EDPOpenNative/Scripts/build-native.sh
-```
-
-该脚本会在构建前校验证书 SHA-256、私钥可用性和 certificate root，防止同名错误证书被误用；Xcode 的既有 Rust pre-build phase 也会调用同一校验脚本，因此直接在 Xcode 点 Build 同样受此约束。
-
-XPC peer signing contract 可单独验证：
+从 monorepo 根目录进入 Studio 原生工程：
 
 ```bash
-native/EDPOpenNative/Scripts/verify-peer-signing-contract.sh
-```
-
-该测试不会修改用户 trust store，也不会创建或加入任何临时 signing keychain；它会生成一张仅存在于临时目录的 self-signed code-signing certificate/private key，通过 Security.framework 的显式 `SecIdentity` 生成真实 alternate certificate-backed App/Broker 签名，再确认 production leaf requirement 必须拒绝这些坏样本。测试退出时同时断言 DefaultKeychain/SearchList 与运行前完全一致。
-
-规范本机安装分两步：先以普通用户完成签名构建，再仅用 root 复制已签名产物；root 安装阶段不会访问签名私钥：
-
-```bash
+cd Apps/Studio
 native/EDPOpenNative/Scripts/build-native.sh
 sudo /bin/bash native/EDPOpenNative/Scripts/install-native.sh
 /bin/bash native/EDPOpenNative/Scripts/verify-installed-native.sh
 ```
 
-安装器固定 App 到 `/Applications/EDPOpen.app`，Raw Broker 到 `/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker`，LaunchDaemon 到 `/Library/LaunchDaemons/com.evolution404.edpopen.rawbroker.plist`。Broker 强制 `root:wheel 0755`、plist 强制 `root:wheel 0644`，复制前后都验证固定 bundle identifier + 精确 EDP leaf requirement，并拒绝旧 Apple Development Team ID。
+Xcode build phase 会直接构建 monorepo 内的 `Packages/EDPCore`，不需要跨仓库 checkout、Git revision pin 或 Deploy Key。
 
-## 参照与对拍基准
+XPC signing contract 可单独验证：
 
-算法与流程移植自 Python 版工具（另行保存），测试向量取自真实盘的
-LBA0-13 备份，Rust 与 Python 输出逐字节对拍。
+```bash
+native/EDPOpenNative/Scripts/verify-peer-signing-contract.sh
+```
 
-## 状态
+该测试不会修改用户 trust store 或 DefaultKeychain/SearchList。
 
-开发中（进度约 60%）。**接手/继续开发先读：**
-- [PLAN.md](PLAN.md) — 权威计划：架构、算法规则表、重加密表、测试体系、剩余任务
-- [HANDOFF.md](HANDOFF.md) — 执行记录：进度快照、模块地图、关键决策、已知坑、上手命令
+## 历史
+
+旧 EDPOpen 的 Tauri/WebView/Rust 实现已经从当前树删除，但完整历史仍保留在 monorepo Git 图中，可通过 Git 历史追溯。当前开发只以原生 macOS 路径为准。
