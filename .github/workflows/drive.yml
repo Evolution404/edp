@@ -43,6 +43,12 @@ jobs:
           ! grep -Fq '仅退出界面（' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq '完全退出（' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq 'Menu(' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq '.menuBarExtraStyle(.window)' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq '.menuBarExtraStyle(.menu)' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq '@State private var selectedDeviceID: String?' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq '@State private var selectedPartitionType: UInt32?' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'HStack(alignment: .top, spacing: 0)' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'EDPMenuNavigationRow' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq '<string>EDPDrive.icns</string>' Apps/Drive/product/App/Info.plist
           grep -Fq '<string>Copyright © 2026 EDP</string>' Apps/Drive/product/App/Info.plist
           test -f Apps/Drive/product/App/EDPDriveIcon.svg

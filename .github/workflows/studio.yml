@@ -37,8 +37,10 @@ jobs:
           grep -Fq 'HSplitView' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           ! grep -Fq '.inspector(' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           grep -Fq '.padding(8)' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
-          grep -Fq '.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
-          grep -Fq '.glassEffect(.regular, in: .rect(cornerRadius: 22))' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          grep -Fq 'NativeSidebarMaterial' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          grep -Fq 'view.material = .sidebar' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          grep -Fq 'view.blendingMode = .behindWindow' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
+          ! grep -Fq '.background(.ultraThinMaterial' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           ! grep -Fq '.background(.background)' Apps/Studio/native/EDPStudioNative/Sources/RootView.swift
           grep -Fq 'diskMapLayout' Apps/Studio/native/EDPStudioNative/Sources/DiskMapView.swift
           grep -Fq '.frame(width: layout.totalWidth' Apps/Studio/native/EDPStudioNative/Sources/DiskMapView.swift

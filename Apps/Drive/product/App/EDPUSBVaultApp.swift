@@ -1391,81 +1391,423 @@ struct EDPSettingsView: View {
 struct EDPMenuBarView: View {
     @ObservedObject var model: EDPVaultViewModel
     @Environment(\.openWindow) private var openWindow
+    @State private var selectedDeviceID: String?
+    @State private var selectedPartitionType: UInt32?
 
     private var connectedDevices: [EDPXPCDevice] {
         model.snapshot.devices.filter(\.connected)
     }
 
+    private var selectedDevice: EDPXPCDevice? {
+        guard let selectedDeviceID else { return nil }
+        return connectedDevices.first(where: { $0.deviceID == selectedDeviceID })
+    }
+
+    private var selectedPartition: EDPXPCPartition? {
+        guard let selectedDevice, let selectedPartitionType else { return nil }
+        return selectedDevice.partitions.first(where: { $0.partitionType == selectedPartitionType })
+    }
+
     var body: some View {
-        Button("打开 EDP Drive") {
-            openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        .keyboardShortcut("o")
+        HStack(alignment: .top, spacing: 0) {
+            rootPanel
+                .frame(width: 304)
 
-        Divider()
-        Label("后台服务：\(model.serviceStatus)", systemImage: "gearshape.2")
-        Button(model.snapshot.globalAutoMountEnabled ? "暂停自动挂载" : "恢复自动挂载") {
-            model.setGlobalAutoMount(!model.snapshot.globalAutoMountEnabled)
-        }
-
-        if connectedDevices.isEmpty {
-            Divider()
-            Text("未连接标准 EDP 加密盘")
-                .foregroundStyle(.secondary)
-        } else {
-            ForEach(connectedDevices) { device in
+            if let selectedDevice {
                 Divider()
-                Section(device.displayName) {
-                    ForEach(device.partitions) { partition in
-                        if partition.mountState == .mounted {
-                            if partition.mountPoint != nil {
-                                Button("\(partition.displayName) · 在 Finder 中显示") {
-                                    model.openInFinder(partition)
+                devicePanel(selectedDevice)
+                    .frame(width: 276)
+            }
+
+            if let selectedDevice, let selectedPartition {
+                Divider()
+                partitionPanel(device: selectedDevice, partition: selectedPartition)
+                    .frame(width: 250)
+            }
+        }
+        .background(.clear)
+        .animation(.snappy(duration: 0.18), value: selectedDeviceID)
+        .animation(.snappy(duration: 0.18), value: selectedPartitionType)
+        .onChange(of: connectedDevices.map(\.deviceID)) { _, deviceIDs in
+            guard let selectedDeviceID else { return }
+            if !deviceIDs.contains(selectedDeviceID) {
+                self.selectedDeviceID = nil
+                selectedPartitionType = nil
+            }
+        }
+        .onChange(of: selectedDevice?.partitions.map(\.partitionType) ?? []) { _, partitionTypes in
+            guard let selectedPartitionType else { return }
+            if !partitionTypes.contains(selectedPartitionType) {
+                self.selectedPartitionType = nil
+            }
+        }
+    }
+
+    private var rootPanel: some View {
+        VStack(spacing: 0) {
+            EDPMenuPanelHeader(title: "EDP Drive", subtitle: "标准 EDP 加密盘")
+
+            EDPMenuNavigationRow(
+                title: "打开 EDP Drive",
+                subtitle: "设备、密码与自动挂载设置",
+                systemImage: "macwindow",
+                trailingSystemImage: "arrow.up.forward.app"
+            ) {
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .keyboardShortcut("o")
+
+            Divider().padding(.horizontal, 12)
+
+            VStack(spacing: 4) {
+                HStack(spacing: 8) {
+                    Image(systemName: "gearshape.2")
+                        .foregroundStyle(.secondary)
+                    Text("后台服务")
+                    Spacer()
+                    Text(model.serviceStatus)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+
+                EDPMenuNavigationRow(
+                    title: model.snapshot.globalAutoMountEnabled ? "暂停自动挂载" : "恢复自动挂载",
+                    subtitle: model.snapshot.globalAutoMountEnabled ? "当前自动挂载已启用" : "当前自动挂载已暂停",
+                    systemImage: model.snapshot.globalAutoMountEnabled ? "pause.circle" : "play.circle"
+                ) {
+                    model.setGlobalAutoMount(!model.snapshot.globalAutoMountEnabled)
+                }
+            }
+
+            Divider().padding(.horizontal, 12)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("设备")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+
+                if connectedDevices.isEmpty {
+                    HStack(spacing: 9) {
+                        Image(systemName: "externaldrive.badge.questionmark")
+                        Text("未连接标准 EDP 加密盘")
+                        Spacer()
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 12)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(connectedDevices) { device in
+                                EDPMenuNavigationRow(
+                                    title: device.displayName,
+                                    subtitle: device.vidPID,
+                                    systemImage: "externaldrive.fill",
+                                    trailingSystemImage: "chevron.right",
+                                    isSelected: selectedDeviceID == device.deviceID
+                                ) {
+                                    selectedDeviceID = device.deviceID
+                                    selectedPartitionType = nil
                                 }
                             }
-                            Button("\(partition.displayName) · 卸载") {
-                                model.unmountPartition(
-                                    deviceID: device.deviceID,
-                                    partitionType: partition.partitionType
-                                )
-                            }
-                        } else {
-                            Button("\(partition.displayName) · 挂载") {
-                                model.mountPartition(
-                                    deviceID: device.deviceID,
-                                    partitionType: partition.partitionType
-                                )
-                            }
-                            .disabled(partition.encrypted && partition.credentialStatus != .saved)
                         }
                     }
-                    Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
+                    .frame(maxHeight: 220)
+                }
+            }
+
+            if !connectedDevices.isEmpty && model.needsFullDiskAccess {
+                Divider().padding(.horizontal, 12)
+                VStack(spacing: 2) {
+                    EDPMenuNavigationRow(
+                        title: "需要完全磁盘访问",
+                        subtitle: "为 EDP Drive 开启一次即可",
+                        systemImage: "lock.trianglebadge.exclamationmark"
+                    ) {
+                        model.openFullDiskAccessSettings()
+                    }
+                    EDPMenuNavigationRow(
+                        title: "重新检测权限",
+                        systemImage: "arrow.clockwise",
+                        isEnabled: !model.isBusy
+                    ) {
+                        model.refreshRawAccess()
+                    }
+                }
+            }
+
+            Divider().padding(.horizontal, 12)
+            footer
+        }
+    }
+
+    private func devicePanel(_ device: EDPXPCDevice) -> some View {
+        VStack(spacing: 0) {
+            EDPMenuPanelHeader(title: device.displayName, subtitle: device.vidPID)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("分区")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 6)
+
+                ForEach(device.partitions) { partition in
+                    EDPMenuNavigationRow(
+                        title: partition.displayName,
+                        subtitle: partitionStatus(partition),
+                        systemImage: partitionIcon(partition),
+                        trailingSystemImage: "chevron.right",
+                        isSelected: selectedPartitionType == partition.partitionType
+                    ) {
+                        selectedPartitionType = partition.partitionType
+                    }
+                }
+            }
+
+            Divider().padding(.horizontal, 12)
+
+            EDPMenuNavigationRow(
+                title: "安全推出整盘",
+                subtitle: "卸载全部分区并释放设备",
+                systemImage: "eject",
+                tint: .red,
+                isEnabled: !model.isBusy
+            ) {
+                model.eject(deviceID: device.deviceID)
+            }
+
+            Spacer(minLength: 8)
+        }
+    }
+
+    private func partitionPanel(device: EDPXPCDevice, partition: EDPXPCPartition) -> some View {
+        VStack(spacing: 0) {
+            EDPMenuPanelHeader(
+                title: partition.displayName,
+                subtitle: partitionStatus(partition)
+            )
+
+            VStack(spacing: 2) {
+                if partition.mountState == .mounted {
+                    if partition.mountPoint != nil {
+                        EDPMenuNavigationRow(
+                            title: "在 Finder 中显示",
+                            systemImage: "folder"
+                        ) {
+                            model.openInFinder(partition)
+                        }
+                    }
+
+                    EDPMenuNavigationRow(
+                        title: "卸载",
+                        subtitle: "保持整盘连接",
+                        systemImage: "externaldrive.badge.minus",
+                        isEnabled: !model.isBusy
+                    ) {
+                        model.unmountPartition(
+                            deviceID: device.deviceID,
+                            partitionType: partition.partitionType
+                        )
+                    }
+                } else {
+                    EDPMenuNavigationRow(
+                        title: partition.mountState == .mounting ? "正在挂载…" : "挂载",
+                        subtitle: mountAvailabilityText(partition),
+                        systemImage: "externaldrive.badge.plus",
+                        isEnabled: canMount(partition)
+                    ) {
+                        model.mountPartition(
+                            deviceID: device.deviceID,
+                            partitionType: partition.partitionType
+                        )
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 4) {
+            EDPMenuCompactButton(title: "刷新", systemImage: "arrow.clockwise") {
+                model.refresh()
+            }
+            Spacer(minLength: 6)
+            EDPMenuCompactButton(title: "仅退出界面", systemImage: "rectangle.portrait.and.arrow.right") {
+                NSApplication.shared.terminate(nil)
+            }
+            EDPMenuCompactButton(
+                title: "完全退出",
+                systemImage: "power",
+                tint: .red,
+                isEnabled: !model.isBusy
+            ) {
+                model.stopService {
+                    NSApplication.shared.terminate(nil)
                 }
             }
         }
+        .padding(8)
+    }
 
-        if !connectedDevices.isEmpty && model.needsFullDiskAccess {
-            Divider()
-            Text("需要为 EDP Drive 开启完全磁盘访问")
-                .foregroundStyle(.secondary)
-            Button("打开完全磁盘访问") { model.openFullDiskAccessSettings() }
-            Button("重新检测权限") { model.refreshRawAccess() }
-                .disabled(model.isBusy)
-        }
+    private func canMount(_ partition: EDPXPCPartition) -> Bool {
+        guard !model.isBusy, partition.mountState != .mounting else { return false }
+        return !partition.encrypted || partition.credentialStatus == .saved
+    }
 
-        Divider()
-        Button("刷新") { model.refresh() }
-        Divider()
-        Button("仅退出界面") {
-            NSApplication.shared.terminate(nil)
+    private func mountAvailabilityText(_ partition: EDPXPCPartition) -> String? {
+        if partition.encrypted && partition.credentialStatus != .saved {
+            return "请先在主界面保存密码"
         }
-        Button("完全退出") {
-            model.stopService {
-                NSApplication.shared.terminate(nil)
+        if partition.mountState == .failed {
+            return partition.lastError ?? "上次挂载失败"
+        }
+        return nil
+    }
+
+    private func partitionStatus(_ partition: EDPXPCPartition) -> String {
+        switch partition.mountState {
+        case .unavailable: return "不可用"
+        case .unmounted: return "未挂载"
+        case .mounting: return "正在挂载"
+        case .mounted: return "已挂载"
+        case .failed: return "挂载失败"
+        }
+    }
+
+    private func partitionIcon(_ partition: EDPXPCPartition) -> String {
+        switch EDPPartitionKind(rawValue: partition.partitionType) {
+        case .boot: return "externaldrive"
+        case .exchange: return "arrow.left.arrow.right.square"
+        case .secure: return "lock.square"
+        case nil: return "externaldrive.badge.questionmark"
+        }
+    }
+}
+
+private struct EDPMenuPanelHeader: View {
+    let title: String
+    var subtitle: String? = nil
+    var backAction: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 9) {
+            if let backAction {
+                Button(action: backAction) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.glass)
+                .help("返回")
+            } else {
+                Image(systemName: "externaldrive.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.tint)
+                    .frame(width: 24, height: 24)
             }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
         }
-        .disabled(model.isBusy)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+}
+
+private struct EDPMenuNavigationRow: View {
+    let title: String
+    var subtitle: String? = nil
+    let systemImage: String
+    var trailingSystemImage: String? = nil
+    var tint: Color? = nil
+    var isEnabled = true
+    var isSelected = false
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint ?? .secondary)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(tint ?? .primary)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                if let trailingSystemImage {
+                    Image(systemName: trailingSystemImage)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, subtitle == nil ? 8 : 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            isSelected
+                ? Color.accentColor.opacity(0.16)
+                : Color.primary.opacity(hovering && isEnabled ? 0.075 : 0),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
+        .padding(.horizontal, 4)
+        .onHover { hovering = $0 }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.48)
+    }
+}
+
+private struct EDPMenuCompactButton: View {
+    let title: String
+    let systemImage: String
+    var tint: Color? = nil
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.caption)
+                .foregroundStyle(tint ?? .primary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+        }
+        .buttonStyle(.glass)
+        .disabled(!isEnabled)
     }
 }
 
@@ -2182,6 +2524,9 @@ struct EDPUSBVaultApp: App {
                     : "externaldrive"
             )
         }
-        .menuBarExtraStyle(.menu)
+        // Window style keeps one stable popover alive while the user drills through
+        // device -> partition pages. Unlike AppKit cascading NSMenu submenus, there is
+        // no narrow hover corridor that can accidentally dismiss the hierarchy.
+        .menuBarExtraStyle(.window)
     }
 }

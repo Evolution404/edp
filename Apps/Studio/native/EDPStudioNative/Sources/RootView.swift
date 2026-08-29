@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RootView: View {
@@ -137,16 +138,19 @@ struct InspectorView: View {
             }
             .padding(18)
         }
-        // Keep the inspector as a real HSplitView column so it never overlays scrollable
-        // content, but render the column itself as a floating macOS 26 glass sidebar.
-        // The outer padding is applied by RootView so the rounded glass surface has the
-        // same detached-from-window-edge character as NavigationSplitView's sidebar.
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        // Match the native NavigationSplitView sidebar instead of stacking a gray
+        // SwiftUI material beneath Liquid Glass. NSVisualEffectView(.sidebar) gives the
+        // same behind-window blur family as the leading sidebar; the surrounding HSplitView
+        // column stays transparent and only this rounded surface floats inside it.
+        .background {
+            NativeSidebarMaterial()
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(.separator.opacity(0.34), lineWidth: 0.5)
+                .stroke(.separator.opacity(0.22), lineWidth: 0.5)
         }
+        .shadow(color: .black.opacity(0.08), radius: 18, y: 7)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
@@ -228,6 +232,24 @@ struct InspectorView: View {
                 }
             }
         }
+    }
+}
+
+private struct NativeSidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.isEmphasized = false
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = .sidebar
+        nsView.blendingMode = .behindWindow
+        nsView.state = .active
+        nsView.isEmphasized = false
     }
 }
 
