@@ -181,6 +181,7 @@ Service 打开 raw device 前后继续验证：
 - `st_rdev` 一致性；
 - VID/PID / 容量 / registry identity；
 - LBA0 / LBA4 / LBA7 / LBA11 / LBA12 metadata 与标准加密盘几何；
+- 每次 discovery/reconcile 都重新读取上述 5 个扇区并重新分类，禁止用缓存设备记录绕过标准盘判定；
 - stable EDP device ID；
 - 只把 raw fd 传给允许的 EDP transport。
 
