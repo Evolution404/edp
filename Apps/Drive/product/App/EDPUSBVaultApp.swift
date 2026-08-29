@@ -976,7 +976,11 @@ struct EDPMainView: View {
             }
             .listStyle(.sidebar)
             .navigationTitle("EDP Drive")
-            .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 190)
+            // Keep the primary navigation readable even when AppKit restores an
+            // old split-view position. A ranged width can be compressed below its
+            // declared minimum by the nested device split view.
+            .frame(width: 180)
+            .navigationSplitViewColumnWidth(180)
         } detail: {
             switch section ?? .devices {
             case .devices: EDPDevicesView(model: model)
@@ -1046,7 +1050,7 @@ struct EDPDevicesView: View {
                     }
                 }
                 .listStyle(.sidebar)
-                .frame(minWidth: 200, idealWidth: 220, maxWidth: 240)
+                .frame(minWidth: 180, idealWidth: 200, maxWidth: 220)
 
                 Group {
                     if let selectedDevice {
@@ -1060,7 +1064,7 @@ struct EDPDevicesView: View {
                         )
                     }
                 }
-                .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("设备")
@@ -1138,6 +1142,9 @@ struct EDPDeviceDetailView: View {
                             Text(device.deviceID)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .layoutPriority(-1)
                                 .textSelection(.enabled)
                         }
                         Spacer()
@@ -1146,6 +1153,7 @@ struct EDPDeviceDetailView: View {
                             systemImage: device.connected ? "checkmark.circle.fill" : "circle.dashed",
                             tone: device.connected ? .success : .neutral
                         )
+                        .fixedSize()
                     }
                 }
 
