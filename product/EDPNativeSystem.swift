@@ -13,6 +13,7 @@ struct PhysicalDisk: Hashable, Sendable {
     let vidHex: String
     let pidHex: String
     let registryEntryID: UInt64
+    let usbRegistryEntryID: UInt64
     let metadataDeviceID: String
     let deviceID: String
 }
@@ -52,6 +53,7 @@ private struct USBAncestorIdentity {
     let vid: UInt64
     let pid: UInt64
     let productName: String?
+    let registryEntryID: UInt64
 }
 
 private func usbAncestorIdentity(of service: io_registry_entry_t) -> USBAncestorIdentity? {
@@ -66,7 +68,16 @@ private func usbAncestorIdentity(of service: io_registry_entry_t) -> USBAncestor
            let pid = ioUInt64(ioRegistryProperty(current, "idProduct")) {
             let name = (ioRegistryProperty(current, "USB Product Name") as? String)
                 ?? (ioRegistryProperty(current, "Product Name") as? String)
-            return USBAncestorIdentity(vid: vid, pid: pid, productName: name)
+            var registryEntryID: UInt64 = 0
+            guard IORegistryEntryGetRegistryEntryID(current, &registryEntryID) == KERN_SUCCESS else {
+                return nil
+            }
+            return USBAncestorIdentity(
+                vid: vid,
+                pid: pid,
+                productName: name,
+                registryEntryID: registryEntryID
+            )
         }
 
         var parent: io_registry_entry_t = 0
@@ -101,7 +112,7 @@ private func hasAncestorBSDName(_ service: io_registry_entry_t, _ target: String
 }
 
 enum EDPNativeDeviceDiscovery {
-    static func allWholeUSBMedia() throws -> [(bsdName: String, size: UInt64, mediaName: String, vid: String, pid: String, registryEntryID: UInt64)] {
+    static func allWholeUSBMedia() throws -> [(bsdName: String, size: UInt64, mediaName: String, vid: String, pid: String, registryEntryID: UInt64, usbRegistryEntryID: UInt64)] {
         guard let matching = IOServiceMatching("IOMedia") else {
             throw RuntimeNativeError("IOServiceMatching(IOMedia) failed")
         }
@@ -112,7 +123,7 @@ enum EDPNativeDeviceDiscovery {
         }
         defer { IOObjectRelease(iterator) }
 
-        var answer: [(String, UInt64, String, String, String, UInt64)] = []
+        var answer: [(String, UInt64, String, String, String, UInt64, UInt64)] = []
         while case let service = IOIteratorNext(iterator), service != 0 {
             defer { IOObjectRelease(service) }
             guard ioBool(ioRegistryProperty(service, "Whole")) == true,
@@ -136,10 +147,19 @@ enum EDPNativeDeviceDiscovery {
                 mediaName,
                 String(format: "%04x", usb.vid),
                 String(format: "%04x", usb.pid),
-                registryEntryID
+                registryEntryID,
+                usb.registryEntryID
             ))
         }
         return answer
+    }
+
+    static func registryEntryExists(_ registryEntryID: UInt64) -> Bool {
+        guard let matching = IORegistryEntryIDMatching(registryEntryID) else { return false }
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, matching)
+        guard service != 0 else { return false }
+        IOObjectRelease(service)
+        return true
     }
 
     static func diagnosticReport() -> [String] {
@@ -209,11 +229,28 @@ enum EDPNativeDeviceDiscovery {
                 vidHex: media.vid,
                 pidHex: media.pid,
                 registryEntryID: media.registryEntryID,
+                usbRegistryEntryID: media.usbRegistryEntryID,
                 metadataDeviceID: metadataDeviceID,
                 deviceID: deviceID
             ))
         }
         return answer.sorted { $0.bsdName < $1.bsdName }
+    }
+
+    static func usbRegistryEntryID(forBSDName bsdName: String) -> UInt64? {
+        guard let matching = IOServiceMatching("IOMedia") else { return nil }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
+            return nil
+        }
+        defer { IOObjectRelease(iterator) }
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            guard (ioRegistryProperty(service, "BSD Name") as? String) == bsdName,
+                  let usb = usbAncestorIdentity(of: service) else { continue }
+            return usb.registryEntryID
+        }
+        return nil
     }
 
     static func descendantBSDNames(of rootBSD: String) throws -> [String] {
@@ -250,6 +287,22 @@ struct RuntimeNativeError: Error, CustomStringConvertible, Sendable {
 private final class DAOperationBox: @unchecked Sendable {
     let semaphore = DispatchSemaphore(value: 0)
     var status: DAReturn = DAReturn(kDAReturnSuccess)
+    var statusDescription: String?
+}
+
+private func daMountApprovalCallback(
+    _ disk: DADisk,
+    _ context: UnsafeMutableRawPointer?
+) -> Unmanaged<DADissenter>? {
+    guard let context else { return nil }
+    let controller = Unmanaged<EDPDiskArbitrationController>.fromOpaque(context).takeUnretainedValue()
+    guard controller.shouldDenyMount(disk) else { return nil }
+    let dissenter = DADissenterCreate(
+        kCFAllocatorDefault,
+        DAReturn(kDAReturnNotPermitted),
+        "EDP USB Vault safely ejected this device" as CFString
+    )
+    return Unmanaged.passRetained(dissenter)
 }
 
 private func daOperationCallback(
@@ -259,24 +312,59 @@ private func daOperationCallback(
 ) {
     guard let context else { return }
     let box = Unmanaged<DAOperationBox>.fromOpaque(context).takeUnretainedValue()
-    if let dissenter { box.status = DADissenterGetStatus(dissenter) }
+    if let dissenter {
+        box.status = DADissenterGetStatus(dissenter)
+        if let description = DADissenterGetStatusString(dissenter) {
+            box.statusDescription = description as String
+        }
+    }
     box.semaphore.signal()
 }
 
 final class EDPDiskArbitrationController: @unchecked Sendable {
     private let session: DASession
     private let queue = DispatchQueue(label: "com.edp.usbvault.disk-arbitration")
+    private let stateLock = NSLock()
+    private var suppressedUSBRegistryEntryIDs = Set<UInt64>()
 
     init() throws {
         guard let session = DASessionCreate(kCFAllocatorDefault) else {
             throw RuntimeNativeError("DASessionCreate failed")
         }
         self.session = session
+        DARegisterDiskMountApprovalCallback(
+            session,
+            nil,
+            daMountApprovalCallback,
+            Unmanaged.passUnretained(self).toOpaque()
+        )
         DASessionSetDispatchQueue(session, queue)
     }
 
     deinit {
         DASessionSetDispatchQueue(session, nil)
+    }
+
+    fileprivate func shouldDenyMount(_ disk: DADisk) -> Bool {
+        guard let name = DADiskGetBSDName(disk),
+              let usbRegistryEntryID = EDPNativeDeviceDiscovery.usbRegistryEntryID(
+                  forBSDName: String(cString: name)
+              ) else { return false }
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return suppressedUSBRegistryEntryIDs.contains(usbRegistryEntryID)
+    }
+
+    func suppressAutomount(usbRegistryEntryID: UInt64) {
+        stateLock.lock()
+        suppressedUSBRegistryEntryIDs.insert(usbRegistryEntryID)
+        stateLock.unlock()
+    }
+
+    func allowAutomount(usbRegistryEntryID: UInt64) {
+        stateLock.lock()
+        suppressedUSBRegistryEntryIDs.remove(usbRegistryEntryID)
+        stateLock.unlock()
     }
 
     private func disk(_ bsdName: String) throws -> DADisk {
@@ -300,7 +388,10 @@ final class EDPDiskArbitrationController: @unchecked Sendable {
             throw RuntimeNativeError("Disk Arbitration operation timed out for \(bsdName)")
         }
         guard box.status == kDAReturnSuccess else {
-            throw RuntimeNativeError("Disk Arbitration refused \(bsdName): status=\(box.status)")
+            let detail = box.statusDescription.map { " (\($0))" } ?? ""
+            throw RuntimeNativeError(
+                "Disk Arbitration refused \(bsdName): status=\(box.status)\(detail)"
+            )
         }
     }
 

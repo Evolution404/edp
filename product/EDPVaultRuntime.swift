@@ -121,7 +121,7 @@ private final class EDPRawAccessLease: @unchecked Sendable {
     let deviceID: String
     let registryEntryID: UInt64
     let rawPath: String
-    let fd: Int32
+    private(set) var fd: Int32
 
     init(deviceID: String, registryEntryID: UInt64, rawPath: String, fd: Int32) {
         self.deviceID = deviceID
@@ -130,8 +130,14 @@ private final class EDPRawAccessLease: @unchecked Sendable {
         self.fd = fd
     }
 
+    func invalidate() {
+        guard fd >= 0 else { return }
+        close(fd)
+        fd = -1
+    }
+
     deinit {
-        if fd >= 0 { close(fd) }
+        invalidate()
     }
 }
 
@@ -166,6 +172,7 @@ private func wholeUSBMediaStillMatches(_ disk: PhysicalDisk) throws -> Bool {
             && $0.vid == disk.vidHex
             && $0.pid == disk.pidHex
             && $0.registryEntryID == disk.registryEntryID
+            && $0.usbRegistryEntryID == disk.usbRegistryEntryID
     }
 }
 
@@ -315,6 +322,7 @@ private func discoverEDPDisks(
                 && $0.vidHex == media.vid
                 && $0.pidHex == media.pid
                 && $0.registryEntryID == media.registryEntryID
+                && $0.usbRegistryEntryID == media.usbRegistryEntryID
         }) {
             diagnostic?("bsd=\(media.bsdName);result=recognized_cached;deviceID=\(cached.deviceID)")
             answer.append(cached)
@@ -360,6 +368,7 @@ private func discoverEDPDisks(
             vidHex: media.vid,
             pidHex: media.pid,
             registryEntryID: media.registryEntryID,
+            usbRegistryEntryID: media.usbRegistryEntryID,
             metadataDeviceID: metadataDeviceID,
             deviceID: deviceID
         ))
@@ -1073,6 +1082,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
     private var rawAccessLeases = [String: EDPRawAccessLease]()
+    private var ejectingUSBRegistryIDs = [String: UInt64]()
     private var rawAccessReadyByDeviceID = [String: Bool]()
     private var rawAccessErrorsByDeviceID = [String: String]()
     private var lastDiscoveryDiagnostics = ["discovery_not_started"]
@@ -1180,6 +1190,9 @@ private final class EDPDaemonController: @unchecked Sendable {
     }
 
     private func requireRawAccessLeaseLocked(for disk: PhysicalDisk) throws -> EDPRawAccessLease {
+        guard ejectingUSBRegistryIDs[disk.deviceID] == nil else {
+            throw fail("EDP device was safely ejected; physically reinsert it before mounting")
+        }
         if let lease = rawAccessLeaseLocked(for: disk) { return lease }
         try rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
         guard let lease = rawAccessLeaseLocked(for: disk) else {
@@ -1249,13 +1262,20 @@ private final class EDPDaemonController: @unchecked Sendable {
                     ? ["no whole USB media scanned"]
                     : scanDiagnostics
                 connectedDisks = disks
+                let connectedDeviceIDs = Set(disks.map(\.deviceID))
+                for (deviceID, usbRegistryEntryID) in ejectingUSBRegistryIDs
+                where !EDPNativeDeviceDiscovery.registryEntryExists(usbRegistryEntryID) {
+                    ejectingUSBRegistryIDs.removeValue(forKey: deviceID)
+                    diskArbitration.allowAutomount(usbRegistryEntryID: usbRegistryEntryID)
+                }
                 let currentByDeviceID = Dictionary(uniqueKeysWithValues: disks.map { ($0.deviceID, $0) })
                 rawAccessLeases = rawAccessLeases.filter { deviceID, lease in
                     guard let disk = currentByDeviceID[deviceID] else { return false }
                     return lease.registryEntryID == disk.registryEntryID && lease.rawPath == disk.rawPath
                 }
-                for disk in disks where rawAccessReadyByDeviceID[disk.deviceID] == nil
-                    || rawAccessLeaseLocked(for: disk) == nil {
+                for disk in disks where ejectingUSBRegistryIDs[disk.deviceID] == nil
+                    && (rawAccessReadyByDeviceID[disk.deviceID] == nil
+                        || rawAccessLeaseLocked(for: disk) == nil) {
                     do {
                         try rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
                     } catch {
@@ -1278,7 +1298,6 @@ private final class EDPDaemonController: @unchecked Sendable {
                         self.reconcileLocked()
                     }
                 }
-                let connectedDeviceIDs = Set(disks.map(\.deviceID))
                 rawAccessReadyByDeviceID = rawAccessReadyByDeviceID.filter {
                     connectedDeviceIDs.contains($0.key)
                 }
@@ -1297,6 +1316,12 @@ private final class EDPDaemonController: @unchecked Sendable {
                 let policyDocument = try policies.load()
                 let records = try store.load().records
                 for disk in disks {
+                    if ejectingUSBRegistryIDs[disk.deviceID] != nil {
+                        if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
+                            _ = try? diskArbitration.unmountWhole(disk.bsdName)
+                        }
+                        continue
+                    }
                     guard let devicePolicy = policyDocument.devices.first(
                         where: { $0.deviceID == disk.deviceID }
                     ) else { continue }
@@ -1385,7 +1410,9 @@ private final class EDPDaemonController: @unchecked Sendable {
                 try observe(disks)
                 let records = try store.load().records
                 let policyDocument = try policies.load()
-                let connectedByID = Dictionary(uniqueKeysWithValues: disks.map { ($0.deviceID, $0) })
+                let connectedByID = Dictionary(uniqueKeysWithValues: disks
+                    .filter { ejectingUSBRegistryIDs[$0.deviceID] == nil }
+                    .map { ($0.deviceID, $0) })
                 let deviceIDs = Set(policyDocument.devices.map(\.deviceID))
                     .union(records.map(\.deviceID))
                     .union(disks.map(\.deviceID))
@@ -1610,7 +1637,7 @@ private final class EDPDaemonController: @unchecked Sendable {
         try queue.sync {
             guard !connectedDisks.isEmpty else { return }
             var firstError: Error?
-            for disk in connectedDisks {
+            for disk in connectedDisks where ejectingUSBRegistryIDs[disk.deviceID] == nil {
                 do {
                     try rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
                     addActivity("完全磁盘访问已验证", deviceID: disk.deviceID)
@@ -1633,9 +1660,44 @@ private final class EDPDaemonController: @unchecked Sendable {
             guard let disk = connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 throw fail("EDP device is no longer connected")
             }
-            manager.eject(deviceID: deviceID)
-            try diskArbitration.eject(disk.bsdName)
-            addActivity("设备已安全推出", deviceID: deviceID)
+            ejectingUSBRegistryIDs[deviceID] = disk.usbRegistryEntryID
+            diskArbitration.suppressAutomount(usbRegistryEntryID: disk.usbRegistryEntryID)
+            do {
+                // Tear down every encrypted transport before releasing the
+                // daemon-owned whole-disk descriptor.  Keeping that retained
+                // O_RDWR fd open makes Disk Arbitration reject whole-device
+                // eject as busy.
+                manager.eject(deviceID: deviceID)
+                if let lease = rawAccessLeases.removeValue(forKey: deviceID) {
+                    lease.invalidate()
+                }
+                rawAccessReadyByDeviceID[deviceID] = false
+                rawAccessErrorsByDeviceID.removeValue(forKey: deviceID)
+
+                // DADiskEject requires all filesystems on the media family to
+                // be unmounted first, including the ordinary boot partition.
+                if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
+                    try diskArbitration.unmountWhole(disk.bsdName)
+                }
+                try diskArbitration.eject(disk.bsdName)
+
+                // Do not let a queued reconciliation reacquire the raw lease
+                // while the successful physical eject is still propagating.
+                connectedDisks.removeAll { $0.deviceID == deviceID }
+                rawAccessReadyByDeviceID.removeValue(forKey: deviceID)
+                rawAccessErrorsByDeviceID.removeValue(forKey: deviceID)
+                addActivity("设备已安全推出", deviceID: deviceID)
+            } catch {
+                ejectingUSBRegistryIDs.removeValue(forKey: deviceID)
+                diskArbitration.allowAutomount(usbRegistryEntryID: disk.usbRegistryEntryID)
+                // If eject failed for an unrelated reason, return the device
+                // to an operational state without asking for authopen/admin.
+                if (try? wholeUSBMediaStillMatches(disk)) == true {
+                    try? rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
+                    restoreBootPolicy(disk: disk)
+                }
+                throw error
+            }
         }
     }
 

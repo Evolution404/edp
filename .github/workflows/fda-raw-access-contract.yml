@@ -124,6 +124,10 @@ jobs:
           grep -Fq 'persistent Full Disk Access daemon + retained raw fd + inherited transport fd' product/EDPVaultRuntime.swift
           grep -Fq 'EDP_RAW_LEASE_METADATA_REFUSED' product/EDPVaultRuntime.swift
           grep -Fq 'posix_spawn_file_actions_adddup2' product/EDPVaultRuntime.swift
+          grep -Fq 'ejectingUSBRegistryIDs' product/EDPVaultRuntime.swift
+          grep -Fq 'registryEntryExists' product/EDPNativeSystem.swift
+          grep -Fq 'lease.invalidate()' product/EDPVaultRuntime.swift
+          grep -Fq -- '--xpc-eject-smoke' product/App/EDPUSBVaultApp.swift
           grep -Fq 'no authenticated console user is available' product/EDPVaultRuntime.swift
           echo 'RESULT=FDA_PRODUCTION_AUTHORIZATION_SERVICES_REMOVED'
 

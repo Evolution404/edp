@@ -1404,6 +1404,35 @@ struct EDPUSBVaultApp: App {
             exit(unmounted.0 ? 0 : 1)
         }
 
+        if let index = CommandLine.arguments.firstIndex(of: "--xpc-eject-smoke"),
+           CommandLine.arguments.count > index + 2 {
+            let deviceID = CommandLine.arguments[index + 2]
+            let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            connection.resume()
+            defer { connection.invalidate() }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                fputs("XPC_EJECT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_EJECT_SMOKE_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            let ejectResult = EDPXPCSmokeResult()
+            let ejectSemaphore = DispatchSemaphore(value: 0)
+            proxy.eject(deviceID: deviceID) { errorMessage in
+                ejectResult.set(passed: errorMessage == nil, detail: errorMessage ?? "eject completed")
+                ejectSemaphore.signal()
+            }
+            guard ejectSemaphore.wait(timeout: .now() + 90) == .success else {
+                print("RESULT=XPC_EJECT_SMOKE_TIMEOUT")
+                exit(1)
+            }
+            let ejected = ejectResult.snapshot()
+            print("XPC_EJECT_SMOKE_DETAIL=\(ejected.1)")
+            print(ejected.0 ? "RESULT=XPC_EJECT_SMOKE_OK" : "RESULT=XPC_EJECT_SMOKE_FAILED")
+            exit(ejected.0 ? 0 : 1)
+        }
+
         if CommandLine.arguments.contains("--xpc-diagnostics") {
             let result = EDPXPCDataResult()
             let semaphore = DispatchSemaphore(value: 0)
