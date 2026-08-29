@@ -152,11 +152,21 @@
 - 将该 preference 恢复为 true（等价于用户点击“启动”的第一步）并重新打开已安装 `02e9ad8` UI 后，真实 Lexar 在约 10 s 内无需手工 mount 即恢复 type 2/type 4，可写 ExFAT 两区均 mounted，`failedMounts` 清空；证明 transient retry 核心逻辑实机 PASS。
 - follow-up 已把同一 retry 接入 `startService()` health-check success 路径；因此“用户曾 Stop -> 后续显式 Start”也能在尊重用户意图的前提下恢复 transient FSKit 自动挂载失败。
 
+## 2026-08-29 22:18 后 UI 合并与 XPC 生命周期继续验收
+
+- `codex/ui-macos26-liquid-glass` 已完成并保持干净，严格线性基于 `main@1942795`；已 fast-forward 合并到 `main` 并 push，合并后 HEAD `a6f1098fca52b9f13a3c1c6cc45109cef5c813c8`。
+- UI 分支除了液态玻璃视觉调整，还把正式 `EDPVaultViewModel` 的 NSXPC interruption/invalidation/error/reply callbacks 全部标注为 `@Sendable`，这正好覆盖实机 crash report 中 `EDPVaultViewModel.proxy()` 从 XPC queue 触发 Swift 6 MainActor isolation `SIGTRAP` 的根因。
+- 旧安装二进制 `1942795` 的正式 UI 点击“启动”可稳定复现 `EXC_BREAKPOINT/SIGTRAP`，crash stack 为 `EDPVaultViewModel.proxy()` -> `__NSXPCCONNECTION_IS_CALLING_OUT_TO_ERROR_BLOCK__` -> `_swift_task_checkIsolatedSwift`；因此旧包不能继续作为生命周期最终验收候选。
+- 同一旧包的 `--xpc-graceful-stop` CLI 也可在 XPC callback 路径触发同类 actor crash；已将 `@main EDPUSBVaultApp.init()` 下全部 CLI XPC error/reply/interruption/invalidation callbacks 同样显式改为 `@Sendable`，避免 smoke harness 自身干扰产品验收。
+- 新增 CI ratchet：正式 ViewModel proxy/graceful-shutdown 与 CLI graceful-stop 均必须保留 `@Sendable`，并禁止重新出现未标注的 `remoteObjectProxyWithErrorHandler({ error in`。
+- 找到此前“Stop 后约 6 s 又自动复活”的外部触发源：`/private/tmp/EDP Drive UI.app/Contents/MacOS/EDP Drive`（PID 10716）是并行 UI 调试遗留测试 App，每约 2 s 连接 `com.edp.drive.service`。Service 因路径/签名安全边界正确拒绝该 peer，但 launchd 在 peer validation 前已因 `ipc (mach)` demand-launch Service；终止该临时测试进程后不再把此现象归因于产品 KeepAlive。
+- 当前旧 Service 的最后一次 teardown 已把所有用户卷/hidden mount 清到 0，但一个旧 secure transport 曾停留为无 mount 的 zombie child；这属于旧二进制异常收尾状态。由于没有挂载文件系统，后续可安全通过新候选安装升级替换。
+
 ## 下一步立即执行
 
-1. 提交/push transient macFUSE auto-mount recovery，等待 exact-head Drive CI。
-2. 当前 type 2/type 4 已挂载；先走 graceful Stop 完整卸载，再从新提交构建/安装候选包。
-3. 故意复现“macFUSE 组合安装重置 user FSKit settings”场景：安装后先允许 Service 失败一次，再启动 EDP Drive UI，确认无需手工点挂载即可自动恢复 type 2/type 4。
-4. 完成第二轮 Stop -> Start -> Restart；确认每轮 XPC responsive、两区恢复、无 controller queue 卡死。
+1. 提交/push CLI XPC `@Sendable` hardening，等待合并后 exact-head Drive/Studio CI。
+2. 从新 exact-head 构建 Native 候选；当前旧 Service 已无任何文件系统 mount，可通过安装器安全替换旧 stuck daemon/transport 状态。
+3. 安装新候选后复测正式 UI Start，确认不再出现 MainActor/XPC `SIGTRAP`；复测 `--xpc-graceful-stop`，确认 smoke harness 自身也不崩。
+4. 清除所有临时测试 App 后，完成两轮 Stop -> Start -> Restart；确认每轮 Service 正常 exit/on-demand launch、两区恢复、无 controller queue 卡死或外部 Mach peer 干扰。
 5. 完成安全推出整盘、App restart；随后物理拔插 / `diskN` 变化需要用户实际拔插动作时再提示。
 6. 更新 HANDOFF/STATUS/本 tracker，最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。

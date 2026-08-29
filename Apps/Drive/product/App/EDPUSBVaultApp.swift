@@ -2063,7 +2063,7 @@ private enum EDPXPCPolicySmokeRunner {
     private static func snapshot(proxy: EDPVaultXPCProtocol) throws -> EDPXPCSnapshot {
         let result = EDPXPCDataResult()
         let semaphore = DispatchSemaphore(value: 0)
-        proxy.snapshot { data in
+        proxy.snapshot { @Sendable data in
             result.set(data: data)
             semaphore.signal()
         }
@@ -2087,7 +2087,7 @@ private enum EDPXPCPolicySmokeRunner {
             options: .privileged
         )
         connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
             fputs("XPC_POLICY_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
         }) as? EDPVaultXPCProtocol else {
             print("RESULT=XPC_POLICY_SMOKE_PROXY_UNAVAILABLE")
@@ -2247,7 +2247,7 @@ struct EDPUSBVaultApp: App {
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
             let result = EDPXPCSmokeResult()
             let semaphore = DispatchSemaphore(value: 0)
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 result.set(passed: false, detail: error.localizedDescription)
                 semaphore.signal()
             }) as? EDPVaultXPCProtocol else {
@@ -2255,7 +2255,7 @@ struct EDPUSBVaultApp: App {
                 exit(1)
             }
             connection.resume()
-            proxy.refreshRawAccess { errorMessage in
+            proxy.refreshRawAccess { @Sendable errorMessage in
                 result.set(
                     passed: errorMessage == nil,
                     detail: errorMessage ?? "Full Disk Access broker probe accepted"
@@ -2289,7 +2289,7 @@ struct EDPUSBVaultApp: App {
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 fputs("XPC_MOUNT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
             }) as? EDPVaultXPCProtocol else {
                 print("RESULT=XPC_MOUNT_SMOKE_PROXY_UNAVAILABLE")
@@ -2300,7 +2300,7 @@ struct EDPUSBVaultApp: App {
             proxy.mountPartition(
                 deviceID: deviceID,
                 partitionType: partitionType
-            ) { errorMessage in
+            ) { @Sendable errorMessage in
                 mountResult.set(passed: errorMessage == nil, detail: errorMessage ?? "mount completed")
                 mountSemaphore.signal()
             }
@@ -2323,7 +2323,7 @@ struct EDPUSBVaultApp: App {
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 fputs("XPC_UNMOUNT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
             }) as? EDPVaultXPCProtocol else {
                 print("RESULT=XPC_UNMOUNT_SMOKE_PROXY_UNAVAILABLE")
@@ -2334,7 +2334,7 @@ struct EDPUSBVaultApp: App {
             proxy.unmountPartition(
                 deviceID: deviceID,
                 partitionType: partitionType
-            ) { errorMessage in
+            ) { @Sendable errorMessage in
                 unmountResult.set(passed: errorMessage == nil, detail: errorMessage ?? "unmount completed")
                 unmountSemaphore.signal()
             }
@@ -2355,7 +2355,7 @@ struct EDPUSBVaultApp: App {
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
             connection.resume()
             defer { connection.invalidate() }
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 fputs("XPC_EJECT_SMOKE_ERROR=\(error.localizedDescription)\n", stderr)
             }) as? EDPVaultXPCProtocol else {
                 print("RESULT=XPC_EJECT_SMOKE_PROXY_UNAVAILABLE")
@@ -2363,7 +2363,7 @@ struct EDPUSBVaultApp: App {
             }
             let ejectResult = EDPXPCSmokeResult()
             let ejectSemaphore = DispatchSemaphore(value: 0)
-            proxy.eject(deviceID: deviceID) { errorMessage in
+            proxy.eject(deviceID: deviceID) { @Sendable errorMessage in
                 ejectResult.set(passed: errorMessage == nil, detail: errorMessage ?? "eject completed")
                 ejectSemaphore.signal()
             }
@@ -2382,7 +2382,7 @@ struct EDPUSBVaultApp: App {
             let semaphore = DispatchSemaphore(value: 0)
             let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 result.set(error: error.localizedDescription)
                 semaphore.signal()
             }) as? EDPVaultXPCProtocol else {
@@ -2390,7 +2390,7 @@ struct EDPUSBVaultApp: App {
                 exit(1)
             }
             connection.resume()
-            proxy.diagnostics { data in
+            proxy.diagnostics { @Sendable data in
                 result.set(data: data)
                 semaphore.signal()
             }
@@ -2420,7 +2420,7 @@ struct EDPUSBVaultApp: App {
             let semaphore = DispatchSemaphore(value: 0)
             let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 result.set(error: error.localizedDescription)
                 semaphore.signal()
             }) as? EDPVaultXPCProtocol else {
@@ -2428,7 +2428,7 @@ struct EDPUSBVaultApp: App {
                 exit(1)
             }
             connection.resume()
-            proxy.snapshot { data in
+            proxy.snapshot { @Sendable data in
                 result.set(data: data)
                 semaphore.signal()
             }
@@ -2470,7 +2470,7 @@ struct EDPUSBVaultApp: App {
                 options: .privileged
             )
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 result.set(passed: false, detail: error.localizedDescription)
                 semaphore.signal()
             }) as? EDPVaultXPCProtocol else {
@@ -2478,7 +2478,7 @@ struct EDPUSBVaultApp: App {
                 exit(1)
             }
             connection.resume()
-            proxy.healthCheck { response in
+            proxy.healthCheck { @Sendable response in
                 let valid = response == "com.edp.drive.service:running"
                 result.set(passed: valid, detail: response)
                 semaphore.signal()
@@ -2504,9 +2504,9 @@ struct EDPUSBVaultApp: App {
                 options: .privileged
             )
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-            connection.interruptionHandler = { disconnectSemaphore.signal() }
-            connection.invalidationHandler = { disconnectSemaphore.signal() }
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            connection.interruptionHandler = { @Sendable in disconnectSemaphore.signal() }
+            connection.invalidationHandler = { @Sendable in disconnectSemaphore.signal() }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 result.set(passed: false, detail: error.localizedDescription)
                 replySemaphore.signal()
             }) as? EDPVaultXPCProtocol else {
@@ -2514,7 +2514,7 @@ struct EDPUSBVaultApp: App {
                 exit(1)
             }
             connection.resume()
-            proxy.requestGracefulShutdown { errorMessage in
+            proxy.requestGracefulShutdown { @Sendable errorMessage in
                 result.set(
                     passed: errorMessage == nil,
                     detail: errorMessage ?? "graceful teardown completed"
@@ -2572,7 +2572,7 @@ struct EDPUSBVaultApp: App {
             let semaphore = DispatchSemaphore(value: 0)
             let connection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
             connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
                 result.set(passed: false, detail: error.localizedDescription)
                 semaphore.signal()
             }) as? EDPVaultXPCProtocol else {
@@ -2580,7 +2580,7 @@ struct EDPUSBVaultApp: App {
                 exit(1)
             }
             connection.resume()
-            proxy.diagnostics { data in
+            proxy.diagnostics { @Sendable data in
                 let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
                 let valid = payload?["eventDrivenDiscovery"] as? Bool == true
                     && payload?["credentialStore"] as? String == "System Keychain"
