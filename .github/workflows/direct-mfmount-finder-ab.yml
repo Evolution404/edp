@@ -164,7 +164,7 @@ jobs:
             if printf '%s\n' "${OUT}" | grep -Fq "${LOCAL_FINDER_NAME}"; then L=1; else L=0; fi
             echo "FINDER_${LABEL}_GENERIC_VISIBLE=${G}"
             echo "FINDER_${LABEL}_LOCAL_VISIBLE=${L}"
-            printf '%s %s' "${G}" "${L}" > "${RUNNER_TEMP}/finder-${LABEL}.flags"
+            printf '%s %s\n' "${G}" "${L}" > "${RUNNER_TEMP}/finder-${LABEL}.flags"
           }
 
           open -a Finder

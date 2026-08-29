@@ -53,7 +53,8 @@ jobs:
           grep -Fq 'tccutil reset SystemPolicyAllFiles' scripts/first-install-acceptance.sh
           grep -Fq 'com.edp.usbvault.rawaccess' scripts/first-install-acceptance.sh
           grep -Fq 'diskutil list external physical' scripts/first-install-acceptance.sh
-          grep -Fq 'credential=saved' scripts/first-install-acceptance.sh
+          grep -Fq 'expected="saved"' scripts/first-install-acceptance.sh
+          grep -Fq 'Passwords must never be passed to this script or written to logs.' scripts/first-install-acceptance.sh
           grep -Fq -- '--xpc-policy-smoke' scripts/first-install-acceptance.sh
           grep -Fq -- '--xpc-eject-smoke' scripts/first-install-acceptance.sh
           grep -Fq '0700' scripts/first-install-acceptance.sh
