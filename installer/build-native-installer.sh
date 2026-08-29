@@ -27,7 +27,45 @@ if [[ -n "${APP_SIGN_KEYCHAIN}" && ! -f "${APP_SIGN_KEYCHAIN}" ]]; then
   exit 2
 fi
 
+SIGNING_SEARCH_PREPARED=0
+SIGNING_SEARCH_MODIFIED=0
+ORIGINAL_USER_KEYCHAINS=()
+
+prepare_signing_search_list() {
+  [[ -n "${APP_SIGN_KEYCHAIN}" ]] || return 0
+  [[ "${SIGNING_SEARCH_PREPARED}" == "0" ]] || return 0
+  SIGNING_SEARCH_PREPARED=1
+
+  local line path found=0
+  while IFS= read -r line; do
+    path="${line#"${line%%[![:space:]]*}"}"
+    path="${path#\"}"
+    path="${path%\"}"
+    [[ -n "${path}" ]] || continue
+    ORIGINAL_USER_KEYCHAINS+=("${path}")
+    [[ "${path}" == "${APP_SIGN_KEYCHAIN}" ]] && found=1
+  done < <(/usr/bin/security list-keychains -d user)
+
+  if [[ "${found}" == "0" ]]; then
+    /usr/bin/security list-keychains -d user -s \
+      "${ORIGINAL_USER_KEYCHAINS[@]}" "${APP_SIGN_KEYCHAIN}"
+    SIGNING_SEARCH_MODIFIED=1
+  fi
+}
+
+restore_signing_search_list() {
+  [[ "${SIGNING_SEARCH_MODIFIED}" == "1" ]] || return 0
+  if (( ${#ORIGINAL_USER_KEYCHAINS[@]} > 0 )); then
+    /usr/bin/security list-keychains -d user -s \
+      "${ORIGINAL_USER_KEYCHAINS[@]}" >/dev/null 2>&1 || true
+  else
+    /usr/bin/security list-keychains -d user -s >/dev/null 2>&1 || true
+  fi
+  SIGNING_SEARCH_MODIFIED=0
+}
+
 sign_app_code() {
+  prepare_signing_search_list
   local args=(/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}")
   if [[ -n "${APP_SIGN_KEYCHAIN}" ]]; then
     args+=(--keychain "${APP_SIGN_KEYCHAIN}")
@@ -36,7 +74,10 @@ sign_app_code() {
 }
 
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/edp-native-installer.XXXXXX")"
-cleanup() { /bin/rm -rf "${BUILD_ROOT}"; }
+cleanup() {
+  restore_signing_search_list
+  /bin/rm -rf "${BUILD_ROOT}"
+}
 trap cleanup EXIT INT TERM
 
 RUNTIME_STAGE="${BUILD_ROOT}/runtime"

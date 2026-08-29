@@ -148,9 +148,11 @@ jobs:
           grep -Fq 'certificate root' installer/build-native-installer.sh
           grep -Fq 'EDP_APP_SIGN_KEYCHAIN' installer/build-clean-installer.sh
           grep -Fq 'EDP_APP_SIGN_KEYCHAIN' installer/build-native-installer.sh
-          if grep -E 'security[[:space:]]+(default-keychain|list-keychains)' \
+          grep -Fq 'restore_signing_search_list' installer/build-clean-installer.sh
+          grep -Fq 'restore_signing_search_list' installer/build-native-installer.sh
+          if grep -E 'security[[:space:]]+default-keychain' \
             installer/build-clean-installer.sh installer/build-native-installer.sh; then
-            echo 'installer build scripts must never mutate the user default/search keychain' >&2
+            echo 'installer build scripts must never mutate the user default keychain' >&2
             exit 1
           fi
           echo 'RESULT=FDA_INSTALLER_FIXED_IDENTITY_CONTRACT_OK'
