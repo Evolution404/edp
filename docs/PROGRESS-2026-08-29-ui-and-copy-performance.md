@@ -9,9 +9,11 @@
 - Phase B：代码完成，已本地 Release build/安装，待用户视觉验收
 - Phase C：代码完成，已 Swift 6 `-warnings-as-errors` 编译，待本地安装交互验收
 - Phase D：完成，已用 Direct MFMount Local fixture 精确验证 FUSE write/fsync/flush 行为并加入汇总 instrumentation
-- Phase E：进行中，sync 分层、fixture 验证与本地编译/golden 已完成；真实盘 A/B 前发现并修复 cold-start fd3 继承 blocker
-- Phase F：待安装候选 App/runtime 后开始真实 Lexar A/B
-- Phase G：未开始
+- Phase E：完成，regular sync / final durability 分层与 dirty-generation fsync 去重均已提交并通过 exact-head CI
+- Phase F：大部分完成；真实复制/TextEdit/多文件/cold-start 已通过，第二轮 Service Restart 暴露失败清理卡死，当前等待 lifecycle hardening + 重启后最终复验
+- Phase G：完成第一轮研究，已形成 Finder 约 3 秒进度机制诊断文档；结论为系统 Finder/ExFAT UI 稳定窗口，不是 EDP 首写阻塞
+- Phase H：完成第一轮公开资料研究，已形成 EDP metadata 研究文档；公开资料确认三区域/标签模型，但未找到 LBA/EDPF/type/SM4 字节级公开格式
+- Phase I：进行中，生命周期 hardening 已编码并通过本地 validator，待提交/CI/HANDOFF 收口
 
 ## 已确认事实
 
@@ -81,11 +83,59 @@
 - 基于 fixture 精确行为，新增加 dirty-generation fsync 去重：每次成功 `FUSE_WRITE` 增加 generation；`FUSE_FSYNC` 仅在 generation 尚未同步时执行物理 fsync；没有新 WRITE 的重复 FSYNC 直接 success。
 - Direct MFMount Local fixture 已验证：3 次上层 `fsync()` -> 6 次 `FUSE_FSYNC` request，但新逻辑为 `physical_fsync=3`、`skipped_fsync=3`、`flush=0`，准确消除 macFUSE Local 的重复同步放大。
 
+## 2026-08-29 21:00-21:17 真实复制与 Finder 对照
+
+- dirty-generation 去重提交 `63b003a997889e50b6032bf761450bfa841ad305`；exact-head EDP Drive CI run `33254052414` success。
+- 第二版候选 runtime 已安装；cold-start 后 type 2/type 4 均自动挂载成功，fd3 blocker 修复保持稳定。
+- 去重版真实 fsync：4 KiB median 约 49.1 ms，8 MiB median 约 105.7 ms；单次 fsync 没有继续下降，说明 Apple ExFAT 在相邻 FUSE_FSYNC 之间可能继续产生 metadata/block WRITE，第二次并非总可跳过。
+- 600 MiB 普通文件复制约 10.980 s / 57.30 MB/s，较第一版约 52.02 MB/s 有约 10% 改善；SHA-256 一致。
+- Finder 真实 `~/Downloads/ChatGPT.dmg`（600,747,074 bytes）复制到交换区：目标目录项约 0.269 s 出现，约 0.885 s 已开始实际 allocated/write，Finder UI 首次明显状态切换约 2.908 s，总时间约 5.369 s，SHA-256 一致。
+- 建立完全绕过 EDP/macFUSE/USB 的本机 8 GiB ExFAT DiskImages2 对照，复制 6.5 GiB Ubuntu ISO：Finder UI 首次状态切换约 2.979 s。
+- 同一 6.5 GiB ISO -> EDP 交换区：Finder UI 首次状态切换约 3.296 s，总时间约 70.211 s，持续吞吐约 92.85 MB/s，SHA-256 一致。
+- 因此约 3 秒的“来回折返/不确定进度”被定性为 Finder 对 ExFAT 复制的 UI/progress stabilization 行为，而不是 EDP 在 3 秒后才开始 I/O。EDP 实际写入 <1 s 即已开始。
+- TextEdit 真实 UI open -> edit -> Save -> close：PASS，原子保存内容正确。
+- Finder 32 文件批量复制与删除：PASS；抽样 hash PASS；测试 Trash 项已清理。
+- 所有大文件/临时 ExFAT 控制镜像均已清理；真实 U 盘没有 raw-sector 写入。
+
+## 2026-08-29 21:13 后第二轮 Restart 生命周期问题
+
+- 第一轮 Service Stop -> on-demand Start -> type 2/type 4 自动恢复已经 PASS。
+- 第二轮 restart-equivalent 暴露异常：Service PID `44397` controller queue 失去 XPC 响应；交换区曾正常挂载，保密区 transport process 启动但未形成 hidden mount；`--xpc-snapshot` / `--xpc-graceful-stop` 均 timeout。
+- 安全恢复过程中：交换区通过 Finder eject 正常完成文件系统推出；其 hidden macFUSE mount 正常解除；exchange transport 正常退出；secure transport 从未形成 VFS mount，SIGTERM 无响应后才执行 SIGKILL。
+- 当前没有任何 `/Volumes/交换区`、`/Volumes/保密区` 或 `.edp-block-*` mount，也没有 EDP transport process。
+- root Service 自身在请求 SIGKILL 后仍停留于 `ps` state `E` / launchd PID `44397`，属于 OS/process teardown 已卡死状态；由于所有用户卷/transport 已安全清空，不存在当前数据一致性风险，但最终实机 Restart/Safe Eject 验收需要系统重启后继续。
+- 代码级 hardening 已实施：
+  - `hdiutil info/detach` 改为 bounded process，8 s hard timeout；
+  - writable DiskImages2 attach 改为 bounded process，15 s hard timeout；
+  - bounded runner 使用临时文件承载 stdout/stderr，避免 Pipe 满造成父子互等；
+  - transport stop 只有在确认 hidden VFS mount 已消失后才允许 `SIGTERM -> 2 s grace -> SIGKILL -> 1 s verify`；mount 仍存在时 fail closed，绝不 kill transport。
+- 新增 `ValidateTransportLifecycle.swift`，纯内存覆盖 already-exited、TERM exit、TERM->KILL、mounted fail-closed 四种状态；本地结果 `RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK`。
+- 完整 Drive daemon Swift 6 `-warnings-as-errors` 编译通过。
+- lifecycle hardening 已提交为 `70ea958d116b2f216f497cdd1b91e6c0198720aa`；exact-head EDP Drive CI run `33255506939` success。
+
+## 2026-08-29 Finder Progress 研究
+
+- 新文档：`Apps/Drive/docs/diagnostics/2026-08-29-finder-progress-estimation.md`。
+- Apple Foundation `Progress` 公开语义确认：file progress 以 bytes 为 unit；缺少合理 total/completed 时可处于 indeterminate；throughput / estimatedTimeRemaining 是独立可选信息。
+- Apple 没有公开 Finder 内部“等待 3 秒”的固定阈值/算法；精确约 3 秒来自本机受控 A/B，必须标注为实测，不得写成 Apple 官方规则。
+- Finder Sync 公开 API 仅覆盖 monitored folders、badge、context menu、toolbar 等，没有接口覆盖 Finder 自己的 file-copy progress。
+- File Provider progress 属于 provider upload/download 模型，不适合真实本地 EDP block volume。
+- 当前没有找到受支持的 FSKit/mount 属性能强迫 Finder 从第一帧显示 determinate percentage。
+- 若未来必须“立即百分比”，可由 EDP 自己成为 copy operation owner，已知 source bytes 后自行发布 `Progress` 并显示 UI；这会变成 EDP 自有复制流程，不是修改 Finder 内置复制行为。
+
+## 2026-08-29 EDP Metadata 公开资料研究
+
+- 新文档：`Apps/Drive/docs/diagnostics/2026-08-29-edp-metadata-public-research.md`。
+- 北信源专利 CN105141614A/B 直接确认：加密标签移动存储设备划分为“启动区、交互区、保密区”，通过密码控制交互/保密区访问。
+- 政府采购技术要求公开使用“启动区、交换区、保密区”术语，并描述三区/双区组合；与项目产品 UI/真实盘模型高度一致。
+- 北信源招股资料确认专用安全 U 盘、芯片级移动存储数据安全、USB 标签认证及底层数据存储转换/解码分析/信息重构产品路线。
+- 公司历年公开报告确认“北信源移动存储管理系统及安全U盘2.16.0”是长期产品，并列有“快速识别移动存储设备的方法和装置”等相关专利。
+- 当前未找到公开资料直接披露 type 1/2/4、LBA4/LBA7/LBA11/LBA12、`EDPF` record、CRC 字段、key derivation 或 SM4 block mapping；这些继续只以真实盘 capture + golden validator 为权威证据。
+
 ## 下一步立即执行
 
-1. 完整编译 dirty-generation 去重候选，提交/push 并等待 exact-head EDP Drive CI。
-2. 构建并安装第二版候选 App/runtime，保持当前真实盘数据不变。
-3. 对真实 Lexar 重跑 4 KiB / 8 MiB fsync probe 与 600 MiB copy A/B，确认同步延迟和吞吐变化。
-4. 用 Finder 发起同尺寸大文件复制，观察不确定进度条持续时间/真正进度出现时间。
-5. 回归 TextEdit 原子保存、多文件复制删除、交换区/保密区卸载重挂、安全推出、Service Stop/Start/Restart。
-6. exact-head 全绿后更新 HANDOFF/STATUS 并收口工作树。
+1. lifecycle hardening local gates / 独立 commit / exact-head CI 已完成；保留 reboot 后真实盘复验作为最终硬 gate。
+2. 将 Finder progress / EDP metadata 两份研究文档与计划/进度状态形成独立 docs commit。
+3. 更新 `docs/HANDOFF-2026-08-29.md` 与 Drive STATUS，明确约 3 秒 Finder 行为结论与 root Service 当前 E-state blocker。
+4. 当前 Mac 需要重启才能清除已 SIGKILL 但仍停留 E-state 的 root Service；重启后继续 type 2/type 4 自动挂载、第二轮 Stop/Start/Restart、安全推出整盘、App restart 最终验收。
+5. 最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。

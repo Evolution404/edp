@@ -12,6 +12,18 @@
 2. EDP Drive 菜单栏恢复清晰的多级设备/分区层级，但不能恢复 AppKit 级联 `Menu(...)` 的鼠标横移易关闭问题。
 3. 解决 Finder 向交换区/保密区复制文件时，在真正显示确定进度条前反复出现不确定进度、首写启动慢的问题，同时保持正常 fsync、卸载、完全退出、安全推出时的数据完整性语义。
 
+## 执行状态（2026-08-29 21:40 更新）
+
+- Phase A：完成。
+- Phase B：Studio native sidebar material 代码/安装/CI 已完成，仍待用户最终视觉确认。
+- Phase C：Drive 同窗多级菜单代码/编译/CI 已完成，仍待用户最终交互确认。
+- Phase D：完成；Direct MFMount fixture 已精确量化 write/fsync/flush。
+- Phase E：完成；regular sync / final durability 和 dirty-generation fsync dedupe 已提交并通过 CI。
+- Phase F：大部分真实标准盘功能/性能已通过；第二轮 Restart 暴露 failure-path wedge，当前所有用户卷/transport 已安全清空，root Service 处于 OS process state `E`，需 reboot 后用 lifecycle hardening 继续最终验收。
+- Phase G：第一轮研究完成，结论与数据已写入 `Apps/Drive/docs/diagnostics/2026-08-29-finder-progress-estimation.md`。
+- Phase H：第一轮研究完成，结论与来源已写入 `Apps/Drive/docs/diagnostics/2026-08-29-edp-metadata-public-research.md`。
+- Phase I：进行中；lifecycle hardening `70ea958` exact-head Drive CI `33255506939` 已通过，当前进行 research docs / HANDOFF / STATUS 收口，实机最终 gate 等 reboot 后继续。
+
 ## 不可破坏约束
 
 - 不新增 worktree，不切离当前 `main`。
@@ -140,10 +152,40 @@
 
 完成标准：性能改善且无数据损坏、无挂载生命周期回归。
 
-## Phase G — 提交、CI 与交接
+## Phase G — Finder 约 3 秒进度估算机制研究
+
+目标：解释 Finder 为什么复制已开始后仍会持续约 3 秒显示不确定进度，并判断是否能由 EDP Drive 让 Finder 更早直接显示确定百分比。
+
+- [ ] 用真实 EDP ExFAT 与本机纯 ExFAT 对照，分别记录目标文件出现、首个 allocated bytes、Finder UI 首次状态切换时间。
+- [ ] 联网检索 Apple 官方文档、Developer 文档、Darwin / Foundation 公开接口及可信工程资料，确认 Finder 文件复制进度来源、NSProgress/copyfile 估算与不确定进度展示机制。
+- [ ] 判断约 3 秒窗口是否由 Finder 自身的 ETA/throughput smoothing 或文件系统预扫描决定，而不是 EDP transport 阻塞。
+- [ ] 评估可行方案：
+  - 是否存在受支持的文件系统/FSKit 属性让 Finder 一开始就知道 totalUnitCount；
+  - 是否能通过 Finder 扩展、File Provider、Progress API 或 copy engine 影响系统 Finder 的复制进度；
+  - 如果不能，明确“不应通过伪造 I/O/缓存语义来骗 Finder”的边界。
+- [ ] 形成诊断结论并写入 docs；如无受支持接口，明确只能优化实际首写/吞吐，不能强制系统 Finder 立即显示百分比。
+
+完成标准：有本机 A/B 数据 + 公开资料依据 + 可执行/不可执行结论。
+
+## Phase H — EDP 元数据格式公开资料研究
+
+目标：联网检索公开存在的 EDP U 盘格式、专利、驱动、逆向/取证资料，与项目实测结构交叉验证，提高对盘上协议的理解，但不以网络资料覆盖真实盘证据。
+
+- [ ] 检索关键词：`EDP U盘`、`EDP加密U盘`、`EDPF`、`LBA11`、`LBA12`、交换区/保密区、相关厂商/控制器、专利及驱动资料。
+- [ ] 优先官方文档、专利、厂商资料、学术/取证论文；论坛/博客只作线索。
+- [ ] 对照当前已验证结构：LBA4 serial marker、LBA7 `EDPF` layout、LBA11 identity、LBA12 volume table / partition types 1/2/4、密码/key CRC、SM4 logical block mapping。
+- [ ] 区分“公开资料直接确认”“从源码/真实盘实测确认”“仍属推断”三类证据。
+- [ ] 不因为网络资料修改 media classifier 或 raw 写入逻辑，除非有真实盘 fixture + golden tests 共同证明。
+- [ ] 形成独立诊断文档，列出来源、匹配项、冲突项和未知字段。
+
+完成标准：新增一份可引用的 EDP metadata research 文档，并把可靠结论回填 HANDOFF/STATUS。
+
+## Phase I — 提交、CI 与交接
 
 - [ ] UI 修改独立小提交。
 - [ ] 同步/复制性能修改独立小提交。
+- [ ] 生命周期修复独立小提交。
+- [ ] Finder 进度研究与 EDP metadata 研究文档独立提交。
 - [ ] 每个提交 push 后检查 exact-head GitHub Actions。
 - [ ] 更新 `docs/HANDOFF-2026-08-29.md` 和必要的 Drive STATUS。
 - [ ] 工作树最终干净，`main == origin/main`。
