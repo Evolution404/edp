@@ -41,7 +41,18 @@ struct direct_state {
     gid_t gid;
     MFChannelRef channel;
     bool running;
+    uint64_t write_calls;
+    uint64_t fsync_calls;
+    uint64_t flush_calls;
+    uint64_t fsync_total_us;
+    uint64_t fsync_max_us;
 };
+
+static uint64_t monotonic_us(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (uint64_t)now.tv_sec * 1000000ULL + (uint64_t)now.tv_nsec / 1000ULL;
+}
 
 static int send_iov(MFChannelRef channel, const struct iovec *iov, size_t count) {
     ssize_t sent = MFChannelSendMessage(channel, iov, count);
@@ -456,14 +467,6 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
     }
 
     const struct fuse_in_header *in = (const struct fuse_in_header *)body;
-    fprintf(stderr,
-            "DIRECT_OPCODE opcode=%u unique=%" PRIu64 " node=%" PRIu64 " len=%u body=%zu\n",
-            in->opcode,
-            in->unique,
-            in->nodeid,
-            in->len,
-            body_size);
-
     int result = 0;
     switch (in->opcode) {
         case FUSE_INIT:
@@ -485,6 +488,7 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
             result = handle_read(state, in, body, body_size);
             break;
         case FUSE_WRITE:
+            state->write_calls += 1;
             result = handle_write(state, in, body, body_size);
             break;
         case FUSE_STATFS:
@@ -493,19 +497,29 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
         case FUSE_RELEASE:
             result = send_payload(state->channel, in->unique, NULL, 0);
             break;
-        case FUSE_FSYNC:
+        case FUSE_FSYNC: {
+            state->fsync_calls += 1;
+            uint64_t started_us = monotonic_us();
             if (fsync(state->backing_fd) != 0) {
                 result = send_error(state->channel, in->unique, errno);
             } else {
                 result = send_payload(state->channel, in->unique, NULL, 0);
+            }
+            uint64_t ended_us = monotonic_us();
+            if (ended_us >= started_us) {
+                uint64_t elapsed_us = ended_us - started_us;
+                state->fsync_total_us += elapsed_us;
+                if (elapsed_us > state->fsync_max_us) state->fsync_max_us = elapsed_us;
             }
             break;
+        }
         case FUSE_FLUSH:
-            if (fsync(state->backing_fd) != 0) {
-                result = send_error(state->channel, in->unique, errno);
-            } else {
-                result = send_payload(state->channel, in->unique, NULL, 0);
-            }
+            state->flush_calls += 1;
+            /* FUSE_FLUSH is a close-path hook and may run multiple times for one
+             * open file description. All WRITE errors are already returned
+             * synchronously, so do not turn every close into a physical media
+             * durability barrier. FUSE_FSYNC remains the filesystem sync path. */
+            result = send_payload(state->channel, in->unique, NULL, 0);
             break;
         case FUSE_OPENDIR:
             result = handle_open(state, in, true);
@@ -664,6 +678,16 @@ int main(int argc, char **argv) {
         }
         MFRelease(message);
     }
+
+    fprintf(stderr,
+            "DIRECT_IO_SUMMARY writes=%" PRIu64 " fsync=%" PRIu64
+            " flush=%" PRIu64 " fsync_total_us=%" PRIu64
+            " fsync_max_us=%" PRIu64 "\n",
+            state.write_calls,
+            state.fsync_calls,
+            state.flush_calls,
+            state.fsync_total_us,
+            state.fsync_max_us);
 
     bool lifecycle_teardown = EDPDirectMFMountTeardownActive != NULL &&
         EDPDirectMFMountTeardownComplete != NULL &&

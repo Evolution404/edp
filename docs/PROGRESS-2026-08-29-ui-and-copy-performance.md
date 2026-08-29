@@ -8,8 +8,8 @@
 - Phase A：完成
 - Phase B：代码完成，已本地 Release build/安装，待用户视觉验收
 - Phase C：代码完成，已 Swift 6 `-warnings-as-errors` 编译，待本地安装交互验收
-- Phase D：进行中，已完成调用链归因，下一步加精确 instrumentation / A/B
-- Phase E：未开始
+- Phase D：完成调用链归因与真实 fsync 延迟基线；当前继续补 A/B 观测
+- Phase E：进行中，已完成 lightweight sync / final durability barrier 第一版代码，待编译与真实盘验证
 - Phase F：未开始
 - Phase G：未开始
 
@@ -45,11 +45,27 @@
 - Drive UI 已通过 Swift 6 `-warnings-as-errors` 独立编译。
 - CI ratchet 已同步更新：继续禁止 `Menu(...)` 和 `.menuBarExtraStyle(.menu)`，要求 `.window` + 同窗多级选择状态；Studio 要求原生 sidebar visual effect 且禁止 `.ultraThinMaterial`/`.background(.background)` 回退。
 
+## 2026-08-29 20:33 同步语义第一版
+
+- UI 代码已独立提交：`ad37dd18884593afd14abc253feffaebec74d138`；Studio exact-head CI `33252622273` success。
+- Drive UI ratchet follow-up：`101ade3c14103776452b051a0f6971b264ed97a3`；Drive exact-head CI `33252662687` success。
+- 写入同步路径已开始拆层：
+  - `EDPRawWritable.synchronize()` 定义为普通文件系统 sync；
+  - 新增 `forceDurability()` 作为 transport close / safe eject 前最终强 barrier；
+  - `EDPFileRawDevice.synchronize()` 现在只执行 `fsync`；
+  - `EDPFileRawDevice.forceDurability()` 执行 `fsync` 后再 `F_FULLFSYNC`；
+  - encrypted/plaintext block device 均向下转发两种同步语义；
+  - `edp_rw_close()` 改为最终 `forceDurability()`；
+  - Direct MFMount 的 `FUSE_FLUSH` 改为仅成功返回，不再把每个 close-path flush 变成物理介质 barrier；
+  - `FUSE_FSYNC` 继续进入普通 `fsync`；transport 关闭时保留最终强 durability。
+- 性能候选版已补低噪声观测：移除每个 FUSE 请求的 `DIRECT_OPCODE` 热路径日志，改为 transport 退出时输出 `DIRECT_IO_SUMMARY`（write/fsync/flush 计数和 fsync 累计/最大耗时）；最终强 barrier 输出 `EDP_FINAL_DURABILITY elapsed_us=...`。
+- native-core golden 已通过，包含 boot/encrypted block 对 `synchronize()` 与 `forceDurability()` 两条独立转发语义的回归断言；macFUSE Local transport 已用 Swift 6 / C `-Werror` 成功构建。
+- 当前这些性能修改尚未提交；下一步先跑完整 Drive 本地编译 gate，再形成独立性能 commit。真实盘 A/B 需要把候选 runtime 安装到受保护的 `/Library/Application Support/EDP Drive/bin` 后进行。
+
 ## 下一步立即执行
 
-1. 形成并 push 独立 UI commit，检查 Drive/Studio exact-head CI。
-2. 对 `FUSE_FLUSH` / `FUSE_FSYNC` / final shutdown 的调用链建立精确计数和耗时诊断。
-3. 实现 lightweight sync 与 final durability barrier 分层。
-4. 设计并实现 lightweight sync 与 final durability barrier 分层。
-5. 真实 U 盘做 Finder 复制 A/B、文本保存、卸载/重挂、安全推出回归。
-6. 分阶段 push、等 exact-head CI 全绿，实时更新本文件。
+1. 跑 native-core golden、Swift 6 `-warnings-as-errors`、macFUSE Local transport build，修正任何同步接口回归。
+2. 给 FLUSH / FSYNC / final durability 增加低噪声计数/耗时观测，确认 Finder 首写阶段实际请求分布。
+3. 安装性能候选版并用当前 Lexar 真实交换区做相同 fsync probe 和约 600 MB Finder 复制 A/B。
+4. 回归 TextEdit 原子保存、多文件复制删除、交换区/保密区卸载重挂、安全推出、Service Stop/Start/Restart。
+5. 性能修复独立 commit + push，检查 exact-head Drive CI，并实时更新本文件/HANDOFF。

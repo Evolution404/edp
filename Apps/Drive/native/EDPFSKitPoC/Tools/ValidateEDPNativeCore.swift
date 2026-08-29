@@ -12,6 +12,7 @@ private final class MemoryRawReadable: EDPRawWritable {
     private(set) var bytes: Data
     let allowsWrites: Bool
     private(set) var synchronizeCount = 0
+    private(set) var forceDurabilityCount = 0
 
     init(_ bytes: Data, allowsWrites: Bool = true) {
         self.bytes = bytes
@@ -54,6 +55,13 @@ private final class MemoryRawReadable: EDPRawWritable {
             throw ValidationFailure.message("memory storage is read-only")
         }
         synchronizeCount += 1
+    }
+
+    func forceDurability() throws {
+        guard allowsWrites else {
+            throw ValidationFailure.message("memory storage is read-only")
+        }
+        forceDurabilityCount += 1
     }
 }
 
@@ -101,6 +109,7 @@ private final class SparseRawWritable: EDPRawWritable {
     let allowsWrites: Bool
     let sizeBytes: UInt64?
     private(set) var synchronizeCount = 0
+    private(set) var forceDurabilityCount = 0
 
     init(sizeBytes: UInt64, allowsWrites: Bool = true) {
         self.sizeBytes = sizeBytes
@@ -146,6 +155,13 @@ private final class SparseRawWritable: EDPRawWritable {
             throw ValidationFailure.message("sparse raw is read-only")
         }
         synchronizeCount += 1
+    }
+
+    func forceDurability() throws {
+        guard allowsWrites else {
+            throw ValidationFailure.message("sparse raw is read-only")
+        }
+        forceDurabilityCount += 1
     }
 }
 
@@ -343,6 +359,8 @@ struct ValidateEDPNativeCore {
         )
         try unlocked.block.synchronize()
         try require(raw.synchronizeCount == 1, "boot slice synchronize was not forwarded")
+        try unlocked.block.forceDurability()
+        try require(raw.forceDurabilityCount == 1, "boot slice force durability was not forwarded")
 
         var readOverflowRejected = false
         do {
@@ -591,12 +609,14 @@ struct ValidateEDPNativeCore {
         expected.replaceSubrange(127..<192, with: spanning)
         try block.write(at: UInt64(expected.count), data: Data())
         try block.synchronize()
+        try block.forceDurability()
 
         try require(
             [UInt8](try block.read(at: 0, length: expected.count)) == expected,
             "encrypted writer plaintext readback mismatch"
         )
         try require(raw.synchronizeCount == 1, "encrypted writer sync was not forwarded")
+        try require(raw.forceDurabilityCount == 1, "encrypted writer force durability was not forwarded")
         try require(
             [UInt8](raw.bytes.prefix(prefix.count)) == prefix,
             "encrypted writer modified bytes before the partition"

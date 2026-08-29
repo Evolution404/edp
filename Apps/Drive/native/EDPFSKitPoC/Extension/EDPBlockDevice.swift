@@ -26,6 +26,13 @@ extension EDPBlockReadable {
 protocol EDPBlockWritable: EDPBlockReadable {
     func write(at offset: UInt64, data: Data) throws
     func synchronize() throws
+    func forceDurability() throws
+}
+
+extension EDPBlockWritable {
+    func forceDurability() throws {
+        try synchronize()
+    }
 }
 
 /// Adapts the existing encrypted-partition reader to the product block-view
@@ -84,6 +91,10 @@ final class EDPEncryptedReadWriteBlockDevice: EDPBlockWritable {
 
     func synchronize() throws {
         try reader.synchronize()
+    }
+
+    func forceDurability() throws {
+        try reader.forceDurability()
     }
 }
 
@@ -146,6 +157,10 @@ final class EDPPlaintextReadWriteBlockDevice: EDPBlockWritable {
 
     func synchronize() throws {
         try raw.synchronize()
+    }
+
+    func forceDurability() throws {
+        try raw.forceDurability()
     }
 }
 

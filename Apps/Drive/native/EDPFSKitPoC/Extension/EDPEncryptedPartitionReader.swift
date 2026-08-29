@@ -217,6 +217,16 @@ final class EDPEncryptedPartitionReader: EDPRawReadable {
         try writableRaw.synchronize()
     }
 
+    func forceDurability() throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard let writableRaw = raw as? any EDPRawWritable,
+              writableRaw.allowsWrites else {
+            throw EDPNativeCoreError.invalidInput("encrypted partition backing is read-only")
+        }
+        try writableRaw.forceDurability()
+    }
+
     private func readExactUnlocked(at offset: UInt64, length: Int) throws -> Data {
         guard length >= 0 else {
             throw EDPNativeCoreError.invalidInput("negative read length")

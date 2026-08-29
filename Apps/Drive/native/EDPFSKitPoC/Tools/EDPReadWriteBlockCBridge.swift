@@ -312,8 +312,8 @@ public func edp_rw_close(_ opaque: UnsafeMutableRawPointer?) {
     let context = Unmanaged<EDPReadWriteBridgeContext>.fromOpaque(opaque)
         .takeRetainedValue()
     do {
-        try context.block.synchronize()
+        try context.block.forceDurability()
     } catch {
-        logReadWriteBridgeError("EDP_RW_CLOSE_SYNC_ERROR=\(error)\n")
+        logReadWriteBridgeError("EDP_RW_CLOSE_DURABILITY_ERROR=\(error)\n")
     }
 }

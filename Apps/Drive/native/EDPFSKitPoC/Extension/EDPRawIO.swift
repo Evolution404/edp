@@ -29,10 +29,18 @@ extension EDPRawReadable {
 /// explicitly opened for read/write access.
 ///
 /// Implementations must complete an entire write or throw. `synchronize()` is
-/// the durability boundary used by FUSE flush/fsync and before device eject.
+/// the regular filesystem sync boundary. `forceDurability()` is the stronger
+/// final barrier used before transport close / safe device eject.
 protocol EDPRawWritable: EDPRawReadable {
     var allowsWrites: Bool { get }
 
     func writeExact(at offset: UInt64, data: Data) throws
     func synchronize() throws
+    func forceDurability() throws
+}
+
+extension EDPRawWritable {
+    func forceDurability() throws {
+        try synchronize()
+    }
 }

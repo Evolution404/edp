@@ -211,6 +211,11 @@ final class EDPFileRawDevice: EDPRawWritable {
             if errno == EINTR { continue }
             throw EDPNativeCoreError.invalidInput("fsync failed: errno=\(errno)")
         }
+    }
+
+    func forceDurability() throws {
+        guard writable else { return }
+        try synchronize()
 
         #if os(macOS)
         if Darwin.fcntl(fd, F_FULLFSYNC) != 0,

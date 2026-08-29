@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 extern void *edp_rw_open_device_fd(int raw_fd, const char *vid_hex,
@@ -26,6 +27,13 @@ extern void edp_rw_close(void *handle);
 static void *g_edp_handle = NULL;
 static const int g_virtual_fd = 0x4d46;
 static const char *g_mountpoint = NULL;
+
+static unsigned long long adapter_monotonic_us(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (unsigned long long)now.tv_sec * 1000000ULL
+        + (unsigned long long)now.tv_nsec / 1000ULL;
+}
 
 static void secure_zero(void *buffer, size_t length) {
     volatile unsigned char *bytes = buffer;
@@ -228,8 +236,14 @@ int main(int argc, char **argv) {
         NULL,
     };
     int result = edp_direct_raw_main(4, direct_argv);
-    (void)edp_rw_sync(g_edp_handle);
+    /* edp_rw_close performs the final strong durability barrier. The transport
+     * loop has already handled any filesystem-requested FUSE_FSYNC calls. */
+    unsigned long long close_started_us = adapter_monotonic_us();
     edp_rw_close(g_edp_handle);
+    unsigned long long close_ended_us = adapter_monotonic_us();
+    fprintf(stderr,
+            "EDP_FINAL_DURABILITY elapsed_us=%llu\n",
+            close_ended_us >= close_started_us ? close_ended_us - close_started_us : 0ULL);
     g_edp_handle = NULL;
     g_mountpoint = NULL;
     return result;

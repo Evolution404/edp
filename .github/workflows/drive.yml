@@ -62,6 +62,12 @@ jobs:
           grep -Fq 'Packages/EDPCore' Apps/Drive/scripts/prepare-shared-edp-core.sh
           ! grep -Fq 'cachedDisks' Apps/Drive/product/EDPVaultRuntime.swift
           ! grep -Fq 'recognized_cached' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'func forceDurability() throws' Apps/Drive/native/EDPFSKitPoC/Extension/EDPRawIO.swift
+          grep -Fq 'try context.block.forceDurability()' Apps/Drive/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift
+          grep -Fq 'state->flush_calls += 1;' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
+          grep -Fq 'DIRECT_IO_SUMMARY' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
+          grep -Fq 'EDP_FINAL_DURABILITY' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPAdapter.c
+          ! grep -Fq 'DIRECT_OPCODE opcode=' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           bash -n Apps/Drive/scripts/prepare-shared-edp-core.sh
           bash -n Tools/build-macos-icon.sh
           Tools/build-macos-icon.sh icns \
