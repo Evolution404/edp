@@ -60,7 +60,7 @@ XPC peer signing contract 可单独验证：
 native/EDPOpenNative/Scripts/verify-peer-signing-contract.sh
 ```
 
-该测试不会修改用户 trust store，也不会把临时 keychain 加入 SearchList；它会生成一张不导入钥匙串的临时 self-signed code-signing certificate，用不同 leaf SHA-1 对拍 requirement，确认固定 leaf requirement 不会接受其他自签证书。
+该测试不会修改用户 trust store，也不会创建或加入任何临时 signing keychain；它会生成一张仅存在于临时目录的 self-signed code-signing certificate/private key，通过 Security.framework 的显式 `SecIdentity` 生成真实 alternate certificate-backed App/Broker 签名，再确认 production leaf requirement 必须拒绝这些坏样本。测试退出时同时断言 DefaultKeychain/SearchList 与运行前完全一致。
 
 ## 参照与对拍基准
 

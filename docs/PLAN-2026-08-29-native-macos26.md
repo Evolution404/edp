@@ -68,7 +68,7 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 - [ ] EDP metadata verification before exposing device session
 - [x] narrow NSXPC IPC, no arbitrary path API；broker 只接受数字 `diskN`
 - [x] broker peer/process hardening：App 必须来自固定 `/Applications/EDPOpen.app/Contents/MacOS/EDPOpen`；Broker 必须从固定 privileged-helper 路径以 root 启动，且 broker executable 必须 root-owned、group/world 不可写
-- [x] peer signing contract：正式 leaf requirement 通过；随机另一张 self-signed code-signing certificate 的不同 leaf SHA-1 被拒绝；测试不修改用户 trust store / DefaultKeychain / SearchList
+- [x] peer signing contract：正式 leaf requirement 通过；随机另一张 self-signed code-signing certificate/private key 通过显式 `SecIdentity` 真实签出 alternate App/Broker，production leaf requirement 必须拒绝；测试不修改用户 trust store、不创建临时 signing keychain，且 DefaultKeychain / SearchList 前后完全一致
 - [x] App/broker 双向 `setCodeSigningRequirement()`，绑定固定 bundle identifier + 精确同一 EDP self-signed leaf certificate；不依赖 Apple Team ID
 - [ ] 同一 open fd/session 复用
 - [x] broker 实时 IOKit + Disk Arbitration 枚举 external physical USB whole disk；App 不再使用视觉 sample 的 stale `diskN` 作为权限目标
