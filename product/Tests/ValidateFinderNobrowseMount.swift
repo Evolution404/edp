@@ -43,8 +43,15 @@ enum ValidateFinderNobrowseMount {
             let storeURL = URL(fileURLWithPath: actual, isDirectory: true)
                 .appendingPathComponent(".DS_Store")
             let stored = try Data(contentsOf: storeURL)
-            guard stored == (try EDPFinderVolumeDefaults.templateData()) else {
+            guard stored == (try EDPFinderVolumeDefaults.templateData(for: (getuid(), getgid()))) else {
                 fputs("Finder defaults written to staging volume do not match template\n", stderr)
+                exit(1)
+            }
+            let inheritedProbe = try EDPFinderVolumeDefaults.templateData(
+                windowSize: CGSize(width: 922, height: 587)
+            )
+            guard inheritedProbe.range(of: Data("{{120, 120}, {0922, 0587}}".utf8)) != nil else {
+                fputs("Finder inherited window size was not encoded into the template\n", stderr)
                 exit(1)
             }
             let seededAgain = try EDPFinderVolumeDefaults.seedIfMissing(

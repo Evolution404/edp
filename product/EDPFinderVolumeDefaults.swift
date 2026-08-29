@@ -2,10 +2,39 @@ import Darwin
 import Foundation
 
 enum EDPFinderVolumeDefaults {
-    private static let rawDeflateBase64 = "7VlLcBRFGO6vk5AZMpAGEkkwA1sJlIBJ2AQxkUfV5qU8E2QTsgmBZXdnJAOTmbAzuyGGWCmrvAhoedLyVXryQclBxddFqxRFj4pWYVkesLR8HLRKLyoHe2Z6Q1jAkwfU+ap2v/n77+f093dv9xJC0JnTWgipIYRIJGBWQa4LSXyuARVcxj/g5Ymd5k9vp8dNw3FJiBAhQoQIEeJmBMT+XhG+ihAhQlxnfYgIjgmeCRjCTwWXzinDBEcExwTPBAyRjwouFSwJZoIjgmOCZwIWixbE4QOiZYgTCpjgiOBYOI8hQtwIwdm9OT3hjKfNuef3aPQL0JLSsnnl5XJ5Rfn++Kg9EXdTbs7pTGX3eVa/bZvpwnMqvdfQJ5Ksqsu23JRh6Vm/gKHpPMvIoGFp9kSnnbM0Z98chyxLcpLVTk21tEYbI/xrujEy1dIS5UbbndHpaVmqbli3aU/yiDlm2SfIVSsAWVA0lJPBUEwn3xUMpSReGMqXYiiSPL9CWaAOJoaGlZEkW5znfe4bdw3bcvbqWYdzklU6vH/bMra1O6t7/sGMbebGLCfJFmVSZiZnply9wzTjxv264+XOZG3T3G07hlfNUMLVj7me7xpXYtixs26XX1mSsZyj79F5XUZe7+Y1OgmDN+kVrCpeheUzC5euWLm6qbVtc6xn2657L1SyRYuXKNXKMH+JlmvcZ+jZoZST0S3NsA4NTBiaOzqYNxwjber9VmpMlxehUb5QWVO77NY6VQ0yXClQyJrIpY2jOcOdZA2S5LcRUeuVEY13bpetea1oEjsr+55Var26z/N0ZXX+rYkCa9TblX6Hj0FiqSBjsxJV+o/w2ZeZE6SsVzaoA2YqrZsy04Ji7cpGdTAfvH+Z7QgStyjVaiJjj43xITpykNahdqkHvGZ3phy3b1y3vC6dD3x3c9+wM5rK6n0TXH2iR9t5qj+lPN0r1KMZru07+dvorVfVIa+6Dk3zx7CsprZSjasDEvtU4lNkWHmDK573KhC+1FCYk4bYWvHwXiZ4CF50Qyw6e2mmklbSTXaSgyRLpsgp8gQ5TV4n58iH5HPyNfmB/Ep+BzAP5ZiPClRhGVaiERvQhnbchU70YTf2II4RjMLAYTg4hklM4TgewsM4gVN4BI/jGTyL5/A8XsareA1n8QbexXl8jE/wGS7hG3yL7/Az/sCfuEzL6FJaQ2tpPW2kTbSZttF2upFuor20jyZoih6mNh0XV3uFINtfdOU3ORtkYr2gZ64fZHX3bN22Xdn5rwmyiwv9sKqqvmVpZNXadXe0b+mYlV+g14JE5wrfV/tVMeKr3VdDkVIv+PGnLF9RCLjimB3gBfVjkhetrFzkblgp8TBhZcJcvYabO9i8wKxrapZ4SDLqm0pd63qZBx4rEWZTGzcRGMqmzTIPQVYqzOUxbhJRTXcPr+Y8k/4pfV8kl8j35Bdymet7IZagBrchylXdia3o9XUdxwAOIImDSEPDGCzYOMoVfhzTeAAzeJDr+yRX+KN4DE/iKTzNVf4CXsRLOI1XuMbfxFt4B+/jA5zDR0LtX3Gt/4ifivS7q2iefwv0m49nLdO2DolftV6K45ru5Ljey6X9P9n7SwKq8c7/PTe+/w8RIsR/+Zxf2h3v7rxyIXgNqLgIODjnYuDvLgIw5w/Dm+4iINz/w/0/3P/JXw=="
-    private static let expectedSize = 8_196
+    private static let rawDeflateBase64 = "7dnBitNAHAbwSbdqaiuM4h70FFg8KEWyexdit4gnLbbU1VVi0g7uwOxMyUza3S2FnnbxrL6IBx9FPPksTpwpWwo+gO73g8k3mczQ/NNCSkIICTrleJeQkFw22rKbC0KiJnFqPuu2BfY4AQAAgH/elouwut8/sPf9W7gkAFdOUO/2ux33J//vk2xLfC5dBn685rO+Npeu9ROfS5eBH6/5rPsMfVKfkc/E59KlP8mgtjp5n6FP/8lB5DPBFwwAAAAAAAAAAFeWe7f/OJ/pSS5Ubvd+5RPBtYnjn0Ftq37t+o2wcbPRsK2Z0rv7SpqMS1b0j9Ssz8csz4qUbvcKNuVs1sskG3LNcy64OT2s5vQyc2TnHK7Nf/+nbzJT6o4/MsjyoV3v+koJO+vday7HatZRpRzrRpjS+/P57l7cjuxm0Y7msdWOqu1iEd6Lnw8+yLPzz1++urJWTwlJa6Peb65eoaerer+v6v1xWW+zldLbo0yMSpEZ9lSIPj9j+oCPlKx6b7UqzL4S5bE8MOzEVGMppaVmr5hdwKesa5fplN6prsrLieFK6iErtM1wJ4ndqQxkdsx2kkdur0GDcPvh3pNnb6Q6WZxfbNSx+W7mk6tj2i+kUPIjcU9jqxFthDmdsBe2RPy8AQAAAAAAAAAAAAAAAAD+f78B"
+    private static let expectedSize = 16_388
+    private static let boundsPlaceholder = "{{120, 120}, {0000, 0000}}"
+    private static let fallbackWindowSize = CGSize(width: 920, height: 587)
 
-    static func templateData() throws -> Data {
+    static func preferredWindowSize(for uid: uid_t) -> CGSize? {
+        guard let account = getpwuid(uid), let homeCString = account.pointee.pw_dir else {
+            return nil
+        }
+        let home = String(cString: homeCString)
+        let preferencesURL = URL(fileURLWithPath: home, isDirectory: true)
+            .appendingPathComponent("Library/Preferences/com.apple.finder.plist")
+        guard let data = try? Data(contentsOf: preferencesURL),
+              let root = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let preferences = root as? [String: Any],
+              let computerView = preferences["ComputerViewSettings"] as? [String: Any],
+              let windowState = computerView["WindowState"] as? [String: Any],
+              let bounds = windowState["WindowBounds"] as? String else {
+            return nil
+        }
+        let rect = NSRectFromString(bounds)
+        guard rect.size.width.isFinite,
+              rect.size.height.isFinite,
+              rect.size.width >= 400,
+              rect.size.height >= 300,
+              rect.size.width <= 9_999,
+              rect.size.height <= 9_999 else {
+            return nil
+        }
+        return rect.size
+    }
+
+    static func templateData(windowSize: CGSize) throws -> Data {
         guard let compressed = Data(base64Encoded: rawDeflateBase64) else {
             throw NSError(
                 domain: "com.edp.usbvault.finder-defaults",
@@ -13,7 +42,7 @@ enum EDPFinderVolumeDefaults {
                 userInfo: [NSLocalizedDescriptionKey: "Finder default template base64 is invalid"]
             )
         }
-        let decoded = try (compressed as NSData).decompressed(using: .zlib) as Data
+        var decoded = try (compressed as NSData).decompressed(using: .zlib) as Data
         guard decoded.count == expectedSize,
               decoded.count >= 8,
               String(decoding: decoded[4..<8], as: UTF8.self) == "Bud1" else {
@@ -23,13 +52,31 @@ enum EDPFinderVolumeDefaults {
                 userInfo: [NSLocalizedDescriptionKey: "Finder default template failed integrity check"]
             )
         }
+
+        let width = min(max(Int(windowSize.width.rounded()), 400), 9_999)
+        let height = min(max(Int(windowSize.height.rounded()), 300), 9_999)
+        let replacement = String(format: "{{120, 120}, {%04d, %04d}}", width, height)
+        let placeholder = Data(boundsPlaceholder.utf8)
+        guard placeholder.count == replacement.utf8.count,
+              let range = decoded.range(of: placeholder) else {
+            throw NSError(
+                domain: "com.edp.usbvault.finder-defaults",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Finder default window bounds placeholder is missing"]
+            )
+        }
+        decoded.replaceSubrange(range, with: replacement.utf8)
         return decoded
+    }
+
+    static func templateData(for owner: (uid_t, gid_t)) throws -> Data {
+        try templateData(windowSize: preferredWindowSize(for: owner.0) ?? fallbackWindowSize)
     }
 
     static func seedIfMissing(at mountPoint: String, owner: (uid_t, gid_t)) throws -> Bool {
         let storePath = mountPoint + "/.DS_Store"
         if FileManager.default.fileExists(atPath: storePath) { return false }
-        let decoded = try templateData()
+        let decoded = try templateData(for: owner)
 
         let fd = Darwin.open(storePath, O_WRONLY | O_CREAT | O_EXCL, 0o644)
         if fd < 0 {

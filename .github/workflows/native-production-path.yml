@@ -152,7 +152,7 @@ jobs:
           grep -F 'mountNobrowse' product/EDPNativeSystem.swift
           grep -F 'EDPFinderVolumeDefaults.seedIfMissing' product/EDPVaultRuntime.swift
           grep -F 'O_WRONLY | O_CREAT | O_EXCL' product/EDPFinderVolumeDefaults.swift
-          python3 -c 'import base64,pathlib,re,zlib; s=pathlib.Path("product/EDPFinderVolumeDefaults.swift").read_text(); b=re.search(r"rawDeflateBase64 = \"([^\"]+)\"", s).group(1); d=zlib.decompress(base64.b64decode(b), -zlib.MAX_WBITS); assert len(d) == 8196 and d[4:8] == b"Bud1" and b"ShowToolbar" in d and b"ShowSidebar" in d and b"Nlsv" in d; print("RESULT=FINDER_DEFAULT_TEMPLATE_OK")'
+          python3 -c 'import base64,pathlib,re,zlib; s=pathlib.Path("product/EDPFinderVolumeDefaults.swift").read_text(); b=re.search(r"rawDeflateBase64 = \"([^\"]+)\"", s).group(1); d=zlib.decompress(base64.b64decode(b), -zlib.MAX_WBITS); assert len(d) == 16388 and d[4:8] == b"Bud1" and b"ShowToolbar" in d and b"ShowSidebar" in d and b"Nlsv" in d and b"{{120, 120}, {0000, 0000}}" in d; print("RESULT=FINDER_DEFAULT_TEMPLATE_OK")'
           ! grep -F 'run(binaryRoot + "/diskimages2-attach"' product/EDPVaultRuntime.swift
           grep -F 'diskimages2-attach' product/EDPBlockDevicePublisher.swift
           cc -Wall -Wextra product/EDPRawMetadataHelper.c \
