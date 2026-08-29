@@ -160,6 +160,7 @@ final class EDPVaultViewModel: ObservableObject {
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.drive.service.plist")
     private let servicePreferenceKey = "com.edp.drive.service.desired-running"
     private var connection: NSXPCConnection?
+    private var connectionGeneration: UUID?
     private var serviceOperationID: UUID?
     private var restartAfterStop = false
     private var stopCompletion: (() -> Void)?
@@ -189,6 +190,14 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     init() {
+#if EDP_UI_PREVIEW
+        serviceMode = "preview"
+        daemonService = nil
+        snapshot = Self.previewSnapshot
+        serviceStatus = "运行中"
+        transportRuntimeReady = true
+        return
+#else
         serviceMode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
         daemonService = serviceMode == "smappservice"
             ? SMAppService.daemon(plistName: daemonPlistName)
@@ -213,7 +222,83 @@ final class EDPVaultViewModel: ObservableObject {
                 self?.refresh()
             }
         }
+#endif
     }
+
+#if EDP_UI_PREVIEW
+    private static let previewSnapshot = EDPXPCSnapshot(
+        devices: [
+            EDPXPCDevice(
+                deviceID: "disk&ven_lexar&prod_usb_flash_drive-49979b696404",
+                bsdName: "disk6",
+                mediaName: "Lexar USB Flash Drive",
+                displayName: "EDP 工作盘",
+                vidPID: "21c4:0cd1",
+                sizeBytes: 124_736_503_808,
+                connected: true,
+                privilegedAccessReady: true,
+                partitions: [
+                    EDPXPCPartition(
+                        partitionType: EDPPartitionKind.boot.rawValue,
+                        displayName: "启动区",
+                        encrypted: false,
+                        autoMount: true,
+                        credentialStatus: .notRequired,
+                        mountState: .mounted,
+                        filesystem: "FAT16",
+                        readOnly: true,
+                        mountPoint: "/Volumes/EDP Boot",
+                        lastError: nil
+                    ),
+                    EDPXPCPartition(
+                        partitionType: EDPPartitionKind.exchange.rawValue,
+                        displayName: "交换区",
+                        encrypted: true,
+                        autoMount: true,
+                        credentialStatus: .saved,
+                        mountState: .mounted,
+                        filesystem: "ExFAT",
+                        readOnly: false,
+                        mountPoint: "/Volumes/交换区",
+                        lastError: nil
+                    ),
+                    EDPXPCPartition(
+                        partitionType: EDPPartitionKind.secure.rawValue,
+                        displayName: "保密区",
+                        encrypted: true,
+                        autoMount: false,
+                        credentialStatus: .saved,
+                        mountState: .unmounted,
+                        filesystem: "ExFAT",
+                        readOnly: false,
+                        mountPoint: nil,
+                        lastError: nil
+                    )
+                ]
+            )
+        ],
+        activities: [
+            EDPXPCActivity(
+                id: UUID(),
+                timestamp: "22:30:08",
+                level: "info",
+                deviceID: "disk&ven_lexar&prod_usb_flash_drive-49979b696404",
+                partitionType: EDPPartitionKind.exchange.rawValue,
+                message: "交换区已自动挂载"
+            ),
+            EDPXPCActivity(
+                id: UUID(),
+                timestamp: "22:29:56",
+                level: "info",
+                deviceID: "disk&ven_lexar&prod_usb_flash_drive-49979b696404",
+                partitionType: nil,
+                message: "已识别标准 EDP 加密盘"
+            )
+        ],
+        serviceVersion: "0.6.0",
+        timestamp: "2026-08-29T22:30:08+08:00"
+    )
+#endif
 
     private func currentServiceStatus() -> SMAppService.Status {
         if let daemonService { return daemonService.status }
@@ -224,27 +309,29 @@ final class EDPVaultViewModel: ObservableObject {
         guard serviceDesiredRunning, currentServiceStatus() == .enabled else { return nil }
         if let connection { return connection }
         let newConnection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+        let generation = UUID()
         newConnection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
-        newConnection.interruptionHandler = { [weak self, weak newConnection] in
+        newConnection.interruptionHandler = { @Sendable [weak self] in
             Task { @MainActor in
-                guard let self, self.connection === newConnection else { return }
+                guard let self, self.connectionGeneration == generation else { return }
                 self.serviceConnectionEnded()
             }
         }
-        newConnection.invalidationHandler = { [weak self, weak newConnection] in
+        newConnection.invalidationHandler = { @Sendable [weak self] in
             Task { @MainActor in
-                guard let self, self.connection === newConnection else { return }
+                guard let self, self.connectionGeneration == generation else { return }
                 self.serviceConnectionEnded()
             }
         }
         newConnection.resume()
         connection = newConnection
+        connectionGeneration = generation
         return newConnection
     }
 
     private func proxy() -> EDPVaultXPCProtocol? {
         guard let connection = connectIfNeeded() else { return nil }
-        return connection.remoteObjectProxyWithErrorHandler { [weak self] error in
+        return connection.remoteObjectProxyWithErrorHandler { @Sendable [weak self] error in
             Task { @MainActor in self?.lastError = error.localizedDescription }
         } as? EDPVaultXPCProtocol
     }
@@ -307,6 +394,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     private func serviceConnectionEnded() {
         connection = nil
+        connectionGeneration = nil
         guard !serviceDesiredRunning else {
             serviceStatus = "连接已中断"
             return
@@ -343,6 +431,7 @@ final class EDPVaultViewModel: ObservableObject {
         }
         connection?.invalidate()
         connection = nil
+        connectionGeneration = nil
         isBusy = true
         serviceStatus = "正在启动…"
         lastError = nil
@@ -350,7 +439,7 @@ final class EDPVaultViewModel: ObservableObject {
         serviceOperationID = operationID
         armServiceTimeout(id: operationID, operation: "启动")
         guard let connection = connectIfNeeded(),
-              let proxy = connection.remoteObjectProxyWithErrorHandler({ [weak self] error in
+              let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
                   Task { @MainActor in
                       guard let self, self.serviceOperationID == operationID else { return }
                       self.serviceOperationID = nil
@@ -364,7 +453,7 @@ final class EDPVaultViewModel: ObservableObject {
             lastError = "无法建立后台服务连接"
             return
         }
-        proxy.healthCheck { [weak self] response in
+        proxy.healthCheck { @Sendable [weak self] response in
             Task { @MainActor in
                 guard let self, self.serviceOperationID == operationID else { return }
                 guard response == "com.edp.drive.service:running" else {
@@ -385,7 +474,7 @@ final class EDPVaultViewModel: ObservableObject {
     func stopService(restart: Bool = false, completion: (() -> Void)? = nil) {
         let activeConnection = connection ?? connectIfNeeded()
         guard let activeConnection,
-              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ [weak self] error in
+              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
                   Task { @MainActor in
                       guard let self else { return }
                       self.serviceDesiredRunning = true
@@ -426,7 +515,7 @@ final class EDPVaultViewModel: ObservableObject {
         let operationID = UUID()
         serviceOperationID = operationID
         armServiceTimeout(id: operationID, operation: restart ? "重启" : "停止")
-        proxy.requestGracefulShutdown { [weak self] errorMessage in
+        proxy.requestGracefulShutdown { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self, self.serviceOperationID == operationID else { return }
                 if let errorMessage {
@@ -492,7 +581,7 @@ final class EDPVaultViewModel: ObservableObject {
             }
             return
         }
-        proxy.snapshot { [weak self] data in
+        proxy.snapshot { @Sendable [weak self] data in
             Task { @MainActor in
                 guard let self else { return }
                 do {
@@ -531,7 +620,7 @@ final class EDPVaultViewModel: ObservableObject {
     func refreshRawAccess() {
         guard let proxy = proxy() else { return }
         isBusy = true
-        proxy.refreshRawAccess { [weak self] errorMessage in
+        proxy.refreshRawAccess { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -543,7 +632,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     private func retryTransientAutomaticMounts() {
         guard let proxy = proxy() else { return }
-        proxy.retryTransientAutomaticMounts { [weak self] errorMessage in
+        proxy.retryTransientAutomaticMounts { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 if let errorMessage { self.lastError = errorMessage }
@@ -559,7 +648,7 @@ final class EDPVaultViewModel: ObservableObject {
             deviceID: deviceID,
             partitionType: partitionType,
             password: Data(password.utf8)
-        ) { [weak self] errorMessage in
+        ) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -572,7 +661,7 @@ final class EDPVaultViewModel: ObservableObject {
     func mountPartition(deviceID: String, partitionType: UInt32) {
         guard requireTransportRuntime(), let proxy = proxy() else { return }
         isBusy = true
-        proxy.mountPartition(deviceID: deviceID, partitionType: partitionType) { [weak self] errorMessage in
+        proxy.mountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -585,7 +674,7 @@ final class EDPVaultViewModel: ObservableObject {
     func unmountPartition(deviceID: String, partitionType: UInt32) {
         guard let proxy = proxy() else { return }
         isBusy = true
-        proxy.unmountPartition(deviceID: deviceID, partitionType: partitionType) { [weak self] errorMessage in
+        proxy.unmountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -598,7 +687,7 @@ final class EDPVaultViewModel: ObservableObject {
     func deleteCredential(deviceID: String, partitionType: UInt32) {
         guard let proxy = proxy() else { return }
         isBusy = true
-        proxy.deleteCredential(deviceID: deviceID, partitionType: partitionType) { [weak self] errorMessage in
+        proxy.deleteCredential(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -611,7 +700,7 @@ final class EDPVaultViewModel: ObservableObject {
     func deleteDeviceRecord(deviceID: String) {
         guard let proxy = proxy() else { return }
         isBusy = true
-        proxy.deleteDeviceRecord(deviceID: deviceID) { [weak self] errorMessage in
+        proxy.deleteDeviceRecord(deviceID: deviceID) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -627,7 +716,7 @@ final class EDPVaultViewModel: ObservableObject {
             deviceID: deviceID,
             partitionType: partitionType,
             enabled: enabled
-        ) { [weak self] errorMessage in
+        ) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 self?.lastError = errorMessage
                 self?.refresh()
@@ -637,7 +726,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     func setGlobalAutoMount(_ enabled: Bool) {
         guard let proxy = proxy() else { return }
-        proxy.setGlobalAutoMount(enabled: enabled) { [weak self] errorMessage in
+        proxy.setGlobalAutoMount(enabled: enabled) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 self?.lastError = errorMessage
                 self?.refresh()
@@ -647,7 +736,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     func rename(deviceID: String, displayName: String) {
         guard let proxy = proxy() else { return }
-        proxy.setDeviceDisplayName(deviceID: deviceID, displayName: displayName) { [weak self] errorMessage in
+        proxy.setDeviceDisplayName(deviceID: deviceID, displayName: displayName) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 self?.lastError = errorMessage
                 self?.refresh()
@@ -670,7 +759,7 @@ final class EDPVaultViewModel: ObservableObject {
     func eject(deviceID: String) {
         guard let proxy = proxy() else { return }
         isBusy = true
-        proxy.eject(deviceID: deviceID) { [weak self] errorMessage in
+        proxy.eject(deviceID: deviceID) { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self else { return }
                 self.isBusy = false
@@ -682,7 +771,7 @@ final class EDPVaultViewModel: ObservableObject {
 
     func loadDiagnostics() {
         guard let proxy = proxy() else { return }
-        proxy.diagnostics { [weak self] data in
+        proxy.diagnostics { @Sendable [weak self] data in
             Task { @MainActor in
                 self?.diagnostics = String(decoding: data, as: UTF8.self)
             }
@@ -881,10 +970,13 @@ struct EDPMainView: View {
     var body: some View {
         NavigationSplitView {
             List(EDPMainSection.allCases, selection: $section) { item in
-                Label(item.rawValue, systemImage: item.icon).tag(item)
+                Label(item.rawValue, systemImage: item.icon)
+                    .padding(.vertical, 3)
+                    .tag(item)
             }
+            .listStyle(.sidebar)
             .navigationTitle("EDP Drive")
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 220)
+            .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 190)
         } detail: {
             switch section ?? .devices {
             case .devices: EDPDevicesView(model: model)
@@ -893,6 +985,7 @@ struct EDPMainView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 620)
+        .background { EDPWindowBackdrop() }
         .alert("操作失败", isPresented: Binding(
             get: { model.lastError != nil },
             set: { if !$0 { model.lastError = nil } }
@@ -919,21 +1012,21 @@ struct EDPDevicesView: View {
     var body: some View {
         VStack(spacing: 0) {
             if model.needsFullDiskAccess {
-                HStack(spacing: 12) {
-                    Label(
-                        "EDP U 盘已识别。请为“EDP Drive 磁盘访问”开启一次完全磁盘访问。",
-                        systemImage: "externaldrive.badge.exclamationmark"
-                    )
-                    Spacer()
+                EDPNoticeBanner(
+                    title: "需要完全磁盘访问",
+                    message: "EDP U 盘已识别。为“EDP Drive 磁盘访问”开启一次即可。",
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    tone: .warning
+                ) {
                     Button("显示组件") { model.revealRawAccessHelper() }
+                        .buttonStyle(.glass)
                     Button("打开完全磁盘访问") { model.openFullDiskAccessSettings() }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.glassProminent)
                     Button("重新检测") { model.refreshRawAccess() }
+                        .buttonStyle(.glass)
                         .disabled(model.isBusy)
                 }
-                .padding(12)
-                .background(Color.accentColor.opacity(0.10))
-                Divider()
+                .padding(EDPTheme.Spacing.sm)
             }
 
             HSplitView {
@@ -952,31 +1045,32 @@ struct EDPDevicesView: View {
                         }
                     }
                 }
-                .frame(minWidth: 220, idealWidth: 250, maxWidth: 300)
+                .listStyle(.sidebar)
+                .frame(minWidth: 200, idealWidth: 220, maxWidth: 240)
 
                 Group {
                     if let selectedDevice {
                         EDPDeviceDetailView(device: selectedDevice, model: model)
                             .id(selectedDevice.deviceID)
                     } else {
-                        VStack(spacing: 14) {
-                            ContentUnavailableView(
-                                "未发现 EDP U 盘",
-                                systemImage: "externaldrive",
-                                description: Text("插入设备后会自动识别，也可以查看此前保存的设备。")
-                            )
-                        }
+                        EDPEmptyState(
+                            "未发现 EDP U 盘",
+                            message: "插入设备后会自动识别，也可以查看此前保存的设备。",
+                            systemImage: "externaldrive.badge.questionmark"
+                        )
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 540, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("设备")
+        .background { EDPWindowBackdrop() }
         .toolbar {
             ToolbarItem {
                 Button { model.refresh() } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.glass)
             }
         }
         .onAppear {
@@ -1024,25 +1118,46 @@ struct EDPDeviceDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        TextField("设备名称", text: $displayName)
-                            .font(.title2.bold())
-                            .textFieldStyle(.plain)
-                            .onSubmit {
-                                model.rename(deviceID: device.deviceID, displayName: displayName)
-                            }
-                        Text("\(device.vidPID) · \(ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file))")
-                            .foregroundStyle(.secondary)
-                        Text(device.deviceID)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.tertiary)
-                            .textSelection(.enabled)
+                EDPContentCard {
+                    HStack(alignment: .center, spacing: EDPTheme.Spacing.md) {
+                        Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
+                            .font(.system(size: 29, weight: .medium))
+                            .foregroundStyle(device.connected ? Color.accentColor : .secondary)
+                            .frame(width: 62, height: 62)
+                            .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            TextField("设备名称", text: $displayName)
+                                .font(.title2.weight(.semibold))
+                                .textFieldStyle(.plain)
+                                .onSubmit {
+                                    model.rename(deviceID: device.deviceID, displayName: displayName)
+                                }
+                            Text("\(device.vidPID) · \(ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file))")
+                                .foregroundStyle(.secondary)
+                            Text(device.deviceID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .textSelection(.enabled)
+                        }
+                        Spacer()
+                        EDPStatusPill(
+                            title: device.connected ? "已连接" : "未连接",
+                            systemImage: device.connected ? "checkmark.circle.fill" : "circle.dashed",
+                            tone: device.connected ? .success : .neutral
+                        )
                     }
-                    Spacer()
-                    Label(device.connected ? "已连接" : "未连接",
-                          systemImage: device.connected ? "checkmark.circle.fill" : "circle.dashed")
-                        .foregroundStyle(device.connected ? .green : .secondary)
+                }
+
+                EDPSectionHeader(
+                    "分区",
+                    subtitle: "管理自动挂载、凭据和 Finder 访问",
+                    systemImage: "rectangle.split.3x1"
+                ) {
+                    Text("\(device.partitions.count)")
+                        .font(.system(.callout, design: .rounded).weight(.semibold))
+                        .contentTransition(.numericText())
+                        .foregroundStyle(.secondary)
                 }
 
                 ForEach(device.partitions) { partition in
@@ -1062,11 +1177,13 @@ struct EDPDeviceDetailView: View {
 
                 HStack {
                     Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
+                        .buttonStyle(.glass)
                         .disabled(!device.connected || model.isBusy)
                     if !device.connected {
                         Button("删除设备记录", role: .destructive) {
                             confirmingRecordDeletion = true
                         }
+                        .buttonStyle(.glass)
                         .disabled(model.isBusy)
                     }
                     Spacer()
@@ -1075,8 +1192,9 @@ struct EDPDeviceDetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(24)
+            .padding(EDPTheme.Spacing.lg)
         }
+        .background { EDPWindowBackdrop() }
         .onAppear { displayName = device.displayName }
         .onChange(of: device.displayName) { _, value in displayName = value }
         .sheet(item: $credentialTarget) { target in
@@ -1102,7 +1220,8 @@ struct EDPPartitionCard: View {
     private var mounted: Bool { partition.mountState == .mounted }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        EDPContentCard(padding: 16) {
+          VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: icon)
                     .font(.title3)
@@ -1149,6 +1268,7 @@ struct EDPPartitionCard: View {
                     Button(partition.credentialStatus == .saved ? "更新密码" : "设置密码") {
                         onSetPassword()
                     }
+                    .buttonStyle(.glass)
                     if partition.credentialStatus == .saved {
                         Button("删除密码", role: .destructive) {
                             model.deleteCredential(
@@ -1156,12 +1276,14 @@ struct EDPPartitionCard: View {
                                 partitionType: partition.partitionType
                             )
                         }
+                        .buttonStyle(.glass)
                     }
                 }
                 Spacer()
                 if mounted {
                     if partition.mountPoint != nil {
                         Button("在 Finder 中显示") { model.openInFinder(partition) }
+                            .buttonStyle(.glass)
                     }
                     Button("卸载") {
                         model.unmountPartition(
@@ -1169,6 +1291,7 @@ struct EDPPartitionCard: View {
                             partitionType: partition.partitionType
                         )
                     }
+                    .buttonStyle(.glass)
                 } else {
                     Button("挂载") {
                         model.mountPartition(
@@ -1176,6 +1299,7 @@ struct EDPPartitionCard: View {
                             partitionType: partition.partitionType
                         )
                     }
+                    .buttonStyle(.glassProminent)
                     .disabled(
                         !device.connected || model.isBusy
                             || (partition.encrypted && partition.credentialStatus != .saved)
@@ -1188,10 +1312,8 @@ struct EDPPartitionCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+          }
         }
-        .padding(16)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.35)))
     }
 
     private var icon: String {
@@ -1215,12 +1337,11 @@ struct EDPPartitionCard: View {
     @ViewBuilder private var statusBadge: some View {
         let title = mounted ? (partition.readOnly == true ? "只读" : "已挂载")
             : (partition.credentialStatus == .saved ? "密码已保存" : "未挂载")
-        Text(title)
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background((mounted ? Color.green : Color.secondary).opacity(0.13), in: Capsule())
-            .foregroundStyle(mounted ? .green : .secondary)
+        EDPStatusPill(
+            title: title,
+            systemImage: mounted ? "checkmark.circle.fill" : "circle",
+            tone: mounted ? .success : .neutral
+        )
     }
 }
 
@@ -1232,29 +1353,39 @@ struct EDPCredentialSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("设置\(target.partitionName)密码").font(.title3.bold())
+            EDPSectionHeader(
+                "设置\(target.partitionName)密码",
+                subtitle: "安全验证后保存到系统钥匙串",
+                systemImage: "key.fill"
+            )
             Text("密码会先在当前 U 盘上验证，成功后才保存到系统钥匙串。应用不会修改盘上的密码。")
                 .foregroundStyle(.secondary)
             SecureField("现有分区密码", text: $password)
                 .textFieldStyle(.roundedBorder)
-            HStack {
-                Spacer()
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("验证并保存") {
-                    model.saveCredential(
-                        deviceID: target.deviceID,
-                        partitionType: target.partitionType,
-                        password: password
-                    )
-                    password = ""
-                    dismiss()
+            EDPGlassToolbar {
+                HStack {
+                    Spacer()
+                    Button("取消") { dismiss() }
+                        .buttonStyle(.glass)
+                        .keyboardShortcut(.cancelAction)
+                    Button("验证并保存") {
+                        model.saveCredential(
+                            deviceID: target.deviceID,
+                            partitionType: target.partitionType,
+                            password: password
+                        )
+                        password = ""
+                        dismiss()
+                    }
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(password.isEmpty || model.isBusy)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(password.isEmpty || model.isBusy)
             }
         }
         .padding(24)
         .frame(width: 460)
+        .background { EDPWindowBackdrop() }
     }
 }
 
@@ -1264,35 +1395,44 @@ struct EDPActivityView: View {
     var body: some View {
         Group {
             if model.snapshot.activities.isEmpty {
-                ContentUnavailableView(
+                EDPEmptyState(
                     "暂无活动记录",
-                    systemImage: "clock",
-                    description: Text("设备插入、挂载和凭据变更会显示在这里。")
+                    message: "设备插入、挂载和凭据变更会显示在这里。",
+                    systemImage: "clock.arrow.circlepath"
                 )
             } else {
-                List(model.snapshot.activities) { activity in
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: activity.level == "error"
-                              ? "exclamationmark.triangle.fill" : "checkmark.circle")
-                            .foregroundStyle(activity.level == "error" ? .red : .secondary)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(activity.message)
-                            HStack {
-                                Text(activity.timestamp)
-                                if let type = activity.partitionType,
-                                   let kind = EDPPartitionKind(rawValue: type) {
-                                    Text("· \(kind.displayName)")
+                ScrollView {
+                    LazyVStack(spacing: EDPTheme.Spacing.sm) {
+                        ForEach(model.snapshot.activities) { activity in
+                            EDPContentCard(padding: EDPTheme.Spacing.sm) {
+                                HStack(alignment: .top, spacing: 12) {
+                                    Image(systemName: activity.level == "error"
+                                          ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                                        .foregroundStyle(activity.level == "error" ? .red : .green)
+                                        .symbolEffect(.bounce, value: activity.timestamp)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(activity.message)
+                                        HStack {
+                                            Text(activity.timestamp)
+                                            if let type = activity.partitionType,
+                                               let kind = EDPPartitionKind(rawValue: type) {
+                                                Text("· \(kind.displayName)")
+                                            }
+                                        }
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
                                 }
                             }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(EDPTheme.Spacing.lg)
                 }
             }
         }
         .navigationTitle("活动")
+        .background { EDPWindowBackdrop() }
     }
 }
 
@@ -1334,6 +1474,7 @@ struct EDPSettingsView: View {
                     .foregroundStyle(.secondary)
                 if model.serviceStatus != "运行中" {
                     Button("打开登录项与扩展设置") { model.openServiceSettings() }
+                        .buttonStyle(.glass)
                 }
             }
             Section("自动挂载") {
@@ -1356,14 +1497,18 @@ struct EDPSettingsView: View {
                 )
                 HStack {
                     Button("启动") { model.startService() }
+                        .buttonStyle(.glassProminent)
                         .disabled(model.isBusy || model.serviceStatus == "运行中")
                     Button("停止") { model.stopService() }
+                        .buttonStyle(.glass)
                         .disabled(model.isBusy || model.serviceStatus == "已停止")
                     Button("重启") { model.restartService() }
+                        .buttonStyle(.glass)
                         .disabled(model.isBusy || model.serviceStatus != "运行中")
                 }
                 if model.serviceStatus == "需要系统批准" {
                     Button("打开登录项与扩展设置") { model.openServiceSettings() }
+                        .buttonStyle(.glass)
                 }
             }
             Section("诊断") {
@@ -1371,9 +1516,12 @@ struct EDPSettingsView: View {
                     model.loadDiagnostics()
                     showingDiagnostics = true
                 }
+                .buttonStyle(.glass)
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background { EDPWindowBackdrop() }
         .navigationTitle("设置")
         .sheet(isPresented: $showingDiagnostics) {
             VStack(alignment: .leading, spacing: 12) {
@@ -1388,6 +1536,7 @@ struct EDPSettingsView: View {
             }
             .padding(20)
             .frame(width: 680, height: 460)
+            .background { EDPWindowBackdrop() }
         }
     }
 
@@ -1406,6 +1555,7 @@ struct EDPSettingsView: View {
 struct EDPMenuBarView: View {
     @ObservedObject var model: EDPVaultViewModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedDeviceID: String?
     @State private var selectedPartitionType: UInt32?
 
@@ -1432,17 +1582,19 @@ struct EDPMenuBarView: View {
                 Divider()
                 devicePanel(selectedDevice)
                     .frame(width: 276)
+                    .transition(panelTransition)
             }
 
             if let selectedDevice, let selectedPartition {
                 Divider()
                 partitionPanel(device: selectedDevice, partition: selectedPartition)
                     .frame(width: 250)
+                    .transition(panelTransition)
             }
         }
         .background(.clear)
-        .animation(.snappy(duration: 0.18), value: selectedDeviceID)
-        .animation(.snappy(duration: 0.18), value: selectedPartitionType)
+        .animation(reduceMotion ? EDPTheme.Motion.reduced : EDPTheme.Motion.navigation, value: selectedDeviceID)
+        .animation(reduceMotion ? EDPTheme.Motion.reduced : EDPTheme.Motion.navigation, value: selectedPartitionType)
         .onChange(of: connectedDevices.map(\.deviceID)) { _, deviceIDs in
             guard let selectedDeviceID else { return }
             if !deviceIDs.contains(selectedDeviceID) {
@@ -1456,6 +1608,15 @@ struct EDPMenuBarView: View {
                 self.selectedPartitionType = nil
             }
         }
+    }
+
+    private var panelTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .asymmetric(
+                insertion: .move(edge: .leading).combined(with: .opacity),
+                removal: .opacity
+            )
     }
 
     private var rootPanel: some View {
@@ -1728,6 +1889,7 @@ private struct EDPMenuPanelHeader: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.tint)
                     .frame(width: 24, height: 24)
+                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
             VStack(alignment: .leading, spacing: 1) {
@@ -1745,6 +1907,7 @@ private struct EDPMenuPanelHeader: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.025))
     }
 }
 
@@ -1758,6 +1921,7 @@ private struct EDPMenuNavigationRow: View {
     var isSelected = false
     let action: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
     var body: some View {
@@ -1801,6 +1965,8 @@ private struct EDPMenuNavigationRow: View {
         )
         .padding(.horizontal, 4)
         .onHover { hovering = $0 }
+        .animation(reduceMotion ? EDPTheme.Motion.reduced : EDPTheme.Motion.hover, value: hovering)
+        .animation(reduceMotion ? EDPTheme.Motion.reduced : EDPTheme.Motion.navigation, value: isSelected)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.48)
     }
