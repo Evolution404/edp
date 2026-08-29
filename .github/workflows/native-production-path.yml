@@ -3,7 +3,7 @@ name: Native Production Path
 on:
   workflow_dispatch:
   push:
-    branches: ["feat/macos26-native-fskit", "test/fuset-minimal-fskit-bridge"]
+    branches: ["feat/macos26-native-fskit", "test/self-signed-standalone-distribution"]
     paths:
       - "product/**"
       - "installer/build-clean-installer.sh"
@@ -54,7 +54,6 @@ jobs:
             product/EDPNTFSMountPolicy.swift \
             product/EDPCredentialStore.swift \
             product/EDPDevicePolicyStore.swift \
-            product/EDPFuseTRuntimePolicy.swift \
             product/EDPMacFUSERuntimePolicy.swift \
             product/EDPTransportProvider.swift \
             product/EDPTransportRuntimePolicy.swift \

@@ -2,7 +2,7 @@ name: Direct MFMount Encrypted Local Transport
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c"

@@ -2,7 +2,7 @@ name: Direct MFMount Generic vs Local Finder A-B
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - ".github/workflows/direct-mfmount-finder-ab.yml"
   workflow_dispatch:

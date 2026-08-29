@@ -2,7 +2,7 @@ name: macFUSE 5.3.3 Runtime Policy
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - "product/EDPMacFUSERuntimePolicy.swift"
       - ".github/workflows/macfuse-532-runtime-policy.yml"

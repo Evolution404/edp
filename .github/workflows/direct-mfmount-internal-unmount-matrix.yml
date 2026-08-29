@@ -2,7 +2,7 @@ name: Direct MFMount Internal Unmount Matrix
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPFixtureAdapter.c"
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"

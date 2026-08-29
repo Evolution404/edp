@@ -83,13 +83,13 @@
 
 通过真实 U 盘验证：
 
-`self-signed App → legacy XPC → raw authorization → Direct MFMount macFUSE Local → encrypted volume.raw → DiskImages2 → Apple filesystem → Finder → unmount → remount`
+`self-signed App → legacy XPC → FDA daemon retained raw fd → Direct MFMount macFUSE Local → volume.raw → DiskImages2 → Apple filesystem → Finder → unmount → remount`
 
 至少验证交换区；不对真实介质执行格式化、分区或擦除。
 
 ### G. 合并门槛
 
-只有同时满足以下条件才合并回 `test/fuset-minimal-fskit-bridge`：
+只有同时满足以下条件才合并回主线：
 
 - self-signed build gate 全部通过；
 - GitHub Actions production/clean installer/XPC contract 全绿；

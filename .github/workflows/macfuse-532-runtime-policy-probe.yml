@@ -2,7 +2,7 @@ name: macFUSE 5.3.2 Runtime Policy Probe
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - ".github/workflows/macfuse-532-runtime-policy-probe.yml"
   workflow_dispatch:

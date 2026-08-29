@@ -2,7 +2,7 @@ name: Direct MFMount Local FSKit P0 Probe
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - ".github/workflows/direct-mfmount-local-fskit-transport.yml"
   workflow_dispatch:

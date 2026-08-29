@@ -687,7 +687,7 @@ private final class MountManager {
             attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
         )
         guard chown(bridgeMount, identity.0, identity.1) == 0 else {
-            throw fail("cannot assign encrypted bridge mountpoint to console user: errno=\(errno)")
+            throw fail("cannot assign block-transport mountpoint to console user: errno=\(errno)")
         }
         if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
             try diskArbitration.unmountWhole(disk.bsdName)
@@ -1182,18 +1182,8 @@ private final class EDPDaemonController: @unchecked Sendable {
             rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
             return
         }
-        let bootBSD = try? bootPartitionBSD(for: disk)
-        let bootWasMounted = bootBSD.flatMap { EDPNativeMountTable.mountPoint(forBSD: $0) } != nil
         if temporarilyUnmount, EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
             try diskArbitration.unmountWhole(disk.bsdName)
-        }
-        defer {
-            if temporarilyUnmount,
-               bootWasMounted,
-               let bootBSD,
-               EDPNativeMountTable.mountPoint(forBSD: bootBSD) == nil {
-                _ = try? diskArbitration.mount(bootBSD)
-            }
         }
         do {
             let lease = try openPersistentRawAccess(for: disk)
@@ -1220,35 +1210,19 @@ private final class EDPDaemonController: @unchecked Sendable {
         return lease
     }
 
-    private func bootPartitionBSD(for disk: PhysicalDisk) throws -> String {
-        let expected = "\(disk.bsdName)s1"
-        guard try EDPNativeDeviceDiscovery.descendantBSDNames(of: disk.bsdName)
-            .contains(expected) else {
-            throw fail("EDP boot partition is missing: /dev/\(expected)")
-        }
-        return expected
-    }
-
-    private func bootSummary(for disk: PhysicalDisk) -> [String: String]? {
-        guard let bsdName = try? bootPartitionBSD(for: disk),
-              let mountpoint = EDPNativeMountTable.mountPoint(forBSD: bsdName) else {
-            return nil
-        }
-        return [
-            "filesystem": EDPNativeMountTable.filesystem(forBSD: bsdName) ?? "FAT",
-            "mountpoint": mountpoint,
-            "exposedBSD": bsdName,
-        ]
-    }
-
     private func setBootMounted(_ mounted: Bool, disk: PhysicalDisk) throws {
-        let bsdName = try bootPartitionBSD(for: disk)
+        let partitionType = EDPPartitionKind.boot.rawValue
         if mounted {
-            if EDPNativeMountTable.mountPoint(forBSD: bsdName) == nil {
-                _ = try diskArbitration.mount(bsdName)
-            }
-        } else if EDPNativeMountTable.mountPoint(forBSD: bsdName) != nil {
-            try diskArbitration.unmount(bsdName)
+            guard !manager.contains(disk, partitionType) else { return }
+            let rawLease = try requireRawAccessLeaseLocked(for: disk)
+            try manager.mount(
+                disk: disk,
+                partitionType: partitionType,
+                password: [],
+                rawFD: rawLease.fd
+            )
+        } else {
+            manager.unmount(deviceID: disk.deviceID, partitionType: partitionType)
         }
     }
 
@@ -1440,9 +1414,10 @@ private final class EDPDaemonController: @unchecked Sendable {
                     let record = records.first { $0.deviceID == deviceID }
                     let policy = policyDocument.devices.first { $0.deviceID == deviceID }
                     let partitions = EDPPartitionKind.allCases.map { kind -> EDPXPCPartition in
-                        let summary = kind == .boot
-                            ? disk.flatMap { bootSummary(for: $0) }
-                            : manager.summary(deviceID: deviceID, partitionType: kind.rawValue)
+                        let summary = manager.summary(
+                            deviceID: deviceID,
+                            partitionType: kind.rawValue
+                        )
                         let mountpoint = summary?["mountpoint"]
                         let isMounted = mountpoint?.isEmpty == false || summary != nil
                         let credentialStatus: EDPCredentialStatus = kind.isEncrypted

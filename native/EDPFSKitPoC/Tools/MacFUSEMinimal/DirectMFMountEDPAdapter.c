@@ -50,7 +50,7 @@ static int read_all_fd(int fd, unsigned char *buffer, size_t capacity, size_t *l
 
 static int edp_backing_open(const char *path, int flags, ...) {
     (void)flags;
-    if (strcmp(path, "EDP_ENCRYPTED_BACKING") != 0 || g_edp_handle == NULL) {
+    if (strcmp(path, "EDP_BLOCK_BACKING") != 0 || g_edp_handle == NULL) {
         errno = ENOENT;
         return -1;
     }
@@ -149,7 +149,7 @@ static bool edp_channel_close(MFChannelRef channel) {
 static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --raw-device /dev/rdiskN --raw-fd FD --vid HEX --pid HEX "
-            "--device-size BYTES --partition-type {2|4} --control-fd FD "
+            "--device-size BYTES --partition-type {1|2|4} --control-fd FD "
             "--mountpoint PATH --volume-name NAME\n",
             program);
 }
@@ -187,7 +187,7 @@ int main(int argc, char **argv) {
     if (!end || *end || device_size == 0) return 64;
     end = NULL;
     unsigned long partition = strtoul(partition_text, &end, 10);
-    if (!end || *end || (partition != 2 && partition != 4)) return 64;
+    if (!end || *end || (partition != 1 && partition != 2 && partition != 4)) return 64;
     end = NULL;
     long control_fd_long = strtol(control_fd_text, &end, 10);
     if (!end || *end || control_fd_long < 0 || control_fd_long > INT32_MAX) return 64;
@@ -200,25 +200,29 @@ int main(int argc, char **argv) {
 
     unsigned char password[4096];
     size_t password_length = 0;
-    if (read_all_fd((int)control_fd_long, password, sizeof(password), &password_length) != 0) {
+    if (partition != 1 &&
+        read_all_fd((int)control_fd_long, password, sizeof(password), &password_length) != 0) {
         secure_zero(password, sizeof(password));
         fprintf(stderr, "EDP_DIRECT_CONTROL_FD_READ_FAILED\n");
         return 65;
     }
 
     g_mountpoint = mountpoint;
-    g_edp_handle = edp_rw_open_device_fd(raw_fd, vid, pid, device_size,
-                                         password, password_length,
-                                         (uint32_t)partition);
+    g_edp_handle = edp_rw_open_device_fd(
+        raw_fd, vid, pid, device_size,
+        partition == 1 ? NULL : password,
+        partition == 1 ? 0 : password_length,
+        (uint32_t)partition
+    );
     secure_zero(password, sizeof(password));
     if (g_edp_handle == NULL) {
-        fprintf(stderr, "EDP_DIRECT_ENCRYPTED_BACKEND_OPEN_FAILED\n");
+        fprintf(stderr, "EDP_DIRECT_BLOCK_BACKEND_OPEN_FAILED\n");
         return 65;
     }
 
     char *direct_argv[] = {
         argv[0],
-        "EDP_ENCRYPTED_BACKING",
+        "EDP_BLOCK_BACKING",
         (char *)mountpoint,
         (char *)volume_name,
         NULL,

@@ -100,7 +100,6 @@ CORE_SOURCES=(
 PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPCredentialStore.swift"
   "${REPO_ROOT}/product/EDPDevicePolicyStore.swift"
-  "${REPO_ROOT}/product/EDPFuseTRuntimePolicy.swift"
   "${REPO_ROOT}/product/EDPMacFUSERuntimePolicy.swift"
   "${REPO_ROOT}/product/EDPTransportProvider.swift"
   "${REPO_ROOT}/product/EDPTransportRuntimePolicy.swift"
@@ -117,7 +116,7 @@ xcrun swiftc -O -framework CryptoKit -framework Security \
   "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 
-echo "Building switchable transport backends (default macfuse-local)..."
+echo "Building macFUSE Local transport..."
 MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   "${REPO_ROOT}/installer/build-transport-backends.sh" "${RUNTIME_STAGE}/bin"
 
@@ -246,7 +245,7 @@ else
 fi
 /usr/bin/shasum -a 256 "${OUTPUT}" > "${OUTPUT}.sha256"
 echo "OUTPUT=${OUTPUT}"
-echo "FUSET_RUNTIME=external-pinned-1.2.7"
+echo "TRANSPORT_RUNTIME=macfuse-local-only"
 echo "RESULT=EDP_NATIVE_INSTALLER_BUILT"
 if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   echo "RESULT=SELF_SIGNED_DISTRIBUTION_PACKAGE"

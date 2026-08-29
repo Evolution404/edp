@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - "test/self-signed-standalone-distribution"
-      - "test/fuset-minimal-fskit-bridge"
       - "feat/macos26-native-fskit"
     paths:
       - "product/**"
@@ -67,7 +66,6 @@ jobs:
             product/EDPNTFSMountPolicy.swift \
             product/EDPCredentialStore.swift \
             product/EDPDevicePolicyStore.swift \
-            product/EDPFuseTRuntimePolicy.swift \
             product/EDPMacFUSERuntimePolicy.swift \
             product/EDPTransportProvider.swift \
             product/EDPTransportRuntimePolicy.swift \

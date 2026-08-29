@@ -35,13 +35,6 @@ CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
 )
 
-# Preserve the proven FUSE-T implementation as an explicit backend binary.
-xcrun swiftc -O -parse-as-library -D FUSET_BRIDGE_LIBRARY \
-  "${CORE_SOURCES[@]}" \
-  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTMinimalBridge.swift" \
-  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/FuseTMinimal/FuseTEDPAuthorizedReadWriteBridge.swift" \
-  -o "${OUTPUT_BIN}/edp-fuset-readwrite-backend"
-
 # Build the Direct MFMount Local product adapter. Patch only the copied generic
 # transport source so the shared source remains usable for Generic A/B tests.
 cp "${REPO_ROOT}/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c" \
@@ -74,21 +67,10 @@ xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
   -framework MFMount -framework CoreFoundation -framework DiskArbitration \
   -o "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
 
-# Keep the runtime-facing filename stable while making backend selection an
-# explicit exec boundary controlled by EDP_TRANSPORT.
-xcrun clang -std=c17 -Wall -Wextra -Werror \
-  "${REPO_ROOT}/product/EDPTransportExec.c" \
-  -o "${OUTPUT_BIN}/edp-fuset-readwrite"
-
-for binary in \
-  "${OUTPUT_BIN}/edp-fuset-readwrite" \
-  "${OUTPUT_BIN}/edp-fuset-readwrite-backend" \
-  "${OUTPUT_BIN}/edp-mfmount-local-readwrite"; do
-  test -x "${binary}"
-done
+test -x "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
 
 otool -L "${OUTPUT_BIN}/edp-mfmount-local-readwrite" > "${BUILD_ROOT}/local-otool.txt"
 grep -Fq 'MFMount.framework' "${BUILD_ROOT}/local-otool.txt"
 ! grep -Eiq 'libfuse|libosxfuse|libmacfuse' "${BUILD_ROOT}/local-otool.txt"
 
-echo 'RESULT=EDP_TRANSPORT_BACKENDS_BUILT'
+echo 'RESULT=EDP_MACFUSE_LOCAL_TRANSPORT_BUILT'

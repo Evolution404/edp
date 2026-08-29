@@ -2,7 +2,7 @@ name: EDP Crypto Direct vs Encrypted I/O
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - "native/EDPFSKitPoC/Extension/EDPRawIO.swift"
       - "native/EDPFSKitPoC/Extension/EDPCrypto.swift"
@@ -11,7 +11,7 @@ on:
       - "native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift"
       - "native/EDPFSKitPoC/Extension/EDPBlockDevice.swift"
       - "native/EDPFSKitPoC/Tools/PrepareEncryptedDiskImage.swift"
-      - "native/EDPFSKitPoC/Tools/FuseTMinimal/EDPCryptoIOBenchmark.swift"
+      - "native/EDPFSKitPoC/Tools/EDPCryptoIOBenchmark.swift"
       - ".github/workflows/edp-crypto-io-overhead.yml"
   workflow_dispatch:
 
@@ -56,7 +56,7 @@ jobs:
             native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift \
             native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift \
             native/EDPFSKitPoC/Extension/EDPBlockDevice.swift \
-            native/EDPFSKitPoC/Tools/FuseTMinimal/EDPCryptoIOBenchmark.swift \
+            native/EDPFSKitPoC/Tools/EDPCryptoIOBenchmark.swift \
             -o "${RUNNER_TEMP}/EDPCryptoIOBenchmark"
           xcrun swiftc -O -parse-as-library -swift-version 6 -warnings-as-errors \
             native/EDPFSKitPoC/Extension/EDPCrypto.swift \

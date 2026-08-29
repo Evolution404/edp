@@ -2,7 +2,7 @@ name: Native Swift Fast Checks
 
 on:
   push:
-    branches: ["feat/macos26-native-fskit", "feat/macos26-fskit-*", "test/fuset-minimal-fskit-bridge"]
+    branches: ["feat/macos26-native-fskit", "feat/macos26-fskit-*", "test/self-signed-standalone-distribution"]
     paths:
       - "native/EDPFSKitPoC/Extension/**/*.swift"
       - "native/EDPFSKitPoC/Host/**/*.swift"
@@ -138,6 +138,7 @@ jobs:
           grep -F 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
           grep -F 'RESULT=SWIFT_NATIVE_ENCRYPTED_WRITER_OK' "${RUNNER_TEMP}/swift-native-core.txt"
+          grep -F 'RESULT=SWIFT_NATIVE_BOOT_PLAINTEXT_SLICE_OK' "${RUNNER_TEMP}/swift-native-core.txt"
 
       - name: Validate production Swift source graph in parallel
         run: |

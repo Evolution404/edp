@@ -12,7 +12,7 @@ protocol EDPBlockDevicePublisher: AnyObject {
     func unpublish(_ device: EDPPublishedBlockDevice) throws
 }
 
-/// Separate read-only publication boundary for the FUSE-T thin transport.
+/// Separate read-only publication boundary for read-only product flows.
 ///
 /// Keeping this protocol distinct makes it impossible for the read-only path
 /// to accidentally call the existing writable DiskImages2 helper.

@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - "feat/macos26-native-fskit"
-      - "test/fuset-minimal-fskit-bridge"
       - "test/self-signed-standalone-distribution"
     paths:
       - "product/**"

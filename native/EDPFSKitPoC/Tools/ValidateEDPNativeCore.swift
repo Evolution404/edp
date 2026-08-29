@@ -57,6 +57,59 @@ private final class MemoryRawReadable: EDPRawWritable {
     }
 }
 
+private final class SparseRawWritable: EDPRawWritable {
+    private var bytes = [UInt64: UInt8]()
+    let allowsWrites: Bool
+    let sizeBytes: UInt64?
+    private(set) var synchronizeCount = 0
+
+    init(sizeBytes: UInt64, allowsWrites: Bool = true) {
+        self.sizeBytes = sizeBytes
+        self.allowsWrites = allowsWrites
+    }
+
+    func seed(at offset: UInt64, data: Data) {
+        for (index, byte) in data.enumerated() {
+            bytes[offset + UInt64(index)] = byte
+        }
+    }
+
+    func readExact(at offset: UInt64, length: Int) throws -> Data {
+        guard length >= 0,
+              let sizeBytes,
+              offset <= sizeBytes,
+              UInt64(length) <= sizeBytes - offset else {
+            throw ValidationFailure.message("sparse raw read past end")
+        }
+        var output = [UInt8](repeating: 0, count: length)
+        for index in 0..<length {
+            output[index] = bytes[offset + UInt64(index)] ?? 0
+        }
+        return Data(output)
+    }
+
+    func writeExact(at offset: UInt64, data: Data) throws {
+        guard allowsWrites else {
+            throw ValidationFailure.message("sparse raw is read-only")
+        }
+        guard let sizeBytes,
+              offset <= sizeBytes,
+              UInt64(data.count) <= sizeBytes - offset else {
+            throw ValidationFailure.message("sparse raw write past end")
+        }
+        for (index, byte) in data.enumerated() {
+            bytes[offset + UInt64(index)] = byte
+        }
+    }
+
+    func synchronize() throws {
+        guard allowsWrites else {
+            throw ValidationFailure.message("sparse raw is read-only")
+        }
+        synchronizeCount += 1
+    }
+}
+
 @main
 struct ValidateEDPNativeCore {
     private struct DeterministicRNG {
@@ -76,7 +129,8 @@ struct ValidateEDPNativeCore {
         guard CommandLine.arguments.count == 2 else {
             throw ValidationFailure.message("usage: ValidateEDPNativeCore <fixtures/golden/disks.json>")
         }
-        let rootData = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+        let goldenURL = URL(fileURLWithPath: CommandLine.arguments[1])
+        let rootData = try Data(contentsOf: goldenURL)
         guard let root = try JSONSerialization.jsonObject(with: rootData) as? [String: Any],
               let disks = root["disks"] as? [[String: Any]] else {
             throw ValidationFailure.message("invalid golden fixture JSON")
@@ -88,6 +142,10 @@ struct ValidateEDPNativeCore {
         try validateEncryptedWriter()
         try validateStablePhysicalDeviceID()
         try validateMetadataErrorPaths()
+        try validateBootPlaintextSlice(
+            disks: disks,
+            fixturesRoot: goldenURL.deletingLastPathComponent().deletingLastPathComponent()
+        )
 
         var lba12Count = 0
         var lba11Count = 0
@@ -164,6 +222,112 @@ struct ValidateEDPNativeCore {
         print("RESULT=SWIFT_NATIVE_LBA11_LBA12_OK")
         print("RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK")
         print("RESULT=SWIFT_NATIVE_ENCRYPTED_WRITER_OK")
+        print("RESULT=SWIFT_NATIVE_BOOT_PLAINTEXT_SLICE_OK")
+    }
+
+    private static func validateBootPlaintextSlice(
+        disks: [[String: Any]],
+        fixturesRoot: URL
+    ) throws {
+        guard let disk = disks.first(where: { $0["name"] as? String == "disk4_real_lexar" }),
+              let expectedDeviceID = disk["device_id"] as? String,
+              let params = disk["lba11_params"] as? [String: Any],
+              let vid = params["vid"] as? String,
+              let pid = params["pid"] as? String else {
+            throw ValidationFailure.message("boot slice fixture metadata is missing")
+        }
+        let deviceSize = number(params["size_bytes"]).uint64Value
+        let fixtureDirectory = fixturesRoot
+            .appendingPathComponent("real_disks")
+            .appendingPathComponent("disk4")
+        let raw = SparseRawWritable(sizeBytes: deviceSize)
+        raw.seed(
+            at: EDPMetadataProbe.lba4ByteOffset,
+            data: try Data(contentsOf: fixtureDirectory.appendingPathComponent("LBA4.bin"))
+        )
+        raw.seed(
+            at: EDPMetadataProbe.lba7ByteOffset,
+            data: try Data(contentsOf: fixtureDirectory.appendingPathComponent("LBA7.bin"))
+        )
+        raw.seed(
+            at: EDPVolumeMetadata.lba11ByteOffset,
+            data: try Data(contentsOf: fixtureDirectory.appendingPathComponent("LBA11.bin"))
+        )
+
+        let startSector: UInt32 = 2_048
+        let sectorCount: UInt32 = 4_096
+        var mbr = Data(repeating: 0, count: Int(EDPMetadataProbe.legacySectorSize))
+        let entry = 446
+        mbr[entry + 4] = 0x06
+        writeUInt32LE(startSector, to: &mbr, at: entry + 8)
+        writeUInt32LE(sectorCount, to: &mbr, at: entry + 12)
+        mbr[510] = 0x55
+        mbr[511] = 0xaa
+        raw.seed(at: 0, data: mbr)
+
+        let partitionStartBytes = UInt64(startSector) * EDPMetadataProbe.legacySectorSize
+        let seedOffset: UInt64 = 37
+        let seed = Data([0x10, 0x20, 0x30, 0x40])
+        raw.seed(at: partitionStartBytes + seedOffset, data: seed)
+
+        let unlocked = try EDPBootUnlock.unlock(
+            raw: raw,
+            vidHex: vid,
+            pidHex: pid,
+            deviceSizeBytes: deviceSize
+        )
+        try require(unlocked.deviceID == expectedDeviceID, "boot slice device identity mismatch")
+        try require(unlocked.partitionStartSector == UInt64(startSector), "boot slice start mismatch")
+        try require(
+            unlocked.partitionSizeBytes == UInt64(sectorCount) * EDPMetadataProbe.legacySectorSize,
+            "boot slice size mismatch"
+        )
+        try require(
+            try unlocked.block.read(at: seedOffset, length: seed.count) == seed,
+            "boot slice read did not map to physical MBR offset"
+        )
+
+        let writeOffset: UInt64 = 1_337
+        let payload = Data([0xde, 0xad, 0xbe, 0xef, 0x42])
+        try unlocked.block.write(at: writeOffset, data: payload)
+        try require(
+            try raw.readExact(
+                at: partitionStartBytes + writeOffset,
+                length: payload.count
+            ) == payload,
+            "boot slice write did not map to physical MBR offset"
+        )
+        try unlocked.block.synchronize()
+        try require(raw.synchronizeCount == 1, "boot slice synchronize was not forwarded")
+
+        var readOverflowRejected = false
+        do {
+            _ = try unlocked.block.read(
+                at: unlocked.partitionSizeBytes - 1,
+                length: 2
+            )
+        } catch {
+            readOverflowRejected = true
+        }
+        try require(readOverflowRejected, "boot slice out-of-bounds read must be rejected")
+
+        var writeOverflowRejected = false
+        do {
+            try unlocked.block.write(
+                at: unlocked.partitionSizeBytes - 1,
+                data: Data([0xaa, 0xbb])
+            )
+        } catch {
+            writeOverflowRejected = true
+        }
+        try require(writeOverflowRejected, "boot slice out-of-bounds write must be rejected")
+    }
+
+    private static func writeUInt32LE(_ value: UInt32, to data: inout Data, at offset: Int) {
+        data[offset] = UInt8(truncatingIfNeeded: value)
+        data[offset + 1] = UInt8(truncatingIfNeeded: value >> 8)
+        data[offset + 2] = UInt8(truncatingIfNeeded: value >> 16)
+        data[offset + 3] = UInt8(truncatingIfNeeded: value >> 24)
     }
 
     private static func validateStablePhysicalDeviceID() throws {

@@ -1,15 +1,13 @@
-name: Transport Backend Builder Contract
+name: macFUSE Local Transport Builder Contract
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - "installer/build-transport-backends.sh"
-      - "product/EDPTransportExec.c"
       - "native/EDPFSKitPoC/Tools/MacFUSEMinimal/**"
       - "native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift"
-      - "native/EDPFSKitPoC/Tools/FuseTMinimal/**"
-      - ".github/workflows/transport-backend-builder.yml"
+      - ".github/workflows/macfuse-local-transport-builder.yml"
   workflow_dispatch:
 
 permissions:
@@ -32,13 +30,15 @@ jobs:
           PKG="$(find "${VOL}" -maxdepth 2 \( -type f -o -type d \) -name '*.pkg' -print -quit)"
           sudo installer -pkg "${PKG}" -target /
           hdiutil detach "${VOL}" >/dev/null
-      - name: Build all switchable transport binaries
+      - name: Build the macFUSE Local product transport
         run: |
           set -euo pipefail
           chmod +x installer/build-transport-backends.sh
           installer/build-transport-backends.sh "${RUNNER_TEMP}/bin" | tee "${RUNNER_TEMP}/builder.txt"
-          grep -Fq 'RESULT=EDP_TRANSPORT_BACKENDS_BUILT' "${RUNNER_TEMP}/builder.txt"
-          for n in edp-fuset-readwrite edp-fuset-readwrite-backend edp-mfmount-local-readwrite; do test -x "${RUNNER_TEMP}/bin/${n}"; done
-          EDP_TRANSPORT=invalid "${RUNNER_TEMP}/bin/edp-fuset-readwrite" >/dev/null 2>"${RUNNER_TEMP}/invalid.txt" && exit 1 || RC=$?
-          test "${RC}" -eq 64
-          echo 'RESULT=TRANSPORT_BACKEND_BUILDER_CONTRACT_OK'
+          grep -Fq 'RESULT=EDP_MACFUSE_LOCAL_TRANSPORT_BUILT' "${RUNNER_TEMP}/builder.txt"
+          test -x "${RUNNER_TEMP}/bin/edp-mfmount-local-readwrite"
+          test "$(find "${RUNNER_TEMP}/bin" -maxdepth 1 -type f -name 'edp-*readwrite*' | wc -l | tr -d ' ')" -eq 1
+          otool -L "${RUNNER_TEMP}/bin/edp-mfmount-local-readwrite" | tee "${RUNNER_TEMP}/otool.txt"
+          grep -Fq 'MFMount.framework' "${RUNNER_TEMP}/otool.txt"
+          ! grep -Eiq 'libfuse|libosxfuse' "${RUNNER_TEMP}/otool.txt"
+          echo 'RESULT=MACFUSE_LOCAL_TRANSPORT_BUILDER_CONTRACT_OK'

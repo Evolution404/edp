@@ -2,7 +2,7 @@ name: Actions Queue Cleanup
 
 on:
   push:
-    branches: ["test/fuset-minimal-fskit-bridge"]
+    branches: ["test/self-signed-standalone-distribution"]
     paths:
       - ".github/workflows/actions-queue-cleanup.yml"
   workflow_dispatch:

@@ -1,7 +1,6 @@
 import Foundation
 
 enum EDPTransportBackend: String, Codable, CaseIterable, Sendable {
-    case fuseT = "fuset"
     case macFUSELocal = "macfuse-local"
 }
 
@@ -89,14 +88,11 @@ struct EDPTransportRequest: Sendable {
 }
 
 enum EDPTransportSelectionError: Error, CustomStringConvertible {
-    case unsupportedBackend(String)
     case backendCannotHideTransport(EDPTransportBackend)
     case backendCannotWrite(EDPTransportBackend)
 
     var description: String {
         switch self {
-        case .unsupportedBackend(let value):
-            return "unsupported EDP transport backend: \(value)"
         case .backendCannotHideTransport(let backend):
             return "EDP transport backend \(backend.rawValue) does not satisfy Finder-hidden product policy"
         case .backendCannotWrite(let backend):
@@ -106,25 +102,12 @@ enum EDPTransportSelectionError: Error, CustomStringConvertible {
 }
 
 enum EDPTransportProvider {
-    static let environmentKey = "EDP_TRANSPORT"
-
-    static func selectedBackend(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> EDPTransportBackend {
-        let value = environment[environmentKey] ?? EDPTransportBackend.macFUSELocal.rawValue
-        guard let backend = EDPTransportBackend(rawValue: value) else {
-            throw EDPTransportSelectionError.unsupportedBackend(value)
-        }
-        return backend
+    static func selectedBackend() -> EDPTransportBackend {
+        .macFUSELocal
     }
 
     static func capabilities(for backend: EDPTransportBackend) -> EDPTransportCapabilities {
         switch backend {
-        case .fuseT:
-            return EDPTransportCapabilities(
-                finderHidden: false,
-                writable: true,
-                diskImagesCompatible: true,
-                localVolume: false
-            )
         case .macFUSELocal:
             return EDPTransportCapabilities(
                 finderHidden: true,
@@ -137,8 +120,6 @@ enum EDPTransportProvider {
 
     static func executableName(for backend: EDPTransportBackend, readOnly: Bool) -> String {
         switch backend {
-        case .fuseT:
-            return readOnly ? "edp-fuset-readonly" : "edp-fuset-readwrite"
         case .macFUSELocal:
             return readOnly ? "edp-mfmount-local-readonly" : "edp-mfmount-local-readwrite"
         }
@@ -174,13 +155,6 @@ enum EDPTransportProvider {
             readOnly: request.readOnly
         )
         switch backend {
-        case .fuseT:
-            return EDPTransportLaunchSpec(
-                executable: executable,
-                arguments: commonArguments,
-                environment: [:],
-                capabilities: capabilities
-            )
         case .macFUSELocal:
             return EDPTransportLaunchSpec(
                 executable: executable,

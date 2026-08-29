@@ -1,7 +1,7 @@
 # Direct MFMount / Generic vs Local FSKit P0 诊断
 
 日期：2026-08-27  
-分支：`test/fuset-minimal-fskit-bridge`
+历史验证分支：已归档；当前产品实现位于 macFUSE-only 主线。
 
 ## 目标
 
@@ -163,7 +163,7 @@ Apple filesystem / separately-installed FSKit filesystem provider
 Finder user volume
 ```
 
-重要限制：当前正式产品仍使用 FUSE-T transport，且产品政策明确不应在没有完整迁移验证前静默引入 macFUSE runtime dependency。因此 Local MFMount 证据已足以确定 P0 的候选实现，但还不能仅凭 CI A/B 就直接把正式 runtime 改成 macFUSE。
+当前产品已经完成迁移：Direct MFMount + macFUSE Local 是唯一 transport runtime，且由安装包、runtime policy、Finder 隐藏和生命周期 E2E 共同约束。
 
 ## 正式集成 gate
 
@@ -176,4 +176,4 @@ Finder user volume
 5. 实体 Mac 最终确认侧边栏只出现用户卷，不出现 `EDP * Transport`；
 6. 明确安装/签名/升级策略后，才允许把 macFUSE Local runtime 设为产品依赖。
 
-当前状态：**P0 根因与可行修复机制已确认；正式产品迁移仍在实现中。**
+当前状态：**P0 根因、可行修复机制与正式产品迁移均已完成。**

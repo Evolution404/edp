@@ -2,7 +2,7 @@ import Foundation
 
 private final class EDPReadWriteBridgeContext {
     let raw: EDPFileRawDevice
-    let block: EDPEncryptedReadWriteBlockDevice
+    let block: any EDPBlockWritable
 
     init(cipherPath: String, key: [UInt8]) throws {
         raw = try EDPFileRawDevice(path: cipherPath, writable: true)
@@ -35,17 +35,26 @@ private final class EDPReadWriteBridgeContext {
             declaredSizeBytes: deviceSizeBytes,
             writable: true
         )
-        let unlocked = try EDPReadWriteUnlock.unlock(
-            raw: raw,
-            request: EDPReadWriteUnlockRequest(
+        if partitionType == 1 {
+            block = try EDPBootUnlock.unlock(
+                raw: raw,
                 vidHex: vidHex,
                 pidHex: pidHex,
-                deviceSizeBytes: deviceSizeBytes,
-                passwordBytes: passwordBytes,
-                partitionType: partitionType
+                deviceSizeBytes: deviceSizeBytes
+            ).block
+        } else {
+            let unlocked = try EDPReadWriteUnlock.unlock(
+                raw: raw,
+                request: EDPReadWriteUnlockRequest(
+                    vidHex: vidHex,
+                    pidHex: pidHex,
+                    deviceSizeBytes: deviceSizeBytes,
+                    passwordBytes: passwordBytes,
+                    partitionType: partitionType
+                )
             )
-        )
-        block = unlocked.block
+            block = unlocked.block
+        }
     }
 
     init(
@@ -61,17 +70,26 @@ private final class EDPReadWriteBridgeContext {
             declaredSizeBytes: deviceSizeBytes,
             writable: true
         )
-        let unlocked = try EDPReadWriteUnlock.unlock(
-            raw: raw,
-            request: EDPReadWriteUnlockRequest(
+        if partitionType == 1 {
+            block = try EDPBootUnlock.unlock(
+                raw: raw,
                 vidHex: vidHex,
                 pidHex: pidHex,
-                deviceSizeBytes: deviceSizeBytes,
-                passwordBytes: passwordBytes,
-                partitionType: partitionType
+                deviceSizeBytes: deviceSizeBytes
+            ).block
+        } else {
+            let unlocked = try EDPReadWriteUnlock.unlock(
+                raw: raw,
+                request: EDPReadWriteUnlockRequest(
+                    vidHex: vidHex,
+                    pidHex: pidHex,
+                    deviceSizeBytes: deviceSizeBytes,
+                    passwordBytes: passwordBytes,
+                    partitionType: partitionType
+                )
             )
-        )
-        block = unlocked.block
+            block = unlocked.block
+        }
     }
 }
 
@@ -131,15 +149,22 @@ public func edp_rw_open_device(
     guard let rawPathPointer,
           let vidPointer,
           let pidPointer,
-          let passwordPointer,
-          passwordLength > 0,
+          [UInt32(1), 2, 4].contains(partitionType),
           passwordLength <= UInt64(Int.max) else {
         return nil
     }
+    guard partitionType == 1 || (passwordPointer != nil && passwordLength > 0) else {
+        return nil
+    }
 
-    let passwordBytes = Array(
-        UnsafeBufferPointer(start: passwordPointer, count: Int(passwordLength))
-    )
+    let passwordBytes: [UInt8]
+    if let passwordPointer, passwordLength > 0 {
+        passwordBytes = Array(
+            UnsafeBufferPointer(start: passwordPointer, count: Int(passwordLength))
+        )
+    } else {
+        passwordBytes = []
+    }
 
     do {
         let context = try EDPReadWriteBridgeContext(
@@ -170,14 +195,21 @@ public func edp_rw_open_device_fd(
     guard rawFileDescriptor >= 0,
           let vidPointer,
           let pidPointer,
-          let passwordPointer,
-          passwordLength > 0,
+          [UInt32(1), 2, 4].contains(partitionType),
           passwordLength <= UInt64(Int.max) else {
         return nil
     }
-    let passwordBytes = Array(
-        UnsafeBufferPointer(start: passwordPointer, count: Int(passwordLength))
-    )
+    guard partitionType == 1 || (passwordPointer != nil && passwordLength > 0) else {
+        return nil
+    }
+    let passwordBytes: [UInt8]
+    if let passwordPointer, passwordLength > 0 {
+        passwordBytes = Array(
+            UnsafeBufferPointer(start: passwordPointer, count: Int(passwordLength))
+        )
+    } else {
+        passwordBytes = []
+    }
     do {
         let context = try EDPReadWriteBridgeContext(
             rawFileDescriptor: rawFileDescriptor,

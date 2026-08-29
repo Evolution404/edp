@@ -169,7 +169,6 @@ xcrun swiftc -O -framework CryptoKit -framework Security \
   "${REPO_ROOT}/product/EDPNTFSMountPolicy.swift" \
   "${REPO_ROOT}/product/EDPCredentialStore.swift" \
   "${REPO_ROOT}/product/EDPDevicePolicyStore.swift" \
-  "${REPO_ROOT}/product/EDPFuseTRuntimePolicy.swift" \
   "${REPO_ROOT}/product/EDPMacFUSERuntimePolicy.swift" \
   "${REPO_ROOT}/product/EDPTransportProvider.swift" \
   "${REPO_ROOT}/product/EDPTransportRuntimePolicy.swift" \
@@ -188,7 +187,7 @@ xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
   -o "${RUNTIME_STAGE}/bin/libEDPReadWriteBridge.dylib"
 
-echo "Building switchable transport backends (default macfuse-local)..."
+echo "Building macFUSE Local transport..."
 MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   "${REPO_ROOT}/installer/build-transport-backends.sh" "${RUNTIME_STAGE}/bin"
 

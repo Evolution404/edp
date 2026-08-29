@@ -34,7 +34,6 @@ LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.pl
 for path in \
   "bin/edp-vaultctl" \
   "bin/edp-console-exec" \
-  "bin/edp-fuset-readwrite" \
   "bin/edp-mfmount-local-readwrite" \
   "bin/edp-raw-metadata" \
   "bin/libEDPReadWriteBridge.dylib" \
@@ -51,6 +50,13 @@ for path in \
     exit 3
   }
 done
+
+TRANSPORT_BINARIES="$(/usr/bin/find "${ROOT}/bin" -maxdepth 1 -type f -name 'edp-*readwrite*' -print | /usr/bin/sort)"
+[[ "${TRANSPORT_BINARIES}" == "${ROOT}/bin/edp-mfmount-local-readwrite" ]] || {
+  echo "unexpected EDP transport runtime set: ${TRANSPORT_BINARIES}" >&2
+  exit 3
+}
+echo "RESULT=MACFUSE_ONLY_TRANSPORT_PACKAGED"
 
 for item in "${ROOT}/bin/"* "${ROOT}/lib/"*; do
   /usr/bin/codesign --verify --strict "${item}"
@@ -130,11 +136,6 @@ fi
 /usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
   | /usr/bin/grep -F 'fskit_agent' >/dev/null
 echo "RESULT=CONSOLE_USER_MACFUSE_FSKIT_ENABLEMENT_PACKAGED"
-if /usr/bin/strings "${APP}/Contents/MacOS/EDP USB Vault" \
-  | /usr/bin/grep -F '/Applications/fuse-t.app' >/dev/null; then
-  echo "production App unexpectedly gates mounting on FUSE-T" >&2
-  exit 6
-fi
 /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \
   | /usr/bin/grep -F 'raw read-only open failed' >/dev/null
 /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \
