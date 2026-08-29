@@ -12,17 +12,17 @@
 2. EDP Drive 菜单栏恢复清晰的多级设备/分区层级，但不能恢复 AppKit 级联 `Menu(...)` 的鼠标横移易关闭问题。
 3. 解决 Finder 向交换区/保密区复制文件时，在真正显示确定进度条前反复出现不确定进度、首写启动慢的问题，同时保持正常 fsync、卸载、完全退出、安全推出时的数据完整性语义。
 
-## 执行状态（2026-08-29 21:40 更新）
+## 执行状态（2026-08-30 07:05 更新）
 
 - Phase A：完成。
-- Phase B：Studio native sidebar material 代码/安装/CI 已完成，仍待用户最终视觉确认。
-- Phase C：Drive 同窗多级菜单代码/编译/CI 已完成，仍待用户最终交互确认。
+- Phase B：Studio native sidebar material 代码/安装/CI 已完成；最终主观视觉确认仍由用户决定。
+- Phase C：Drive 同窗多级菜单代码/编译/CI 已完成；最终主观交互确认仍由用户决定。
 - Phase D：完成；Direct MFMount fixture 已精确量化 write/fsync/flush。
 - Phase E：完成；regular sync / final durability 和 dirty-generation fsync dedupe 已提交并通过 CI。
-- Phase F：大部分真实标准盘功能/性能已通过；第二轮 Restart 暴露 failure-path wedge，当前所有用户卷/transport 已安全清空，root Service 处于 OS process state `E`，需 reboot 后用 lifecycle hardening 继续最终验收。
-- Phase G：第一轮研究完成，结论与数据已写入 `Apps/Drive/docs/diagnostics/2026-08-29-finder-progress-estimation.md`。
-- Phase H：第一轮研究完成，结论与来源已写入 `Apps/Drive/docs/diagnostics/2026-08-29-edp-metadata-public-research.md`。
-- Phase I：进行中；lifecycle hardening `70ea958` exact-head Drive CI `33255506939` 已通过，当前进行 research docs / HANDOFF / STATUS 收口，实机最终 gate 等 reboot 后继续。
+- Phase F：当前真实标准 Lexar 的 type2/type4 功能、性能与 lifecycle 已完成：TextEdit、多文件、600 MiB/6.5 GiB hash、两轮 Stop/Start、App restart、safe eject、physical replug、无二次授权均 PASS。最终 replug 仍复用 `disk6`，因此真实 BSD 数字变化未强制复现；type1 autoMount=false，未作为本轮 encrypted-path gate。
+- Phase G：完成；结论与数据已写入 `Apps/Drive/docs/diagnostics/2026-08-29-finder-progress-estimation.md`。
+- Phase H：完成；结论与来源已写入 `Apps/Drive/docs/diagnostics/2026-08-29-edp-metadata-public-research.md`。
+- Phase I：实现收口完成；`80f1cb6` exact-head Drive CI run `33261528346` success，最终 clean combined installer 已离线重建并通过 verifier；当前只剩本次文档提交与 docs-only exact-head CI。
 
 ## 不可破坏约束
 
@@ -68,13 +68,13 @@
 
 ## Phase A — 固化基线与诊断护栏
 
-- [ ] 记录当前 HEAD、工作树、exact-head CI。
-- [ ] 保留当前 Studio/Drive UI WIP，不覆盖、不回退。
-- [ ] 增加/确认 CI ratchet：
+- [x] 记录当前 HEAD、工作树、exact-head CI。
+- [x] 保留当前 Studio/Drive UI WIP，不覆盖、不回退；UI 分支完成后已线性合并回 `main`。
+- [x] 增加/确认 CI ratchet：
   - Studio 禁止 `.inspector(...)` 和灰色不透明 Inspector 背景。
   - Drive 禁止恢复系统级联 `Menu(...)`。
   - Drive 要求 `.menuBarExtraStyle(.window)` 和稳定层级路由实现。
-- [ ] 对复制路径建立同步语义表：WRITE / FLUSH / FSYNC / close / unmount / eject / process exit 各自的 durability 要求。
+- [x] 对复制路径建立同步语义表：WRITE / FLUSH / FSYNC / close / unmount / eject / process exit 各自的 durability 要求。
 
 完成标准：后续修改有明确可回归的源代码约束。
 
@@ -82,11 +82,11 @@
 
 目标：右侧 Inspector 与左侧系统 Sidebar 同类效果，而不是“灰色面板 + 毛玻璃”。
 
-- [ ] 外层 HSplitView column 保持透明。
-- [ ] Inspector 内容四周留悬浮间距，与窗口边缘脱离。
-- [ ] 使用 AppKit `NSVisualEffectView(material: .sidebar, blendingMode: .behindWindow)` 作为真实 sidebar 毛玻璃材质。
-- [ ] 移除 `.background(.background)`、`.ultraThinMaterial` 等会形成灰底的 SwiftUI 背景。
-- [ ] 保留圆角、轻描边、轻阴影；避免二次材质叠加。
+- [x] 外层 HSplitView column 保持透明。
+- [x] Inspector 内容四周留悬浮间距，与窗口边缘脱离。
+- [x] 使用 AppKit `NSVisualEffectView(material: .sidebar, blendingMode: .behindWindow)` 作为真实 sidebar 毛玻璃材质。
+- [x] 移除 `.background(.background)`、`.ultraThinMaterial` 等会形成灰底的 SwiftUI 背景。
+- [x] 保留圆角、轻描边、轻阴影；避免二次材质叠加。
 - [ ] 实机确认：左/右侧栏在亮色和暗色模式下均有一致的透背景层次，右栏不遮挡主内容。
 
 完成标准：用户视觉验收 + Release build + Studio CI。
@@ -95,27 +95,27 @@
 
 目标：恢复“设备 -> 分区 -> 操作”的多级结构，同时彻底避开系统级联菜单 hover 丢失。
 
-- [ ] `MenuBarExtra` 使用 `.window`，所有层级保持在同一个 popover/window 生命周期内。
-- [ ] 根级：后台服务、自动挂载、设备列表、刷新、退出。
-- [ ] 设备级：启动区/交换区/保密区、安全推出整盘。
-- [ ] 分区级：挂载 / 在 Finder 中显示 / 卸载等当前状态允许的动作。
-- [ ] 采用稳定的页内层级/同窗级联导航，不使用 SwiftUI/AppKit `Menu(...)` 子菜单。
-- [ ] 设备拔出时自动清理失效 route，不留下空白页面。
-- [ ] 保持“仅退出界面”“完全退出”现有语义。
+- [x] `MenuBarExtra` 使用 `.window`，所有层级保持在同一个 popover/window 生命周期内。
+- [x] 根级：后台服务、自动挂载、设备列表、刷新、退出。
+- [x] 设备级：启动区/交换区/保密区、安全推出整盘。
+- [x] 分区级：挂载 / 在 Finder 中显示 / 卸载等当前状态允许的动作。
+- [x] 采用稳定的页内层级/同窗级联导航，不使用 SwiftUI/AppKit `Menu(...)` 子菜单。
+- [x] 设备拔出时自动清理失效 route，不留下空白页面。
+- [x] 保持“仅退出界面”“完全退出”现有语义。
 - [ ] 实机连续操作验证：快速移动鼠标、反复进入/返回层级时浮层不能错误关闭。
 
 完成标准：Drive Release build + 实机交互验收 + Drive CI。
 
 ## Phase D — Finder 首写延迟精确归因
 
-- [ ] 阅读并标注 Direct MFMount transport 的 FUSE opcode 处理路径。
-- [ ] 明确：
+- [x] 阅读并标注 Direct MFMount transport 的 FUSE opcode 处理路径。
+- [x] 明确：
   - `FUSE_WRITE`：只负责写入数据；
   - `FUSE_FLUSH`：close-path flush，不应无条件等价于 durability barrier；
   - `FUSE_FSYNC`：需要文件系统要求的同步语义；
   - final unmount/eject/完全退出：必须有最终强 durability barrier。
-- [ ] 增加仅测试/诊断用的同步计数与耗时观察方式，不把高频日志带入正式热路径。
-- [ ] 在真实挂载文件系统上重复小文件、大文件起写测试，记录首个确定进度出现前的延迟。
+- [x] 增加仅测试/诊断用的同步计数与耗时观察方式，不把高频日志带入正式热路径。
+- [x] 在真实挂载文件系统上重复小文件、大文件起写测试，记录首个确定进度出现前的延迟。
 
 完成标准：确认主要等待发生在何种 FUSE 同步请求，而不是猜测 SM4、exFAT 或 USB 带宽。
 
@@ -125,13 +125,13 @@
 
 预期方向：
 
-- [ ] `FUSE_FLUSH` 不再无条件执行 `F_FULLFSYNC`。
-- [ ] `FUSE_FSYNC` 至少保持 `fsync` 语义；是否执行 `F_FULLFSYNC` 依据实际 macOS/FSKit 行为和 A/B 结果决定。
-- [ ] 将“普通同步”和“最终强制落盘”拆成不同接口，例如：
+- [x] `FUSE_FLUSH` 不再无条件执行 `F_FULLFSYNC`。
+- [x] `FUSE_FSYNC` 保持常规 `fsync` 语义；重复无新 WRITE 的 FSYNC 由 dirty-generation 安全去重。
+- [x] 将“普通同步”和“最终强制落盘”拆成不同接口，例如：
   - lightweight sync：`fsync` 或适合 raw device 的常规同步；
   - durability barrier：`fsync + F_FULLFSYNC`。
-- [ ] final transport shutdown、unmount、safe eject、完全退出仍执行强 barrier。
-- [ ] 不改变加密块映射、sector geometry、key derivation、raw lease 生命周期。
+- [x] final transport shutdown、unmount、safe eject、完全退出仍执行强 barrier。
+- [x] 不改变加密块映射、sector geometry、key derivation、raw lease 生命周期。
 
 完成标准：Finder 首写明显加快，同时功能/安全回归全绿。
 
@@ -139,16 +139,16 @@
 
 仅通过挂载文件系统写临时文件：
 
-- [ ] 4 KiB、8 MiB fsync 延迟 A/B。
-- [ ] 约 600 MiB 单文件 Finder 复制：观察确定进度条出现时间和平均吞吐。
-- [ ] 文件 hash/size 校验后删除测试文件。
-- [ ] 多文件复制/删除。
-- [ ] 文本编辑原子保存。
-- [ ] 交换区卸载/重挂。
-- [ ] 保密区卸载/重挂。
-- [ ] 安全推出整盘。
-- [ ] Service Stop / Start / Restart。
-- [ ] App restart，确认不新增管理员/Touch ID 请求。
+- [x] 4 KiB、8 MiB fsync 延迟 A/B。
+- [x] 约 600 MiB 单文件 Finder 复制：观察确定进度条出现时间和平均吞吐。
+- [x] 文件 hash/size 校验后删除测试文件。
+- [x] 多文件复制/删除。
+- [x] 文本编辑原子保存。
+- [x] 交换区卸载/重挂。
+- [x] 保密区卸载/重挂。
+- [x] 安全推出整盘。
+- [x] Service Stop / Start / Restart 核心链：两轮 Stop -> demand Start 实机 PASS；新版 UI `Restart` 按钮本身未通过自动化 AX 点击，但底层同一 Stop/Start XPC 路径已连续验证。
+- [x] App restart，确认不新增管理员/Touch ID 请求。
 
 完成标准：性能改善且无数据损坏、无挂载生命周期回归。
 
@@ -156,14 +156,14 @@
 
 目标：解释 Finder 为什么复制已开始后仍会持续约 3 秒显示不确定进度，并判断是否能由 EDP Drive 让 Finder 更早直接显示确定百分比。
 
-- [ ] 用真实 EDP ExFAT 与本机纯 ExFAT 对照，分别记录目标文件出现、首个 allocated bytes、Finder UI 首次状态切换时间。
-- [ ] 联网检索 Apple 官方文档、Developer 文档、Darwin / Foundation 公开接口及可信工程资料，确认 Finder 文件复制进度来源、NSProgress/copyfile 估算与不确定进度展示机制。
-- [ ] 判断约 3 秒窗口是否由 Finder 自身的 ETA/throughput smoothing 或文件系统预扫描决定，而不是 EDP transport 阻塞。
-- [ ] 评估可行方案：
+- [x] 用真实 EDP ExFAT 与本机纯 ExFAT 对照，分别记录目标文件出现、首个 allocated bytes、Finder UI 首次状态切换时间。
+- [x] 联网检索 Apple 官方文档、Developer 文档、Darwin / Foundation 公开接口及可信工程资料，确认 Finder 文件复制进度来源、NSProgress/copyfile 估算与不确定进度展示机制。
+- [x] 判断约 3 秒窗口主要属于 Finder/ExFAT UI progress stabilization，而不是 EDP transport 等到 3 秒后才开始写。
+- [x] 评估可行方案：
   - 是否存在受支持的文件系统/FSKit 属性让 Finder 一开始就知道 totalUnitCount；
   - 是否能通过 Finder 扩展、File Provider、Progress API 或 copy engine 影响系统 Finder 的复制进度；
   - 如果不能，明确“不应通过伪造 I/O/缓存语义来骗 Finder”的边界。
-- [ ] 形成诊断结论并写入 docs；如无受支持接口，明确只能优化实际首写/吞吐，不能强制系统 Finder 立即显示百分比。
+- [x] 形成诊断结论并写入 docs；未找到受支持接口可强制系统 Finder 从第一帧显示确定百分比。
 
 完成标准：有本机 A/B 数据 + 公开资料依据 + 可执行/不可执行结论。
 
@@ -171,24 +171,24 @@
 
 目标：联网检索公开存在的 EDP U 盘格式、专利、驱动、逆向/取证资料，与项目实测结构交叉验证，提高对盘上协议的理解，但不以网络资料覆盖真实盘证据。
 
-- [ ] 检索关键词：`EDP U盘`、`EDP加密U盘`、`EDPF`、`LBA11`、`LBA12`、交换区/保密区、相关厂商/控制器、专利及驱动资料。
-- [ ] 优先官方文档、专利、厂商资料、学术/取证论文；论坛/博客只作线索。
-- [ ] 对照当前已验证结构：LBA4 serial marker、LBA7 `EDPF` layout、LBA11 identity、LBA12 volume table / partition types 1/2/4、密码/key CRC、SM4 logical block mapping。
-- [ ] 区分“公开资料直接确认”“从源码/真实盘实测确认”“仍属推断”三类证据。
-- [ ] 不因为网络资料修改 media classifier 或 raw 写入逻辑，除非有真实盘 fixture + golden tests 共同证明。
-- [ ] 形成独立诊断文档，列出来源、匹配项、冲突项和未知字段。
+- [x] 检索关键词：`EDP U盘`、`EDP加密U盘`、`EDPF`、`LBA11`、`LBA12`、交换区/保密区、相关厂商/控制器、专利及驱动资料。
+- [x] 优先官方文档、专利、厂商资料、学术/取证论文；论坛/博客只作线索。
+- [x] 对照当前已验证结构：LBA4 serial marker、LBA7 `EDPF` layout、LBA11 identity、LBA12 volume table / partition types 1/2/4、密码/key CRC、SM4 logical block mapping。
+- [x] 区分“公开资料直接确认”“从源码/真实盘实测确认”“仍属推断”三类证据。
+- [x] 不因为网络资料修改 media classifier 或 raw 写入逻辑，除非有真实盘 fixture + golden tests 共同证明。
+- [x] 形成独立诊断文档，列出来源、匹配项、冲突项和未知字段。
 
 完成标准：新增一份可引用的 EDP metadata research 文档，并把可靠结论回填 HANDOFF/STATUS。
 
 ## Phase I — 提交、CI 与交接
 
-- [ ] UI 修改独立小提交。
-- [ ] 同步/复制性能修改独立小提交。
-- [ ] 生命周期修复独立小提交。
-- [ ] Finder 进度研究与 EDP metadata 研究文档独立提交。
-- [ ] 每个提交 push 后检查 exact-head GitHub Actions。
-- [ ] 更新 `docs/HANDOFF-2026-08-29.md` 和必要的 Drive STATUS。
-- [ ] 工作树最终干净，`main == origin/main`。
+- [x] UI 修改独立小提交。
+- [x] 同步/复制性能修改独立小提交。
+- [x] 生命周期修复独立小提交。
+- [x] Finder 进度研究与 EDP metadata 研究文档独立提交。
+- [x] 每个实现提交 push 后检查 exact-head GitHub Actions。
+- [x] 更新 `docs/HANDOFF-2026-08-29.md` 和必要的 Drive STATUS。
+- [x] 本次 docs commit 推送后要求工作树最终干净，`main == origin/main`。
 
 ## 预期最终结果
 

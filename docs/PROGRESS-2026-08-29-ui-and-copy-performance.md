@@ -6,14 +6,14 @@
 ## 当前状态
 
 - Phase A：完成
-- Phase B：代码完成，已本地 Release build/安装，待用户视觉验收
-- Phase C：代码完成，已 Swift 6 `-warnings-as-errors` 编译，待本地安装交互验收
+- Phase B：代码/安装/CI 完成，最终主观视觉确认由用户决定
+- Phase C：代码/安装/CI 完成，最终主观交互确认由用户决定
 - Phase D：完成，已用 Direct MFMount Local fixture 精确验证 FUSE write/fsync/flush 行为并加入汇总 instrumentation
 - Phase E：完成，regular sync / final durability 分层与 dirty-generation fsync 去重均已提交并通过 exact-head CI
-- Phase F：大部分完成；真实复制/TextEdit/多文件/cold-start 已通过，第二轮 Service Restart 暴露失败清理卡死，当前等待 lifecycle hardening + 重启后最终复验
-- Phase G：完成第一轮研究，已形成 Finder 约 3 秒进度机制诊断文档；结论为系统 Finder/ExFAT UI 稳定窗口，不是 EDP 首写阻塞
-- Phase H：完成第一轮公开资料研究，已形成 EDP metadata 研究文档；公开资料确认三区域/标签模型，但未找到 LBA/EDPF/type/SM4 字节级公开格式
-- Phase I：进行中，生命周期 hardening 已编码并通过本地 validator，待提交/CI/HANDOFF 收口
+- Phase F：真实标准 Lexar type2/type4 功能、性能、两轮 lifecycle、App restart、safe eject、physical replug、无二次授权均已 PASS；最终 replug 仍为 `disk6`，所以真实 BSD 数字变化未强制复现
+- Phase G：完成，Finder 约 3 秒进度机制诊断已形成；结论为系统 Finder/ExFAT UI 稳定窗口，不是 EDP 首写阻塞
+- Phase H：完成，EDP metadata 公开资料研究已形成；公开资料确认三区域/标签模型，但未找到 LBA/EDPF/type/SM4 字节级公开格式
+- Phase I：实现收口完成；`80f1cb6` exact-head Drive CI success，最终 clean combined installer 已离线重建并通过 verifier；当前执行最终文档提交
 
 ## 已确认事实
 
@@ -187,10 +187,28 @@
 - 整盘安全推出前进一步收紧 fail-closed 边界：`EDPVaultManager.unmount(deviceID:partitionType:)` 和 `eject(deviceID:)` 改为 `throws`，只要 session 仍存在就明确失败；controller 的显式卸载、删除凭据前卸载、整盘推出均 `try` 传播，不再出现“底层 teardown 失败但 UI 继续报成功/继续释放 raw fd 或物理 eject”的路径。
 - CI 新增 ratchet：整盘 `eject` 必须 `throws`、controller 必须 `try manager.eject`、分区卸载必须 `throws` 并保留 `EDP partition could not be safely unmounted` guard。完整 fixed-signing Native product build已通过，结果 `RESULT=EJECT_FAIL_CLOSED_BUILD_OK`。
 
-## 下一步立即执行
+## 2026-08-30 06:58 最终 real-device acceptance
 
-1. 提交/push explicit unmount/eject fail-closed propagation，等待 exact-head Drive CI。
-2. 先 graceful Stop 当前健康 Service，安装新 exact-head Native 候选，再 demand Start 并确认 type 2/type 4 恢复。
-3. 使用产品 XPC `eject(deviceID:)` 做整盘安全推出；要求 type 2/type 4/hidden transport 全部先清空，再卸载启动区并由 Disk Arbitration eject 物理 `diskN`，失败时必须保持 fail-closed。
-4. 安全推出成功后等待用户物理重新插入，验证 `diskN` 变化/重复插拔无需第二次管理员授权且自动挂载恢复。
-5. 更新 HANDOFF/STATUS/本 tracker，最终 exact-head CI 全绿、工作树干净、`main == origin/main` 后收口。
+- `80f1cb61b4949d5ccf7d90f2cdb84987c340b9d0` 已提交/push，exact-head Drive CI run `33261528346` success；该提交增加 explicit unmount/eject incomplete-session fail-closed propagation。
+- 安装 `80f1cb6` Native 候选后，Service PID `3641` 连续运行约 7 小时；type2/type4 始终保持可写 ExFAT，XPC health/snapshot 正常，无新 EDP Drive/Service crash。
+- 安装二进制与安装时 `80f1cb6` Native candidate payload SHA-256 完全一致；固定 designated requirement 仍为 `identifier "com.edp.drive" and certificate root = H"040b5488fb2b6c02b0786e76b674cb4460658ca2"`。
+- 产品 XPC `eject(deviceID:)` 整盘安全推出 PASS：约 1 s 完成；type2/type4 user mounts、两个 `.edp-block-*` hidden mounts、两个 macFUSE transport process 全部消失；snapshot 变为 `mounted=false / privilegedAccessReady=false / bsdName=""`，Service 保持健康运行。
+- 安全推出后连续观察 15 s，没有被 event discovery 重新接管；已推出状态下 App restart（UI PID `5322 -> 5335`）不改变 Service PID `3641`，也不重新挂载设备。
+- 用户随后物理拔出、等待后重新插入。Service PID 仍为 `3641`，Lexar stable device ID/VID:PID 保持不变；本次 macOS 仍分配 `disk6`，所以**没有强制复现 BSD 数字变化**。
+- 重新插入后无需手工挂载，type2/type4 在观察开始时 1 s 内已恢复；snapshot `privilegedAccessReady=true`、两区 `mount=mounted`、`filesystem=ExFAT`、`readOnly=false`。
+- 20 s 稳定观察继续保持两区 mounted，Service/transport process 均为正常 `S/Ss` 状态，无新 crash。
+- 没有可见 `SecurityAgent` / `CoreServicesUIAgent` / `Installer` 授权窗口，前台应用为普通 iTerm2；本次物理 replug 未要求第二次管理员/Touch ID 授权。
+- 最终 clean combined installer 已使用本机 SHA 匹配的 `macfuse-5.3.3.dmg` 与已安装 pinned LICENSE 离线重建，避免网络下载不确定性：
+  - `/private/tmp/edp-80f1cb6-clean/EDP-Drive-0.6.0-arm64-Clean.pkg`
+  - SHA-256 `183fc2836aae54979d67526bd81c5b39d1f4af968ae40325bc5025310b34a75f`
+  - `verify-clean-installer.sh` 全部 PASS，包含 single App + embedded Service、legacy FDA daemon、自签固定身份、macFUSE-only transport、无 ntfs-3g/authopen 等 gate。
+- clean combined 与已安装 Native 是独立构建，Mach-O/code-signature hash 不相同；不宣称 reproducible binary。二者来自同一 `main@80f1cb6` 源码、同一 pinned signing identity，clean 包通过完整 verifier。
+
+## 剩余事项
+
+1. 物理 negative classifier matrix：ordinary USB、legacyNoPassword、currentNoPassword、unrecognizedEDP 仍需在对应真实介质可用时验证“不接管”。
+2. 本次 physical replug 仍是 `disk6`；真实 BSD `diskN` 数字变化没有被强制复现，不得写成已验证。
+3. type1 当前 autoMount=false，本轮 final gate 聚焦 encrypted type2/type4；若发布策略要求 Drive 管理 type1，再单独做实机验收。
+4. `80f1cb6` 安装后的单独 exact-head reboot 未重复；之前多个重启已验证固定身份/FDA persistence，且 `80f1cb6` 只增加 eject error propagation。若发布流程要求严格 exact-head reboot gate，可单独补跑。
+5. Drive/Studio 最终视觉体验仍以用户主观验收为准。
+6. 本次文档提交后要求 docs-only exact-head CI 全绿、工作树干净、`main == origin/main`。

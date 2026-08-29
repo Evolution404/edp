@@ -215,43 +215,41 @@ com.edp.usbvault.*
 已通过：
 
 - Swift 6 `warnings-as-errors`；
-- EDPCore tests；
-- SM4 标准向量；
-- real LBA11 / LBA12 golden；
-- 两只真实盘共 1024 个随机读 golden；
+- EDPCore tests、SM4 标准向量、real LBA11/LBA12 golden、两只真实盘共 1024 个随机读 golden；
 - encrypted reader/writer boundary / persistence；
-- 五类 USB classifier 与真实 Lexar/SanDisk 标准盘 golden；
-- 每次扫描重新分类、禁止 cached-device 绕过标准盘判定；
-- 单 App + embedded Service installer build / expansion contract；
-- 包内无 `ntfs-3g`；
-- App ID `com.edp.drive`；
-- Service code/Mach ID `com.edp.drive.service`；
-- 从旧身份升级到 `/Applications/EDP Drive.app`；
-- 新身份 Full Disk Access 已由用户手动授权一次；
-- graceful shutdown / UI Start-Stop-Restart 基础流程；第一轮真实标准盘 Stop -> on-demand Start 已通过；
-- Stop 后 launchd `state = not running` 且不自动复活；
-- cold-start fd3/CLOEXEC 继承问题已修复，真实标准 Lexar 冷启动后交换区/保密区均可自动恢复；
-- 第二轮真实 Restart 暴露失败清理 wedge：secure transport 未形成 mount、Service controller XPC timeout；已新增 bounded hdiutil/DiskImages2 和 mount-gated TERM->KILL transport teardown，待 Mac 重启后复验；
+- 五类 USB classifier 的 golden 与真实 Lexar/SanDisk 标准盘 positive fixtures；每次扫描重新分类，禁止 cached-device 绕过标准盘判定；
+- 单 App + embedded Service installer build / expansion contract，包内无 `ntfs-3g`，固定 App ID `com.edp.drive` / Service ID `com.edp.drive.service`；
+- 固定 `EDP Project Code Signing` 证书 + 一次性 Full Disk Access；未修改 TCC 数据库；
+- cold-start fd3/CLOEXEC 继承修复：真实 Lexar 冷启动后交换区/保密区自动恢复；
+- Swift 6 NSXPC callback `@Sendable` 修复：旧版 MainActor/XPC `SIGTRAP` 不再复现；
+- macFUSE FSKit `not found/not enabled` transient auto-mount recovery；
+- bounded DiskImages2/hdiutil helper；transport hidden mount 未消失时 fail closed，不 kill transport；
+- VFS unmount 已从 privileged Service 的 direct `Darwin.unmount(2)` 移到 bounded `/sbin/umount` 子进程；`ValidateBoundedVFS.swift` timeout probe 约 0.229 s 返回；
+- teardown 严格按 user filesystem -> DiskImages2 BSD -> hidden macFUSE -> transport process，自上而下 fail closed；
+- explicit partition unmount / credential-delete unmount / whole-device eject 均传播 incomplete teardown 错误，session 未清空时不释放 raw lease、不尝试物理 eject；
+- real Lexar 在 bounded-VFS 修复后连续两轮 Stop -> demand Start：两次 Stop 均约 1 s，Service `exit 0`，user/hidden/transport residue 为 0；第二轮 Start 后两区约 8 s 恢复；
+- mounted 状态 App restart：UI PID 变化，Service PID 与 type2/type4 mount 持续不变；
+- `80f1cb6` 安装后 Service 连续稳定运行约 7 小时，两区仍为可写 ExFAT，无新 crash；
+- 产品 XPC whole-device safe eject：约 1 s 完成，type2/type4/hidden/transport 全清空，snapshot 进入 saved/offline 状态；
+- safe eject 后 15 s 不重新接管，App restart 也不重新接管；
+- 用户物理拔出/等待/重新插入后，两区 1 s 内自动恢复，stable device ID/VID:PID 保持一致，`privilegedAccessReady=true`；
+- 重插后未出现可见 SecurityAgent/CoreServicesUIAgent/Installer 授权窗口，未发生第二次管理员/Touch ID 授权；
 - 同一 `.menuBarExtraStyle(.window)` 内多级 `设备 -> 分区 -> 操作` 菜单、`仅退出界面` / `完全退出` 生命周期；禁止恢复 AppKit cascading `Menu(...)`；
-- Drive/Studio 原生 App Icon 与 Finder copyright metadata；
-- EDP Studio inspector 改为真实 `HSplitView`；
-- XPC disconnect race hardening；
-- `63b003a` exact-head Drive CI `33254052414` 已通过；lifecycle hardening `70ea958` exact-head Drive CI `33255506939` 也已通过；
+- Drive/Studio 原生 App Icon 与 Finder copyright metadata；EDP Studio inspector 使用真实 `HSplitView`；
+- `80f1cb61b4949d5ccf7d90f2cdb84987c340b9d0` exact-head Drive CI run `33261528346` success；
+- exact-head clean combined installer 已从本地 pinned macFUSE 5.3.3 DMG + pinned license 离线重建并通过 `verify-clean-installer.sh`，SHA-256 `183fc2836aae54979d67526bd81c5b39d1f4af968ae40325bc5025310b34a75f`；
 - 三个旧 GitHub 仓库历史已迁入 monorepo并已删除。
 
-当前仍需真实 U 盘完成的发布验收：
+当前仍需补齐的发布验收：
 
-1. 普通 U 盘：必须完全交给 macOS，Drive 不接管；
-2. 旧版 NoPwd：必须识别为 `legacyNoPassword`，Drive 不接管；
-3. 最新 NoPwd：必须识别为 `currentNoPassword`，Drive 不接管；
-4. 标准加密 EDP：标准 Lexar 已实证进入 Drive；仍需把分类矩阵其余物理介质补齐；
-5. 标准盘 type 2/type 4 writable ExFAT、TextEdit 保存、多文件 copy/delete、hash 已通过；type 1 按当前产品策略补验；
-6. Mac 当前 root Service 在第二轮 Restart 异常后处于 process state `E`，所有用户卷/hidden transports 已安全清空；需先 reboot，再用 `70ea958` hardening 复验；
-7. safe eject、物理拔插与 `diskN` 变化；
-8. App restart；
-9. Service 第二轮 Stop / Start / Restart；
-10. Mac reboot persistence；
-11. 后续均不再出现管理员/Touch ID 授权。
+1. 普通 U 盘：物理验证必须完全交给 macOS，Drive 不接管；
+2. 旧版 NoPwd：物理验证 `legacyNoPassword` 且 Drive 不接管；
+3. 最新 NoPwd：物理验证 `currentNoPassword` 且 Drive 不接管；
+4. `unrecognizedEDP` 物理负例：Drive 不建立 raw lease/mount session；
+5. type 1 如当前产品策略需要由 Drive 管理时再补对应实机验收；当前 final trial 的 type 1 autoMount=false；
+6. 最终 physical replug 仍复用了 `disk6`，因此“真实 BSD `diskN` 数字变化”这一子项没有被本次实机强制复现；不得伪称已验证；
+7. `80f1cb6` 安装后的单独一次 Mac reboot 未重新重复；此前多个 acceptance reboot 已证明固定身份/FDA persistence，而 `80f1cb6` 只新增 eject error propagation；如发布流程要求 exact-head reboot gate，可再单独执行；
+8. Drive/Studio 最终视觉验收仍以用户主观确认结果为准。
 
 Finder 复制性能补充：受控 A/B 已证明约 3 秒的“不确定/折返进度”在完全绕过 EDP 的本机 ExFAT DiskImages2 卷上同样存在（约 2.98 s），EDP 交换区约 2.91-3.30 s；实际目标 <1 s 已开始写入。因此该 UI 延迟不再作为 EDP I/O bug。6.5 GiB 真实 Finder 持续写约 92.85 MB/s，SHA-256 一致；短时复制可更高。详见 `docs/diagnostics/2026-08-29-finder-progress-estimation.md`。
 
