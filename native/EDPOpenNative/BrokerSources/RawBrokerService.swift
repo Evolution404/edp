@@ -103,11 +103,50 @@ final class RawBrokerService: NSObject, EDPRawBrokerProtocol {
     }
 }
 
+enum RawBrokerProcessSecurity {
+    static func validateBrokerStartup() -> String? {
+        guard geteuid() == 0 else {
+            return "raw broker must run as root"
+        }
+        guard executablePath(pid: getpid()) == RawBrokerConstants.brokerExecutablePath else {
+            return "raw broker is not running from its fixed privileged helper path"
+        }
+        guard secureRegularFile(at: RawBrokerConstants.brokerExecutablePath, requireRootOwner: true) else {
+            return "raw broker executable must be root-owned and not group/world writable"
+        }
+        return nil
+    }
+
+    static func validateAppConnection(_ connection: NSXPCConnection) -> Bool {
+        let pid = connection.processIdentifier
+        guard pid > 1 else { return false }
+        guard executablePath(pid: pid) == RawBrokerConstants.appExecutablePath else { return false }
+        guard secureRegularFile(at: RawBrokerConstants.appExecutablePath, requireRootOwner: false) else { return false }
+        return true
+    }
+
+    private static func executablePath(pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        let pathBytes = buffer.prefix(Int(length)).prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(decoding: pathBytes, as: UTF8.self)
+    }
+
+    private static func secureRegularFile(at path: String, requireRootOwner: Bool) -> Bool {
+        var st = stat()
+        guard lstat(path, &st) == 0 else { return false }
+        guard (st.st_mode & S_IFMT) == S_IFREG else { return false }
+        if requireRootOwner && st.st_uid != 0 { return false }
+        return (st.st_mode & (S_IWGRP | S_IWOTH)) == 0
+    }
+}
+
 final class RawBrokerListenerDelegate: NSObject, NSXPCListenerDelegate {
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
-        // The privileged daemon never trusts caller-supplied paths. It additionally binds
-        // every XPC message to the fixed EDPOpen GUI bundle ID signed by the shared EDP
-        // self-signed certificate used by both EDP macOS projects.
+        // First bind the peer to the one installed EDPOpen executable path, then require
+        // the fixed GUI identifier and the exact leaf certificate shared by both EDP apps.
+        guard RawBrokerProcessSecurity.validateAppConnection(connection) else { return false }
         connection.setCodeSigningRequirement(RawBrokerConstants.appCodeSigningRequirement)
         connection.exportedInterface = NSXPCInterface(with: EDPRawBrokerProtocol.self)
         connection.exportedObject = RawBrokerService()
