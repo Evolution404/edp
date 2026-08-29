@@ -127,7 +127,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPOpen" */;
 			buildPhases = (
-				0B41737A278B56C1E97D80C2 /* Build Rust EDP Core */,
+				0B41737A278B56C1E97D80C2 /* Build Shared Swift EDP Core */,
 				74CC5917F83D722E1F69E6D5 /* Sources */,
 				A87EB0F0C9DDC24802197ED6 /* Resources */,
 			);
@@ -192,7 +192,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		0B41737A278B56C1E97D80C2 /* Build Rust EDP Core */ = {
+		0B41737A278B56C1E97D80C2 /* Build Shared Swift EDP Core */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -201,14 +201,14 @@
 			);
 			inputPaths = (
 			);
-			name = "Build Rust EDP Core";
+			name = "Build Shared Swift EDP Core";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/Scripts/build-rust-core.sh\"\n";
+			shellScript = "\"$SRCROOT/Scripts/build-shared-core.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -279,17 +279,17 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/include";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/target/release";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release";
 				MARKETING_VERSION = 0.2.0;
-				OTHER_LDFLAGS = "$(inherited) -ledpopen_ffi";
+				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
 				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
 				SDKROOT = macosx;
-				SWIFT_OBJC_BRIDGING_HEADER = Support/EDPOpenCoreBridge.h;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules";
 			};
 			name = Debug;
 		};
@@ -456,17 +456,17 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/include";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/edpopen-ffi/target/release";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release";
 				MARKETING_VERSION = 0.2.0;
-				OTHER_LDFLAGS = "$(inherited) -ledpopen_ffi";
+				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
 				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
 				SDKROOT = macosx;
-				SWIFT_OBJC_BRIDGING_HEADER = Support/EDPOpenCoreBridge.h;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules";
 			};
 			name = Release;
 		};

@@ -1,3 +1,4 @@
+import EDPCore
 import Foundation
 
 struct CoreIdentity: Sendable {
@@ -5,57 +6,51 @@ struct CoreIdentity: Sendable {
     let k0: UInt16
 }
 
-struct CoreField: Decodable, Hashable, Sendable {
+struct CoreField: Hashable, Sendable {
     let off: Int
     let len: Int
     let name: String
     let desc: String
     let value: String
     let color: String
+
+    init(_ field: EDPSectorField) {
+        off = field.off
+        len = field.len
+        name = field.name
+        desc = field.desc
+        value = field.value
+        color = field.color
+    }
 }
 
-struct CoreSectorDecode: Decodable, Sendable {
-    let ok: Bool
-    let error: String?
+struct CoreSectorDecode: Sendable {
     let decodedHex: String?
     let method: String?
     let fields: [CoreField]
-
-    enum CodingKeys: String, CodingKey {
-        case ok
-        case error
-        case decodedHex = "decoded_hex"
-        case method
-        case fields
-    }
 }
 
-enum EDPCoreError: LocalizedError {
+enum EDPOpenCoreError: LocalizedError {
     case invalidSectorLength(Int)
-    case ffiReturnedNull
     case core(String)
-    case invalidJSON(String)
 
     var errorDescription: String? {
         switch self {
-        case .invalidSectorLength(let count): "Rust Core 只接受 512B 扇区，当前为 \(count)B"
-        case .ffiReturnedNull: "Rust Core FFI 返回空指针"
-        case .core(let message): message
-        case .invalidJSON(let message): "Rust Core JSON 解析失败：\(message)"
+        case .invalidSectorLength(let count):
+            "EDP Core 只接受 512B 扇区，当前为 \(count)B"
+        case .core(let message):
+            message
         }
     }
 }
 
-enum EDPCore {
+enum EDPOpenCore {
     static var version: String {
-        guard let ptr = edp_core_version() else { return "core unavailable" }
-        return String(cString: ptr)
+        "edp-core/\(EDPCoreVersion.current)"
     }
 
     static func crc32(_ data: [UInt8]) -> UInt32 {
-        data.withUnsafeBufferPointer { buffer in
-            edp_core_crc32(buffer.baseAddress, buffer.count)
-        }
+        EDPCrypto.crc32Bare(data)
     }
 
     static func decodeSector(
@@ -66,53 +61,35 @@ enum EDPCore {
         pid: String? = nil,
         sizeBytes: UInt64 = 0
     ) throws -> CoreSectorDecode {
-        guard raw.count == 512 else { throw EDPCoreError.invalidSectorLength(raw.count) }
+        guard raw.count == EDPSectorDecoder.sectorSize else {
+            throw EDPOpenCoreError.invalidSectorLength(raw.count)
+        }
 
-        return try withOptionalCString(vid) { vidPtr in
-            try withOptionalCString(pid) { pidPtr in
-                try raw.withUnsafeBufferPointer { rawBuffer in
-                    guard let resultPtr = edp_decode_sector_json(
-                        lba,
-                        rawBuffer.baseAddress,
-                        rawBuffer.count,
-                        identity == nil ? 0 : 1,
-                        identity?.crc ?? 0,
-                        identity?.k0 ?? 0,
-                        vidPtr,
-                        pidPtr,
-                        sizeBytes
-                    ) else {
-                        throw EDPCoreError.ffiReturnedNull
-                    }
-                    defer { edp_string_free(resultPtr) }
-                    let json = String(cString: resultPtr)
-                    guard let data = json.data(using: .utf8) else {
-                        throw EDPCoreError.invalidJSON("UTF-8 conversion failed")
-                    }
-                    do {
-                        let decoded = try JSONDecoder().decode(CoreSectorDecode.self, from: data)
-                        if !decoded.ok {
-                            throw EDPCoreError.core(decoded.error ?? "未知 Rust Core 错误")
-                        }
-                        return decoded
-                    } catch let error as EDPCoreError {
-                        throw error
-                    } catch {
-                        throw EDPCoreError.invalidJSON(error.localizedDescription)
-                    }
-                }
-            }
+        do {
+            let decoded = try EDPSectorDecoder.decode(
+                lba: lba,
+                raw: raw,
+                context: EDPSectorDecodeContext(
+                    identity: identity.map { EDPSectorIdentity(crc: $0.crc, k0: $0.k0) },
+                    vid: vid,
+                    pid: pid,
+                    sizeBytes: sizeBytes == 0 ? nil : sizeBytes
+                )
+            )
+            return CoreSectorDecode(
+                decodedHex: decoded.decoded.map(hex),
+                method: decoded.method,
+                fields: decoded.fields.map(CoreField.init)
+            )
+        } catch let error as EDPCoreError {
+            throw EDPOpenCoreError.core(error.description)
+        } catch {
+            throw EDPOpenCoreError.core(error.localizedDescription)
         }
     }
 
-    private static func withOptionalCString<T>(
-        _ value: String?,
-        _ body: (UnsafePointer<CChar>?) throws -> T
-    ) rethrows -> T {
-        guard let value else { return try body(nil) }
-        return try value.withCString { ptr in
-            try body(ptr)
-        }
+    private static func hex(_ bytes: [UInt8]) -> String {
+        bytes.map { String(format: "%02x", $0) }.joined()
     }
 }
 

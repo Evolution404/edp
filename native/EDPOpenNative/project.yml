@@ -25,9 +25,9 @@ targets:
       - path: Sources
       - path: Shared
     preBuildScripts:
-      - name: Build Rust EDP Core
+      - name: Build Shared Swift EDP Core
         script: |
-          "$SRCROOT/Scripts/build-rust-core.sh"
+          "$SRCROOT/Scripts/build-shared-core.sh"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.evolution404.edpopen
@@ -35,10 +35,10 @@ targets:
         CURRENT_PROJECT_VERSION: 1
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
-        SWIFT_OBJC_BRIDGING_HEADER: Support/EDPOpenCoreBridge.h
-        HEADER_SEARCH_PATHS: "$(SRCROOT)/../../core/edpopen-ffi/include"
-        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../core/edpopen-ffi/target/release"
-        OTHER_LDFLAGS: "$(inherited) -ledpopen_ffi"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules"
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release"
+        OTHER_LDFLAGS: "$(inherited) -lEDPCore"
     dependencies:
       - target: EDPOpenRawBroker
     scheme:

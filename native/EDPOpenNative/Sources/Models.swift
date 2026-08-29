@@ -178,7 +178,7 @@ final class AppModel {
     var selectedDiskNumber: UInt32?
 
     let disk = SampleData.disk
-    let coreVersion = EDPCore.version
+    let coreVersion = EDPOpenCore.version
     private var brokerClient: RawBrokerClient?
 
     init() {
@@ -324,7 +324,7 @@ enum SampleData {
             raw[0x1FE] = 0x55
             raw[0x1FF] = 0xAA
 
-            if let decoded = try? EDPCore.decodeSector(lba: 0, raw: raw) {
+            if let decoded = try? EDPOpenCore.decodeSector(lba: 0, raw: raw) {
                 let view = decoded.decodedHex?.decodedHexBytes ?? raw
                 var semantics = view.map { $0 == 0 ? ByteSemantic.zero : .normal }
                 for field in decoded.fields {
@@ -336,7 +336,7 @@ enum SampleData {
                 return SectorSnapshot(
                     lba: 0,
                     title: "LBA0 · MBR 分区表",
-                    method: decoded.method ?? "Rust Core · raw MBR",
+                    method: decoded.method ?? "EDP Core · raw MBR",
                     bytes: view,
                     semantics: semantics,
                     fields: decoded.fields
@@ -381,7 +381,7 @@ enum SampleData {
             return SectorSnapshot(
                 lba: lba,
                 title: "LBA12 · EDPF 分区表",
-                method: "视觉样例 · 实盘接入后由 Rust Core 解密",
+                method: "视觉样例 · 实盘接入后由 EDP Core 解密",
                 bytes: bytes,
                 semantics: semantics,
                 fields: []
