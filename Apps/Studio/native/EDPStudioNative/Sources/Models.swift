@@ -182,6 +182,17 @@ final class AppModel {
     private var brokerClient: RawBrokerClient?
 
     init() {
+#if DEBUG
+        let previewArgument = ProcessInfo.processInfo.arguments.first {
+            $0.hasPrefix("--ui-preview-section=")
+        }
+        let rawValue = previewArgument?.split(separator: "=", maxSplits: 1).last.map(String.init)
+            ?? ProcessInfo.processInfo.environment["EDP_UI_PREVIEW_SECTION"]
+        if let rawValue,
+           let destination = SidebarDestination(rawValue: rawValue) {
+            selection = destination
+        }
+#endif
         refreshBrokerConnection()
     }
 

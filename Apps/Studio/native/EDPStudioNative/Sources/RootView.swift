@@ -3,6 +3,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         @Bindable var model = model
@@ -10,8 +11,10 @@ struct RootView: View {
         NavigationSplitView {
             List(SidebarDestination.allCases, selection: $model.selection) { item in
                 Label(item.title, systemImage: item.systemImage)
+                    .padding(.vertical, 3)
                     .tag(item)
             }
+            .listStyle(.sidebar)
             .navigationTitle("EDP Studio")
             .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 260)
         } detail: {
@@ -24,7 +27,9 @@ struct RootView: View {
 
                     ToolbarItemGroup {
                         Button {
-                            model.inspectorVisible.toggle()
+                            withAnimation(reduceMotion ? EDPTheme.Motion.reduced : EDPTheme.Motion.navigation) {
+                                model.inspectorVisible.toggle()
+                            }
                         } label: {
                             Label("检查器", systemImage: "sidebar.trailing")
                         }
@@ -34,6 +39,7 @@ struct RootView: View {
                 }
         }
         .navigationSplitViewStyle(.balanced)
+        .background { EDPWindowBackdrop() }
     }
 
     @ViewBuilder
@@ -47,6 +53,7 @@ struct RootView: View {
                     .environment(model)
                     .padding(8)
                     .frame(minWidth: 256, idealWidth: 306, maxWidth: 376)
+                    .transition(.opacity)
             }
         } else {
             detailView
@@ -88,10 +95,11 @@ private struct DiskIdentityPill: View {
     let disk: RawBrokerDisk?
 
     var body: some View {
-        GlassEffectContainer(spacing: 8) {
+        EDPGlassToolbar {
             HStack(spacing: 9) {
                 Image(systemName: disk == nil ? "externaldrive.badge.questionmark" : "externaldrive.fill")
                     .foregroundStyle(disk == nil ? Color.secondary : Color.accentColor)
+                    .contentTransition(.symbolEffect(.replace))
                 VStack(alignment: .leading, spacing: 0) {
                     if let disk {
                         Text("\(disk.diskName) · \(disk.displayName)")
@@ -104,22 +112,17 @@ private struct DiskIdentityPill: View {
                             .font(.system(size: 12, weight: .semibold))
                         Text("由 Raw Broker 实时枚举")
                             .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
+                        .foregroundStyle(.secondary)
                     }
                 }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
-            .glassEffect(.regular.interactive(), in: .capsule)
         }
     }
 }
 
 struct InspectorView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         ScrollView {
@@ -143,8 +146,11 @@ struct InspectorView: View {
         // same behind-window blur family as the leading sidebar; the surrounding HSplitView
         // column stays transparent and only this rounded surface floats inside it.
         .background {
-            NativeSidebarMaterial()
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            if reduceTransparency {
+                Color(nsColor: .controlBackgroundColor)
+            } else {
+                NativeSidebarMaterial()
+            }
         }
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -155,13 +161,11 @@ struct InspectorView: View {
     }
 
     private var inspectorHeader: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("检查器")
-                .font(.headline)
-            Text("当前设备与字段上下文")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
+        EDPSectionHeader(
+            "检查器",
+            subtitle: "当前设备与字段上下文",
+            systemImage: "sidebar.trailing"
+        )
     }
 
     private var diskSection: some View {
@@ -278,22 +282,10 @@ struct NativePlaceholderView: View {
 
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
-                .ignoresSafeArea()
-
-            VStack(spacing: 16) {
-                Image(systemName: icon)
-                    .font(.system(size: 34, weight: .medium))
-                    .foregroundStyle(.tint)
-                Text(title)
-                    .font(.title2.weight(.semibold))
-                Text(message)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 440)
+            EDPWindowBackdrop()
+            EDPGlassCard {
+                EDPEmptyState(title, message: message, systemImage: icon)
             }
-            .padding(34)
-            .glassEffect(.regular, in: .rect(cornerRadius: 24))
         }
     }
 }

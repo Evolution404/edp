@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DiskMapView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedRegionID: UUID?
 
     var body: some View {
@@ -11,14 +12,13 @@ struct DiskMapView: View {
             VStack(alignment: .leading, spacing: 20) {
                 mapHeader
                 fullDiskMap
-                    .animation(.smooth(duration: 0.28), value: model.zoom)
                 metadataGrid
                 regionDetails
             }
             .padding(24)
             .frame(minWidth: 980, alignment: .leading)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background { EDPWindowBackdrop() }
         .safeAreaInset(edge: .bottom) {
             zoomBar
                 .padding(.bottom, 8)
@@ -49,7 +49,7 @@ struct DiskMapView: View {
         // pushed Boot/Secret/metadata past that boundary, so the final Secret block was
         // painted outside the scrollable content and could never be reached.
         .frame(width: layout.totalWidth, height: 170, alignment: .leading)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(EDPTheme.quietFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(.separator.opacity(0.45), lineWidth: 0.5)
@@ -120,7 +120,9 @@ struct DiskMapView: View {
         let selected = selectedRegionID == region.id
 
         return Button {
-            selectedRegionID = region.id
+            withAnimation(reduceMotion ? EDPTheme.Motion.reduced : EDPTheme.Motion.navigation) {
+                selectedRegionID = region.id
+            }
         } label: {
             ZStack(alignment: .bottomLeading) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -158,7 +160,8 @@ struct DiskMapView: View {
     }
 
     private var metadataGrid: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        EDPContentCard {
+          VStack(alignment: .leading, spacing: 12) {
             Text("LBA 0–13 元数据")
                 .font(.headline)
 
@@ -181,15 +184,14 @@ struct DiskMapView: View {
                     .buttonStyle(.glass)
                 }
             }
+          }
         }
-        .padding(18)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     @ViewBuilder
     private var regionDetails: some View {
         if let region = model.disk.regions.first(where: { $0.id == selectedRegionID }) ?? model.disk.regions.first(where: { $0.kind == .share }) {
-            GlassEffectContainer(spacing: 10) {
+            EDPContentCard(padding: 16) {
                 HStack(spacing: 16) {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(region.kind.gradient)
@@ -211,30 +213,29 @@ struct DiskMapView: View {
                         Text("\(region.sectorCount.formatted()) sectors")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .contentTransition(.numericText())
                     }
                 }
-                .padding(16)
-                .glassEffect(.regular, in: .rect(cornerRadius: 18))
             }
         }
     }
 
     private var zoomBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "minus.magnifyingglass")
-            Slider(value: Binding(
-                get: { model.zoom },
-                set: { model.zoom = $0 }
-            ), in: 0.8...1.6)
-                .frame(width: 180)
-            Image(systemName: "plus.magnifyingglass")
-            Text("\(Int(model.zoom * 100))%")
-                .font(.system(.caption, design: .monospaced))
-                .frame(width: 42, alignment: .trailing)
+        EDPGlassToolbar {
+            HStack(spacing: 10) {
+                Image(systemName: "minus.magnifyingglass")
+                Slider(value: Binding(
+                    get: { model.zoom },
+                    set: { model.zoom = $0 }
+                ), in: 0.8...1.6)
+                    .frame(width: 180)
+                Image(systemName: "plus.magnifyingglass")
+                Text("\(Int(model.zoom * 100))%")
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(width: 42, alignment: .trailing)
+                    .contentTransition(.numericText())
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .glassEffect(.regular.interactive(), in: .capsule)
     }
 
     private func minimumWidth(for kind: DiskRegion.Kind) -> CGFloat {

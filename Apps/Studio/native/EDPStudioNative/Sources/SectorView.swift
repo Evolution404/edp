@@ -13,8 +13,6 @@ struct SectorView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
 
-            Divider()
-
             ScrollView([.horizontal, .vertical]) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .firstTextBaseline) {
@@ -46,7 +44,7 @@ struct SectorView: View {
                 .padding(22)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background { EDPWindowBackdrop() }
 
             Divider()
             statusBar
@@ -56,7 +54,7 @@ struct SectorView: View {
     private var controlBar: some View {
         @Bindable var model = model
 
-        return GlassEffectContainer(spacing: 8) {
+        return EDPGlassToolbar {
             HStack(spacing: 10) {
                 Button {
                     model.selectedLBA = model.selectedLBA > 0 ? model.selectedLBA - 1 : 0
@@ -64,7 +62,8 @@ struct SectorView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
+                .padding(7)
 
                 HStack(spacing: 6) {
                     Text("LBA")
@@ -77,7 +76,7 @@ struct SectorView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
-                .glassEffect(.regular.interactive(), in: .capsule)
+                .background(EDPTheme.quietFill, in: Capsule())
 
                 Button {
                     model.selectedLBA += 1
@@ -85,7 +84,8 @@ struct SectorView: View {
                 } label: {
                     Image(systemName: "chevron.right")
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
+                .padding(7)
 
                 Divider()
                     .frame(height: 20)
@@ -110,7 +110,9 @@ struct SectorView: View {
                     Label("元数据", systemImage: "square.grid.3x3")
                 }
                 .menuStyle(.button)
-                .buttonStyle(.glass)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
             }
         }
     }
@@ -132,7 +134,7 @@ struct SectorView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 18)
         .frame(height: 30)
-        .background(.bar)
+        .background(EDPTheme.quietFill)
     }
 }
 

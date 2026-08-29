@@ -15,40 +15,42 @@ struct OverviewView: View {
             .padding(24)
             .frame(maxWidth: 1180, alignment: .leading)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background { EDPWindowBackdrop() }
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.tint.opacity(0.12))
-                Image(systemName: "externaldrive.fill")
-                    .font(.system(size: 30, weight: .medium))
-                    .foregroundStyle(.tint)
+        EDPContentCard {
+            HStack(alignment: .center, spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.tint.opacity(0.12))
+                    Image(systemName: "externaldrive.fill")
+                        .font(.system(size: 30, weight: .medium))
+                        .foregroundStyle(.tint)
+                }
+                .frame(width: 68, height: 68)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Lexar USB Flash Drive")
+                        .font(.title2.weight(.semibold))
+                    Text("\(model.disk.diskName) · \(model.disk.capacityText) · USB \(model.disk.vid):\(model.disk.pid)")
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                EDPStatusPill(
+                    title: model.disk.state.label,
+                    systemImage: model.disk.state.symbol,
+                    tone: .accent
+                )
             }
-            .frame(width: 68, height: 68)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Lexar USB Flash Drive")
-                    .font(.title2.weight(.semibold))
-                Text("\(model.disk.diskName) · \(model.disk.capacityText) · USB \(model.disk.vid):\(model.disk.pid)")
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Label(model.disk.state.label, systemImage: model.disk.state.symbol)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .glassEffect(.regular.tint(.blue.opacity(0.16)).interactive(), in: .capsule)
         }
     }
 
     private var identityGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-            MetricCard(title: "设备标识", value: model.disk.deviceID, icon: "fingerprint", monospaced: true)
+            MetricCard(title: "设备标识", value: model.disk.deviceID, icon: "barcode.viewfinder", monospaced: true)
             MetricCard(title: "CRC32", value: "0x\(model.disk.crc32)", icon: "number", monospaced: true)
             MetricCard(title: "LBA7 K0", value: "0x\(model.disk.k0)", icon: "key.horizontal", monospaced: true)
             MetricCard(title: "Label Only ID", value: model.disk.labelOnlyID, icon: "tag", monospaced: true)
@@ -56,7 +58,8 @@ struct OverviewView: View {
     }
 
     private var brokerCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        EDPContentCard {
+          VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: model.brokerState.systemImage)
                     .font(.title2)
@@ -85,31 +88,33 @@ struct OverviewView: View {
 
                 Text("FDA")
                     .font(.caption2.weight(.bold))
+                    .foregroundStyle(brokerTint)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .glassEffect(.regular.tint(brokerTint.opacity(0.16)), in: .capsule)
+                    .background(brokerTint.opacity(0.12), in: Capsule())
             }
 
-            HStack(spacing: 10) {
-                Button("重新检测 Broker") {
-                    model.refreshBrokerConnection()
-                }
-                .buttonStyle(.glass)
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button("重新检测 Broker") {
+                        model.refreshBrokerConnection()
+                    }
+                    .buttonStyle(.glass)
 
-                Button("检测当前盘权限") {
-                    model.probeFullDiskAccess()
-                }
-                .buttonStyle(.glassProminent)
-                .disabled(!canProbeFDA)
+                    Button("检测当前盘权限") {
+                        model.probeFullDiskAccess()
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(!canProbeFDA)
 
-                Button("打开完全磁盘访问") {
-                    model.openFullDiskAccessSettings()
+                    Button("打开完全磁盘访问") {
+                        model.openFullDiskAccessSettings()
+                    }
+                    .buttonStyle(.glass)
                 }
-                .buttonStyle(.glass)
             }
+          }
         }
-        .padding(18)
-        .glassEffect(.clear, in: .rect(cornerRadius: 18))
     }
 
     private var canProbeFDA: Bool {
@@ -133,7 +138,8 @@ struct OverviewView: View {
     }
 
     private var layoutCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        EDPContentCard {
+          VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("EDP 布局", systemImage: "rectangle.split.3x1")
                     .font(.headline)
@@ -152,29 +158,20 @@ struct OverviewView: View {
                 LayoutFact(title: "LBA9", value: model.disk.hasEETU ? "EETU present" : "zero")
                 LayoutFact(title: "总扇区", value: model.disk.totalSectors.formatted())
             }
-        }
-        .padding(18)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.separator.opacity(0.45), lineWidth: 0.5)
+          }
         }
     }
 
     private var metadataCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        EDPContentCard {
+          VStack(alignment: .leading, spacing: 12) {
             Label("当前迁移状态", systemImage: "checkmark.seal")
                 .font(.headline)
 
             MigrationRow(icon: "macwindow", title: "原生 UI", detail: "SwiftUI + AppKit · macOS 26 Liquid Glass", done: true)
             MigrationRow(icon: "externaldrive.badge.checkmark", title: "FDA Raw Broker", detail: "Swift XPC broker 已接入 · 固定路径 + 同 leaf 双向校验", done: true)
             MigrationRow(icon: "shippingbox", title: "Rust EDP Core", detail: "保留现有 crypto / parser / convert / editor golden", done: true)
-        }
-        .padding(18)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.separator.opacity(0.45), lineWidth: 0.5)
+          }
         }
     }
 }
@@ -186,18 +183,19 @@ private struct MetricCard: View {
     let monospaced: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: icon)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(monospaced ? .system(.body, design: .monospaced) : .body)
-                .lineLimit(2)
-                .textSelection(.enabled)
+        EDPContentCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                Label(title, systemImage: icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(monospaced ? .system(.body, design: .monospaced) : .body)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                    .contentTransition(.numericText())
+            }
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
-        .padding(16)
-        .glassEffect(.clear, in: .rect(cornerRadius: 18))
     }
 }
 

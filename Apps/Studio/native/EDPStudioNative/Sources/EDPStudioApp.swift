@@ -30,6 +30,8 @@ struct NativeSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .padding()
+        .background { EDPWindowBackdrop() }
     }
 }
