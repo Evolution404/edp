@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "${REPO_ROOT}/scripts/prepare-shared-edp-core.sh"
-VERSION="${EDP_VERSION:-0.5.0}"
+VERSION="${EDP_VERSION:-0.6.0}"
 ARCH="${EDP_ARCH:-arm64}"
 OUTPUT_DIR="${1:-${REPO_ROOT}/artifacts}"
 MACFUSE_VERSION="5.3.3"
@@ -117,6 +117,7 @@ RUNTIME_STAGE="${BUILD_ROOT}/runtime"
 mkdir -p "${RUNTIME_STAGE}/bin" "${RUNTIME_STAGE}/licenses/macfuse"
 
 echo "Building EDP encrypted block runtime..."
+SERVICE_STAGE="${BUILD_ROOT}/edp-drive-service"
 CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPRawIO.swift"
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
@@ -127,7 +128,9 @@ CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
 )
 
-xcrun swiftc -O -framework CryptoKit -framework Security \
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  -Xfrontend -disable-availability-checking \
+  -framework CryptoKit -framework Security \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/product/EDPCredentialStore.swift" \
@@ -141,9 +144,10 @@ xcrun swiftc -O -framework CryptoKit -framework Security \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/EDPXPCSecurity.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \
-  -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
+  -o "${SERVICE_STAGE}"
 
-xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  -emit-library -module-name EDPReadWriteBridge \
   -Xlinker -install_name -Xlinker @rpath/libEDPReadWriteBridge.dylib \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
@@ -172,6 +176,7 @@ MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
 for item in "${RUNTIME_STAGE}/bin/"*; do
   sign_app_code "${item}"
 done
+sign_app_code --identifier com.edp.drive.service "${SERVICE_STAGE}"
 
 echo "Building SwiftUI app..."
 APP_STAGE="${BUILD_ROOT}/EDP Drive.app"
@@ -182,51 +187,20 @@ cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
-xcrun swiftc -O \
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
   -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
-cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
+cp "${SERVICE_STAGE}" \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
-if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
-cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.edp.usbvault.mountd.v2</string>
-  <key>BundleProgram</key>
-  <string>Contents/Library/LaunchServices/edp-drive-service</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>edp-drive-service</string>
-    <string>daemon</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>EDP_RUNTIME_BIN_ROOT</key>
-    <string>/Library/Application Support/EDP USB Vault/bin</string>
-  </dict>
-  <key>MachServices</key>
-  <dict>
-    <key>com.edp.usbvault.xpc</key><true/>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Interactive</string>
-  <key>StandardOutPath</key><string>/var/log/edp-usbvault.log</string>
-  <key>StandardErrorPath</key><string>/var/log/edp-usbvault.log</string>
-</dict>
-</plist>
-PLIST
-/bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
-fi
+cp "${REPO_ROOT}/product/App/com.edp.drive.service.plist" \
+  "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.drive.service.plist"
+/bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.drive.service.plist"
 sign_app_code \
-  --identifier com.edp.usbvault.mountd.v2 \
+  --identifier com.edp.drive.service \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
-sign_app_code --identifier com.edp.usbvault.app "${APP_STAGE}"
+sign_app_code --identifier com.edp.drive "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
 if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   SIGNING_INFO="$(/usr/bin/codesign -dv --verbose=4 "${APP_STAGE}" 2>&1)"
@@ -241,7 +215,7 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
 
   APP_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}" 2>&1)"
   DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service" 2>&1)"
-  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.app"' <<<"${APP_REQUIREMENT}"
+  /usr/bin/grep -Fq 'identifier "com.edp.drive"' <<<"${APP_REQUIREMENT}"
   APP_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${APP_REQUIREMENT}")"
   DAEMON_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${DAEMON_REQUIREMENT}")"
   [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
@@ -267,44 +241,15 @@ printf '%s  %s\n' \
   | /usr/bin/shasum -a 256 -c -
 
 PAYLOAD="${BUILD_ROOT}/payload"
-PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
+PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP Drive"
 mkdir -p "${PRODUCT_DIR}" "${PAYLOAD}/usr/local/bin" "${PAYLOAD}/Applications"
 cp -R "${RUNTIME_STAGE}/." "${PRODUCT_DIR}/"
 cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP Drive.app"
-ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
-  "${PAYLOAD}/usr/local/bin/edp-vaultctl"
 if [[ "${SERVICE_MODE}" == "legacy" ]]; then
   mkdir -p "${PAYLOAD}/Library/LaunchDaemons"
-  cat > "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.edp.usbvault.mountd</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service</string>
-    <string>daemon</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>EDP_RUNTIME_BIN_ROOT</key>
-    <string>/Library/Application Support/EDP USB Vault/bin</string>
-  </dict>
-  <key>MachServices</key>
-  <dict>
-    <key>com.edp.usbvault.xpc</key><true/>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Interactive</string>
-  <key>StandardOutPath</key><string>/var/log/edp-usbvault.log</string>
-  <key>StandardErrorPath</key><string>/var/log/edp-usbvault.log</string>
-</dict>
-</plist>
-PLIST
-  /bin/chmod 0644 "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+  cp "${REPO_ROOT}/installer/com.edp.drive.service.plist" \
+    "${PAYLOAD}/Library/LaunchDaemons/com.edp.drive.service.plist"
+  /bin/chmod 0644 "${PAYLOAD}/Library/LaunchDaemons/com.edp.drive.service.plist"
 fi
 
 SCRIPTS="${BUILD_ROOT}/scripts"
@@ -312,11 +257,13 @@ mkdir -p "${SCRIPTS}"
 cat > "${SCRIPTS}/preinstall" <<'PREINSTALL'
 #!/bin/bash
 set -e
-LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
-if [[ -f "${LEGACY_PLIST}" ]]; then
-  /bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
-  /bin/rm -f "${LEGACY_PLIST}"
-fi
+for LABEL in com.edp.drive.service com.edp.usbvault.mountd com.edp.usbvault.mountd.v2; do
+  /bin/launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+done
+/bin/rm -f \
+  /Library/LaunchDaemons/com.edp.drive.service.plist \
+  /Library/LaunchDaemons/com.edp.usbvault.mountd.plist \
+  /Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist
 OLD_ROOT="/Library/Application Support/EDP USB Vault"
 OLD_CTL="${OLD_ROOT}/bin/edp-vaultctl"
 if [[ -x "${OLD_CTL}" ]]; then
@@ -325,10 +272,11 @@ fi
 for RETIRED_RUNTIME in edp-readwrite-fuse edp-raw-sparse; do
   /bin/rm -f "${OLD_ROOT}/bin/${RETIRED_RUNTIME}"
 done
+/bin/rm -rf "${OLD_ROOT}"
 OLD_APP="/Applications/EDP USB Vault.app"
 if [[ -f "${OLD_APP}/Contents/Info.plist" ]]; then
   OLD_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${OLD_APP}/Contents/Info.plist" 2>/dev/null || true)"
-  if [[ "${OLD_ID}" == "com.edp.usbvault" ]]; then
+  if [[ "${OLD_ID}" == "com.edp.usbvault" || "${OLD_ID}" == "com.edp.usbvault.app" ]]; then
     /bin/rm -rf "${OLD_APP}"
   fi
 fi
@@ -348,29 +296,29 @@ PREINSTALL
 cat > "${SCRIPTS}/postinstall" <<'POSTINSTALL'
 #!/bin/bash
 set -e
-ROOT="/Library/Application Support/EDP USB Vault"
+ROOT="/Library/Application Support/EDP Drive"
 APP="/Applications/EDP Drive.app"
 /usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
 /bin/chmod -R go-w "${ROOT}" "${APP}"
 /bin/chmod 0755 "${ROOT}" "${ROOT}/bin"
 /bin/chmod 0755 "${ROOT}/bin/"*
 /usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
-LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+LEGACY_PLIST="/Library/LaunchDaemons/com.edp.drive.service.plist"
 if [[ -f "${LEGACY_PLIST}" ]]; then
   /bin/launchctl bootstrap system "${LEGACY_PLIST}"
-  /bin/launchctl enable system/com.edp.usbvault.mountd || true
-  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
+  /bin/launchctl enable system/com.edp.drive.service || true
+  /bin/launchctl kickstart -k system/com.edp.drive.service || true
 fi
-if /bin/launchctl print system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1; then
+if /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
   # Registration remains owned by SMAppService. Restart the approved job so
   # package upgrades immediately execute the newly installed daemon binary.
-  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd.v2 || true
+  /bin/launchctl kickstart -k system/com.edp.drive.service || true
 fi
 exit 0
 POSTINSTALL
 chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
 
-APP_COMPONENT="${BUILD_ROOT}/components/ZZ-EDP-USB-Vault.pkg"
+APP_COMPONENT="${BUILD_ROOT}/components/ZZ-EDP-Drive.pkg"
 COMPONENT_PLIST="${BUILD_ROOT}/edp-component.plist"
 mkdir -p "${BUILD_ROOT}/components"
 /usr/bin/pkgbuild --analyze --root "${PAYLOAD}" "${COMPONENT_PLIST}"
@@ -382,7 +330,7 @@ mkdir -p "${BUILD_ROOT}/components"
 /usr/libexec/PlistBuddy -c 'Set :0:BundleOverwriteAction upgrade' "${COMPONENT_PLIST}"
 /usr/bin/pkgbuild \
   --root "${PAYLOAD}" \
-  --identifier com.edp.usbvault.runtime \
+  --identifier com.edp.drive.runtime \
   --version "${VERSION}" \
   --install-location / \
   --component-plist "${COMPONENT_PLIST}" \
@@ -428,11 +376,11 @@ p = Path(sys.argv[1])
 s = p.read_text()
 needle = '<installer-gui-script minSpecVersion="1">'
 if '<title>' not in s:
-    s = s.replace(needle, needle + '\n    <title>EDP USB Vault + macFUSE FSKit</title>', 1)
+    s = s.replace(needle, needle + '\n    <title>EDP Drive + macFUSE FSKit</title>', 1)
 p.write_text(s)
 PY
 
-OUTPUT_PKG="${OUTPUT_DIR}/EDP-USB-Vault-${VERSION}-${ARCH}-Clean.pkg"
+OUTPUT_PKG="${OUTPUT_DIR}/EDP-Drive-${VERSION}-${ARCH}-Clean.pkg"
 FINAL_ARGS=(
   --distribution "${DIST}"
   --package-path "${BUILD_ROOT}/components"
@@ -444,7 +392,7 @@ fi
 
 /usr/sbin/pkgutil --check-signature "${OUTPUT_PKG}" || true
 /usr/bin/shasum -a 256 "${OUTPUT_PKG}" \
-  > "${OUTPUT_DIR}/EDP-USB-Vault-${VERSION}-${ARCH}-Clean.pkg.sha256"
+  > "${OUTPUT_DIR}/EDP-Drive-${VERSION}-${ARCH}-Clean.pkg.sha256"
 
 echo "OUTPUT=${OUTPUT_PKG}"
 echo "MACFUSE_VERSION=${MACFUSE_VERSION}"

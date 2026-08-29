@@ -1,7 +1,7 @@
 import Foundation
 import FSKit
 
-let bundleID = "com.edp.usbvault.fskit-poc.extension"
+let bundleID = "com.edp.drive.fskit-poc.extension"
 let semaphore = DispatchSemaphore(value: 0)
 var exitCode: Int32 = 1
 

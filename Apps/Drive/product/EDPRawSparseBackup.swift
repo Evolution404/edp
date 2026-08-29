@@ -341,7 +341,7 @@ private func backup(sourceFD: Int32, sourcePath: String, options: Options) throw
     keepPartial = true
 
     let manifest = RawSparseManifest(
-        format: "com.edp.usbvault.raw-sparse-backup",
+        format: "com.edp.drive.raw-sparse-backup",
         formatVersion: 1,
         createdAt: ISO8601DateFormatter().string(from: Date()),
         sourcePath: sourcePath,
@@ -377,7 +377,8 @@ private func backup(sourceFD: Int32, sourcePath: String, options: Options) throw
 private func loadManifest(_ path: String) throws -> RawSparseManifest {
     let data = try Data(contentsOf: URL(fileURLWithPath: path))
     let manifest = try JSONDecoder().decode(RawSparseManifest.self, from: data)
-    guard manifest.format == "com.edp.usbvault.raw-sparse-backup", manifest.formatVersion == 1 else {
+    guard ["com.edp.drive.raw-sparse-backup", "com.edp.usbvault.raw-sparse-backup"].contains(manifest.format),
+          manifest.formatVersion == 1 else {
         throw fail("unsupported sparse manifest format")
     }
     guard manifest.extentCount == manifest.extents.count else { throw fail("manifest extent count mismatch") }

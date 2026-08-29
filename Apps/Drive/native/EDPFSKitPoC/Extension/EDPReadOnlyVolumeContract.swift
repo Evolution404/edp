@@ -19,7 +19,7 @@ final class EDPReadOnlyVolumeContract: FSVolume {
     init() {
         super.init(
             volumeID: FSVolume.Identifier(uuid: UUID(uuidString: "3DFA8D69-1DBB-4D3C-A004-ED0000000001")!),
-            volumeName: FSFileName(string: "EDP USB Vault")
+            volumeName: FSFileName(string: "EDP Drive")
         )
     }
 }

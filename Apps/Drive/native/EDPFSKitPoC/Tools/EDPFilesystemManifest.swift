@@ -140,7 +140,7 @@ private enum EDPFilesystemManifestMain {
             paths.sort { $0.utf8.lexicographicallyPrecedes($1.utf8) }
             let entries = try paths.map { try manifestEntry(root: root, path: $0) }
             let manifest = FilesystemManifest(
-                format: "com.edp.usbvault.ntfs-file-manifest.v1",
+                format: "com.edp.drive.ntfs-file-manifest.v1",
                 volumeLabel: label,
                 decryptedVolumeSize: rawSize,
                 bootWindowSHA256: try hashFD(rawFD, offset: 0, length: 4096),

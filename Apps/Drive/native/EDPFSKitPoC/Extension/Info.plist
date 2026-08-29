@@ -46,7 +46,7 @@
             <key>EDPVault</key>
             <dict>
                 <key>FSName</key>
-                <string>EDP USB Vault</string>
+                <string>EDP Drive</string>
                 <key>FSfileObjectsAreCaseSensitive</key>
                 <false/>
             </dict>

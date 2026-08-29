@@ -25,21 +25,21 @@ private func waitReply(
 ) throws {
     guard semaphore.wait(timeout: timeout) == .success else {
         throw NSError(
-            domain: "com.edp.usbvault.smoke",
+            domain: "com.edp.drive.smoke",
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "\(label) timed out"]
         )
     }
     guard let captured = state.get() else {
         throw NSError(
-            domain: "com.edp.usbvault.smoke",
+            domain: "com.edp.drive.smoke",
             code: 2,
             userInfo: [NSLocalizedDescriptionKey: "\(label) returned no reply"]
         )
     }
     if let error = captured {
         throw NSError(
-            domain: "com.edp.usbvault.smoke",
+            domain: "com.edp.drive.smoke",
             code: 3,
             userInfo: [NSLocalizedDescriptionKey: error]
         )
@@ -68,7 +68,7 @@ private enum EDPXPCMountSmoke {
                 fputs("XPC_ERROR=\(error.localizedDescription)\n", stderr)
             }) as? EDPVaultXPCProtocol else {
                 throw NSError(
-                    domain: "com.edp.usbvault.smoke",
+                    domain: "com.edp.drive.smoke",
                     code: 4,
                     userInfo: [NSLocalizedDescriptionKey: "XPC proxy unavailable"]
                 )

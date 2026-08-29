@@ -23,7 +23,7 @@ ACTUAL_CERT_SHA256="$(/usr/bin/printf '%s' "${CERT_PEM}" \
   exit 2
 }
 
-PROBE="$(/usr/bin/mktemp /private/tmp/edp-usb-vault-signing-probe.XXXXXX)"
+PROBE="$(/usr/bin/mktemp /private/tmp/edp-drive-signing-probe.XXXXXX)"
 cleanup_probe() { /bin/rm -f "${PROBE}"; }
 trap cleanup_probe EXIT INT TERM
 /bin/cp /usr/bin/true "${PROBE}"

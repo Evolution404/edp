@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-BUNDLE_ID="com.edp.usbvault.fskit-poc.extension"
+BUNDLE_ID="com.edp.drive.fskit-poc.extension"
 APP="${EDP_FSKIT_APP:-/Applications/EDPFSKitPoC.app}"
 EXT="${APP}/Contents/Extensions/EDPFSKitExtension.appex"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,7 +105,7 @@ cat "${DIAG_DIR}/mount.err" || true
 sleep 2
 
 log show --start "${LOG_START}" --style compact \
-    --predicate 'subsystem == "com.edp.usbvault.fskit-poc.extension" OR eventMessage CONTAINS[c] "com.edp.usbvault.fskit-poc.extension" OR process == "fskitd"' \
+    --predicate 'subsystem == "com.edp.drive.fskit-poc.extension" OR eventMessage CONTAINS[c] "com.edp.drive.fskit-poc.extension" OR process == "fskitd"' \
     >"${DIAG_DIR}/runtime.log" 2>&1 || true
 cat "${DIAG_DIR}/runtime.log" || true
 

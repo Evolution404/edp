@@ -2,12 +2,13 @@ import Darwin
 import Foundation
 import Security
 
-private let dataRoot = "/var/db/com.edp.usbvault"
+private let dataRoot = "/var/db/com.edp.drive"
+private let legacyDataRoot = "/var/db/com.edp.usbvault"
 private let sessionRoot = dataRoot + "/sessions"
 private let credentialIndexPath = dataRoot + "/credential-index.json"
 private let policyPath = dataRoot + "/device-policies.json"
-private let legacyCredentialPath = dataRoot + "/credentials.json"
-private let legacyMasterKeyPath = dataRoot + "/master.key"
+private let legacyCredentialPath = legacyDataRoot + "/credentials.json"
+private let legacyMasterKeyPath = legacyDataRoot + "/master.key"
 
 private enum RuntimeError: Error, CustomStringConvertible {
     case message(String)
@@ -20,6 +21,91 @@ private enum RuntimeError: Error, CustomStringConvertible {
 }
 
 private func fail(_ message: String) -> RuntimeError { .message(message) }
+
+private func migrateLegacyRuntimeState() throws {
+    try FileManager.default.createDirectory(
+        atPath: dataRoot,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
+    )
+    guard chmod(dataRoot, 0o700) == 0 else {
+        throw fail("failed to secure EDP Drive state root: errno=\(errno)")
+    }
+    let decoder = JSONDecoder()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+    let oldCredentialIndex = legacyDataRoot + "/credential-index.json"
+    if FileManager.default.fileExists(atPath: oldCredentialIndex) {
+        let legacy = try decoder.decode(
+            EDPCredentialIndex.self,
+            from: Data(contentsOf: URL(fileURLWithPath: oldCredentialIndex))
+        )
+        var merged = FileManager.default.fileExists(atPath: credentialIndexPath)
+            ? try decoder.decode(
+                EDPCredentialIndex.self,
+                from: Data(contentsOf: URL(fileURLWithPath: credentialIndexPath))
+            )
+            : EDPCredentialIndex()
+        for record in legacy.records {
+            if let index = merged.records.firstIndex(where: { $0.deviceID == record.deviceID }) {
+                let types = Set(merged.records[index].partitionTypes)
+                    .union(record.partitionTypes).sorted()
+                merged.records[index] = EDPCredentialRecord(
+                    deviceID: record.deviceID,
+                    partitionTypes: types,
+                    updatedAt: merged.records[index].updatedAt
+                )
+            } else {
+                merged.records.append(record)
+            }
+        }
+        merged.records.sort { $0.deviceID < $1.deviceID }
+        try atomicWrite(try encoder.encode(merged), to: credentialIndexPath, mode: 0o600)
+    }
+
+    let oldPolicyPath = legacyDataRoot + "/device-policies.json"
+    if FileManager.default.fileExists(atPath: oldPolicyPath) {
+        let legacy = try decoder.decode(
+            EDPPolicyDocument.self,
+            from: Data(contentsOf: URL(fileURLWithPath: oldPolicyPath))
+        )
+        let hasNewPolicy = FileManager.default.fileExists(atPath: policyPath)
+        var merged = hasNewPolicy
+            ? try decoder.decode(
+                EDPPolicyDocument.self,
+                from: Data(contentsOf: URL(fileURLWithPath: policyPath))
+            )
+            : legacy
+        if hasNewPolicy {
+            for device in legacy.devices
+                where !merged.devices.contains(where: { $0.deviceID == device.deviceID }) {
+                merged.devices.append(device)
+            }
+            merged.devices.sort { $0.deviceID < $1.deviceID }
+        }
+        try atomicWrite(try encoder.encode(merged), to: policyPath, mode: 0o600)
+    }
+
+    let oldSessionsPath = legacyDataRoot + "/sessions.json"
+    let newSessionsPath = dataRoot + "/sessions.json"
+    if FileManager.default.fileExists(atPath: oldSessionsPath),
+       !FileManager.default.fileExists(atPath: newSessionsPath) {
+        let data = try Data(contentsOf: URL(fileURLWithPath: oldSessionsPath))
+        _ = try JSONSerialization.jsonObject(with: data)
+        try atomicWrite(data, to: newSessionsPath, mode: 0o644)
+    }
+}
+
+private func finalizeLegacyRuntimeStateMigration() {
+    for name in ["credential-index.json", "device-policies.json", "sessions.json"] {
+        let oldPath = legacyDataRoot + "/" + name
+        let newPath = dataRoot + "/" + name
+        guard FileManager.default.fileExists(atPath: newPath) else { continue }
+        try? FileManager.default.removeItem(atPath: oldPath)
+    }
+    try? FileManager.default.removeItem(atPath: legacyDataRoot)
+}
 
 private func secureZero<T>(_ bytes: inout [T]) {
     bytes.withUnsafeMutableBytes { raw in
@@ -1094,7 +1180,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     private let policies: EDPDevicePolicyStore
     private let manager: MountManager
     private let diskArbitration: EDPDiskArbitrationController
-    private let queue = DispatchQueue(label: "com.edp.usbvault.controller")
+    private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private var failedMounts = [String: String]()
     private var manualUnmountSuppressions = Set<String>()
     private var activities = [EDPXPCActivity]()
@@ -1109,11 +1195,15 @@ private final class EDPDaemonController: @unchecked Sendable {
     private var lastDiscoveryTimestamp = ""
 
     init() throws {
+        try migrateLegacyRuntimeState()
         store = try makeCredentialStore()
         policies = try makePolicyStore()
         manager = try MountManager()
         diskArbitration = try EDPDiskArbitrationController()
         manager.recoverPersistedSessions()
+        _ = try store.load()
+        _ = try policies.load()
+        finalizeLegacyRuntimeStateMigration()
     }
 
     private func key(_ deviceID: String, _ partitionType: UInt32) -> String {
@@ -1932,13 +2022,13 @@ private func doctor() -> Int32 {
 private func usage() {
     print("""
     Usage:
-      edp-vaultctl doctor
-      edp-vaultctl status
-      sudo edp-vaultctl list
-      sudo edp-vaultctl authorize [diskN]
-      sudo edp-vaultctl revoke <device-id>
-      sudo edp-vaultctl cleanup
-      sudo edp-vaultctl daemon
+      edp-drive-service doctor
+      edp-drive-service status
+      sudo edp-drive-service list
+      sudo edp-drive-service authorize [diskN]
+      sudo edp-drive-service revoke <device-id>
+      sudo edp-drive-service cleanup
+      sudo edp-drive-service daemon
 
     After passwords are verified and saved, the privileged launch daemon
     automatically mounts configured EDP partitions when the USB disk appears.

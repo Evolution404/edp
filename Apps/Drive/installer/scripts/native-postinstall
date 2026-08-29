@@ -1,22 +1,22 @@
 #!/bin/bash
 set -e
-ROOT="/Library/Application Support/EDP USB Vault"
+ROOT="/Library/Application Support/EDP Drive"
 APP="/Applications/EDP Drive.app"
 /usr/sbin/chown -R root:wheel "${ROOT}" "${APP}"
 /bin/chmod -R go-w "${ROOT}" "${APP}"
 /usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" >/dev/null 2>&1 || true
 /bin/chmod 0755 "${ROOT}" "${ROOT}/bin" "${ROOT}/bin/"*
-PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+PLIST="/Library/LaunchDaemons/com.edp.drive.service.plist"
 if [[ -f "${PLIST}" ]]; then
   /bin/launchctl bootstrap system "${PLIST}"
-  /bin/launchctl enable system/com.edp.usbvault.mountd || true
-  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
-elif /bin/launchctl print system/com.edp.usbvault.mountd >/dev/null 2>&1; then
-  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd || true
+  /bin/launchctl enable system/com.edp.drive.service || true
+  /bin/launchctl kickstart -k system/com.edp.drive.service || true
+elif /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
+  /bin/launchctl kickstart -k system/com.edp.drive.service || true
 fi
-if /bin/launchctl print system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1; then
+if /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
   # SMAppService owns registration. Restart an already approved job so an
   # in-place package upgrade cannot keep executing the previous app binary.
-  /bin/launchctl kickstart -k system/com.edp.usbvault.mountd.v2 || true
+  /bin/launchctl kickstart -k system/com.edp.drive.service || true
 fi
 exit 0

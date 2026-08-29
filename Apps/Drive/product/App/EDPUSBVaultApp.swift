@@ -34,7 +34,7 @@ private func runUserTool(_ executable: String, _ arguments: [String]) throws -> 
     let text = String(decoding: data, as: UTF8.self)
     guard process.terminationStatus == 0 else {
         throw NSError(
-            domain: "com.edp.usbvault.fskit",
+            domain: "com.edp.drive.fskit",
             code: Int(process.terminationStatus),
             userInfo: [NSLocalizedDescriptionKey: "\(executable) \(arguments.joined(separator: " ")) failed: \(text)"]
         )
@@ -98,7 +98,7 @@ private func ensureMacFUSELocalEnablement() throws {
             format: nil
         ) as? [String] else {
             throw NSError(
-                domain: "com.edp.usbvault.fskit",
+                domain: "com.edp.drive.fskit",
                 code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "FSKit 模块启用设置格式无效"]
             )
@@ -130,7 +130,7 @@ private func ensureMacFUSELocalEnablement() throws {
     let after = try runUserTool(pluginKit, ["-m", "-A", "-D"])
     guard edpMacFUSEModuleIDs.allSatisfy({ after.contains("+    \($0)") || after.contains("+\t\($0)") }) else {
         throw NSError(
-            domain: "com.edp.usbvault.fskit",
+            domain: "com.edp.drive.fskit",
             code: 2,
             userInfo: [NSLocalizedDescriptionKey: "macFUSE FSKit 模块未被 PluginKit 启用"]
         )
@@ -155,8 +155,8 @@ final class EDPVaultViewModel: ObservableObject {
 
     private let serviceMode: String
     private let daemonService: SMAppService?
-    private let daemonPlistName = "com.edp.usbvault.mountd.v2.plist"
-    private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
+    private let daemonPlistName = "com.edp.drive.service.plist"
+    private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.drive.service.plist")
     private var connection: NSXPCConnection?
 
     var needsFullDiskAccess: Bool {
@@ -1768,7 +1768,7 @@ struct EDPUSBVaultApp: App {
             let mode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
             print("EDP_SERVICE_MODE=\(mode)")
             if mode == "smappservice" {
-                let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.v2.plist")
+                let service = SMAppService.daemon(plistName: "com.edp.drive.service.plist")
                 do {
                     if service.status != .enabled && service.status != .requiresApproval {
                         try service.register()
@@ -1795,7 +1795,7 @@ struct EDPUSBVaultApp: App {
                     exit(1)
                 }
             } else {
-                let legacyURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.usbvault.mountd.plist")
+                let legacyURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.drive.service.plist")
                 switch SMAppService.statusForLegacyPlist(at: legacyURL) {
                 case .enabled:
                     print("EDP_SERVICE_STATUS=enabled")
@@ -1822,7 +1822,7 @@ struct EDPUSBVaultApp: App {
                 print("RESULT=SERVICE_REREGISTER_NOT_APPLICABLE")
                 exit(1)
             }
-            let service = SMAppService.daemon(plistName: "com.edp.usbvault.mountd.v2.plist")
+            let service = SMAppService.daemon(plistName: "com.edp.drive.service.plist")
             do {
                 try service.unregister()
                 try service.register()

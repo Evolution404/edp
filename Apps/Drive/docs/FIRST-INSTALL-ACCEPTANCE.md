@@ -1,4 +1,4 @@
-# EDP USB Vault — First-Install Full Acceptance
+# EDP Drive — First-Install Full Acceptance
 
 This document defines the repeatable clean-machine acceptance process for the macOS 26+ product. The executable harness is:
 
@@ -85,7 +85,7 @@ Run the following sequence for each release candidate.
 7.  sudo install <candidate.pkg>
 8.  verify-installed
 9.  open-fda
-10. user grants FDA once to EDP USB Vault Raw Access
+10. user grants FDA once to EDP Drive and its embedded service
 11. insert one real EDP USB
 12. verify-fda-device [VID:PID]
 13. save/validate exchange and secret passwords in the App UI
@@ -178,7 +178,7 @@ Uses the same XPC `eject()` operation as the UI. It verifies all three user volu
 Each run creates a session directory under:
 
 ```text
-/Users/Shared/EDP USB Vault Acceptance/<UTC-session-id>/
+/Users/Shared/EDP Drive Acceptance/<UTC-session-id>/
 ```
 
 The directory is owned by the console user and mode `0700`. `results.log` records only stage results, IDs, hashes, and package metadata. Passwords are never recorded.
@@ -186,7 +186,7 @@ The directory is owned by the console user and mode `0700`. `results.log` record
 The current session pointer is:
 
 ```text
-/Users/Shared/EDP USB Vault Acceptance/current-session
+/Users/Shared/EDP Drive Acceptance/current-session
 ```
 
 The harness validates the pointer format and refuses symlinks before privileged stages consume it.

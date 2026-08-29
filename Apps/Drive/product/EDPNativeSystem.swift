@@ -323,7 +323,7 @@ private func daOperationCallback(
 
 final class EDPDiskArbitrationController: @unchecked Sendable {
     private let session: DASession
-    private let queue = DispatchQueue(label: "com.edp.usbvault.disk-arbitration")
+    private let queue = DispatchQueue(label: "com.edp.drive.disk-arbitration")
     private let stateLock = NSLock()
     private var suppressedUSBRegistryEntryIDs = Set<UInt64>()
 
@@ -525,7 +525,7 @@ private func diskEventCallback(_ disk: DADisk, _ context: UnsafeMutableRawPointe
 
 final class EDPDiskEventMonitor: @unchecked Sendable {
     private let session: DASession
-    private let queue = DispatchQueue(label: "com.edp.usbvault.disk-events")
+    private let queue = DispatchQueue(label: "com.edp.drive.disk-events")
     private var reconciliationTimer: DispatchSourceTimer?
     private var eventGeneration: UInt64 = 0
     private var onChange: (@Sendable () -> Void)?

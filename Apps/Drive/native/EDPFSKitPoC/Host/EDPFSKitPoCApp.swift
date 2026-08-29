@@ -2,7 +2,7 @@ import FSKit
 import ServiceManagement
 import SwiftUI
 
-private let edpFSKitBundleID = "com.edp.usbvault.fskit-poc.extension"
+private let edpFSKitBundleID = "com.edp.drive.fskit-poc.extension"
 
 @main
 struct EDPFSKitPoCApp: App {
@@ -47,7 +47,7 @@ private struct FSKitSetupView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("EDP USB Vault")
+            Text("EDP Drive")
                 .font(.title2.weight(.semibold))
             Text("Native FSKit")
                 .font(.subheadline)
@@ -74,7 +74,7 @@ private struct FSKitSetupView: View {
             statusBlock(
                 systemImage: "externaldrive.badge.questionmark",
                 title: "File system extension needs approval",
-                detail: "The native FSKit extension is installed with EDP USB Vault, but macOS has not exposed it to FSKit yet. Enable it once in System Settings → General → Login Items & Extensions → File System Extensions."
+                detail: "The native FSKit extension is installed with EDP Drive, but macOS has not exposed it to FSKit yet. Enable it once in System Settings → General → Login Items & Extensions → File System Extensions."
             )
 
         case let .disabled(url):
@@ -88,7 +88,7 @@ private struct FSKitSetupView: View {
             statusBlock(
                 systemImage: "checkmark.circle.fill",
                 title: "Native FSKit is enabled",
-                detail: "EDP USB Vault can now receive native FSKit resources without macFUSE.\n\n\(url)"
+                detail: "EDP Drive can now receive native FSKit resources without macFUSE.\n\n\(url)"
             )
 
         case let .failed(message):

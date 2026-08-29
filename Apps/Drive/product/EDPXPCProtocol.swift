@@ -1,6 +1,6 @@
 import Foundation
 
-let edpVaultMachServiceName = "com.edp.usbvault.xpc"
+let edpVaultMachServiceName = "com.edp.drive.service"
 
 enum EDPPartitionKind: UInt32, Codable, CaseIterable, Sendable {
     case boot = 1

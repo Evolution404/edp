@@ -10,7 +10,7 @@ struct EDPCredentialRecord: Codable, Hashable, Sendable {
 }
 
 struct EDPCredentialIndex: Codable, Sendable {
-    var schemaVersion = 4
+    var schemaVersion = 5
     var records = [EDPCredentialRecord]()
 }
 
@@ -33,20 +33,24 @@ private struct LegacyCredentialFile: Codable {
 }
 
 final class EDPCredentialStore {
-    static let serviceName = "com.edp.usbvault.partition-password.v4"
-    static let deviceServiceName = "com.edp.usbvault.device-password.v3"
+    static let serviceName = "com.edp.drive.partition-password.v1"
+    static let legacyPartitionServiceName = "com.edp.usbvault.partition-password.v4"
+    static let legacyDeviceServiceName = "com.edp.usbvault.device-password.v3"
     static let legacyServiceName = "com.edp.usbvault.device-password"
 
     private let indexPath: String
     private let keychain: SecKeychain
+    private let restrictToRoot: Bool
 
     init(
         indexPath: String,
         keychainPath: String = "/Library/Keychains/System.keychain",
+        restrictToRoot: Bool = true,
         legacyCredentialPath: String? = nil,
         legacyMasterKeyPath: String? = nil
     ) throws {
         self.indexPath = indexPath
+        self.restrictToRoot = restrictToRoot
         let directory = URL(fileURLWithPath: indexPath).deletingLastPathComponent().path
         try FileManager.default.createDirectory(
             atPath: directory,
@@ -75,7 +79,7 @@ final class EDPCredentialStore {
             )
         }
 
-        try migrateDeviceCredentialsToPartitions()
+        try migrateLegacyKeychainNamespace()
         try pruneRecordsWithoutCurrentCredentials()
     }
 
@@ -176,7 +180,14 @@ final class EDPCredentialStore {
                 throw EDPCredentialStoreError("Keychain delete failed: status=\(status)")
             }
         }
-        _ = SecItemDelete(deviceSearchQuery(deviceID: deviceID) as CFDictionary)
+        try deleteItem(
+            service: EDPCredentialStore.legacyDeviceServiceName,
+            account: deviceID
+        )
+        try deleteItem(
+            service: EDPCredentialStore.legacyServiceName,
+            account: deviceID
+        )
         var updated = index
         updated.records.removeAll { $0.deviceID == deviceID }
         try save(updated)
@@ -202,27 +213,50 @@ final class EDPCredentialStore {
         "\(deviceID):\(partitionType)"
     }
 
-    private func itemIdentity(deviceID: String, partitionType: UInt32) -> [CFString: Any] {
+    private func itemIdentity(
+        service: String = EDPCredentialStore.serviceName,
+        account: String
+    ) -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: EDPCredentialStore.serviceName,
-            kSecAttrAccount: account(deviceID: deviceID, partitionType: partitionType),
+            kSecAttrService: service,
+            kSecAttrAccount: account,
         ]
     }
 
-    private func searchQuery(deviceID: String, partitionType: UInt32) -> [CFString: Any] {
-        var query = itemIdentity(deviceID: deviceID, partitionType: partitionType)
+    private func searchQuery(
+        service: String = EDPCredentialStore.serviceName,
+        account: String
+    ) -> [CFString: Any] {
+        var query = itemIdentity(service: service, account: account)
         query[kSecMatchSearchList] = [keychain]
         return query
     }
 
-    private func deviceSearchQuery(deviceID: String) -> [CFString: Any] {
-        [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: EDPCredentialStore.deviceServiceName,
-            kSecAttrAccount: deviceID,
-            kSecMatchSearchList: [keychain],
-        ]
+    private func searchQuery(deviceID: String, partitionType: UInt32) -> [CFString: Any] {
+        searchQuery(account: account(deviceID: deviceID, partitionType: partitionType))
+    }
+
+    private func passwordIfPresent(service: String, account: String) throws -> [UInt8]? {
+        var query = searchQuery(service: service, account: account)
+        query[kSecReturnData] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else {
+            throw EDPCredentialStoreError("Keychain read failed: status=\(status)")
+        }
+        return [UInt8](data)
+    }
+
+    private func deleteItem(service: String, account: String) throws {
+        let status = SecItemDelete(
+            searchQuery(service: service, account: account) as CFDictionary
+        )
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw EDPCredentialStoreError("Keychain delete failed: status=\(status)")
+        }
     }
 
     private func upsertPassword(
@@ -232,23 +266,24 @@ final class EDPCredentialStore {
     ) throws {
         let query = searchQuery(deviceID: deviceID, partitionType: partitionType)
         let secret = Data(password)
-        let access = try rootOnlyAccess()
+        let access = try restrictToRoot ? rootOnlyAccess() : nil
+        var updates: [CFString: Any] = [kSecValueData: secret]
+        if let access { updates[kSecAttrAccess] = access }
         let updateStatus = SecItemUpdate(
             query as CFDictionary,
-            [
-                kSecValueData: secret,
-                kSecAttrAccess: access,
-            ] as CFDictionary
+            updates as CFDictionary
         )
         if updateStatus == errSecSuccess { return }
         guard updateStatus == errSecItemNotFound else {
             throw EDPCredentialStoreError("Keychain update failed: status=\(updateStatus)")
         }
 
-        var attributes = itemIdentity(deviceID: deviceID, partitionType: partitionType)
+        var attributes = itemIdentity(
+            account: account(deviceID: deviceID, partitionType: partitionType)
+        )
         attributes[kSecUseKeychain] = keychain
         attributes[kSecValueData] = secret
-        attributes[kSecAttrAccess] = access
+        if let access { attributes[kSecAttrAccess] = access }
         let addStatus = SecItemAdd(attributes as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
             throw EDPCredentialStoreError("Keychain add failed: status=\(addStatus)")
@@ -284,37 +319,85 @@ final class EDPCredentialStore {
                 updatedAt: record.updatedAt
             )
         }
-        if index.records != original || index.schemaVersion != 4 {
-            index.schemaVersion = 4
+        if index.records != original || index.schemaVersion != 5 {
+            index.schemaVersion = 5
             try save(index)
         }
     }
 
-    private func migrateDeviceCredentialsToPartitions() throws {
+    private func migrateLegacyKeychainNamespace() throws {
         guard FileManager.default.fileExists(atPath: indexPath) else { return }
         var index = try load()
-        guard index.schemaVersion < 4 else { return }
         for record in index.records {
-            var legacyQuery = deviceSearchQuery(deviceID: record.deviceID)
-            legacyQuery[kSecReturnData] = true
-            legacyQuery[kSecMatchLimit] = kSecMatchLimitOne
-            var result: CFTypeRef?
-            guard SecItemCopyMatching(legacyQuery as CFDictionary, &result) == errSecSuccess,
-                  let secret = result as? Data else {
-                continue
+            let partitionTypes = record.partitionTypes.filter {
+                [UInt32(2), 4].contains($0)
             }
-            var password = [UInt8](secret)
-            defer { credentialSecureZero(&password) }
-            for partitionType in record.partitionTypes where [UInt32(2), 4].contains(partitionType) {
+
+            // Migrate the two historical device-wide services oldest to newest.
+            // Each source is verified across every indexed partition before the
+            // source item is deleted.  The newer partition service is applied
+            // afterward and may intentionally override these values.
+            for legacyService in [
+                EDPCredentialStore.legacyServiceName,
+                EDPCredentialStore.legacyDeviceServiceName,
+            ] {
+                guard var secret = try passwordIfPresent(
+                    service: legacyService,
+                    account: record.deviceID
+                ) else { continue }
+                defer { credentialSecureZero(&secret) }
+                for partitionType in partitionTypes {
+                    try upsertPassword(
+                        deviceID: record.deviceID,
+                        partitionType: partitionType,
+                        password: secret
+                    )
+                    var verified = try password(
+                        deviceID: record.deviceID,
+                        partitionType: partitionType
+                    )
+                    defer { credentialSecureZero(&verified) }
+                    guard verified == secret else {
+                        throw EDPCredentialStoreError(
+                            "Keychain migration verification failed for \(record.deviceID) partition \(partitionType)"
+                        )
+                    }
+                }
+                try deleteItem(service: legacyService, account: record.deviceID)
+            }
+
+            for partitionType in partitionTypes {
+                let partitionAccount = account(
+                    deviceID: record.deviceID,
+                    partitionType: partitionType
+                )
+                guard var secret = try passwordIfPresent(
+                    service: EDPCredentialStore.legacyPartitionServiceName,
+                    account: partitionAccount
+                ) else { continue }
+                defer { credentialSecureZero(&secret) }
                 try upsertPassword(
                     deviceID: record.deviceID,
                     partitionType: partitionType,
-                    password: password
+                    password: secret
+                )
+                var verified = try password(
+                    deviceID: record.deviceID,
+                    partitionType: partitionType
+                )
+                defer { credentialSecureZero(&verified) }
+                guard verified == secret else {
+                    throw EDPCredentialStoreError(
+                        "Keychain migration verification failed for \(record.deviceID) partition \(partitionType)"
+                    )
+                }
+                try deleteItem(
+                    service: EDPCredentialStore.legacyPartitionServiceName,
+                    account: partitionAccount
                 )
             }
-            _ = SecItemDelete(deviceSearchQuery(deviceID: record.deviceID) as CFDictionary)
         }
-        index.schemaVersion = 4
+        index.schemaVersion = 5
         try save(index)
     }
 
@@ -361,7 +444,7 @@ final class EDPCredentialStore {
                 updatedAt: record.updatedAt
             ))
         }
-        migrated.schemaVersion = 4
+        migrated.schemaVersion = 5
         migrated.records.sort { $0.deviceID < $1.deviceID }
         try save(migrated)
         try FileManager.default.removeItem(atPath: credentialPath)

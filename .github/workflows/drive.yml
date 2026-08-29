@@ -28,9 +28,10 @@ jobs:
           set -euo pipefail
           grep -Fq '<string>EDP Drive</string>' Apps/Drive/product/App/Info.plist
           ! grep -Fq 'EDP USB Vault Raw Access.app' Apps/Drive/installer/build-native-installer.sh
-          grep -Fq 'com.edp.usbvault.app' Apps/Drive/product/App/Info.plist
+          grep -Fq 'com.edp.drive' Apps/Drive/product/App/Info.plist
           grep -Fq '/Applications/EDP Drive.app/Contents/MacOS/EDP Drive' Apps/Drive/product/EDPXPCSecurity.swift
-          grep -Fq '/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service' Apps/Drive/product/App/com.edp.usbvault.mountd.legacy.plist
+          grep -Fq 'com.edp.drive.service' Apps/Drive/product/App/com.edp.drive.service.plist
+          grep -Fq '/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service' Apps/Drive/installer/com.edp.drive.service.plist
           ! test -e Apps/Drive/product/RawAccessHelper/Info.plist
           ! grep -Fq 'EDP_CORE_EXPECTED_REV' Apps/Drive/scripts/prepare-shared-edp-core.sh
           grep -Fq 'Packages/EDPCore' Apps/Drive/scripts/prepare-shared-edp-core.sh
@@ -54,7 +55,8 @@ jobs:
             native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
             native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
           )
-          xcrun swiftc -O -framework CryptoKit -framework Security \
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            -framework CryptoKit -framework Security \
             "${EDP_CORE_SWIFTC_FLAGS[@]}" \
             "${CORE_SOURCES[@]}" \
             native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
@@ -94,12 +96,24 @@ jobs:
             product/EDPXPCSecurity.swift
             product/EDPVaultRuntime.swift
           )
-          xcrun swiftc -O -framework CryptoKit -framework Security \
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            -Xfrontend -disable-availability-checking \
+            -framework CryptoKit -framework Security \
             "${EDP_CORE_SWIFTC_FLAGS[@]}" \
             "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
-            -o "${RUNNER_TEMP}/edp-vaultctl"
-          xcrun swiftc -O \
+            -o "${RUNNER_TEMP}/edp-drive-service"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
             -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
             product/EDPXPCProtocol.swift product/App/EDPUSBVaultApp.swift \
             -o "${RUNNER_TEMP}/edp-drive-app"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            -Xfrontend -disable-availability-checking \
+            -framework CryptoKit -framework Security \
+            product/EDPCredentialStore.swift \
+            native/EDPFSKitPoC/Tools/ValidateCredentialStore.swift \
+            -o "${RUNNER_TEMP}/validate-edp-credential-store"
+          "${RUNNER_TEMP}/validate-edp-credential-store" \
+            | tee "${RUNNER_TEMP}/credential-store.txt"
+          grep -Fq 'RESULT=KEYCHAIN_NAMESPACE_MIGRATION_ATOMIC_OK' \
+            "${RUNNER_TEMP}/credential-store.txt"
           echo 'RESULT=EDP_DRIVE_NATIVE_BUILD_OK'

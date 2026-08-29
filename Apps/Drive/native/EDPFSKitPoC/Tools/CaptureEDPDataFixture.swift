@@ -335,7 +335,7 @@ private enum CaptureEDPDataFixture {
         app.setActivationPolicy(.accessory)
 
         let alert = NSAlert()
-        alert.messageText = "EDP USB Vault"
+        alert.messageText = "EDP Drive"
         alert.informativeText = "请输入 EDP U盘密码。密码只在本机内存中用于本次只读解锁。"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "解锁")

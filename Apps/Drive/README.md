@@ -8,6 +8,16 @@
 不依赖 Tauri 或 WebView。应用设置为 `LSUIElement`，常驻菜单栏且不显示
 Dock 图标；菜单栏可以打开完整的“设备 / 活动 / 设置”主界面。
 
+正式身份和固定路径为：
+
+```text
+/Applications/EDP Drive.app                         com.edp.drive
+Contents/Library/LaunchServices/edp-drive-service  com.edp.drive.service
+LaunchDaemon / Mach service                        com.edp.drive.service
+/Library/Application Support/EDP Drive
+/var/db/com.edp.drive
+```
+
 每个已识别设备按三个分区独立管理：
 
 - type 1 启动区：普通分区，无密码，默认自动挂载；

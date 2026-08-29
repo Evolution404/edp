@@ -1,6 +1,6 @@
 name: EDPFSKitPoC
 options:
-  bundleIdPrefix: com.edp.usbvault
+  bundleIdPrefix: com.edp.drive
   deploymentTarget:
     macOS: "26.0"
 settings:
@@ -22,7 +22,7 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc
+        PRODUCT_BUNDLE_IDENTIFIER: com.edp.drive.fskit-poc
         PRODUCT_NAME: EDPFSKitPoC
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Host/Info.plist
@@ -38,7 +38,7 @@ targets:
           - EDPFSKitExtension.entitlements
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.edp.usbvault.fskit-poc.extension
+        PRODUCT_BUNDLE_IDENTIFIER: com.edp.drive.fskit-poc.extension
         PRODUCT_NAME: EDPFSKitExtension
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Extension/Info.plist

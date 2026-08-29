@@ -19,20 +19,19 @@ EXPANDED="${VERIFY_ROOT}/expanded"
 for identifier in \
   io.macfuse.installer.components.core \
   io.macfuse.installer.components.preferencepane \
-  com.edp.usbvault.runtime; do
+  com.edp.drive.runtime; do
   /usr/bin/grep -F "id=\"${identifier}\"" "${EXPANDED}/Distribution" >/dev/null
 done
 
-PAYLOAD="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Payload"
-ROOT="${PAYLOAD}/Library/Application Support/EDP USB Vault"
+PAYLOAD="${EXPANDED}/ZZ-EDP-Drive.pkg/Payload"
+ROOT="${PAYLOAD}/Library/Application Support/EDP Drive"
 APP="${PAYLOAD}/Applications/EDP Drive.app"
 SERVICE="${APP}/Contents/Library/LaunchServices/edp-drive-service"
-PACKAGE_INFO="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/PackageInfo"
-PREINSTALL="${EXPANDED}/ZZ-EDP-USB-Vault.pkg/Scripts/preinstall"
-DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
-LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+PACKAGE_INFO="${EXPANDED}/ZZ-EDP-Drive.pkg/PackageInfo"
+PREINSTALL="${EXPANDED}/ZZ-EDP-Drive.pkg/Scripts/preinstall"
+DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.drive.service.plist"
+LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.drive.service.plist"
 for path in \
-  "bin/edp-vaultctl" \
   "bin/edp-console-exec" \
   "bin/edp-mfmount-local-readwrite" \
   "bin/edp-raw-metadata" \
@@ -58,11 +57,11 @@ done
 
 [[ -x "${APP}/Contents/MacOS/EDP Drive" ]]
 /usr/bin/codesign --verify --strict "${APP}"
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.usbvault.app" ]]
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP}/Contents/Info.plist")" == "com.edp.drive" ]]
 [[ -x "${SERVICE}" ]]
 /usr/bin/codesign --verify --strict "${SERVICE}"
 /usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \
-  | /usr/bin/grep -F 'Identifier=com.edp.usbvault.mountd.v2' >/dev/null
+  | /usr/bin/grep -F 'Identifier=com.edp.drive.service' >/dev/null
 APP_COUNT="$(/usr/bin/find "${PAYLOAD}/Applications" -maxdepth 1 -type d -name '*.app' | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
 [[ "${APP_COUNT}" == "1" ]]
 [[ ! -e "${PAYLOAD}/Applications/EDP USB Vault.app" ]]
@@ -71,7 +70,7 @@ APP_COUNT="$(/usr/bin/find "${PAYLOAD}/Applications" -maxdepth 1 -type d -name '
 [[ ! -e "${PAYLOAD}/Applications/EDP Drive Raw Access.app" ]]
 /usr/bin/grep -F '<relocate/>' "${PACKAGE_INFO}" >/dev/null
 if /usr/bin/grep -A 4 '<relocate>' "${PACKAGE_INFO}" \
-  | /usr/bin/grep -F 'com.edp.usbvault.app' >/dev/null; then
+  | /usr/bin/grep -F 'com.edp.drive' >/dev/null; then
   echo "EDP Drive must not be relocatable; FDA requires its fixed /Applications path" >&2
   exit 5
 fi
@@ -82,19 +81,21 @@ SERVICE_MODE="$(/usr/libexec/PlistBuddy -c 'Print :EDPServiceMode' "${APP}/Conte
 [[ -x "${SERVICE}" ]]
 case "${SERVICE_MODE}" in
   smappservice)
-    [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${DAEMON_PLIST}")" == "true" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :Label' "${DAEMON_PLIST}")" == "com.edp.drive.service" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.drive.service' "${DAEMON_PLIST}")" == "true" ]]
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :BundleProgram' "${DAEMON_PLIST}")" == "Contents/Library/LaunchServices/edp-drive-service" ]]
     [[ ! -e "${LEGACY_DAEMON_PLIST}" ]]
     /usr/bin/codesign -dv --verbose=4 \
       "${SERVICE}" 2>&1 \
-      | /usr/bin/grep -F 'Identifier=com.edp.usbvault.mountd.v2' >/dev/null
+      | /usr/bin/grep -F 'Identifier=com.edp.drive.service' >/dev/null
     echo "RESULT=SMAPPSERVICE_DAEMON_EMBEDDED"
     ;;
   legacy)
-    [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.usbvault.xpc' "${LEGACY_DAEMON_PLIST}")" == "true" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :Label' "${LEGACY_DAEMON_PLIST}")" == "com.edp.drive.service" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :MachServices:com.edp.drive.service' "${LEGACY_DAEMON_PLIST}")" == "true" ]]
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "${LEGACY_DAEMON_PLIST}")" == "/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service" ]]
-    [[ "$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:EDP_RUNTIME_BIN_ROOT' "${LEGACY_DAEMON_PLIST}")" == "/Library/Application Support/EDP USB Vault/bin" ]]
-    [[ ! -e "${DAEMON_PLIST}" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:EDP_RUNTIME_BIN_ROOT' "${LEGACY_DAEMON_PLIST}")" == "/Library/Application Support/EDP Drive/bin" ]]
+    [[ -e "${DAEMON_PLIST}" ]]
     echo "RESULT=LEGACY_FDA_DAEMON_PACKAGED"
     echo "RESULT=LEGACY_XPC_DAEMON_PACKAGED"
     ;;
@@ -153,7 +154,7 @@ fi
 /usr/bin/nm -u "${SERVICE}" \
   | /usr/bin/grep -F '_posix_spawn' >/dev/null
 /usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \
-  | /usr/bin/grep -F 'Identifier=com.edp.usbvault.mountd.v2' >/dev/null
+  | /usr/bin/grep -F 'Identifier=com.edp.drive.service' >/dev/null
 for BROKER in \
   "${ROOT}/bin/edp-console-exec"; do
   /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_TARGET_REFUSED' >/dev/null
@@ -174,16 +175,17 @@ for BROKER in \
 done
 echo "RESULT=FULL_DISK_ACCESS_RAW_FD3_TRANSPORT_PATH_ENFORCED"
 
-/usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
+/usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F 'NTFS (read-only; Finder erasable)' >/dev/null
-if /usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
+if /usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F -- '--device-auth-readonly' >/dev/null; then
   echo "production daemon unexpectedly references read-only encrypted bridge mode" >&2
   exit 6
 fi
 echo "RESULT=PRODUCTION_APPLE_NTFS_POLICY_ENFORCED"
 
-"${ROOT}/bin/edp-vaultctl" help >/dev/null
+"${SERVICE}" help >/dev/null
+[[ ! -e "${ROOT}/bin/edp-vaultctl" ]]
 [[ ! -e "${ROOT}/bin/edp-readwrite-fuse" ]]
 [[ ! -e "${ROOT}/bin/edp-raw-sparse" ]]
 /usr/bin/grep -F 'edp-readwrite-fuse' "${PREINSTALL}" >/dev/null

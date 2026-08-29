@@ -113,10 +113,13 @@ PRODUCT_SOURCES=(
 )
 
 echo "Building native privileged service..."
-xcrun swiftc -O -framework CryptoKit -framework Security \
+SERVICE_STAGE="${BUILD_ROOT}/edp-drive-service"
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  -Xfrontend -disable-availability-checking \
+  -framework CryptoKit -framework Security \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
-  -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
+  -o "${SERVICE_STAGE}"
 
 echo "Building macFUSE Local transport..."
 MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
@@ -137,30 +140,29 @@ MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
 for item in "${RUNTIME_STAGE}/bin/"*; do
   sign_app_code "${item}"
 done
+sign_app_code --identifier com.edp.drive.service "${SERVICE_STAGE}"
 
 echo "Building native menu-bar app..."
 cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION//./}" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
-xcrun swiftc -O \
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -framework AppKit -framework FSKit -framework SwiftUI \
   -framework ServiceManagement \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
   -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
-cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
+cp "${SERVICE_STAGE}" \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
 
-if [[ "${SERVICE_MODE}" == "smappservice" ]]; then
-  cp "${REPO_ROOT}/product/App/com.edp.usbvault.mountd.v2.plist" \
-    "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
-fi
+cp "${REPO_ROOT}/product/App/com.edp.drive.service.plist" \
+  "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.drive.service.plist"
 sign_app_code \
-  --identifier com.edp.usbvault.mountd.v2 \
+  --identifier com.edp.drive.service \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"
 sign_app_code \
-  --identifier com.edp.usbvault.app "${APP_STAGE}"
+  --identifier com.edp.drive "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
 if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   SIGNING_INFO="$(/usr/bin/codesign -dv --verbose=4 "${APP_STAGE}" 2>&1)"
@@ -169,7 +171,7 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
 
   APP_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}" 2>&1)"
   DAEMON_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service" 2>&1)"
-  /usr/bin/grep -Fq 'identifier "com.edp.usbvault.app"' <<<"${APP_REQUIREMENT}"
+  /usr/bin/grep -Fq 'identifier "com.edp.drive"' <<<"${APP_REQUIREMENT}"
   APP_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${APP_REQUIREMENT}")"
   DAEMON_CERT_ROOT="$(/usr/bin/sed -n 's/.*certificate root = H"\([0-9A-Fa-f]*\)".*/\1/p' <<<"${DAEMON_REQUIREMENT}")"
   [[ -n "${APP_CERT_ROOT}" && "${APP_CERT_ROOT}" == "${DAEMON_CERT_ROOT}" ]] || {
@@ -179,17 +181,14 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
 fi
 
 PAYLOAD="${BUILD_ROOT}/payload"
-PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP USB Vault"
-mkdir -p "${PRODUCT_DIR}/bin" "${PAYLOAD}/Applications" "${PAYLOAD}/usr/local/bin"
+PRODUCT_DIR="${PAYLOAD}/Library/Application Support/EDP Drive"
+mkdir -p "${PRODUCT_DIR}/bin" "${PAYLOAD}/Applications"
 cp -R "${RUNTIME_STAGE}/bin/." "${PRODUCT_DIR}/bin/"
 cp -R "${APP_STAGE}" "${PAYLOAD}/Applications/EDP Drive.app"
-ln -s "/Library/Application Support/EDP USB Vault/bin/edp-vaultctl" \
-  "${PAYLOAD}/usr/local/bin/edp-vaultctl"
-
 if [[ "${SERVICE_MODE}" == "legacy" ]]; then
   mkdir -p "${PAYLOAD}/Library/LaunchDaemons"
-  cp "${REPO_ROOT}/product/App/com.edp.usbvault.mountd.legacy.plist" \
-    "${PAYLOAD}/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+  cp "${REPO_ROOT}/installer/com.edp.drive.service.plist" \
+    "${PAYLOAD}/Library/LaunchDaemons/com.edp.drive.service.plist"
 fi
 
 SCRIPTS="${BUILD_ROOT}/scripts"
@@ -198,7 +197,7 @@ cp "${REPO_ROOT}/installer/scripts/native-preinstall" "${SCRIPTS}/preinstall"
 cp "${REPO_ROOT}/installer/scripts/native-postinstall" "${SCRIPTS}/postinstall"
 chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
 
-COMPONENT="${BUILD_ROOT}/EDP-USB-Vault-Native.pkg"
+COMPONENT="${BUILD_ROOT}/EDP-Drive-Native.pkg"
 COMPONENT_PLIST="${BUILD_ROOT}/native-component.plist"
 /usr/bin/pkgbuild --analyze --root "${PAYLOAD}" "${COMPONENT_PLIST}"
 # The one installed App owns both the foreground executable and the FDA service,
@@ -209,14 +208,14 @@ COMPONENT_PLIST="${BUILD_ROOT}/native-component.plist"
 /usr/libexec/PlistBuddy -c "Set :0:BundleOverwriteAction upgrade" "${COMPONENT_PLIST}"
 /usr/bin/pkgbuild \
   --root "${PAYLOAD}" \
-  --identifier com.edp.usbvault.native \
+  --identifier com.edp.drive.native \
   --version "${VERSION}" \
   --install-location / \
   --component-plist "${COMPONENT_PLIST}" \
   --scripts "${SCRIPTS}" \
   "${COMPONENT}"
 
-OUTPUT="${OUTPUT_DIR}/EDP-USB-Vault-${VERSION}-Native.pkg"
+OUTPUT="${OUTPUT_DIR}/EDP-Drive-${VERSION}-Native.pkg"
 if [[ -n "${PRODUCT_SIGN_IDENTITY:-}" ]]; then
   /usr/bin/productbuild --package "${COMPONENT}" --sign "${PRODUCT_SIGN_IDENTITY}" "${OUTPUT}"
 else

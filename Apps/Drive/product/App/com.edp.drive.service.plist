@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.edp.drive.service</string>
+  <key>BundleProgram</key><string>Contents/Library/LaunchServices/edp-drive-service</string>
+  <key>ProgramArguments</key>
+  <array><string>edp-drive-service</string><string>daemon</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>EDP_RUNTIME_BIN_ROOT</key><string>/Library/Application Support/EDP Drive/bin</string></dict>
+  <key>MachServices</key><dict><key>com.edp.drive.service</key><true/></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>/var/log/edp-drive.log</string>
+  <key>StandardErrorPath</key><string>/var/log/edp-drive.log</string>
+</dict>
+</plist>

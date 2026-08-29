@@ -41,14 +41,15 @@ enum ValidateCredentialStore {
 
         let store = try EDPCredentialStore(
             indexPath: indexURL.path,
-            keychainPath: keychainURL.path
+            keychainPath: keychainURL.path,
+            restrictToRoot: false
         )
         let deviceID = "21c4-0cd1-test-device"
         let secret = Array("correct horse battery staple".utf8)
         try store.put(deviceID: deviceID, password: secret, partitionTypes: [4, 2])
 
         let index = try store.load()
-        guard index.schemaVersion == 4,
+        guard index.schemaVersion == 5,
               index.records.count == 1,
               index.records[0].deviceID == deviceID,
               index.records[0].partitionTypes == [2, 4] else {
@@ -86,6 +87,82 @@ enum ValidateCredentialStore {
             }
         }
         print("RESULT=KEYCHAIN_REVOKE_OK")
+
+        let legacyDeviceID = "21c4-0cd1-legacy-device"
+        let legacyDeviceWideID = "21c4-0cd1-legacy-device-wide"
+        let legacySecret = Data("legacy namespace secret".utf8)
+        let legacyIndex = """
+        {"schemaVersion":4,"records":[{"deviceID":"\(legacyDeviceID)","partitionTypes":[2,4],"updatedAt":"2026-08-29T00:00:00Z"},{"deviceID":"\(legacyDeviceWideID)","partitionTypes":[2,4],"updatedAt":"2026-08-29T00:00:00Z"}]}
+        """
+        try Data(legacyIndex.utf8).write(to: indexURL, options: .atomic)
+        for partitionType in [UInt32(2), 4] {
+            let status = SecItemAdd([
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: EDPCredentialStore.legacyPartitionServiceName,
+                kSecAttrAccount: "\(legacyDeviceID):\(partitionType)",
+                kSecUseKeychain: keychain,
+                kSecValueData: legacySecret,
+            ] as CFDictionary, nil)
+            guard status == errSecSuccess else {
+                throw EDPCredentialStoreError("legacy fixture add failed: status=\(status)")
+            }
+        }
+        let legacyDeviceStatus = SecItemAdd([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: EDPCredentialStore.legacyDeviceServiceName,
+            kSecAttrAccount: legacyDeviceWideID,
+            kSecUseKeychain: keychain,
+            kSecValueData: legacySecret,
+        ] as CFDictionary, nil)
+        guard legacyDeviceStatus == errSecSuccess else {
+            throw EDPCredentialStoreError(
+                "legacy device fixture add failed: status=\(legacyDeviceStatus)"
+            )
+        }
+
+        let migratedStore = try EDPCredentialStore(
+            indexPath: indexURL.path,
+            keychainPath: keychainURL.path,
+            restrictToRoot: false
+        )
+        for partitionType in [UInt32(2), 4] {
+            guard try migratedStore.password(
+                deviceID: legacyDeviceID,
+                partitionType: partitionType
+            ) == [UInt8](legacySecret) else {
+                throw EDPCredentialStoreError("migrated credential mismatch")
+            }
+            let legacyStatus = SecItemCopyMatching([
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: EDPCredentialStore.legacyPartitionServiceName,
+                kSecAttrAccount: "\(legacyDeviceID):\(partitionType)",
+                kSecMatchSearchList: [keychain],
+            ] as CFDictionary, nil)
+            guard legacyStatus == errSecItemNotFound else {
+                throw EDPCredentialStoreError("verified legacy credential was not deleted")
+            }
+        }
+        for partitionType in [UInt32(2), 4] {
+            guard try migratedStore.password(
+                deviceID: legacyDeviceWideID,
+                partitionType: partitionType
+            ) == [UInt8](legacySecret) else {
+                throw EDPCredentialStoreError("device-wide migrated credential mismatch")
+            }
+        }
+        let legacyDeviceRemaining = SecItemCopyMatching([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: EDPCredentialStore.legacyDeviceServiceName,
+            kSecAttrAccount: legacyDeviceWideID,
+            kSecMatchSearchList: [keychain],
+        ] as CFDictionary, nil)
+        guard legacyDeviceRemaining == errSecItemNotFound else {
+            throw EDPCredentialStoreError("verified device-wide credential was not deleted")
+        }
+        guard try migratedStore.load().schemaVersion == 5 else {
+            throw EDPCredentialStoreError("credential namespace migration schema mismatch")
+        }
+        print("RESULT=KEYCHAIN_NAMESPACE_MIGRATION_ATOMIC_OK")
         print("RESULT=KEYCHAIN_CREDENTIAL_STORE_E2E_OK")
     }
 }

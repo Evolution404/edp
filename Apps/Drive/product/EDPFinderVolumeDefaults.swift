@@ -37,7 +37,7 @@ enum EDPFinderVolumeDefaults {
     static func templateData(windowSize: CGSize) throws -> Data {
         guard let compressed = Data(base64Encoded: rawDeflateBase64) else {
             throw NSError(
-                domain: "com.edp.usbvault.finder-defaults",
+                domain: "com.edp.drive.finder-defaults",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Finder default template base64 is invalid"]
             )
@@ -47,7 +47,7 @@ enum EDPFinderVolumeDefaults {
               decoded.count >= 8,
               String(decoding: decoded[4..<8], as: UTF8.self) == "Bud1" else {
             throw NSError(
-                domain: "com.edp.usbvault.finder-defaults",
+                domain: "com.edp.drive.finder-defaults",
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "Finder default template failed integrity check"]
             )
@@ -60,7 +60,7 @@ enum EDPFinderVolumeDefaults {
         guard placeholder.count == replacement.utf8.count,
               let range = decoded.range(of: placeholder) else {
             throw NSError(
-                domain: "com.edp.usbvault.finder-defaults",
+                domain: "com.edp.drive.finder-defaults",
                 code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "Finder default window bounds placeholder is missing"]
             )

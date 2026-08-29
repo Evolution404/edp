@@ -3,7 +3,7 @@ import FSKit
 import os
 
 final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
-    private let logger = Logger(subsystem: "com.edp.usbvault.fskit-poc.extension", category: "filesystem")
+    private let logger = Logger(subsystem: "com.edp.drive.fskit-poc.extension", category: "filesystem")
 
     private static let lba4Offset = EDPMetadataProbe.lba4ByteOffset
     private static let lba7Offset = EDPMetadataProbe.lba7ByteOffset
@@ -56,7 +56,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
             // when LBA11/device identity is wired through the live FSKit path.
             let containerID = FSContainerIdentifier()
             logger.notice("PROBE_MATCH=recognized")
-            reply(.recognized(name: "EDP USB Vault", containerID: containerID), nil)
+            reply(.recognized(name: "EDP Drive", containerID: containerID), nil)
         } catch {
             logger.error("PROBE_NATIVE_OR_READ_ERROR=\(String(describing: error), privacy: .public)")
             reply(nil, error)

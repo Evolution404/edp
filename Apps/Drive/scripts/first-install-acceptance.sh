@@ -18,15 +18,17 @@ OLD_APP="/Applications/EDP USB Vault.app"
 OLD_RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
 APP_BIN="${APP}/Contents/MacOS/EDP Drive"
 SERVICE_BIN="${APP}/Contents/Library/LaunchServices/edp-drive-service"
-PRODUCT_ROOT="/Library/Application Support/EDP USB Vault"
-DATA_ROOT="/var/db/com.edp.usbvault"
-LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
+PRODUCT_ROOT="/Library/Application Support/EDP Drive"
+OLD_PRODUCT_ROOT="/Library/Application Support/EDP USB Vault"
+DATA_ROOT="/var/db/com.edp.drive"
+OLD_DATA_ROOT="/var/db/com.edp.usbvault"
+LEGACY_PLIST="/Library/LaunchDaemons/com.edp.drive.service.plist"
 MACFUSE_ROOT="/Library/Filesystems/macfuse.fs"
 MACFUSE_PREFPANE="/Library/PreferencePanes/macFUSE.prefPane"
-RAW_ACCESS_BUNDLE_ID="com.edp.usbvault.mountd.v2"
+RAW_ACCESS_BUNDLE_ID="com.edp.drive.service"
 MACFUSE_GENERIC_ID="io.macfuse.app.fsmodule.macfuse"
 MACFUSE_LOCAL_ID="io.macfuse.app.fsmodule.macfuse-local"
-REPORT_ROOT="${EDP_ACCEPTANCE_REPORT_ROOT:-/Users/Shared/EDP USB Vault Acceptance}"
+REPORT_ROOT="${EDP_ACCEPTANCE_REPORT_ROOT:-/Users/Shared/EDP Drive Acceptance}"
 SESSION_POINTER="${REPORT_ROOT}/current-session"
 
 fail() {
@@ -222,9 +224,9 @@ assert_user_cleanup_state_clean() {
     "${home}/Library/Containers/io.macfuse.app" \
     "${home}/Library/Containers/io.macfuse.app.fsmodule.macfuse" \
     "${home}/Library/Containers/io.macfuse.app.fsmodule.macfuse-local" \
-    "${home}/Library/Preferences/com.edp.usbvault.app.plist" \
-    "${home}/Library/Caches/com.edp.usbvault.app" \
-    "${home}/Library/Saved Application State/com.edp.usbvault.app.savedState"; do
+    "${home}/Library/Preferences/com.edp.drive.plist" \
+    "${home}/Library/Caches/com.edp.drive" \
+    "${home}/Library/Saved Application State/com.edp.drive.savedState"; do
     [[ ! -e "${path}" ]] || fail "user cleanup still contains ${path}"
   done
 
@@ -261,9 +263,12 @@ user_cleanup() {
 
   local home marker
   home="$(target_home)"
-  /bin/rm -f "${home}/Library/Preferences/com.edp.usbvault.app.plist"
-  /bin/rm -rf "${home}/Library/Caches/com.edp.usbvault.app"
-  /bin/rm -rf "${home}/Library/Saved Application State/com.edp.usbvault.app.savedState"
+  /bin/rm -f "${home}/Library/Preferences/com.edp.drive.plist" \
+    "${home}/Library/Preferences/com.edp.usbvault.app.plist"
+  /bin/rm -rf "${home}/Library/Caches/com.edp.drive" \
+    "${home}/Library/Caches/com.edp.usbvault.app"
+  /bin/rm -rf "${home}/Library/Saved Application State/com.edp.drive.savedState" \
+    "${home}/Library/Saved Application State/com.edp.usbvault.app.savedState"
 
   assert_user_cleanup_state_clean
   marker="$(user_cleanup_marker)"
@@ -280,12 +285,13 @@ forget_scoped_receipts() {
     [[ -n "${receipt}" ]] || continue
     /usr/sbin/pkgutil --forget "${receipt}" >/dev/null 2>&1 || true
   done < <(/usr/sbin/pkgutil --pkgs \
-    | /usr/bin/grep -E '^(com\.edp\.usbvault|io\.macfuse)' || true)
+    | /usr/bin/grep -E '^(com\.edp\.(drive|usbvault)|io\.macfuse)' || true)
 }
 
 remove_edp_system_keychain_credentials() {
   local service
   for service in \
+    com.edp.drive.partition-password.v1 \
     com.edp.usbvault.partition-password.v4 \
     com.edp.usbvault.device-password.v3 \
     com.edp.usbvault.device-password; do
@@ -322,10 +328,13 @@ clean_common() {
   assert_user_keychain_safe
   assert_user_cleanup_prepared
 
-  if [[ -x "${PRODUCT_ROOT}/bin/edp-vaultctl" ]]; then
-    "${PRODUCT_ROOT}/bin/edp-vaultctl" cleanup >/dev/null 2>&1 || true
+  if [[ -x "${SERVICE_BIN}" ]]; then
+    "${SERVICE_BIN}" cleanup >/dev/null 2>&1 || true
+  elif [[ -x "${OLD_PRODUCT_ROOT}/bin/edp-vaultctl" ]]; then
+    "${OLD_PRODUCT_ROOT}/bin/edp-vaultctl" cleanup >/dev/null 2>&1 || true
   fi
 
+  /bin/launchctl bootout system/com.edp.drive.service >/dev/null 2>&1 || true
   /bin/launchctl bootout system/com.edp.usbvault.mountd >/dev/null 2>&1 || true
   /bin/launchctl bootout system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1 || true
   /usr/bin/pkill -f '/Applications/EDP Drive.app/Contents/MacOS/EDP Drive' \
@@ -338,8 +347,12 @@ clean_common() {
     "${OLD_APP}" \
     "${OLD_RAW_ACCESS_APP}" \
     "${PRODUCT_ROOT}" \
-    "${DATA_ROOT}"
-  /bin/rm -f "${LEGACY_PLIST}"
+    "${OLD_PRODUCT_ROOT}" \
+    "${DATA_ROOT}" \
+    "${OLD_DATA_ROOT}"
+  /bin/rm -f "${LEGACY_PLIST}" \
+    /Library/LaunchDaemons/com.edp.usbvault.mountd.plist \
+    /Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist
 
   remove_edp_system_keychain_credentials
   uninstall_macfuse
@@ -375,19 +388,16 @@ verify_clean() {
   assert_user_cleanup_state_clean
 
   local path
-  for path in "${APP}" "${OLD_APP}" "${OLD_RAW_ACCESS_APP}" "${PRODUCT_ROOT}" "${DATA_ROOT}" \
+  for path in "${APP}" "${OLD_APP}" "${OLD_RAW_ACCESS_APP}" "${PRODUCT_ROOT}" "${OLD_PRODUCT_ROOT}" "${DATA_ROOT}" "${OLD_DATA_ROOT}" \
               "${LEGACY_PLIST}" "${MACFUSE_ROOT}" "${MACFUSE_PREFPANE}"; do
     [[ ! -e "${path}" ]] || fail "clean baseline still contains ${path}"
   done
 
-  if /bin/launchctl print system/com.edp.usbvault.mountd >/dev/null 2>&1; then
-    fail "legacy EDP LaunchDaemon is still loaded"
+  if /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
+    fail "EDP Drive LaunchDaemon is still loaded"
   fi
-  if /bin/launchctl print system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1; then
-    fail "v2 EDP LaunchDaemon is still loaded"
-  fi
-  if /usr/sbin/pkgutil --pkgs | /usr/bin/grep -Eq '^(com\.edp\.usbvault|io\.macfuse)'; then
-    /usr/sbin/pkgutil --pkgs | /usr/bin/grep -E '^(com\.edp\.usbvault|io\.macfuse)' >&2 || true
+  if /usr/sbin/pkgutil --pkgs | /usr/bin/grep -Eq '^(com\.edp\.(drive|usbvault)|io\.macfuse)'; then
+    /usr/sbin/pkgutil --pkgs | /usr/bin/grep -E '^(com\.edp\.(drive|usbvault)|io\.macfuse)' >&2 || true
     fail "EDP/macFUSE package receipts remain"
   fi
 
@@ -399,7 +409,7 @@ verify_clean() {
 install_package() {
   require_root
   local pkg="${1:-}"
-  [[ -n "${pkg}" && -f "${pkg}" ]] || fail "usage: sudo $0 install /path/to/EDP-USB-Vault-*.pkg"
+  [[ -n "${pkg}" && -f "${pkg}" ]] || fail "usage: sudo $0 install /path/to/EDP-Drive-*.pkg"
   assert_no_external_physical_disk
   assert_user_keychain_safe
 
@@ -428,8 +438,7 @@ verify_installed() {
   local app_version
   app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP}/Contents/Info.plist")"
 
-  if ! /bin/launchctl print system/com.edp.usbvault.mountd >/dev/null 2>&1 \
-     && ! /bin/launchctl print system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1; then
+  if ! /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
     fail "EDP LaunchDaemon is not loaded"
   fi
 
@@ -629,10 +638,8 @@ restart_app() {
 
 restart_daemon() {
   require_root
-  if /bin/launchctl print system/com.edp.usbvault.mountd >/dev/null 2>&1; then
-    /bin/launchctl kickstart -k system/com.edp.usbvault.mountd
-  elif /bin/launchctl print system/com.edp.usbvault.mountd.v2 >/dev/null 2>&1; then
-    /bin/launchctl kickstart -k system/com.edp.usbvault.mountd.v2
+  if /bin/launchctl print system/com.edp.drive.service >/dev/null 2>&1; then
+    /bin/launchctl kickstart -k system/com.edp.drive.service
   else
     fail "EDP daemon is not loaded"
   fi
@@ -655,7 +662,7 @@ final_check() {
 
 usage() {
   cat <<'EOF'
-EDP USB Vault first-install acceptance
+EDP Drive first-install acceptance
 
 Stages:
   preflight
