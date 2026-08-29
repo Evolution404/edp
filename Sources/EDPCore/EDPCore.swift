@@ -92,8 +92,8 @@ private final class EDPSM4ParallelState: @unchecked Sendable {
 }
 
 public final class EDPSM4: @unchecked Sendable {
-    private static let automaticParallelThreshold = 256 * 1024
-    private static let automaticMaxWorkers = 4
+    private static let fourWorkerThreshold = 64 * 1024
+    private static let sixWorkerThreshold = 128 * 1024
     private let handle: OpaquePointer
 
     public init(key: [UInt8]) throws {
@@ -208,9 +208,14 @@ public final class EDPSM4: @unchecked Sendable {
         case .parallel(let maxWorkers):
             workers = max(1, min(maxWorkers, input.count / 16))
         case .automatic:
-            workers = input.count >= Self.automaticParallelThreshold
-                ? min(Self.automaticMaxWorkers, max(1, ProcessInfo.processInfo.activeProcessorCount))
-                : 1
+            let active = max(1, ProcessInfo.processInfo.activeProcessorCount)
+            if input.count >= Self.sixWorkerThreshold {
+                workers = min(6, active)
+            } else if input.count >= Self.fourWorkerThreshold {
+                workers = min(4, active)
+            } else {
+                workers = 1
+            }
         }
 
         if workers <= 1 {

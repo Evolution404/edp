@@ -54,11 +54,26 @@ private func main() throws {
     print("BACKEND=\(EDPCrypto.sm4BackendName)")
 
     for bench in cases {
-        try runOne(name: "encrypt", size: bench.size, iterations: bench.iterations) { input, output in
+        try runOne(name: "encrypt-auto", size: bench.size, iterations: bench.iterations) { input, output in
             try cipher.encrypt(input: input, output: output)
         }
-        try runOne(name: "decrypt", size: bench.size, iterations: bench.iterations) { input, output in
+        try runOne(name: "decrypt-auto", size: bench.size, iterations: bench.iterations) { input, output in
             try cipher.decrypt(input: input, output: output)
+        }
+    }
+
+    for scaling in [
+        BenchCase(size: 64 * 1024, iterations: 2_000),
+        BenchCase(size: 128 * 1024, iterations: 1_000),
+        BenchCase(size: 256 * 1024, iterations: 500),
+        BenchCase(size: 1024 * 1024, iterations: 200),
+        BenchCase(size: 64 * 1024 * 1024, iterations: 4),
+    ] {
+        for workers in [1, 2, 4, 6, 8] {
+            let policy: EDPSM4ExecutionPolicy = workers == 1 ? .serial : .parallel(maxWorkers: workers)
+            try runOne(name: "decrypt-w\(workers)", size: scaling.size, iterations: scaling.iterations) { input, output in
+                try cipher.decrypt(input: input, output: output, policy: policy)
+            }
         }
     }
 }

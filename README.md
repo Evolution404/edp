@@ -11,7 +11,7 @@ Current v0.1 performance-critical surface:
 - bare reflected EDP CRC32
 - SM4-ECB context with caller-owned/in-place buffers
 - low-latency single-core path for small I/O
-- automatic 4-worker parallel path for buffers >= 256 KiB
+- adaptive parallel path: serial below 64 KiB, up to 4 workers at 64 KiB, up to 6 workers from 128 KiB
 - static `libEDPCore.a` + Swift module for direct `swiftc` consumers
 
 The legacy metadata/A6B0/A7F0/rolling-XOR implementations remain in the two products only as migration references until their golden vectors are moved here and the duplicate implementations are deleted.
@@ -20,9 +20,11 @@ The legacy metadata/A6B0/A7F0/rolling-XOR implementations remain in the two prod
 
 The encrypted filesystem hot path must remain faster than the physical USB I/O path. On the development M1 Pro, release benchmark results for the current C T-table backend are approximately:
 
-- 64 KiB single-core: 437 MiB/s
-- 1 MiB automatic 4-worker: 1.49 GiB/s
-- 64 MiB automatic 4-worker: 1.62 GiB/s
+- 64 KiB automatic 4-worker: about 0.79 GiB/s
+- 128 KiB automatic 6-worker: about 1.10 GiB/s
+- 256 KiB automatic 6-worker: about 1.35 GiB/s
+- 1 MiB automatic 6-worker: about 1.7 GiB/s
+- 64 MiB automatic 6-worker: about 2.0 GiB/s
 
 The Swift API decrypts/encrypts caller-owned buffers in place, so the product hot path does not need `Data -> [UInt8] -> Data` conversion copies.
 
