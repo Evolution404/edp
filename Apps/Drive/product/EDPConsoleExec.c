@@ -34,8 +34,6 @@ static int parse_id(const char *text, unsigned long *value) {
 static int allowed_executable(const char *path) {
     static const char *allowed[] = {
         "/Library/Application Support/EDP USB Vault/bin/edp-mfmount-local-readwrite",
-        "/Library/Application Support/EDP USB Vault/bin/ntfs-3g",
-        "/Library/Application Support/EDP USB Vault/bin/ntfs-3g.probe",
     };
     for (size_t index = 0; index < sizeof(allowed) / sizeof(allowed[0]); ++index) {
         if (strcmp(path, allowed[index]) == 0) return 1;

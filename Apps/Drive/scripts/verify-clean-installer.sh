@@ -38,13 +38,7 @@ for path in \
   "bin/edp-raw-metadata" \
   "bin/libEDPReadWriteBridge.dylib" \
   "bin/diskimages2-attach" \
-  "bin/ntfs-3g" \
-  "bin/ntfs-3g.probe" \
-  "bin/ntfslabel" \
-  "lib/libntfs-3g.90.dylib" \
-  "licenses/macfuse/LICENSE.txt" \
-  "licenses/ntfs-3g/COPYING" \
-  "source/ntfs-3g_ntfsprogs-2026.7.7.tgz"; do
+  "licenses/macfuse/LICENSE.txt"; do
   [[ -e "${ROOT}/${path}" ]] || {
     echo "required payload path missing: ${path}" >&2
     exit 3
@@ -58,7 +52,7 @@ TRANSPORT_BINARIES="$(/usr/bin/find "${ROOT}/bin" -maxdepth 1 -type f -name 'edp
 }
 echo "RESULT=MACFUSE_ONLY_TRANSPORT_PACKAGED"
 
-for item in "${ROOT}/bin/"* "${ROOT}/lib/"*; do
+for item in "${ROOT}/bin/"*; do
   /usr/bin/codesign --verify --strict "${item}"
 done
 
@@ -107,9 +101,11 @@ echo "SERVICE_MODE=${SERVICE_MODE}"
 echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
 
 [[ ! -e "${ROOT}/test-tools" ]]
-[[ ! -e "${ROOT}/bin/mkntfs" ]]
-[[ ! -e "${ROOT}/bin/ntfscp" ]]
-echo "RESULT=PRODUCTION_NTFS_RUNTIME_CONTAINS_NO_FIXTURE_TOOLS"
+[[ ! -e "${ROOT}/bin/ntfs-3g" ]]
+[[ ! -e "${ROOT}/bin/ntfs-3g.probe" ]]
+[[ ! -e "${ROOT}/bin/ntfslabel" ]]
+[[ ! -e "${ROOT}/lib/libntfs-3g.90.dylib" ]]
+echo "RESULT=NTFS3G_RUNTIME_ABSENT"
 
 # The stable Raw Access helper is the only writable raw-device broker. The
 # foreground App never creates AuthorizationExternalForm/sys.openfile rights.
@@ -181,18 +177,7 @@ if /usr/bin/strings "${ROOT}/bin/edp-vaultctl" \
 fi
 echo "RESULT=PRODUCTION_APPLE_NTFS_POLICY_ENFORCED"
 
-/usr/bin/otool -L "${ROOT}/bin/ntfs-3g" \
-  | /usr/bin/grep -F '@loader_path/../lib/libntfs-3g.90.dylib' >/dev/null
-/usr/bin/otool -L "${ROOT}/bin/ntfs-3g" \
-  | /usr/bin/grep -F '/usr/local/lib/libfuse.2.dylib' >/dev/null
-
-printf '%s  %s\n' \
-  d67b769025d32860549d35c2147e45024d172f81c540d750390ce3602c059dab \
-  "${ROOT}/source/ntfs-3g_ntfsprogs-2026.7.7.tgz" \
-  | /usr/bin/shasum -a 256 -c -
-
 "${ROOT}/bin/edp-vaultctl" help >/dev/null
-"${ROOT}/bin/ntfs-3g.probe" --help >/dev/null
 [[ ! -e "${ROOT}/bin/edp-readwrite-fuse" ]]
 [[ ! -e "${ROOT}/bin/edp-raw-sparse" ]]
 /usr/bin/grep -F 'edp-readwrite-fuse' "${PREINSTALL}" >/dev/null

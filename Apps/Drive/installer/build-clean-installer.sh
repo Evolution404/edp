@@ -114,44 +114,7 @@ fi
 printf '%s  %s\n' "${MACFUSE_SHA256}" "${MACFUSE_DMG}" | /usr/bin/shasum -a 256 -c -
 
 RUNTIME_STAGE="${BUILD_ROOT}/runtime"
-mkdir -p "${RUNTIME_STAGE}/bin" "${RUNTIME_STAGE}/lib" \
-  "${RUNTIME_STAGE}/licenses/macfuse"
-
-echo "Building reproducible NTFS-3G runtime..."
-if [[ -n "${NTFS3G_RUNTIME:-}" ]]; then
-  [[ -d "${NTFS3G_RUNTIME}/bin" && -d "${NTFS3G_RUNTIME}/lib" ]] || {
-    echo "invalid NTFS3G_RUNTIME: ${NTFS3G_RUNTIME}" >&2
-    exit 2
-  }
-  mkdir -p "${BUILD_ROOT}/third-party/ntfs-3g"
-  if [[ -d "${NTFS3G_RUNTIME}/licenses/ntfs-3g" ]]; then
-    # Accept an installed EDP product root as a reusable NTFS runtime, but
-    # copy only the pinned NTFS-3G artifacts. Never import unrelated EDP
-    # executables from its shared bin directory into this build staging tree.
-    mkdir -p \
-      "${BUILD_ROOT}/third-party/ntfs-3g/bin" \
-      "${BUILD_ROOT}/third-party/ntfs-3g/lib" \
-      "${BUILD_ROOT}/third-party/ntfs-3g/licenses"
-    for tool in ntfs-3g ntfs-3g.probe ntfslabel; do
-      cp "${NTFS3G_RUNTIME}/bin/${tool}" \
-        "${BUILD_ROOT}/third-party/ntfs-3g/bin/${tool}"
-    done
-    cp "${NTFS3G_RUNTIME}/lib/libntfs-3g.90.dylib" \
-      "${BUILD_ROOT}/third-party/ntfs-3g/lib/libntfs-3g.90.dylib"
-    cp -R "${NTFS3G_RUNTIME}/licenses/ntfs-3g/." \
-      "${BUILD_ROOT}/third-party/ntfs-3g/licenses/"
-    cp -R "${NTFS3G_RUNTIME}/source" \
-      "${BUILD_ROOT}/third-party/ntfs-3g/"
-  else
-    cp -R "${NTFS3G_RUNTIME}/." "${BUILD_ROOT}/third-party/ntfs-3g/"
-  fi
-else
-  /bin/bash "${REPO_ROOT}/scripts/build-ntfs3g-runtime.sh" "${BUILD_ROOT}/third-party"
-fi
-cp "${BUILD_ROOT}/third-party/ntfs-3g/bin/"* "${RUNTIME_STAGE}/bin/"
-cp "${BUILD_ROOT}/third-party/ntfs-3g/lib/"* "${RUNTIME_STAGE}/lib/"
-cp -R "${BUILD_ROOT}/third-party/ntfs-3g/licenses" "${RUNTIME_STAGE}/licenses/ntfs-3g"
-cp -R "${BUILD_ROOT}/third-party/ntfs-3g/source" "${RUNTIME_STAGE}/source"
+mkdir -p "${RUNTIME_STAGE}/bin" "${RUNTIME_STAGE}/licenses/macfuse"
 
 echo "Building EDP encrypted block runtime..."
 CORE_SOURCES=(
@@ -167,8 +130,6 @@ CORE_SOURCES=(
 xcrun swiftc -O -framework CryptoKit -framework Security \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
-  "${REPO_ROOT}/product/EDPNTFSWriteSafety.swift" \
-  "${REPO_ROOT}/product/EDPNTFSMountPolicy.swift" \
   "${REPO_ROOT}/product/EDPCredentialStore.swift" \
   "${REPO_ROOT}/product/EDPDevicePolicyStore.swift" \
   "${REPO_ROOT}/product/EDPMacFUSERuntimePolicy.swift" \
@@ -208,7 +169,7 @@ MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   "${REPO_ROOT}/product/EDPRawMetadataHelper.c" \
   -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
 
-for item in "${RUNTIME_STAGE}/bin/"* "${RUNTIME_STAGE}/lib/"*; do
+for item in "${RUNTIME_STAGE}/bin/"*; do
   sign_app_code "${item}"
 done
 
@@ -405,9 +366,8 @@ APP="/Applications/EDP USB Vault.app"
 RAW_ACCESS_APP="/Applications/EDP USB Vault Raw Access.app"
 /usr/sbin/chown -R root:wheel "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
 /bin/chmod -R go-w "${ROOT}" "${APP}" "${RAW_ACCESS_APP}"
-/bin/chmod 0755 "${ROOT}" "${ROOT}/bin" "${ROOT}/lib"
+/bin/chmod 0755 "${ROOT}" "${ROOT}/bin"
 /bin/chmod 0755 "${ROOT}/bin/"*
-/bin/chmod 0644 "${ROOT}/lib/"*
 /usr/bin/xattr -dr com.apple.quarantine "${ROOT}" "${APP}" "${RAW_ACCESS_APP}" >/dev/null 2>&1 || true
 LEGACY_PLIST="/Library/LaunchDaemons/com.edp.usbvault.mountd.plist"
 if [[ -f "${LEGACY_PLIST}" ]]; then
@@ -505,7 +465,6 @@ fi
 
 echo "OUTPUT=${OUTPUT_PKG}"
 echo "MACFUSE_VERSION=${MACFUSE_VERSION}"
-echo "NTFS3G_VERSION=2026.7.7"
 echo "RESULT=EDP_CLEAN_COMBINED_INSTALLER_BUILT"
 if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   echo "RESULT=SELF_SIGNED_DISTRIBUTION_PACKAGE"
