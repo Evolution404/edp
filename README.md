@@ -62,6 +62,13 @@ EDP 元数据校验。校验通过后才以 `O_RDWR` 打开整盘，将 fd 固�
 
 正式发布前仍需用同一稳定 self-signed certificate 完成“首次 FDA → App/daemon
 重启 → U 盘拔插与 diskN 变化 → Mac 重启 → 版本升级仍无重复授权”的实体盘 E2E。
+当前本机统一签名身份为 `EDP Unified Local Code Signing`，证书 SHA-256 为
+`EA97420A16432AAB05E6E775E8E1698FD9A0E33B3F65CA66186A8AA683850F85`，
+designated requirement 的 certificate root 为
+`fda987d4d26950461a1f1810b3a66eb8bf8724c3`。`edp-usb-vault` 与 `edpopen`
+统一使用这张证书；本地 self-signed 包必须通过
+`./installer/build-self-signed-installer.sh` 构建，该入口会校验证书 fingerprint
+和私钥匹配关系，不再使用 Apple Development identity。
 详细设计与当前验收状态见 `docs/PLAN-2026-08-29-fda-raw-access.md`。
 
 首次安装/完全清理/重启/三分区读写/策略 round-trip/安全推出的标准化验收流程见

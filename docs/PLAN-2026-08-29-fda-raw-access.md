@@ -167,13 +167,22 @@ raw helper: com.edp.usbvault.rawaccess
 daemon: stable signed edp-vaultctl / embedded daemon
 ```
 
-并且三者使用同一张稳定 certificate-backed self-signed code-signing certificate。
+并且三者使用同一张稳定 certificate-backed self-signed code-signing certificate。自 2026-08-29 起，本机长期统一 identity 固定为：
 
-当前实机自签 App 的 designated requirement 形式已经确认：
+```text
+Identity: EDP Unified Local Code Signing
+Certificate SHA-256: EA97420A16432AAB05E6E775E8E1698FD9A0E33B3F65CA66186A8AA683850F85
+Certificate root (DR SHA-1): fda987d4d26950461a1f1810b3a66eb8bf8724c3
+Validity: 2026-08-29 .. 2036-08-26
+```
+
+`edp-usb-vault` 与 `/Users/zhangyuxi/edpopen` 共用这一张证书；不再使用 Apple Development identity 作为本机产品签名身份。私钥只持久化在用户 `login.keychain-db`，仓库不保存私钥/P12。
+
+当前实机 self-signed designated requirement 形式为：
 
 ```text
 identifier "com.edp.usbvault.app"
-and certificate root = H"..."
+and certificate root = H"fda987d4d26950461a1f1810b3a66eb8bf8724c3"
 ```
 
 因此 helper 在固定 bundle id + 同一 certificate root 下升级时，可维持稳定 designated requirement。构建器已经增加发布 gate：self-signed 模式下主 App、Raw Access helper、daemon 的 certificate root 必须完全一致，否则拒绝出包。

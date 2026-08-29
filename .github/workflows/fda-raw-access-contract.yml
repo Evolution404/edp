@@ -10,6 +10,7 @@ on:
       - "product/**"
       - "installer/build-clean-installer.sh"
       - "installer/build-native-installer.sh"
+      - "installer/build-self-signed-installer.sh"
       - "installer/scripts/native-postinstall"
       - "native/EDPFSKitPoC/Extension/**"
       - "native/EDPFSKitPoC/Tools/ValidateRawAuthorizationXPC.swift"
@@ -148,6 +149,9 @@ jobs:
           grep -Fq 'EDP_APP_SIGN_KEYCHAIN' installer/build-native-installer.sh
           grep -Fq 'restore_signing_search_list' installer/build-clean-installer.sh
           grep -Fq 'restore_signing_search_list' installer/build-native-installer.sh
+          grep -Fq 'EDP Unified Local Code Signing' installer/build-self-signed-installer.sh
+          grep -Fq 'EA97420A16432AAB05E6E775E8E1698FD9A0E33B3F65CA66186A8AA683850F85' installer/build-self-signed-installer.sh
+          grep -Fq 'fda987d4d26950461a1f1810b3a66eb8bf8724c3' installer/build-self-signed-installer.sh
           if grep -E 'security[[:space:]]+default-keychain' \
             installer/build-clean-installer.sh installer/build-native-installer.sh; then
             echo 'installer build scripts must never mutate the user default keychain' >&2
