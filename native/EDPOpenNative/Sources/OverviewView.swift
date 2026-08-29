@@ -8,6 +8,7 @@ struct OverviewView: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 identityGrid
+                brokerCard
                 layoutCard
                 metadataCard
             }
@@ -51,6 +52,83 @@ struct OverviewView: View {
             MetricCard(title: "CRC32", value: "0x\(model.disk.crc32)", icon: "number", monospaced: true)
             MetricCard(title: "LBA7 K0", value: "0x\(model.disk.k0)", icon: "key.horizontal", monospaced: true)
             MetricCard(title: "Label Only ID", value: model.disk.labelOnlyID, icon: "tag", monospaced: true)
+        }
+    }
+
+    private var brokerCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: model.brokerState.systemImage)
+                    .font(.title2)
+                    .foregroundStyle(brokerTint)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.brokerState.title)
+                        .font(.headline)
+                    Text(model.brokerState.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    if let disk = model.selectedDetectedDisk {
+                        Text("实时目标：\(disk.diskName) · \(disk.displayName) · \(disk.capacityText)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    } else if case .connected = model.brokerState {
+                        Text("当前没有 external physical USB whole disk")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                Text("FDA")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .glassEffect(.regular.tint(brokerTint.opacity(0.16)), in: .capsule)
+            }
+
+            HStack(spacing: 10) {
+                Button("重新检测 Broker") {
+                    model.refreshBrokerConnection()
+                }
+                .buttonStyle(.glass)
+
+                Button("检测当前盘权限") {
+                    model.probeFullDiskAccess()
+                }
+                .buttonStyle(.glassProminent)
+                .disabled(!canProbeFDA)
+
+                Button("打开完全磁盘访问") {
+                    model.openFullDiskAccessSettings()
+                }
+                .buttonStyle(.glass)
+            }
+        }
+        .padding(18)
+        .glassEffect(.clear, in: .rect(cornerRadius: 18))
+    }
+
+    private var canProbeFDA: Bool {
+        guard model.selectedDetectedDisk != nil else { return false }
+        switch model.brokerState {
+        case .connected, .ready, .denied:
+            return true
+        case .checking, .unavailable:
+            return false
+        }
+    }
+
+    private var brokerTint: Color {
+        switch model.brokerState {
+        case .ready: .green
+        case .connected: .blue
+        case .checking: .secondary
+        case .denied: .orange
+        case .unavailable: .red
         }
     }
 

@@ -8,6 +8,40 @@ struct RawBrokerProbeReply: Decodable, Sendable {
     let helperIdentifier: String?
 }
 
+struct RawBrokerDisk: Decodable, Hashable, Sendable, Identifiable {
+    let diskNumber: UInt32
+    let sizeBytes: UInt64
+    let vendor: String
+    let model: String
+
+    var id: UInt32 { diskNumber }
+    var diskName: String { "disk\(diskNumber)" }
+    var capacityText: String { String(format: "%.2f GB", Double(sizeBytes) / 1_000_000_000.0) }
+    var displayName: String {
+        let name = [vendor, model].filter { !$0.isEmpty }.joined(separator: " ")
+        return name.isEmpty ? "USB Disk" : name
+    }
+}
+
+struct RawBrokerDiskListReply: Decodable, Sendable {
+    let ok: Bool
+    let message: String
+    let disks: [RawBrokerDisk]
+    let euid: UInt32?
+    let helperIdentifier: String?
+}
+
+enum RawBrokerClientError: LocalizedError, Sendable {
+    case message(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .message(let message): message
+        }
+    }
+}
+
+@MainActor
 final class RawBrokerClient {
     private let connection: NSXPCConnection
 
@@ -22,40 +56,58 @@ final class RawBrokerClient {
         self.connection = connection
     }
 
-    deinit {
-        connection.invalidate()
-    }
-
-    func ping(_ completion: @escaping (Result<RawBrokerProbeReply, Error>) -> Void) {
+    func ping(_ completion: @escaping @MainActor (Result<RawBrokerProbeReply, RawBrokerClientError>) -> Void) {
         guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-            completion(.failure(error))
+            let message = error.localizedDescription
+            Task { @MainActor in completion(.failure(.message(message))) }
         }) as? EDPRawBrokerProtocol else {
-            completion(.failure(NSError(domain: "EDPOpen.RawBroker", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法创建 broker XPC proxy"])))
+            completion(.failure(.message("无法创建 broker XPC proxy")))
             return
         }
         proxy.ping { text in
-            completion(Self.decode(text))
+            let result = Self.decode(text)
+            Task { @MainActor in completion(result) }
         }
     }
 
-    func probeReadAccess(diskNumber: UInt32, completion: @escaping (Result<RawBrokerProbeReply, Error>) -> Void) {
+    func listUSBDisks(_ completion: @escaping @MainActor (Result<RawBrokerDiskListReply, RawBrokerClientError>) -> Void) {
         guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
-            completion(.failure(error))
+            let message = error.localizedDescription
+            Task { @MainActor in completion(.failure(.message(message))) }
         }) as? EDPRawBrokerProtocol else {
-            completion(.failure(NSError(domain: "EDPOpen.RawBroker", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法创建 broker XPC proxy"])))
+            completion(.failure(.message("无法创建 broker XPC proxy")))
+            return
+        }
+        proxy.listUSBDisks { text in
+            let result: Result<RawBrokerDiskListReply, RawBrokerClientError> = Self.decodeJSON(text)
+            Task { @MainActor in completion(result) }
+        }
+    }
+
+    func probeReadAccess(diskNumber: UInt32, completion: @escaping @MainActor (Result<RawBrokerProbeReply, RawBrokerClientError>) -> Void) {
+        guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+            let message = error.localizedDescription
+            Task { @MainActor in completion(.failure(.message(message))) }
+        }) as? EDPRawBrokerProtocol else {
+            completion(.failure(.message("无法创建 broker XPC proxy")))
             return
         }
         proxy.probeReadAccess(diskNumber) { text in
-            completion(Self.decode(text))
+            let result = Self.decode(text)
+            Task { @MainActor in completion(result) }
         }
     }
 
-    private static func decode(_ text: String) -> Result<RawBrokerProbeReply, Error> {
+    private nonisolated static func decode(_ text: String) -> Result<RawBrokerProbeReply, RawBrokerClientError> {
+        decodeJSON(text)
+    }
+
+    private nonisolated static func decodeJSON<T: Decodable>(_ text: String) -> Result<T, RawBrokerClientError> {
         do {
             let data = Data(text.utf8)
-            return .success(try JSONDecoder().decode(RawBrokerProbeReply.self, from: data))
+            return .success(try JSONDecoder().decode(T.self, from: data))
         } catch {
-            return .failure(error)
+            return .failure(.message(error.localizedDescription))
         }
     }
 }

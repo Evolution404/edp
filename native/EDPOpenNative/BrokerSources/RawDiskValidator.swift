@@ -8,6 +8,9 @@ struct ValidatedRawDisk {
     let bsdName: String
     let rawPath: String
     let mediaPath: String
+    let sizeBytes: UInt64
+    let vendor: String
+    let model: String
 }
 
 enum RawDiskValidationError: LocalizedError {
@@ -21,6 +24,39 @@ enum RawDiskValidationError: LocalizedError {
 }
 
 enum RawDiskValidator {
+    static func enumerateExternalUSBWholeDisks() -> [ValidatedRawDisk] {
+        guard let matching = IOServiceMatching("IOMedia") else { return [] }
+        var iterator: io_iterator_t = IO_OBJECT_NULL
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
+            return []
+        }
+        defer { IOObjectRelease(iterator) }
+
+        var disks: [ValidatedRawDisk] = []
+        while true {
+            let service = IOIteratorNext(iterator)
+            guard service != IO_OBJECT_NULL else { break }
+            defer { IOObjectRelease(service) }
+
+            guard let bsdName = IORegistryEntryCreateCFProperty(
+                service,
+                "BSD Name" as CFString,
+                kCFAllocatorDefault,
+                0
+            )?.takeRetainedValue() as? String,
+            bsdName.hasPrefix("disk"),
+            let diskNumber = UInt32(bsdName.dropFirst(4)) else {
+                continue
+            }
+
+            if let validated = try? validate(diskNumber) {
+                disks.append(validated)
+            }
+        }
+
+        return disks.sorted { $0.diskNumber < $1.diskNumber }
+    }
+
     static func validate(_ diskNumber: UInt32) throws -> ValidatedRawDisk {
         guard diskNumber >= 2 else {
             throw RawDiskValidationError.rejected("disk0/disk1 永久拒绝")
@@ -44,6 +80,9 @@ enum RawDiskValidator {
         let internalDisk = desc[kDADiskDescriptionDeviceInternalKey] as? Bool ?? true
         let protocolName = desc[kDADiskDescriptionDeviceProtocolKey] as? String ?? ""
         let mediaPath = desc[kDADiskDescriptionMediaPathKey] as? String ?? ""
+        let sizeBytes = (desc[kDADiskDescriptionMediaSizeKey] as? NSNumber)?.uint64Value ?? 0
+        let vendor = (desc[kDADiskDescriptionDeviceVendorKey] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = (desc[kDADiskDescriptionDeviceModelKey] as? String ?? "USB Disk").trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard whole else {
             throw RawDiskValidationError.rejected("拒绝非 whole disk: \(bsdName)")
@@ -60,7 +99,10 @@ enum RawDiskValidator {
             diskNumber: diskNumber,
             bsdName: bsdName,
             rawPath: rawPath,
-            mediaPath: mediaPath
+            mediaPath: mediaPath,
+            sizeBytes: sizeBytes,
+            vendor: vendor,
+            model: model
         )
     }
 

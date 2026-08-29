@@ -9,12 +9,45 @@ private struct BrokerReply: Codable {
     let helperIdentifier: String
 }
 
+private struct BrokerDiskRecord: Codable {
+    let diskNumber: UInt32
+    let sizeBytes: UInt64
+    let vendor: String
+    let model: String
+}
+
+private struct BrokerDiskListReply: Codable {
+    let ok: Bool
+    let message: String
+    let disks: [BrokerDiskRecord]
+    let euid: UInt32
+    let helperIdentifier: String
+}
+
 final class RawBrokerService: NSObject, EDPRawBrokerProtocol {
     func ping(withReply reply: @escaping (String) -> Void) {
         reply(encode(BrokerReply(
             ok: true,
             message: "raw-broker-ready",
             diskNumber: nil,
+            euid: geteuid(),
+            helperIdentifier: RawBrokerConstants.helperIdentifier
+        )))
+    }
+
+    func listUSBDisks(withReply reply: @escaping (String) -> Void) {
+        let disks = RawDiskValidator.enumerateExternalUSBWholeDisks().map {
+            BrokerDiskRecord(
+                diskNumber: $0.diskNumber,
+                sizeBytes: $0.sizeBytes,
+                vendor: $0.vendor,
+                model: $0.model
+            )
+        }
+        reply(encode(BrokerDiskListReply(
+            ok: true,
+            message: "\(disks.count) external physical USB whole disk(s)",
+            disks: disks,
             euid: geteuid(),
             helperIdentifier: RawBrokerConstants.helperIdentifier
         )))
@@ -61,7 +94,7 @@ final class RawBrokerService: NSObject, EDPRawBrokerProtocol {
         }
     }
 
-    private func encode(_ value: BrokerReply) -> String {
+    private func encode<T: Encodable>(_ value: T) -> String {
         guard let data = try? JSONEncoder().encode(value),
               let text = String(data: data, encoding: .utf8) else {
             return #"{"ok":false,"message":"JSON encode failed"}"#

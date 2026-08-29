@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import AppKit
 
 enum SidebarDestination: String, CaseIterable, Identifiable, Hashable {
     case overview
@@ -30,6 +31,42 @@ enum SidebarDestination: String, CaseIterable, Identifiable, Hashable {
         case .editor: "pencil.and.outline"
         case .conversion: "wand.and.sparkles"
         case .backups: "clock.arrow.circlepath"
+        }
+    }
+}
+
+enum BrokerState: Equatable {
+    case checking
+    case unavailable(String)
+    case connected
+    case ready(String)
+    case denied(String)
+
+    var title: String {
+        switch self {
+        case .checking: "正在检测 Raw Broker"
+        case .unavailable: "Raw Broker 未连接"
+        case .connected: "Raw Broker 已连接"
+        case .ready: "完全磁盘访问已就绪"
+        case .denied: "完全磁盘访问未就绪"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .checking: "仅检查 XPC 服务，不访问 raw disk"
+        case .unavailable(let message), .denied(let message), .ready(let message): message
+        case .connected: "XPC 与代码签名校验通过；尚未执行 raw 权限探针"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .checking: "ellipsis.circle"
+        case .unavailable: "xmark.shield"
+        case .connected: "checkmark.shield"
+        case .ready: "checkmark.shield.fill"
+        case .denied: "exclamationmark.shield"
         }
     }
 }
@@ -136,9 +173,17 @@ final class AppModel {
     var inspectorVisible = true
     var showDecoded = true
     var zoom: Double = 1.0
+    var brokerState: BrokerState = .checking
+    var detectedDisks: [RawBrokerDisk] = []
+    var selectedDiskNumber: UInt32?
 
     let disk = SampleData.disk
     let coreVersion = EDPCore.version
+    private var brokerClient: RawBrokerClient?
+
+    init() {
+        refreshBrokerConnection()
+    }
 
     var sector: SectorSnapshot {
         SampleData.sector(lba: selectedLBA)
@@ -157,6 +202,85 @@ final class AppModel {
     var selectedField: CoreField? {
         guard let selectedByteIndex else { return nil }
         return sector.fields.first { selectedByteIndex >= $0.off && selectedByteIndex < $0.off + $0.len }
+    }
+
+    var selectedDetectedDisk: RawBrokerDisk? {
+        guard let selectedDiskNumber else { return detectedDisks.first }
+        return detectedDisks.first { $0.diskNumber == selectedDiskNumber }
+    }
+
+    func refreshBrokerConnection() {
+        brokerState = .checking
+        let client = RawBrokerClient()
+        brokerClient = client
+        client.ping { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let reply) where reply.ok:
+                self.brokerState = .connected
+                self.refreshDetectedDisks()
+            case .success(let reply):
+                self.detectedDisks = []
+                self.selectedDiskNumber = nil
+                self.brokerState = .unavailable(reply.message)
+            case .failure(let error):
+                self.detectedDisks = []
+                self.selectedDiskNumber = nil
+                self.brokerState = .unavailable(error.localizedDescription)
+            }
+        }
+    }
+
+    func refreshDetectedDisks() {
+        guard let client = brokerClient else { return }
+        client.listUSBDisks { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let reply) where reply.ok:
+                let previous = self.selectedDiskNumber
+                self.detectedDisks = reply.disks
+                if let previous, reply.disks.contains(where: { $0.diskNumber == previous }) {
+                    self.selectedDiskNumber = previous
+                } else {
+                    self.selectedDiskNumber = reply.disks.first?.diskNumber
+                }
+            case .success(let reply):
+                self.detectedDisks = []
+                self.selectedDiskNumber = nil
+                self.brokerState = .unavailable(reply.message)
+            case .failure(let error):
+                self.detectedDisks = []
+                self.selectedDiskNumber = nil
+                self.brokerState = .unavailable(error.localizedDescription)
+            }
+        }
+    }
+
+    func probeFullDiskAccess() {
+        guard let diskNumber = selectedDiskNumber,
+              detectedDisks.contains(where: { $0.diskNumber == diskNumber }) else {
+            brokerState = .denied("没有由 broker 实时枚举确认的 external physical USB whole disk")
+            return
+        }
+        let client = brokerClient ?? RawBrokerClient()
+        brokerClient = client
+        brokerState = .checking
+        client.probeReadAccess(diskNumber: diskNumber) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let reply) where reply.ok:
+                self.brokerState = .ready(reply.message)
+            case .success(let reply):
+                self.brokerState = .denied(reply.message)
+            case .failure(let error):
+                self.brokerState = .unavailable(error.localizedDescription)
+            }
+        }
+    }
+
+    func openFullDiskAccessSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
+        NSWorkspace.shared.open(url)
     }
 }
 

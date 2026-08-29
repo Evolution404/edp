@@ -12,5 +12,6 @@ enum RawBrokerConstants {
 
 @objc protocol EDPRawBrokerProtocol {
     func ping(withReply reply: @escaping (String) -> Void)
+    func listUSBDisks(withReply reply: @escaping (String) -> Void)
     func probeReadAccess(_ diskNumber: UInt32, withReply reply: @escaping (String) -> Void)
 }

@@ -61,7 +61,7 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 前置 PoC 证据：`poc/fda-raw-broker/RESULTS-2026-08-29.md`。
 
 - [x] 独立 Swift broker target：`EDPOpenRawBroker`
-- [x] system LaunchDaemon plist / 固定目标路径已定义；尚未正式安装验证
+- [x] system LaunchDaemon / stable install path 已实机安装：`/Library/PrivilegedHelperTools/com.evolution404.edpopen.rawbroker`，Mach service 按需由已签名 App 拉起
 - [x] stable certificate-backed signing identity：App=`com.evolution404.edpopen`、Broker=`com.evolution404.edpopen.rawbroker`，Team=`W82WPH8HY7`，Apple Development + Hardened Runtime，DR 均非 CDHash
 - [x] FDA readiness probe 代码：仅 `open(O_RDONLY|O_CLOEXEC) → fstat → close`，不读取扇区
 - [x] Disk Arbitration + IOKit external/physical/USB/whole-disk gate
@@ -69,6 +69,8 @@ Phase A 严格离线，不枚举/读取真实 U 盘。
 - [x] narrow NSXPC IPC, no arbitrary path API；broker 只接受数字 `diskN`
 - [x] App/broker 双向 `setCodeSigningRequirement()`，绑定 bundle identifier + Team `W82WPH8HY7`
 - [ ] 同一 open fd/session 复用
+- [x] broker 实时 IOKit + Disk Arbitration 枚举 external physical USB whole disk；App 不再使用视觉 sample 的 stale `diskN` 作为权限目标
+- [x] 原生 FDA 状态卡：启动只 `ping + enumerate`，raw `open/fstat/close` 仅由用户明确点击“检测当前盘权限”触发
 
 ## Phase D — 只读实机接入
 

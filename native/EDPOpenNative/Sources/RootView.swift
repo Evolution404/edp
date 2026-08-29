@@ -18,7 +18,7 @@ struct RootView: View {
                 .navigationTitle(model.selection.title)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
-                        DiskIdentityPill(disk: model.disk)
+                        DiskIdentityPill(disk: model.selectedDetectedDisk)
                     }
 
                     ToolbarItemGroup {
@@ -72,19 +72,27 @@ struct RootView: View {
 }
 
 private struct DiskIdentityPill: View {
-    let disk: DiskSnapshot
+    let disk: RawBrokerDisk?
 
     var body: some View {
         GlassEffectContainer(spacing: 8) {
             HStack(spacing: 9) {
-                Image(systemName: "externaldrive.fill")
-                    .foregroundStyle(.tint)
+                Image(systemName: disk == nil ? "externaldrive.badge.questionmark" : "externaldrive.fill")
+                    .foregroundStyle(disk == nil ? Color.secondary : Color.accentColor)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("\(disk.diskName) · Lexar")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("\(disk.capacityText) · USB \(disk.vid):\(disk.pid)")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                    if let disk {
+                        Text("\(disk.diskName) · \(disk.displayName)")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("\(disk.capacityText) · external physical USB")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("未检测到外置 USB")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("由 Raw Broker 实时枚举")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
