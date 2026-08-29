@@ -1,0 +1,506 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		07F9C07028CB8F16999DFCE5 /* EDPOpenRawBroker in Resources */ = {isa = PBXBuildFile; fileRef = FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3D0FFE67E2833673789741E5 /* RawDiskValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797504581BD23A4BE7C14743 /* RawDiskValidator.swift */; };
+		4BA8774F4C8F2E91FE2B8D60 /* CoreBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247B457B6181771CDB71BB4E /* CoreBridge.swift */; };
+		605B1BFE01D9442D61441DAF /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB15351222360442735730DF /* main.swift */; };
+		78AFB9D4E3801EDDB482DCB2 /* RawBrokerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE8B68D4BE7A9F600A3FB41 /* RawBrokerProtocol.swift */; };
+		7CB9A66024E10205FB57E3B0 /* RawBrokerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE8B68D4BE7A9F600A3FB41 /* RawBrokerProtocol.swift */; };
+		876D14D8EDA3BAD1160DA814 /* RawBrokerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379855998A3AAB6F5C8AF564 /* RawBrokerClient.swift */; };
+		A39B4CDF3A22BDE708A472E8 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669B11CA191CA98CEED05387 /* RootView.swift */; };
+		B9B1A758A97DC6B9B61FABD1 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AFE70F558B699851EBD304D /* OverviewView.swift */; };
+		C8A440215B2BAEE99556C89F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C091E369A899A47CD2F0F37 /* Models.swift */; };
+		D0FBFBCB6827CAAE656060AE /* DiskMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3E426A09A50A333BD06287 /* DiskMapView.swift */; };
+		DE6F4ADCAF22DBEF6859892B /* SectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A5681A0D24E519417BC2AB /* SectorView.swift */; };
+		E229F116D5B8688258634FBF /* RawBrokerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 029C03BC5F96D762D3F3EC98 /* RawBrokerService.swift */; };
+		EF0596281CD13A31E2481B20 /* EDPOpenNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		DACDB825477A56892F1889D7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2CC504DCD82751B9D40D4865 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0CED6468A96E936DBF8E9CDC;
+			remoteInfo = EDPOpenRawBroker;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		029C03BC5F96D762D3F3EC98 /* RawBrokerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawBrokerService.swift; sourceTree = "<group>"; };
+		0AFE70F558B699851EBD304D /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
+		247B457B6181771CDB71BB4E /* CoreBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreBridge.swift; sourceTree = "<group>"; };
+		379855998A3AAB6F5C8AF564 /* RawBrokerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawBrokerClient.swift; sourceTree = "<group>"; };
+		5AE8B68D4BE7A9F600A3FB41 /* RawBrokerProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawBrokerProtocol.swift; sourceTree = "<group>"; };
+		669B11CA191CA98CEED05387 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EDPOpenNativeApp.swift; sourceTree = "<group>"; };
+		797504581BD23A4BE7C14743 /* RawDiskValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawDiskValidator.swift; sourceTree = "<group>"; };
+		8F3E426A09A50A333BD06287 /* DiskMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskMapView.swift; sourceTree = "<group>"; };
+		9C091E369A899A47CD2F0F37 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A8A5681A0D24E519417BC2AB /* SectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectorView.swift; sourceTree = "<group>"; };
+		AB15351222360442735730DF /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		D8CA6360E3557E5DDA8E9946 /* EDPOpen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EDPOpen.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */ = {isa = PBXFileReference; includeInIndex = 0; path = EDPOpenRawBroker; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		10026CE1B4EB81841CCA2E44 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				5AE8B68D4BE7A9F600A3FB41 /* RawBrokerProtocol.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		20CCED1A314F195A900FF79B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D8CA6360E3557E5DDA8E9946 /* EDPOpen.app */,
+				FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		358AE5EE590A3ADC275C5671 /* BrokerSources */ = {
+			isa = PBXGroup;
+			children = (
+				AB15351222360442735730DF /* main.swift */,
+				029C03BC5F96D762D3F3EC98 /* RawBrokerService.swift */,
+				797504581BD23A4BE7C14743 /* RawDiskValidator.swift */,
+			);
+			path = BrokerSources;
+			sourceTree = "<group>";
+		};
+		76E009AACBEA9C9A28538FC2 = {
+			isa = PBXGroup;
+			children = (
+				358AE5EE590A3ADC275C5671 /* BrokerSources */,
+				10026CE1B4EB81841CCA2E44 /* Shared */,
+				CA3AE6F2525B89C8E194A477 /* Sources */,
+				20CCED1A314F195A900FF79B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CA3AE6F2525B89C8E194A477 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				247B457B6181771CDB71BB4E /* CoreBridge.swift */,
+				8F3E426A09A50A333BD06287 /* DiskMapView.swift */,
+				670ABDDF4975E5A4DA4385E1 /* EDPOpenNativeApp.swift */,
+				9C091E369A899A47CD2F0F37 /* Models.swift */,
+				0AFE70F558B699851EBD304D /* OverviewView.swift */,
+				379855998A3AAB6F5C8AF564 /* RawBrokerClient.swift */,
+				669B11CA191CA98CEED05387 /* RootView.swift */,
+				A8A5681A0D24E519417BC2AB /* SectorView.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0CED6468A96E936DBF8E9CDC /* EDPOpenRawBroker */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E6BD9416FCEE88643638D966 /* Build configuration list for PBXNativeTarget "EDPOpenRawBroker" */;
+			buildPhases = (
+				6BE1137E0A3A670708CA6CDB /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = EDPOpenRawBroker;
+			packageProductDependencies = (
+			);
+			productName = EDPOpenRawBroker;
+			productReference = FF9FC90F3A0A1144E4C2E85E /* EDPOpenRawBroker */;
+			productType = "com.apple.product-type.tool";
+		};
+		50438055B75C7A57E6437F51 /* EDPOpen */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPOpen" */;
+			buildPhases = (
+				0B41737A278B56C1E97D80C2 /* Build Shared Swift EDP Core */,
+				74CC5917F83D722E1F69E6D5 /* Sources */,
+				A87EB0F0C9DDC24802197ED6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				428F28BC1EBC4BCCE0697EE9 /* PBXTargetDependency */,
+			);
+			name = EDPOpen;
+			packageProductDependencies = (
+			);
+			productName = EDPOpen;
+			productReference = D8CA6360E3557E5DDA8E9946 /* EDPOpen.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		2CC504DCD82751B9D40D4865 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					0CED6468A96E936DBF8E9CDC = {
+						ProvisioningStyle = Manual;
+					};
+					50438055B75C7A57E6437F51 = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 20847BC2FF7FF7D0E1891DF7 /* Build configuration list for PBXProject "EDPOpenNative" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 76E009AACBEA9C9A28538FC2;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 20CCED1A314F195A900FF79B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				50438055B75C7A57E6437F51 /* EDPOpen */,
+				0CED6468A96E936DBF8E9CDC /* EDPOpenRawBroker */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A87EB0F0C9DDC24802197ED6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				07F9C07028CB8F16999DFCE5 /* EDPOpenRawBroker in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0B41737A278B56C1E97D80C2 /* Build Shared Swift EDP Core */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Shared Swift EDP Core";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/Scripts/build-shared-core.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6BE1137E0A3A670708CA6CDB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				78AFB9D4E3801EDDB482DCB2 /* RawBrokerProtocol.swift in Sources */,
+				E229F116D5B8688258634FBF /* RawBrokerService.swift in Sources */,
+				3D0FFE67E2833673789741E5 /* RawDiskValidator.swift in Sources */,
+				605B1BFE01D9442D61441DAF /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		74CC5917F83D722E1F69E6D5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4BA8774F4C8F2E91FE2B8D60 /* CoreBridge.swift in Sources */,
+				D0FBFBCB6827CAAE656060AE /* DiskMapView.swift in Sources */,
+				EF0596281CD13A31E2481B20 /* EDPOpenNativeApp.swift in Sources */,
+				C8A440215B2BAEE99556C89F /* Models.swift in Sources */,
+				B9B1A758A97DC6B9B61FABD1 /* OverviewView.swift in Sources */,
+				876D14D8EDA3BAD1160DA814 /* RawBrokerClient.swift in Sources */,
+				7CB9A66024E10205FB57E3B0 /* RawBrokerProtocol.swift in Sources */,
+				A39B4CDF3A22BDE708A472E8 /* RootView.swift in Sources */,
+				DE6F4ADCAF22DBEF6859892B /* SectorView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		428F28BC1EBC4BCCE0697EE9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0CED6468A96E936DBF8E9CDC /* EDPOpenRawBroker */;
+			targetProxy = DACDB825477A56892F1889D7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		2715D78A9A01D35B7371CC85 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen.rawbroker;
+				PRODUCT_NAME = EDPOpenRawBroker;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		4E3D31B9A387AF11CB592EAB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release";
+				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
+				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
+				SDKROOT = macosx;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules";
+			};
+			name = Debug;
+		};
+		508BEE80EEC42912EDBF5BF4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen.rawbroker;
+				PRODUCT_NAME = EDPOpenRawBroker;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		6CD10C1CA3C8860AF1F9D012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "EDP Project Code Signing";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = EDPOpen;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Evolution404";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = EDPOpen;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		8B44FE3A09B1B4DA11316930 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "EDP Project Code Signing";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = EDPOpen;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Evolution404";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = EDPOpen;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		B9EF76F4C8DA8C463F1C42AA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release";
+				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = "$(inherited) -lEDPCore";
+				PRODUCT_BUNDLE_IDENTIFIER = com.evolution404.edpopen;
+				SDKROOT = macosx;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		20847BC2FF7FF7D0E1891DF7 /* Build configuration list for PBXProject "EDPOpenNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8B44FE3A09B1B4DA11316930 /* Debug */,
+				6CD10C1CA3C8860AF1F9D012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		53B911260DA5884529EFE46B /* Build configuration list for PBXNativeTarget "EDPOpen" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4E3D31B9A387AF11CB592EAB /* Debug */,
+				B9EF76F4C8DA8C463F1C42AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E6BD9416FCEE88643638D966 /* Build configuration list for PBXNativeTarget "EDPOpenRawBroker" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				508BEE80EEC42912EDBF5BF4 /* Debug */,
+				2715D78A9A01D35B7371CC85 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 2CC504DCD82751B9D40D4865 /* Project object */;
+}

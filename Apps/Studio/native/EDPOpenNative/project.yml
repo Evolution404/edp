@@ -1,0 +1,61 @@
+name: EDPOpenNative
+options:
+  bundleIdPrefix: com.evolution404
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    ARCHS: arm64
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_VERSION: "6.0"
+    PRODUCT_NAME: EDPOpen
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: EDPOpen
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+    INFOPLIST_KEY_NSHumanReadableCopyright: Copyright © 2026 Evolution404
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: EDP Project Code Signing
+    DEVELOPMENT_TEAM: ""
+targets:
+  EDPOpen:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+      - path: Shared
+    preBuildScripts:
+      - name: Build Shared Swift EDP Core
+        script: |
+          "$SRCROOT/Scripts/build-shared-core.sh"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.evolution404.edpopen
+        MARKETING_VERSION: 0.2.0
+        CURRENT_PROJECT_VERSION: 1
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release/Modules"
+        HEADER_SEARCH_PATHS: "$(SRCROOT)/../../../edp-core/Sources/CEDPCore/include"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/../../../edp-core/.build/arm64-apple-macosx/release"
+        OTHER_LDFLAGS: "$(inherited) -lEDPCore"
+    dependencies:
+      - target: EDPOpenRawBroker
+    scheme:
+      testTargets: []
+  EDPOpenRawBroker:
+    type: tool
+    platform: macOS
+    sources:
+      - path: BrokerSources
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_NAME: EDPOpenRawBroker
+        PRODUCT_BUNDLE_IDENTIFIER: com.evolution404.edpopen.rawbroker
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        MACOSX_DEPLOYMENT_TARGET: "26.0"
+        SWIFT_VERSION: "6.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
