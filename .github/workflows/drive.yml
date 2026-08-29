@@ -38,8 +38,8 @@ jobs:
           grep -Fq 'Button("启动")' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Button("停止")' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Button("重启")' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'Button("仅退出界面")' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'Button("完全退出")' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'EDPMenuCompactButton(title: "仅退出界面"' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'title: "完全退出"' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq '仅退出界面（' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq '完全退出（' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq 'Menu(' Apps/Drive/product/App/EDPUSBVaultApp.swift
