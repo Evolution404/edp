@@ -146,4 +146,11 @@ jobs:
           grep -Fq '/Applications/EDP USB Vault Raw Access.app/Contents/MacOS/edp-usbvaultd' product/App/com.edp.usbvault.mountd.legacy.plist
           grep -Fq 'certificate root' installer/build-clean-installer.sh
           grep -Fq 'certificate root' installer/build-native-installer.sh
+          grep -Fq 'EDP_APP_SIGN_KEYCHAIN' installer/build-clean-installer.sh
+          grep -Fq 'EDP_APP_SIGN_KEYCHAIN' installer/build-native-installer.sh
+          if grep -E 'security[[:space:]]+(default-keychain|list-keychains)' \
+            installer/build-clean-installer.sh installer/build-native-installer.sh; then
+            echo 'installer build scripts must never mutate the user default/search keychain' >&2
+            exit 1
+          fi
           echo 'RESULT=FDA_INSTALLER_FIXED_IDENTITY_CONTRACT_OK'

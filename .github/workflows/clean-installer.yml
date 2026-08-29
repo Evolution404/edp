@@ -74,13 +74,12 @@ jobs:
           /usr/bin/security set-key-partition-list \
             -S apple-tool:,apple:,codesign: -s \
             -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-          /usr/bin/security list-keychains -d user -s "${KEYCHAIN}"
-          /usr/bin/security default-keychain -d user -s "${KEYCHAIN}"
           /usr/bin/security find-certificate -c "${IDENTITY}" "${KEYCHAIN}" >/dev/null
 
           printf 'int main(void) { return 0; }\n' \
             | /usr/bin/cc -x c - -o "${PROBE}"
           /usr/bin/codesign --force --sign "${IDENTITY}" \
+            --keychain "${KEYCHAIN}" \
             --identifier com.edp.ci.signing-probe "${PROBE}"
           /usr/bin/codesign -dv --verbose=4 "${PROBE}" 2>&1 \
             | tee "${RUNNER_TEMP}/edp-ci-signing-probe.txt"
@@ -90,6 +89,7 @@ jobs:
             "${RUNNER_TEMP}/edp-ci-signing-probe.txt"
 
           echo "EDP_APP_SIGN_IDENTITY=${IDENTITY}" >> "${GITHUB_ENV}"
+          echo "EDP_APP_SIGN_KEYCHAIN=${KEYCHAIN}" >> "${GITHUB_ENV}"
           echo "EDP_CI_SIGNING_KEYCHAIN=${KEYCHAIN}" >> "${GITHUB_ENV}"
           echo 'EDP_SERVICE_MODE=legacy' >> "${GITHUB_ENV}"
           echo 'EDP_SELF_SIGNED_DISTRIBUTION=1' >> "${GITHUB_ENV}"

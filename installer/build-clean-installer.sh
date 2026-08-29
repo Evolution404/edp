@@ -11,6 +11,7 @@ MACFUSE_URL="https://github.com/macfuse/macfuse/releases/download/macfuse-${MACF
 MACFUSE_DMG="${MACFUSE_DMG:-}"
 MACFUSE_LICENSE_FILE="${MACFUSE_LICENSE_FILE:-}"
 APP_SIGN_IDENTITY="${EDP_APP_SIGN_IDENTITY:--}"
+APP_SIGN_KEYCHAIN="${EDP_APP_SIGN_KEYCHAIN:-}"
 SERVICE_MODE="${EDP_SERVICE_MODE:-}"
 LEGACY_DIAGNOSTIC="${EDP_LEGACY_DIAGNOSTIC:-0}"
 SELF_SIGNED_DISTRIBUTION="${EDP_SELF_SIGNED_DISTRIBUTION:-0}"
@@ -37,6 +38,19 @@ if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
     exit 2
   }
 fi
+if [[ -n "${APP_SIGN_KEYCHAIN}" && ! -f "${APP_SIGN_KEYCHAIN}" ]]; then
+  echo "EDP_APP_SIGN_KEYCHAIN does not exist: ${APP_SIGN_KEYCHAIN}" >&2
+  exit 2
+fi
+
+sign_app_code() {
+  local args=(/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}")
+  if [[ -n "${APP_SIGN_KEYCHAIN}" ]]; then
+    args+=(--keychain "${APP_SIGN_KEYCHAIN}")
+  fi
+  "${args[@]}" "$@"
+}
+
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/edp-clean-installer.XXXXXX")"
 MACFUSE_MOUNT="${BUILD_ROOT}/macfuse"
 
@@ -154,7 +168,7 @@ MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   -o "${RUNTIME_STAGE}/bin/edp-raw-metadata"
 
 for item in "${RUNTIME_STAGE}/bin/"* "${RUNTIME_STAGE}/lib/"*; do
-  /usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" "${item}"
+  sign_app_code "${item}"
 done
 
 RAW_ACCESS_APP_STAGE="${BUILD_ROOT}/EDP USB Vault Raw Access.app"
@@ -167,7 +181,7 @@ cp "${REPO_ROOT}/product/RawAccessHelper/Info.plist" \
   "${RAW_ACCESS_APP_STAGE}/Contents/Info.plist"
 cp "${RUNTIME_STAGE}/bin/edp-vaultctl" \
   "${RAW_ACCESS_APP_STAGE}/Contents/MacOS/edp-usbvaultd"
-/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
+sign_app_code \
   --identifier com.edp.usbvault.rawaccess \
   "${RAW_ACCESS_APP_STAGE}"
 /usr/bin/codesign --verify --strict "${RAW_ACCESS_APP_STAGE}"
@@ -222,10 +236,10 @@ cat > "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.pl
 PLIST
 /bin/chmod 0644 "${APP_STAGE}/Contents/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist"
 fi
-/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" \
+sign_app_code \
   --identifier com.edp.usbvault.mountd.v2 \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-usbvaultd"
-/usr/bin/codesign --force --sign "${APP_SIGN_IDENTITY}" --identifier com.edp.usbvault.app "${APP_STAGE}"
+sign_app_code --identifier com.edp.usbvault.app "${APP_STAGE}"
 /usr/bin/codesign --verify --strict "${APP_STAGE}"
 if [[ "${SELF_SIGNED_DISTRIBUTION}" == "1" ]]; then
   SIGNING_INFO="$(/usr/bin/codesign -dv --verbose=4 "${APP_STAGE}" 2>&1)"
