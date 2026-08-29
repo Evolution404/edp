@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${REPO_ROOT}/scripts/prepare-shared-edp-core.sh"
 OUTPUT_BIN="${1:?usage: build-transport-backends.sh OUTPUT_BIN}"
 FRAMEWORKS="${MACFUSE_FRAMEWORKS:-/Library/Filesystems/macfuse.fs/Contents/Frameworks}"
 MOUNT_COMMIT="${MACFUSE_MOUNT_COMMIT:-313b9c68d04cd779bffc9f8bd9f32a4e1f5baf70}"
@@ -60,6 +61,7 @@ xcrun clang -std=c17 -Wall -Wextra -Werror \
   -o "${BUILD_ROOT}/async-shim.o"
 
 xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
+  "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
   "${BUILD_ROOT}/adapter.o" "${BUILD_ROOT}/async-shim.o" \

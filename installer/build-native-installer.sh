@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${REPO_ROOT}/scripts/prepare-shared-edp-core.sh"
 VERSION="${EDP_VERSION:-0.6.0}"
 OUTPUT_DIR="${1:-${REPO_ROOT}/artifacts}"
 APP_SIGN_IDENTITY="${EDP_APP_SIGN_IDENTITY:--}"
@@ -113,6 +114,7 @@ PRODUCT_SOURCES=(
 
 echo "Building native privileged service..."
 xcrun swiftc -O -framework CryptoKit -framework Security \
+  "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
   -o "${RUNTIME_STAGE}/bin/edp-vaultctl"
 

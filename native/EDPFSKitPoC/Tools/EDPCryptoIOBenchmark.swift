@@ -148,6 +148,8 @@ private final class NoCacheRawDevice: EDPRawWritable {
 
     deinit { Darwin.close(fd) }
 
+    var supportsConcurrentReads: Bool { true }
+
     func readExact(at offset: UInt64, length: Int) throws -> Data {
         guard length >= 0 else { throw BenchmarkError.invalid("negative read length") }
         let (end, overflow) = offset.addingReportingOverflow(UInt64(length))
@@ -176,6 +178,34 @@ private final class NoCacheRawDevice: EDPRawWritable {
             }
         }
         return output
+    }
+
+    func readExact(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+        let length = buffer.count
+        let (end, overflow) = offset.addingReportingOverflow(UInt64(length))
+        guard !overflow, end <= (sizeBytes ?? 0), end <= UInt64(Int64.max) else {
+            throw BenchmarkError.invalid("read exceeds storage bounds")
+        }
+        guard length > 0 else { return }
+        guard let base = buffer.baseAddress else {
+            throw BenchmarkError.invalid("read buffer has no storage")
+        }
+
+        var completed = 0
+        while completed < length {
+            let result = Darwin.pread(
+                fd,
+                base.advanced(by: completed),
+                length - completed,
+                off_t(offset + UInt64(completed))
+            )
+            if result < 0 {
+                if errno == EINTR { continue }
+                throw BenchmarkError.posix("pread", errno)
+            }
+            guard result > 0 else { throw BenchmarkError.invalid("unexpected EOF") }
+            completed += result
+        }
     }
 
     func writeExact(at offset: UInt64, data: Data) throws {
@@ -212,7 +242,10 @@ private final class NoCacheRawDevice: EDPRawWritable {
             if errno == EINTR { continue }
             throw BenchmarkError.posix("fsync", errno)
         }
-        if fcntl(fd, F_FULLFSYNC) != 0, errno != EINVAL, errno != ENOTSUP {
+        if fcntl(fd, F_FULLFSYNC) != 0,
+           errno != EINVAL,
+           errno != ENOTSUP,
+           errno != EIO {
             throw BenchmarkError.posix("F_FULLFSYNC", errno)
         }
     }
@@ -274,15 +307,18 @@ private func run() throws {
     )
     let offsets = try offsetSequence(arguments: arguments)
     let writeData = deterministicWriteData(length: arguments.blockSize)
+    var readData = Data(count: arguments.blockSize)
     var checksum: UInt64 = 0
 
     let start = DispatchTime.now().uptimeNanoseconds
     switch (arguments.mode, arguments.operation) {
     case (.direct, .read):
         for offset in offsets {
-            let data = try raw.readExact(at: offset, length: arguments.blockSize)
-            checksum &+= UInt64(data.first ?? 0)
-            checksum &+= UInt64(data.last ?? 0)
+            try readData.withUnsafeMutableBytes { buffer in
+                try raw.readExact(at: offset, into: buffer)
+            }
+            checksum &+= UInt64(readData.first ?? 0)
+            checksum &+= UInt64(readData.last ?? 0)
         }
     case (.direct, .write):
         for offset in offsets {
@@ -296,9 +332,11 @@ private func run() throws {
         )
         let block = try EDPEncryptedReadOnlyBlockDevice(reader: reader)
         for offset in offsets {
-            let data = try block.read(at: offset, length: arguments.blockSize)
-            checksum &+= UInt64(data.first ?? 0)
-            checksum &+= UInt64(data.last ?? 0)
+            try readData.withUnsafeMutableBytes { buffer in
+                try block.read(at: offset, into: buffer)
+            }
+            checksum &+= UInt64(readData.first ?? 0)
+            checksum &+= UInt64(readData.last ?? 0)
         }
     case (.encrypted, .write):
         let reader = try EDPEncryptedPartitionReader(

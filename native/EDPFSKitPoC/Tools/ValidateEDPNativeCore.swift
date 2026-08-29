@@ -57,6 +57,45 @@ private final class MemoryRawReadable: EDPRawWritable {
     }
 }
 
+private final class AlignedConcurrentMemoryRawReadable: EDPRawReadable {
+    private let bytes: Data
+    var supportsConcurrentReads: Bool { true }
+    var sizeBytes: UInt64? { UInt64(bytes.count) }
+
+    init(_ bytes: Data) {
+        self.bytes = bytes
+    }
+
+    func readExact(at offset: UInt64, length: Int) throws -> Data {
+        var output = Data(count: length)
+        try output.withUnsafeMutableBytes { buffer in
+            try readExact(at: offset, into: buffer)
+        }
+        return output
+    }
+
+    func readExact(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+        guard offset % 512 == 0, buffer.count % 512 == 0 else {
+            throw ValidationFailure.message(
+                "concurrent raw read was not sector aligned: offset=\(offset) length=\(buffer.count)"
+            )
+        }
+        guard offset <= UInt64(Int.max),
+              UInt64(buffer.count) <= UInt64(Int.max) - offset else {
+            throw ValidationFailure.message("invalid concurrent memory read")
+        }
+        let start = Int(offset)
+        let end = start + buffer.count
+        guard end <= bytes.count else {
+            throw ValidationFailure.message("concurrent memory read past end")
+        }
+        bytes.copyBytes(
+            to: buffer.bindMemory(to: UInt8.self),
+            from: start..<end
+        )
+    }
+}
+
 private final class SparseRawWritable: EDPRawWritable {
     private var bytes = [UInt64: UInt8]()
     let allowsWrites: Bool
@@ -424,6 +463,24 @@ struct ValidateEDPNativeCore {
         let reader = try EDPEncryptedPartitionReader(raw: raw, descriptor: descriptor)
         let actual = try reader.readExact(at: 7, length: 37)
         try require([UInt8](actual) == Array(plaintext[7..<44]), "unaligned encrypted partition read mismatch")
+
+        var alignedInto = Data(count: 64)
+        try alignedInto.withUnsafeMutableBytes { buffer in
+            try reader.readExact(at: 0, into: buffer)
+        }
+        try require(
+            [UInt8](alignedInto) == plaintext,
+            "aligned encrypted partition read-into mismatch"
+        )
+
+        var unalignedInto = Data(count: 37)
+        try unalignedInto.withUnsafeMutableBytes { buffer in
+            try reader.readExact(at: 7, into: buffer)
+        }
+        try require(
+            [UInt8](unalignedInto) == Array(plaintext[7..<44]),
+            "unaligned encrypted partition read-into mismatch"
+        )
         try require((try reader.readExact(at: 64, length: 0)).isEmpty, "zero-length boundary read should succeed")
         try require(
             [UInt8](try reader.readExact(at: 63, length: 1)) == [plaintext[63]],
@@ -435,6 +492,35 @@ struct ValidateEDPNativeCore {
         try expectThrows("encrypted reader accepted overflowing range") {
             _ = try reader.readExact(at: UInt64.max, length: 1)
         }
+
+        let largePlaintext = (0..<(1024 * 1024)).map {
+            UInt8(truncatingIfNeeded: ($0 &* 29) ^ ($0 >> 5) ^ 0x5a)
+        }
+        let largeEncrypted = try cipher.encryptAligned(largePlaintext)
+        var alignedBacking = Data(count: 512)
+        alignedBacking.append(contentsOf: largeEncrypted)
+        let alignedRaw = AlignedConcurrentMemoryRawReadable(alignedBacking)
+        let alignedDescriptor = EDPVolumeDescriptor(
+            partitionType: 4,
+            startSector: 1,
+            sizeBytes: UInt64(largePlaintext.count),
+            algorithm: 2,
+            fileKey: key,
+            passwordCRC: 0,
+            keyCRC: EDPCrypto.crc32Bare(key)
+        )
+        let alignedReader = try EDPEncryptedPartitionReader(
+            raw: alignedRaw,
+            descriptor: alignedDescriptor
+        )
+        var parallelOutput = Data(count: largePlaintext.count)
+        try parallelOutput.withUnsafeMutableBytes { buffer in
+            try alignedReader.readExact(at: 0, into: buffer)
+        }
+        try require(
+            [UInt8](parallelOutput) == largePlaintext,
+            "sector-aligned parallel read-into mismatch"
+        )
 
         let missingKey = EDPVolumeDescriptor(
             partitionType: 4,

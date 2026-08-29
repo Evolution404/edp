@@ -10,6 +10,17 @@ protocol EDPBlockReadable: AnyObject {
     var sizeBytes: UInt64 { get }
 
     func read(at offset: UInt64, length: Int) throws -> Data
+    func read(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws
+}
+
+extension EDPBlockReadable {
+    func read(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+        let data = try read(at: offset, length: buffer.count)
+        guard data.count == buffer.count else {
+            throw EDPNativeCoreError.verify("block read returned an unexpected byte count")
+        }
+        _ = data.copyBytes(to: buffer.bindMemory(to: UInt8.self))
+    }
 }
 
 protocol EDPBlockWritable: EDPBlockReadable {
@@ -35,6 +46,10 @@ final class EDPEncryptedReadOnlyBlockDevice: EDPBlockReadable {
     func read(at offset: UInt64, length: Int) throws -> Data {
         try reader.readExact(at: offset, length: length)
     }
+
+    func read(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+        try reader.readExact(at: offset, into: buffer)
+    }
 }
 
 /// Read/write block view. All overlapping crypto read-modify-write operations
@@ -57,6 +72,10 @@ final class EDPEncryptedReadWriteBlockDevice: EDPBlockWritable {
 
     func read(at offset: UInt64, length: Int) throws -> Data {
         try reader.readExact(at: offset, length: length)
+    }
+
+    func read(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+        try reader.readExact(at: offset, into: buffer)
     }
 
     func write(at offset: UInt64, data: Data) throws {
@@ -107,6 +126,14 @@ final class EDPPlaintextReadWriteBlockDevice: EDPBlockWritable {
             throw EDPNativeCoreError.invalidInput("startup partition read exceeds bounds")
         }
         return try raw.readExact(at: startBytes + offset, length: length)
+    }
+
+    func read(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+        let (end, overflow) = offset.addingReportingOverflow(UInt64(buffer.count))
+        guard !overflow, end <= sizeBytes else {
+            throw EDPNativeCoreError.invalidInput("startup partition read exceeds bounds")
+        }
+        try raw.readExact(at: startBytes + offset, into: buffer)
     }
 
     func write(at offset: UInt64, data: Data) throws {

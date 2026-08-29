@@ -252,9 +252,9 @@ public func edp_rw_read(
     let length64 = min(requestedLength, size - offset)
     guard length64 <= UInt64(Int.max) else { return -22 }
     do {
-        let data = try context.block.read(at: offset, length: Int(length64))
-        data.copyBytes(to: buffer.assumingMemoryBound(to: UInt8.self), count: data.count)
-        return Int64(data.count)
+        let output = UnsafeMutableRawBufferPointer(start: buffer, count: Int(length64))
+        try context.block.read(at: offset, into: output)
+        return Int64(length64)
     } catch {
         logReadWriteBridgeError(
             "EDP_RW_READ_ERROR offset=\(offset) length=\(length64) error=\(error)\n"

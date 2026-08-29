@@ -82,6 +82,7 @@ final class EDPFileRawDevice: EDPRawWritable {
     }
 
     var sizeBytes: UInt64? { byteCount }
+    var supportsConcurrentReads: Bool { true }
     var allowsWrites: Bool { writable }
 
     func readExact(at offset: UInt64, length: Int) throws -> Data {
@@ -124,6 +125,41 @@ final class EDPFileRawDevice: EDPRawWritable {
             }
         }
         return output
+    }
+
+    func readExact(at offset: UInt64, into buffer: UnsafeMutableRawBufferPointer) throws {
+        let length = buffer.count
+        let length64 = UInt64(length)
+        let (end, overflow) = offset.addingReportingOverflow(length64)
+        guard !overflow, end <= byteCount else {
+            throw EDPNativeCoreError.invalidInput("raw read exceeds storage bounds")
+        }
+        guard length > 0 else { return }
+        guard offset <= UInt64(Int64.max), let base = buffer.baseAddress else {
+            throw EDPNativeCoreError.invalidInput("invalid raw read buffer or offset")
+        }
+
+        var completed = 0
+        while completed < length {
+            let absoluteOffset = offset + UInt64(completed)
+            guard absoluteOffset <= UInt64(Int64.max) else {
+                throw EDPNativeCoreError.invalidInput("raw read continuation exceeds off_t range")
+            }
+            let result = Darwin.pread(
+                fd,
+                base.advanced(by: completed),
+                length - completed,
+                off_t(absoluteOffset)
+            )
+            if result < 0 {
+                if errno == EINTR { continue }
+                throw EDPNativeCoreError.invalidInput("pread failed: errno=\(errno)")
+            }
+            if result == 0 {
+                throw EDPNativeCoreError.verify("unexpected EOF during exact raw read")
+            }
+            completed += result
+        }
     }
 
     func writeExact(at offset: UInt64, data: Data) throws {

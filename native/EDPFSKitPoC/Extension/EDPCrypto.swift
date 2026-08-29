@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+#if canImport(EDPCore)
+import EDPCore
+#endif
 
 enum EDPNativeCoreError: Error, CustomStringConvertible {
     case invalidInput(String)
@@ -201,6 +204,81 @@ struct EDPSM4: Sendable {
         0x89, 0x69, 0x97, 0x4a, 0x0c, 0x96, 0x77, 0x7e, 0x65, 0xb9, 0xf1, 0x09, 0xc5, 0x6e, 0xc6, 0x84,
         0x18, 0xf0, 0x7d, 0xec, 0x3a, 0xdc, 0x4d, 0x20, 0x79, 0xee, 0x5f, 0x3e, 0xd7, 0xcb, 0x39, 0x48,
     ]
+}
+
+final class EDPSharedSM4 {
+    #if canImport(EDPCore)
+    private let core: EDPCore.EDPSM4
+    #else
+    #if EDP_REQUIRE_SHARED_CORE
+    #error("EDP production build requires the shared EDPCore module")
+    #endif
+    private let legacy: EDPSM4
+    #endif
+
+    init(key: [UInt8]) throws {
+        #if canImport(EDPCore)
+        core = try EDPCore.EDPSM4(key: key)
+        #else
+        legacy = try EDPSM4(key: key)
+        #endif
+    }
+
+    func encryptAligned(_ bytes: [UInt8]) throws -> [UInt8] {
+        #if canImport(EDPCore)
+        return try core.encryptAligned(bytes)
+        #else
+        return try legacy.encryptAligned(bytes)
+        #endif
+    }
+
+    func decryptAligned(_ bytes: [UInt8]) throws -> [UInt8] {
+        #if canImport(EDPCore)
+        return try core.decryptAligned(bytes)
+        #else
+        return try legacy.decryptAligned(bytes)
+        #endif
+    }
+
+    func encryptInPlace(_ data: inout Data) throws {
+        #if canImport(EDPCore)
+        try core.encryptInPlace(&data)
+        #else
+        data = Data(try legacy.encryptAligned([UInt8](data)))
+        #endif
+    }
+
+    func decryptInPlace(_ data: inout Data) throws {
+        #if canImport(EDPCore)
+        try core.decryptInPlace(&data)
+        #else
+        data = Data(try legacy.decryptAligned([UInt8](data)))
+        #endif
+    }
+
+    func encryptInPlace(_ buffer: UnsafeMutableRawBufferPointer, serial: Bool = false) throws {
+        #if canImport(EDPCore)
+        try core.encryptInPlace(buffer, policy: serial ? .serial : .automatic)
+        #else
+        guard let base = buffer.baseAddress else { return }
+        let encrypted = try legacy.encryptAligned(Array(buffer.bindMemory(to: UInt8.self)))
+        encrypted.withUnsafeBytes { source in
+            base.copyMemory(from: source.baseAddress!, byteCount: encrypted.count)
+        }
+        #endif
+    }
+
+    func decryptInPlace(_ buffer: UnsafeMutableRawBufferPointer, serial: Bool = false) throws {
+        #if canImport(EDPCore)
+        try core.decryptInPlace(buffer, policy: serial ? .serial : .automatic)
+        #else
+        guard let base = buffer.baseAddress else { return }
+        let decrypted = try legacy.decryptAligned(Array(buffer.bindMemory(to: UInt8.self)))
+        decrypted.withUnsafeBytes { source in
+            base.copyMemory(from: source.baseAddress!, byteCount: decrypted.count)
+        }
+        #endif
+    }
 }
 
 enum EDPA6B0 {

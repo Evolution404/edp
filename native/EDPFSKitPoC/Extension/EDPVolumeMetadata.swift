@@ -88,13 +88,13 @@ enum EDPVolumeMetadata {
         let storedPasswordCRC = readUInt32LE(entry, 0x30)
 
         if storedPasswordCRC == EDPCrypto.crc32Bare(password),
-           let fixedCipher = try? EDPSM4(key: EDPCrypto.md5(Array("LtSWi[2f)j".utf8))),
+           let fixedCipher = try? EDPSharedSM4(key: EDPCrypto.md5(Array("LtSWi[2f)j".utf8))),
            let candidate = try? fixedCipher.decryptAligned(salt),
            EDPCrypto.crc32Bare(candidate) == storedKeyCRC {
             return candidate
         }
 
-        if let passwordCipher = try? EDPSM4(key: EDPCrypto.md5(password)),
+        if let passwordCipher = try? EDPSharedSM4(key: EDPCrypto.md5(password)),
            let candidate = try? passwordCipher.decryptAligned(salt),
            EDPCrypto.crc32Bare(candidate) == storedKeyCRC {
             return candidate

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${REPO_ROOT}/scripts/prepare-shared-edp-core.sh"
 VERSION="${EDP_VERSION:-0.5.0}"
 ARCH="${EDP_ARCH:-arm64}"
 OUTPUT_DIR="${1:-${REPO_ROOT}/artifacts}"
@@ -164,6 +165,7 @@ CORE_SOURCES=(
 )
 
 xcrun swiftc -O -framework CryptoKit -framework Security \
+  "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/product/EDPNTFSWriteSafety.swift" \
   "${REPO_ROOT}/product/EDPNTFSMountPolicy.swift" \
@@ -182,6 +184,7 @@ xcrun swiftc -O -framework CryptoKit -framework Security \
 
 xcrun swiftc -O -emit-library -module-name EDPReadWriteBridge \
   -Xlinker -install_name -Xlinker @rpath/libEDPReadWriteBridge.dylib \
+  "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadOnlyBlockCBridge.swift" \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
