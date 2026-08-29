@@ -11,7 +11,7 @@ DRIVE_UI_BINARY := $(ARTIFACTS)/edp-drive-ui
 STUDIO_DERIVED_DATA := $(ARTIFACTS)/DerivedData/EDPStudio
 STUDIO_PROJECT := $(ROOT)/Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj
 
-.PHONY: help status check build core-test drive-check drive-build drive-restart \
+.PHONY: help status check build core-test drive-check drive-build drive-ui-status drive-stop drive-restart \
 	drive-ui-package drive-ui-install drive-ui-deploy drive-installer \
 	studio-generate studio-build
 
@@ -22,7 +22,9 @@ help:
 	@echo "  make drive-ui-deploy    Build, install and restart UI only (sudo)"
 	@echo "  make drive-ui-package   Build signed UI-only update package"
 	@echo "  make drive-ui-install   Install an existing UI package (sudo)"
-	@echo "  make drive-restart      Restart the foreground UI only"
+	@echo "  make drive-ui-status    List every running Drive foreground UI"
+	@echo "  make drive-stop         Close every Drive foreground UI"
+	@echo "  make drive-restart      Close old UIs and start exactly one official UI"
 	@echo "  make drive-installer    Build the full Drive native installer"
 	@echo "  make studio-generate    Regenerate the Studio Xcode project"
 	@echo "  make studio-build       Build Studio Release without signing"
@@ -68,14 +70,14 @@ drive-ui-install:
 drive-ui-deploy: drive-ui-package
 	@"$(ROOT)/Tools/install-drive-ui-update.sh" "$(DRIVE_UI_PKG)"
 
+drive-ui-status:
+	@"$(ROOT)/Tools/manage-drive-ui.sh" status
+
+drive-stop:
+	@"$(ROOT)/Tools/manage-drive-ui.sh" stop
+
 drive-restart:
-	@pids="$$(pgrep -f '^/Applications/EDP Drive.app/Contents/MacOS/EDP Drive$$' || true)"; \
-	if [[ -n "$$pids" ]]; then kill $$pids; fi; \
-	for _ in {1..30}; do \
-		[[ -z "$$(pgrep -f '^/Applications/EDP Drive.app/Contents/MacOS/EDP Drive$$' || true)" ]] && break; \
-		sleep 0.1; \
-	done; \
-	open '/Applications/EDP Drive.app'
+	@"$(ROOT)/Tools/manage-drive-ui.sh" restart
 
 drive-installer:
 	@mkdir -p "$(ARTIFACTS)"

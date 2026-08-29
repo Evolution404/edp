@@ -90,6 +90,9 @@ Certificate leaf/root SHA-1: 040b5488fb2b6c02b0786e76b674cb4460658ca2
 make help
 make check
 make build
+make drive-ui-status   # 检查所有正式、旧副本和临时 QA 前台实例
+make drive-stop        # 仅关闭全部前台界面，不停止后台服务和挂载
+make drive-restart     # 清理旧实例后只启动一个正式 App
 make drive-ui-deploy   # 仅更新前台 UI，保留后台服务和挂载；需要管理员授权
 make drive-installer   # 服务、transport 或安装逻辑变化时才构建完整安装器
 make studio-build
@@ -99,6 +102,10 @@ make studio-build
 重新编译前台二进制、校验签名证书根、生成 UI-only pkg、安装并重启界面。
 它不会停止后台服务或主动卸载磁盘。单独构建或安装可分别使用
 `make drive-ui-package` 和 `make drive-ui-install`。
+
+`drive-restart` 会先检测并关闭所有 EDP Drive 前台实例，包括旧 App 副本、
+临时 QA App 和直接运行的构建产物，然后只启动 `/Applications/EDP Drive.app`。
+此流程不会匹配 `edp-drive-service` 或分区挂载进程。
 
 底层命令仍可直接使用：
 

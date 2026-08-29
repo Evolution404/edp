@@ -275,6 +275,30 @@ final class EDPVaultViewModel: ObservableObject {
                         lastError: nil
                     )
                 ]
+            ),
+            EDPXPCDevice(
+                deviceID: "disk&ven_edp&prod_backup_drive-preview",
+                bsdName: "disk7",
+                mediaName: "EDP Backup Drive",
+                displayName: "EDP 备份盘",
+                vidPID: "1209:ed02",
+                sizeBytes: 64_000_000_000,
+                connected: false,
+                privilegedAccessReady: true,
+                partitions: [
+                    EDPXPCPartition(
+                        partitionType: EDPPartitionKind.secure.rawValue,
+                        displayName: "保密区",
+                        encrypted: true,
+                        autoMount: true,
+                        credentialStatus: .saved,
+                        mountState: .unmounted,
+                        filesystem: "ExFAT",
+                        readOnly: false,
+                        mountPoint: nil,
+                        lastError: nil
+                    )
+                ]
             )
         ],
         activities: [
@@ -976,20 +1000,23 @@ struct EDPMainView: View {
             }
             .listStyle(.sidebar)
             .navigationTitle("EDP Drive")
-            // Keep the primary navigation readable even when AppKit restores an
-            // Keep the primary navigation identical across Devices, Activity,
-            // and Settings instead of letting detail content resize the column.
-            .frame(width: 180)
-            .navigationSplitViewColumnWidth(180)
+            // Let NavigationSplitView own the column geometry so its native
+            // show/hide transition is not fighting a fixed child frame.
+            .navigationSplitViewColumnWidth(min: 180, ideal: 180, max: 220)
         } detail: {
-            switch section ?? .devices {
-            case .devices: EDPDevicesView(model: model)
-            case .activity: EDPActivityView(model: model)
-            case .settings: EDPSettingsView(model: model)
+            ZStack {
+                EDPWindowBackdrop()
+                switch section ?? .devices {
+                case .devices: EDPDevicesView(model: model)
+                case .activity: EDPActivityView(model: model)
+                case .settings: EDPSettingsView(model: model)
+                }
             }
         }
+        // Keep the detail canvas stable while the glass sidebar moves in or out;
+        // large partition cards no longer relayout on every animation frame.
+        .navigationSplitViewStyle(.prominentDetail)
         .frame(minWidth: 900, minHeight: 620)
-        .background { EDPWindowBackdrop() }
         .alert("操作失败", isPresented: Binding(
             get: { model.lastError != nil },
             set: { if !$0 { model.lastError = nil } }
@@ -1003,6 +1030,7 @@ struct EDPMainView: View {
 
 struct EDPDevicesView: View {
     @ObservedObject var model: EDPVaultViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedDeviceID: String?
 
     private var selectedDevice: EDPXPCDevice? {
@@ -1033,15 +1061,11 @@ struct EDPDevicesView: View {
                 .padding(EDPTheme.Spacing.sm)
             }
 
-            if model.snapshot.devices.count > 1 {
-                deviceSelector
-                Divider()
-            }
-
             Group {
                 if let selectedDevice {
                     EDPDeviceDetailView(device: selectedDevice, model: model)
                         .id(selectedDevice.deviceID)
+                        .transition(.opacity)
                 } else {
                     EDPEmptyState(
                         "未发现 EDP U 盘",
@@ -1051,11 +1075,30 @@ struct EDPDevicesView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(
+                reduceMotion ? EDPTheme.Motion.reduced : EDPTheme.Motion.navigation,
+                value: selectedDeviceID
+            )
         }
         .navigationTitle("设备")
-        .background { EDPWindowBackdrop() }
         .toolbar {
-            ToolbarItem {
+            ToolbarItemGroup {
+                Picker("切换设备", selection: deviceSelection) {
+                    if model.snapshot.devices.isEmpty {
+                        Text("未发现设备").tag("")
+                    } else {
+                        ForEach(model.snapshot.devices) { device in
+                            Text("\(device.displayName) · \(device.connected ? "已连接" : "已保存")")
+                                .tag(device.deviceID)
+                        }
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(minWidth: 170)
+                .disabled(model.snapshot.devices.isEmpty)
+                .help("切换当前管理的 EDP 设备")
+                .accessibilityLabel("切换设备")
+
                 Button { model.refresh() } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
@@ -1082,50 +1125,11 @@ struct EDPDevicesView: View {
         }
     }
 
-    private var deviceSelector: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: EDPTheme.Spacing.xs) {
-                ForEach(model.snapshot.devices) { device in
-                    Button {
-                        selectedDeviceID = device.deviceID
-                    } label: {
-                        HStack(spacing: EDPTheme.Spacing.xs) {
-                            Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
-                                .foregroundStyle(device.connected ? Color.accentColor : .secondary)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(device.displayName)
-                                    .font(.caption.weight(.semibold))
-                                    .lineLimit(1)
-                                Text(device.connected ? "已连接" : "已保存")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 8)
-                        .background(
-                            selectedDeviceID == device.deviceID
-                                ? EDPTheme.selectedFill
-                                : EDPTheme.quietFill,
-                            in: RoundedRectangle(cornerRadius: EDPTheme.Radius.row, style: .continuous)
-                        )
-                        .overlay {
-                            RoundedRectangle(cornerRadius: EDPTheme.Radius.row, style: .continuous)
-                                .stroke(
-                                    selectedDeviceID == device.deviceID
-                                        ? Color.accentColor.opacity(0.30)
-                                        : EDPTheme.cardStroke,
-                                    lineWidth: 0.5
-                                )
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .scrollIndicators(.never)
-        .padding(.horizontal, EDPTheme.Spacing.lg)
-        .padding(.vertical, EDPTheme.Spacing.sm)
+    private var deviceSelection: Binding<String> {
+        Binding(
+            get: { selectedDevice?.deviceID ?? "" },
+            set: { selectedDeviceID = $0 }
+        )
     }
 }
 
@@ -1219,7 +1223,6 @@ struct EDPDeviceDetailView: View {
             }
             .padding(EDPTheme.Spacing.lg)
         }
-        .background { EDPWindowBackdrop() }
         .onAppear { displayName = device.displayName }
         .onChange(of: device.displayName) { _, value in displayName = value }
         .sheet(item: $credentialTarget) { target in
@@ -1457,7 +1460,6 @@ struct EDPActivityView: View {
             }
         }
         .navigationTitle("活动")
-        .background { EDPWindowBackdrop() }
     }
 }
 
@@ -1546,7 +1548,6 @@ struct EDPSettingsView: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .background { EDPWindowBackdrop() }
         .navigationTitle("设置")
         .sheet(isPresented: $showingDiagnostics) {
             VStack(alignment: .leading, spacing: 12) {
