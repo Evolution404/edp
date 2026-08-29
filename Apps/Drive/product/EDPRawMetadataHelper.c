@@ -92,7 +92,7 @@ int main(int argc, char **argv) {
         return 74;
     }
 
-    const uint64_t lbas[] = {4, 7, 11, 12};
+    const uint64_t lbas[] = {0, 4, 7, 11, 12};
     unsigned char sector[EDP_SECTOR_SIZE];
     for (size_t i = 0; i < sizeof(lbas) / sizeof(lbas[0]); ++i) {
         if (read_sector(fd, lbas[i], sector) != 0) {

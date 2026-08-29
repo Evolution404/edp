@@ -173,13 +173,15 @@ enum EDPBootUnlock {
         }
 
         let sectorSize = Int(EDPMetadataProbe.legacySectorSize)
+        let mbr = try raw.readExact(at: 0, length: sectorSize)
         let lba4 = try raw.readExact(at: EDPMetadataProbe.lba4ByteOffset, length: sectorSize)
         let lba7 = try raw.readExact(at: EDPMetadataProbe.lba7ByteOffset, length: sectorSize)
-        guard EDPMetadataProbe.recognizeReservedSectors(
+        guard EDPMetadataProbe.recognizeStandardEncryptedFrontMetadata(
+            lba0: [UInt8](mbr),
             lba4: [UInt8](lba4),
             lba7: [UInt8](lba7)
         ) != nil else {
-            throw EDPNativeCoreError.verify("raw device is not recognized EDP media")
+            throw EDPNativeCoreError.verify("raw device is not factory-standard encrypted EDP media")
         }
 
         let lba11 = try raw.readExact(
@@ -195,7 +197,6 @@ enum EDPBootUnlock {
             throw EDPNativeCoreError.verify("EDP startup device identity validation failed")
         }
 
-        let mbr = try raw.readExact(at: 0, length: sectorSize)
         guard mbr.count == sectorSize,
               mbr[510] == 0x55,
               mbr[511] == 0xaa else {

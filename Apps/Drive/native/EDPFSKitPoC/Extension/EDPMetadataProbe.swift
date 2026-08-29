@@ -16,6 +16,21 @@ enum EDPMetadataProbe {
 
     private static let expectedPartitionTypes: [UInt32] = [1, 2, 4]
     private static let lba7EntrySize = 0x40
+    private static let lba12EntrySize = 0x60
+
+    enum MediaKind: String, Sendable {
+        case standardEncrypted
+        case legacyNoPassword
+        case currentNoPassword
+        case unrecognizedEDP
+        case ordinaryUSB
+    }
+
+    struct PartitionGeometry: Equatable, Sendable {
+        let type: UInt32
+        let startSector: UInt64
+        let sizeBytes: UInt64
+    }
 
     enum ProbeError: Error, CustomStringConvertible {
         case invalidPhysicalBlockSize(UInt64)
@@ -132,6 +147,135 @@ enum EDPMetadataProbe {
             serial: serial,
             lba7K0: oldFormat.k0,
             partitionTypes: expectedPartitionTypes
+        )
+    }
+
+    /// Front-of-disk gate for contexts that cannot decode LBA12 yet (for
+    /// example the old native FSKit PoC). It deliberately requires the
+    /// physical MBR to still match the original type-1 Boot entry from LBA7,
+    /// which rejects both generations of no-password conversion.
+    static func recognizeStandardEncryptedFrontMetadata(
+        lba0: [UInt8],
+        lba4: [UInt8],
+        lba7: [UInt8]
+    ) -> Recognition? {
+        guard let recognition = recognizeReservedSectors(lba4: lba4, lba7: lba7),
+              let decoded = recognizeOldFormatLBA7(lba7)?.plaintext else {
+            return nil
+        }
+        let entries = parseEntries(decoded, stride: lba7EntrySize)
+        guard entryTypes(entries) == [1, 2, 4],
+              let first = entries.first,
+              first.type == 1,
+              let mbrFirst = firstMBRPartition(lba0),
+              mbrFirst.startSector == first.startSector,
+              mbrFirst.sizeBytes == first.sizeBytes else {
+            return nil
+        }
+        return recognition
+    }
+
+    /// Classifies USB media without claiming it. Only `.standardEncrypted`
+    /// is eligible for the EDP Drive raw-access/mount pipeline; every other
+    /// result must remain owned by macOS/Disk Arbitration.
+    static func classifyMedia(
+        lba0: [UInt8],
+        lba4: [UInt8],
+        lba7: [UInt8],
+        lba12Plain: [UInt8]?,
+        hasLBA11Identity: Bool = false
+    ) -> MediaKind {
+        let serialPresent = lba4Serial(lba4) != nil
+        let decodedLBA7 = recognizeOldFormatLBA7(lba7)?.plaintext
+        let lba7Entries = decodedLBA7.map { parseEntries($0, stride: lba7EntrySize) } ?? []
+        let lba12Entries = lba12Plain.map { parseEntries($0, stride: lba12EntrySize) } ?? []
+        let mbrFirst = firstMBRPartition(lba0)
+
+        let hasEDPEvidence = hasLBA11Identity || serialPresent || !lba7Entries.isEmpty || !lba12Entries.isEmpty
+        guard hasEDPEvidence else { return .ordinaryUSB }
+
+        // Factory-standard encrypted EDP media. This is the only shape Drive
+        // is allowed to claim. The original first entry is Boot/type=1 in both
+        // EDPF tables and the physical MBR still exposes that same small Boot
+        // partition rather than a widened plaintext Share partition.
+        if entryTypes(lba7Entries) == [1, 2, 4],
+           entryTypes(lba12Entries) == [1, 2, 4],
+           let first12 = lba12Entries.first,
+           first12.type == 1,
+           let mbrFirst,
+           mbrFirst.startSector == first12.startSector,
+           mbrFirst.sizeBytes == first12.sizeBytes {
+            return .standardEncrypted
+        }
+
+        // Legacy no-password conversion (`make_big_boot.py`): LBA7 stays in
+        // the original three-entry [1,2,4] form. LBA12 keeps three entries but
+        // changes only entry0 Boot/type=1 -> Share/type=2, while LBA0 widens
+        // the first physical partition beyond the old Boot geometry.
+        if entryTypes(lba7Entries) == [1, 2, 4],
+           entryTypes(lba12Entries) == [2, 2, 4],
+           let first12 = lba12Entries.first,
+           let mbrFirst,
+           mbrFirst.startSector == first12.startSector,
+           mbrFirst.sizeBytes > first12.sizeBytes {
+            return .legacyNoPassword
+        }
+
+        // Current no-password conversion: both EDPF tables are rewritten to
+        // two entries [Share, Encrypt]. LBA0 directly exposes the same Share
+        // geometry as LBA12 entry0, so macOS should mount it natively.
+        if entryTypes(lba7Entries) == [2, 4],
+           entryTypes(lba12Entries) == [2, 4],
+           let first12 = lba12Entries.first,
+           let mbrFirst,
+           mbrFirst.startSector == first12.startSector,
+           mbrFirst.sizeBytes == first12.sizeBytes {
+            return .currentNoPassword
+        }
+
+        return .unrecognizedEDP
+    }
+
+    private static func parseEntries(_ bytes: [UInt8], stride: Int) -> [PartitionGeometry] {
+        guard stride > 0 else { return [] }
+        var entries = [PartitionGeometry]()
+        for index in 0..<3 {
+            let offset = index * stride
+            guard bytes.count >= offset + stride else { break }
+            guard bytes[offset] == 0x45,
+                  bytes[offset + 1] == 0x44,
+                  bytes[offset + 2] == 0x50,
+                  bytes[offset + 3] == 0x46 else {
+                break
+            }
+            entries.append(PartitionGeometry(
+                type: readUInt32LE(bytes, at: offset + 0x0c),
+                startSector: readUInt64LE(bytes, at: offset + 0x18),
+                sizeBytes: readUInt64LE(bytes, at: offset + 0x28)
+            ))
+        }
+        return entries
+    }
+
+    private static func entryTypes(_ entries: [PartitionGeometry]) -> [UInt32] {
+        entries.map(\.type)
+    }
+
+    private static func firstMBRPartition(_ bytes: [UInt8]) -> PartitionGeometry? {
+        guard bytes.count == Int(legacySectorByteLength),
+              bytes[510] == 0x55,
+              bytes[511] == 0xaa else {
+            return nil
+        }
+        let offset = 0x1be
+        let type = UInt32(bytes[offset + 4])
+        let start = UInt64(readUInt32LE(bytes, at: offset + 8))
+        let sectors = UInt64(readUInt32LE(bytes, at: offset + 12))
+        guard type != 0, start != 0, sectors != 0 else { return nil }
+        return PartitionGeometry(
+            type: type,
+            startSector: start,
+            sizeBytes: sectors * legacySectorSize
         )
     }
 

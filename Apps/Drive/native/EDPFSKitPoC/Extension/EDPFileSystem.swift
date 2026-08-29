@@ -5,6 +5,7 @@ import os
 final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
     private let logger = Logger(subsystem: "com.edp.drive.fskit-poc.extension", category: "filesystem")
 
+    private static let lba0Offset: UInt64 = 0
     private static let lba4Offset = EDPMetadataProbe.lba4ByteOffset
     private static let lba7Offset = EDPMetadataProbe.lba7ByteOffset
     private static let sectorLength = Int(EDPMetadataProbe.legacySectorByteLength)
@@ -33,12 +34,14 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
         )
 
         do {
+            let lba0 = try raw.readExact(at: Self.lba0Offset, length: Self.sectorLength)
             let lba4 = try raw.readExact(at: Self.lba4Offset, length: Self.sectorLength)
             let lba7 = try raw.readExact(at: Self.lba7Offset, length: Self.sectorLength)
             logger.notice("PROBE_RESERVED_SECTORS_READ=true")
             logger.notice("PROBE_CORE=swift-native")
 
-            guard let evidence = EDPMetadataProbe.recognizeReservedSectors(
+            guard let evidence = EDPMetadataProbe.recognizeStandardEncryptedFrontMetadata(
+                lba0: [UInt8](lba0),
                 lba4: [UInt8](lba4),
                 lba7: [UInt8](lba7)
             ) else {

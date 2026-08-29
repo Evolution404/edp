@@ -197,6 +197,7 @@ private func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
 }
 
 private struct EDPRawMetadataSnapshot {
+    let lba0: Data
     let lba4: Data
     let lba7: Data
     let lba11: Data
@@ -255,6 +256,7 @@ private func rawMetadataSnapshot(fd: Int32) throws -> EDPRawMetadataSnapshot {
     guard fd >= 0 else { throw fail("EDP raw access lease is closed") }
     let sector = Int(EDPMetadataProbe.legacySectorByteLength)
     return EDPRawMetadataSnapshot(
+        lba0: try preadExact(fd: fd, offset: 0, length: sector),
         lba4: try preadExact(fd: fd, offset: EDPMetadataProbe.lba4ByteOffset, length: sector),
         lba7: try preadExact(fd: fd, offset: EDPMetadataProbe.lba7ByteOffset, length: sector),
         lba11: try preadExact(fd: fd, offset: EDPVolumeMetadata.lba11ByteOffset, length: sector),
@@ -299,20 +301,24 @@ private func openPersistentRawAccess(for disk: PhysicalDisk) throws -> EDPRawAcc
             throw fail("EDP_RAW_LEASE_TYPE_REFUSED")
         }
 
-        let sector = Int(EDPMetadataProbe.legacySectorByteLength)
-        let lba4 = try preadExact(fd: fd, offset: EDPMetadataProbe.lba4ByteOffset, length: sector)
-        let lba7 = try preadExact(fd: fd, offset: EDPMetadataProbe.lba7ByteOffset, length: sector)
-        let lba11 = try preadExact(fd: fd, offset: EDPVolumeMetadata.lba11ByteOffset, length: sector)
-        guard EDPMetadataProbe.recognizeReservedSectors(
-                  lba4: [UInt8](lba4),
-                  lba7: [UInt8](lba7)
-              ) != nil,
-              let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-                  [UInt8](lba11),
+        let metadata = try rawMetadataSnapshot(fd: fd)
+        guard let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+                  [UInt8](metadata.lba11),
                   vidHex: disk.vidHex,
                   pidHex: disk.pidHex,
                   sizeBytes: disk.sizeBytes
               ),
+              let lba12Plain = try? EDPVolumeMetadata.decodeLBA12(
+                  [UInt8](metadata.lba12),
+                  deviceID: metadataDeviceID
+              ),
+              EDPMetadataProbe.classifyMedia(
+                  lba0: [UInt8](metadata.lba0),
+                  lba4: [UInt8](metadata.lba4),
+                  lba7: [UInt8](metadata.lba7),
+                  lba12Plain: lba12Plain,
+                  hasLBA11Identity: true
+              ) == .standardEncrypted,
               EDPVolumeMetadata.stablePhysicalDeviceID(
                   metadataDeviceID: metadataDeviceID,
                   vidHex: disk.vidHex,
@@ -392,14 +398,20 @@ private func rawMetadataSnapshot(for rawPath: String) throws -> EDPRawMetadataSn
 
 private func decodeRawMetadataOutput(_ output: Data) throws -> EDPRawMetadataSnapshot {
     let sector = Int(EDPMetadataProbe.legacySectorByteLength)
-    guard output.count == sector * 4 else {
-        throw fail("raw metadata helper returned \(output.count) bytes; expected \(sector * 4)")
+    guard output.count == sector * 5 else {
+        throw fail("raw metadata helper returned \(output.count) bytes; expected \(sector * 5)")
     }
     func slice(_ index: Int) -> Data {
         let start = index * sector
         return output.subdata(in: start..<(start + sector))
     }
-    return EDPRawMetadataSnapshot(lba4: slice(0), lba7: slice(1), lba11: slice(2), lba12: slice(3))
+    return EDPRawMetadataSnapshot(
+        lba0: slice(0),
+        lba4: slice(1),
+        lba7: slice(2),
+        lba11: slice(3),
+        lba12: slice(4)
+    )
 }
 
 private func discoverEDPDisks(
@@ -434,19 +446,32 @@ private func discoverEDPDisks(
             NSLog("EDP discovery skipped %@ because raw metadata read failed: %@", media.bsdName, detail)
             continue
         }
-        guard EDPMetadataProbe.recognizeReservedSectors(
-                  lba4: [UInt8](metadata.lba4),
-                  lba7: [UInt8](metadata.lba7)
-              ) != nil else {
-            diagnostic?("bsd=\(media.bsdName);result=metadata_not_edp")
+        let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+            [UInt8](metadata.lba11),
+            vidHex: media.vid,
+            pidHex: media.pid,
+            sizeBytes: media.size
+        )
+        let lba12Plain = metadataDeviceID.flatMap { deviceID in
+            try? EDPVolumeMetadata.decodeLBA12(
+                [UInt8](metadata.lba12),
+                deviceID: deviceID
+            )
+        }
+        let mediaKind = EDPMetadataProbe.classifyMedia(
+            lba0: [UInt8](metadata.lba0),
+            lba4: [UInt8](metadata.lba4),
+            lba7: [UInt8](metadata.lba7),
+            lba12Plain: lba12Plain,
+            hasLBA11Identity: metadataDeviceID != nil
+        )
+        diagnostic?("bsd=\(media.bsdName);classification=\(mediaKind.rawValue)")
+        guard mediaKind == .standardEncrypted else {
+            // No-password conversions, malformed EDP media and ordinary USB
+            // storage remain entirely under macOS/Disk Arbitration ownership.
             continue
         }
-        guard let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-                  [UInt8](metadata.lba11),
-                  vidHex: media.vid,
-                  pidHex: media.pid,
-                  sizeBytes: media.size
-              ) else {
+        guard let metadataDeviceID else {
             diagnostic?("bsd=\(media.bsdName);result=device_id_invalid")
             continue
         }

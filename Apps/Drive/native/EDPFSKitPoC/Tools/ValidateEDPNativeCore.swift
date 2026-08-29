@@ -293,15 +293,20 @@ struct ValidateEDPNativeCore {
             data: try Data(contentsOf: fixtureDirectory.appendingPathComponent("LBA11.bin"))
         )
 
-        let startSector: UInt32 = 2_048
-        let sectorCount: UInt32 = 4_096
-        var mbr = Data(repeating: 0, count: Int(EDPMetadataProbe.legacySectorSize))
+        let front = try Data(contentsOf: fixtureDirectory.appendingPathComponent("lba0_16.bin"))
+        guard front.count >= Int(EDPMetadataProbe.legacySectorSize) else {
+            throw ValidationFailure.message("real boot MBR fixture is too short")
+        }
+        let mbr = Data(front.prefix(Int(EDPMetadataProbe.legacySectorSize)))
         let entry = 446
-        mbr[entry + 4] = 0x06
-        writeUInt32LE(startSector, to: &mbr, at: entry + 8)
-        writeUInt32LE(sectorCount, to: &mbr, at: entry + 12)
-        mbr[510] = 0x55
-        mbr[511] = 0xaa
+        let startSector = UInt32(mbr[entry + 8])
+            | (UInt32(mbr[entry + 9]) << 8)
+            | (UInt32(mbr[entry + 10]) << 16)
+            | (UInt32(mbr[entry + 11]) << 24)
+        let sectorCount = UInt32(mbr[entry + 12])
+            | (UInt32(mbr[entry + 13]) << 8)
+            | (UInt32(mbr[entry + 14]) << 16)
+            | (UInt32(mbr[entry + 15]) << 24)
         raw.seed(at: 0, data: mbr)
 
         let partitionStartBytes = UInt64(startSector) * EDPMetadataProbe.legacySectorSize

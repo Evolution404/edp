@@ -191,7 +191,11 @@ enum EDPNativeDeviceDiscovery {
             } catch {
                 continue
             }
-            guard let lba4 = try? raw.readExact(
+            guard let lba0 = try? raw.readExact(
+                at: 0,
+                length: Int(EDPMetadataProbe.legacySectorByteLength)
+            ),
+            let lba4 = try? raw.readExact(
                 at: EDPMetadataProbe.lba4ByteOffset,
                 length: Int(EDPMetadataProbe.legacySectorByteLength)
             ),
@@ -199,12 +203,12 @@ enum EDPNativeDeviceDiscovery {
                 at: EDPMetadataProbe.lba7ByteOffset,
                 length: Int(EDPMetadataProbe.legacySectorByteLength)
             ),
-            EDPMetadataProbe.recognizeReservedSectors(
-                lba4: [UInt8](lba4),
-                lba7: [UInt8](lba7)
-            ) != nil,
             let lba11 = try? raw.readExact(
                 at: EDPVolumeMetadata.lba11ByteOffset,
+                length: Int(EDPMetadataProbe.legacySectorByteLength)
+            ),
+            let lba12 = try? raw.readExact(
+                at: EDPVolumeMetadata.lba12ByteOffset,
                 length: Int(EDPMetadataProbe.legacySectorByteLength)
             ),
             let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
@@ -212,7 +216,18 @@ enum EDPNativeDeviceDiscovery {
                 vidHex: media.vid,
                 pidHex: media.pid,
                 sizeBytes: media.size
-            ) else {
+            ),
+            let lba12Plain = try? EDPVolumeMetadata.decodeLBA12(
+                [UInt8](lba12),
+                deviceID: metadataDeviceID
+            ),
+            EDPMetadataProbe.classifyMedia(
+                lba0: [UInt8](lba0),
+                lba4: [UInt8](lba4),
+                lba7: [UInt8](lba7),
+                lba12Plain: lba12Plain,
+                hasLBA11Identity: true
+            ) == .standardEncrypted else {
                 continue
             }
             let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(

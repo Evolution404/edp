@@ -76,6 +76,20 @@ jobs:
           grep -Fq 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/native-core.txt"
           grep -Fq 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/native-core.txt"
           grep -Fq 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/native-core.txt"
+          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
+            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
+            native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
+            -o "${RUNNER_TEMP}/validate-edp-media-classifier"
+          "${RUNNER_TEMP}/validate-edp-media-classifier" fixtures/golden/disks.json \
+            | tee "${RUNNER_TEMP}/media-classifier.txt"
+          grep -Fq 'MEDIA_CLASS_STANDARD_ENCRYPTED=OK' "${RUNNER_TEMP}/media-classifier.txt"
+          grep -Fq 'MEDIA_CLASS_LEGACY_NOPWD=OK' "${RUNNER_TEMP}/media-classifier.txt"
+          grep -Fq 'MEDIA_CLASS_CURRENT_NOPWD=OK' "${RUNNER_TEMP}/media-classifier.txt"
+          grep -Fq 'MEDIA_CLASS_UNRECOGNIZED_EDP=OK' "${RUNNER_TEMP}/media-classifier.txt"
+          grep -Fq 'MEDIA_CLASS_ORDINARY_USB=OK' "${RUNNER_TEMP}/media-classifier.txt"
+          grep -Fq 'REAL_STANDARD_CLASSIFICATION_OK=disk4' "${RUNNER_TEMP}/media-classifier.txt"
+          grep -Fq 'REAL_STANDARD_CLASSIFICATION_OK=disk5' "${RUNNER_TEMP}/media-classifier.txt"
           echo 'RESULT=EDP_DRIVE_GOLDEN_GATE_OK'
       - name: Compile native daemon and SwiftUI app
         run: |

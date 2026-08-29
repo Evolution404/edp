@@ -23,7 +23,7 @@ com.edp.drive.service
 
 后台 Service 负责：
 
-- 真实 whole USB 设备发现与身份验证；
+- whole USB passive classification 与标准 EDP 加密盘身份验证；
 - Full Disk Access 下的 `/dev/rdiskN` 打开和 retained raw fd 生命周期；
 - EDP metadata / stable device identity / password verification；
 - `Packages/EDPCore`；
@@ -46,10 +46,24 @@ App 设置页提供后台 Service 的：
 
 Service plist 不使用 `KeepAlive` 或 `RunAtLoad`，避免用户主动停止后被 launchd 立即重新拉起；Mach service 保持按需激活能力。
 
-## 2. 当前唯一数据路径
+## 2. USB 分类与唯一数据路径
+
+Drive 对 whole USB 只做一次只读 passive sniff，读取 LBA0/4/7/11/12 后区分：
 
 ```text
-physical EDP USB
+standardEncrypted   标准 EDP 加密盘
+legacyNoPassword    旧版免密改造盘
+currentNoPassword   最新免密改造盘
+unrecognizedEDP     有 EDP 证据但结构异常/无法可靠识别
+ordinaryUSB         普通 U 盘
+```
+
+接管规则是硬约束：**只有 `standardEncrypted` 进入 Drive 的 raw/password/mount pipeline**。旧版免密、最新版免密、异常 EDP 和普通 U 盘都不创建 retained raw lease、不建立 EDP mount session、不卸载系统卷，直接留给 macOS / Disk Arbitration / Finder。
+
+标准加密盘当前唯一数据路径：
+
+```text
+physical standard EDP USB
   -> retained raw fd
   -> LBA metadata / password / key derivation
   -> Packages/EDPCore
@@ -166,7 +180,7 @@ Service 打开 raw device 前后继续验证：
 - character device；
 - `st_rdev` 一致性；
 - VID/PID / 容量 / registry identity；
-- LBA4 / LBA7 / LBA11 metadata；
+- LBA0 / LBA4 / LBA7 / LBA11 / LBA12 metadata 与标准加密盘几何；
 - stable EDP device ID；
 - 只把 raw fd 传给允许的 EDP transport。
 

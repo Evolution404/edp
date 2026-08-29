@@ -18,7 +18,19 @@ LaunchDaemon / Mach service                        com.edp.drive.service
 /var/db/com.edp.drive
 ```
 
-每个已识别设备按三个分区独立管理：
+Drive 对 whole USB 先做一次只读 passive sniff，只读取 LBA0/4/7/11/12 做介质分类；**分类不等于接管**。当前区分五类：
+
+```text
+standardEncrypted   标准 EDP 加密盘
+legacyNoPassword    旧版免密改造盘（LBA7 仍 3 条；LBA12 entry0 1→2；MBR 首分区已扩容）
+currentNoPassword   最新免密改造盘（LBA7/LBA12 均为 2 条 [Share, Encrypt]）
+unrecognizedEDP     存在 EDP 证据但结构异常/不完整
+ordinaryUSB         普通 U 盘
+```
+
+只有 `standardEncrypted` 才进入 FDA retained raw fd、密码、EDPCore、macFUSE/DiskImages2 挂载链。其余四类不创建 EDP mount session、不取得持久 raw lease、不改写或卸载物理卷，直接由 macOS / Disk Arbitration / Finder 接管。
+
+每个被 Drive 接管的标准 EDP 设备按三个分区独立管理：
 
 - type 1 启动区：普通分区，无密码，默认自动挂载；
 - type 2 交换区：独立密码和自动挂载策略；
@@ -65,10 +77,11 @@ FSKit module enablement，root daemon 不修改用户的 FSKit 设置。
 安装包只部署 `/Applications/EDP Drive.app`；无 UI 的签名服务位于
 `Contents/Library/LaunchServices/edp-drive-service`，不会作为第二个 App 出现在
 应用列表。首次配置时，用户只需要为这一固定 App/embedded-service 组合开启一次
-Full Disk Access。root 后台服务先通过 IOKit 与只读 metadata helper 识别 EDP
-whole USB，再由 embedded service 对当前
-`/dev/rdiskN` 进行二次 whole-USB、字符设备、device-node 一致性以及 LBA4/LBA7
-EDP 元数据校验。校验通过后才以 `O_RDWR` 打开整盘，将 fd 固定继承为 3，随后
+Full Disk Access。root 后台服务先通过 IOKit 与只读 metadata helper 对 whole USB
+执行 LBA0/4/7/11/12 passive classification；只有标准加密形态才进入受管设备列表。
+随后 embedded service 对当前 `/dev/rdiskN` 再做 whole-USB、字符设备、device-node
+一致性、LBA0/4/7/11/12 标准形态以及 stable device identity 二次校验。校验通过后才以
+`O_RDWR` 打开整盘，将 fd 固定继承为 3，随后
 降权到当前控制台用户并启动加密 transport。正式路径不再使用
 `sys.openfile.*` / `authopen`，因此 U 盘拔插和 `diskN` 变化不依赖 300 秒授权缓存。
 
@@ -230,7 +243,7 @@ real EDP USB
 
 纯 Swift core 已包含：
 
-- LBA4/LBA7 recognition；
+- LBA0/4/7/11/12 five-state media classification，且仅标准加密盘可进入受管路径；
 - LBA11 device identity；
 - LBA12 metadata / partition descriptor；
 - CRC32；
