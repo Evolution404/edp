@@ -22,9 +22,10 @@ Dock 图标；菜单栏可以打开完整的“设备 / 活动 / 设置”主界
 
 ```text
 physical EDP USB
-  -> type 1: validated writable MBR/FAT slice
+  -> FDA daemon retains one validated O_RDWR whole-disk fd
+  -> type 1: plaintext writable MBR/FAT slice
   -> type 2/4: per-partition Swift SM4 block adapter
-  -> pinned FUSE-T 1.2.7 thin FSKit transport
+  -> macFUSE 5.3.3 Local FSKit transport (local,nobrowse)
   -> hidden writable volume.raw
   -> DiskImages2 writable virtual media
   -> Apple native filesystem stack
@@ -39,15 +40,16 @@ ExFAT 由 Apple 原生读写。NTFS 可以按系统能力只读挂载，但虚�
 也由受限的明文 MBR 切片发布为虚拟 FAT 卷。这样启动区、交换区、保密区可以
 同时存在，且仍由同一会话生命周期统一卸载和安全推出。
 
-构建不捆绑第三方 FUSE-T 二进制的原生安装包：
+产品 transport 只支持 macFUSE Local，不存在可切换的备用 transport backend。
+组合安装包包含并校验官方 macFUSE 5.3.3 安装组件：
 
 ```bash
-./installer/build-native-installer.sh artifacts
+./installer/build-clean-installer.sh artifacts
 ```
 
-运行时严格校验 `/Applications/fuse-t.app` 的 bundle ID、Team ID 和已验证
-1.2.7 可执行文件哈希。商业发布前必须取得适用的 FUSE-T commercial
-license；在此之前不得将其二进制随商业产品分发。
+运行时严格校验 `/Library/Filesystems/macfuse.fs` 中的签名、TeamIdentifier、
+MFMount.framework 和 Local FSKit module；前台 App 只负责当前控制台用户的
+FSKit module enablement，root daemon 不修改用户的 FSKit 设置。
 
 原始磁盘访问不保存 `AuthorizationExternalForm`，也不修改 AuthorizationDB。
 首次配置时，用户只需要为稳定签名的 `EDP USB Vault 磁盘访问`
@@ -61,6 +63,13 @@ EDP 元数据校验。校验通过后才以 `O_RDWR` 打开整盘，将 fd 固�
 正式发布前仍需用同一稳定 self-signed certificate 完成“首次 FDA → App/daemon
 重启 → U 盘拔插与 diskN 变化 → Mac 重启 → 版本升级仍无重复授权”的实体盘 E2E。
 详细设计与当前验收状态见 `docs/PLAN-2026-08-29-fda-raw-access.md`。
+
+首次安装/完全清理/重启/三分区读写/策略 round-trip/安全推出的标准化验收流程见
+`docs/FIRST-INSTALL-ACCEPTANCE.md`，可执行入口为：
+
+```bash
+./scripts/first-install-acceptance.sh --help
+```
 
 ## 0.5.0 旧版 macFUSE/NTFS-3G 安装包
 
