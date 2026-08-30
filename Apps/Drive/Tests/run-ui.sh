@@ -14,7 +14,11 @@ cleanup() {
   if [[ -n "${HITCH_PID:-}" ]] && kill -0 "${HITCH_PID}" 2>/dev/null; then
     kill -KILL "${HITCH_PID}" 2>/dev/null || true
   fi
-  rm -rf "${BUILD_ROOT}"
+  if [[ "${EDP_UI_KEEP_ARTIFACTS:-0}" == "1" ]]; then
+    echo "UI_REGRESSION_ARTIFACTS=${BUILD_ROOT}" >&2
+  else
+    rm -rf "${BUILD_ROOT}"
+  fi
 }
 trap cleanup EXIT
 

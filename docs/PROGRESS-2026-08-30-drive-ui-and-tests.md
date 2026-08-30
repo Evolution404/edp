@@ -181,6 +181,7 @@ Status: `DONE`
 - [x] Header with service status and direct 打开主窗口 action.
 - [x] Device compact card(s) with capacity and connected state.
 - [x] Partition quick controls with filesystem/mount status and credential-missing guidance.
+- [x] Encrypted partition rows expose a direct key icon that opens the credential sheet inside the menu-bar window; no main-window navigation is required to set/update a password.
 - [x] Global auto-mount toggle.
 - [x] Service start/stop/restart.
 - [x] Footer: 刷新 / 仅退出界面 / 完全退出.
@@ -392,12 +393,15 @@ Status: `DONE`
 - [x] XPC graceful full-exit tears down sessions before requesting process shutdown.
 - [x] Production controller dependencies are initializer-injected; production defaults remain real IOKit/raw lease/Keychain/policy/mount/Disk Arbitration implementations.
 - [x] Test-only synchronous queue helpers compile only under `EDP_REGRESSION_TESTS`; no environment selector/backdoor was added.
+- [x] D01–D13 new-device default-policy matrix: all three partition types default to manual/no-probe; existing devices are immutable under later default changes; new devices inherit per-partition defaults; probing and mounting remain independent; wrong defaults are attempted once per insertion; reconnect/password changes re-enable probing; type2/type4 remain isolated; global mount pause does not disable credential probing; default passwords stay in Keychain; XPC round-trips are covered.
+- [x] Stale synthetic `diskN` reuse is fail-safe: DiskImages2 teardown is keyed by exact `volume.raw` backing identity, and an absent backing publication never triggers `DADiskEject` against a later physical device reusing the same BSD name.
 
 Validation at implementation HEAD:
 
 ```text
 make drive-test-virtual-usb = PASS
 SCENARIO=C01_OK ... SCENARIO=C08_OK
+SCENARIO=D01_OK ... SCENARIO=D13_OK
 SCENARIO=S01_OK ... SCENARIO=S10_OK
 RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK
 RESULT=DRIVE_SERVICE_LIFECYCLE_OK
@@ -461,7 +465,7 @@ Status: `DONE`
 - [x] Preview scenario factory: healthy/no-device/two-device/FDA/service-stopped/credential-missing/partition-error/all-mounted/offline-saved.
 - [x] Main navigation/page rendering automation.
 - [x] Device overview/partitions/security subpages.
-- [x] Menu bar compact control center rendering.
+- [x] Menu bar compact control center rendering, including credential-missing direct-password-entry state.
 - [x] 900×680 native sidebar geometry with 20 deterministic toggles.
 - [x] Light/Dark rendering.
 - [x] Accessibility structure ratchets.

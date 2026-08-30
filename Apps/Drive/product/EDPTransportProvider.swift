@@ -59,7 +59,8 @@ final class EDPTransportSession {
     func stop(
         unmount: (String) throws -> Void,
         isMounted: (String) -> Bool,
-        gracefulExitSeconds: TimeInterval = 5
+        gracefulExitSeconds: TimeInterval = 5,
+        recoverStuckProcess: (() -> Bool)? = nil
     ) throws {
         if isMounted(mountpoint) {
             try unmount(mountpoint)
@@ -90,6 +91,12 @@ final class EDPTransportSession {
         let killDeadline = Date().addingTimeInterval(1)
         while process.isRunning && Date() < killDeadline {
             Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning, recoverStuckProcess?() == true {
+            let recoveryDeadline = Date().addingTimeInterval(2)
+            while process.isRunning && Date() < recoveryDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
         }
         if process.isRunning {
             throw EDPTransportSessionError(

@@ -75,6 +75,16 @@ run_and_require \
   "$BUILD_ROOT/transport-lifecycle.txt" \
   "$BUILD_ROOT/validate-transport-lifecycle"
 
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  product/EDPXPCProtocol.swift \
+  product/EDPDevicePolicyStore.swift \
+  product/Tests/ValidateProductModels.swift \
+  -o "$BUILD_ROOT/validate-product-models"
+run_and_require \
+  'RESULT=EDP_PRODUCT_MODELS_OK' \
+  "$BUILD_ROOT/product-models.txt" \
+  "$BUILD_ROOT/validate-product-models"
+
 echo 'RESULT=DRIVE_CORE_OK'
 echo 'RESULT=DRIVE_IDENTITY_OK'
 echo 'RESULT=DRIVE_FAST_OK'

@@ -33,6 +33,15 @@ enum EDPMountState: String, Codable, Sendable {
     case failed
 }
 
+struct EDPXPCPartitionDefault: Codable, Hashable, Sendable, Identifiable {
+    var id: UInt32 { partitionType }
+    let partitionType: UInt32
+    let displayName: String
+    let autoMount: Bool
+    let autoProbePassword: Bool
+    let defaultProbePasswordCustomized: Bool
+}
+
 struct EDPXPCPartition: Codable, Hashable, Sendable, Identifiable {
     var id: UInt32 { partitionType }
     let partitionType: UInt32
@@ -83,19 +92,30 @@ struct EDPXPCSnapshot: Codable, Sendable {
     let serviceVersion: String
     let timestamp: String
     let globalAutoMountEnabled: Bool
+    let partitionDefaults: [EDPXPCPartitionDefault]
 
     init(
         devices: [EDPXPCDevice],
         activities: [EDPXPCActivity] = [],
         serviceVersion: String,
         timestamp: String,
-        globalAutoMountEnabled: Bool = true
+        globalAutoMountEnabled: Bool = true,
+        partitionDefaults: [EDPXPCPartitionDefault] = EDPPartitionKind.allCases.map {
+            EDPXPCPartitionDefault(
+                partitionType: $0.rawValue,
+                displayName: $0.displayName,
+                autoMount: false,
+                autoProbePassword: false,
+                defaultProbePasswordCustomized: false
+            )
+        }
     ) {
         self.devices = devices
         self.activities = activities
         self.serviceVersion = serviceVersion
         self.timestamp = timestamp
         self.globalAutoMountEnabled = globalAutoMountEnabled
+        self.partitionDefaults = partitionDefaults
     }
 }
 
@@ -109,6 +129,10 @@ struct EDPXPCSnapshot: Codable, Sendable {
     func deleteCredential(deviceID: String, partitionType: UInt32, withReply reply: @escaping (String?) -> Void)
     func deleteDeviceRecord(deviceID: String, withReply reply: @escaping (String?) -> Void)
     func setPartitionAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool, withReply reply: @escaping (String?) -> Void)
+    func setDefaultPartitionAutoMount(partitionType: UInt32, enabled: Bool, withReply reply: @escaping (String?) -> Void)
+    func setDefaultPartitionAutoProbePassword(partitionType: UInt32, enabled: Bool, withReply reply: @escaping (String?) -> Void)
+    func setDefaultProbePassword(partitionType: UInt32, password: Data, withReply reply: @escaping (String?) -> Void)
+    func resetDefaultProbePassword(partitionType: UInt32, withReply reply: @escaping (String?) -> Void)
     func setDeviceDisplayName(deviceID: String, displayName: String, withReply reply: @escaping (String?) -> Void)
     func setGlobalAutoMount(enabled: Bool, withReply reply: @escaping (String?) -> Void)
     func mountPartition(deviceID: String, partitionType: UInt32, withReply reply: @escaping (String?) -> Void)

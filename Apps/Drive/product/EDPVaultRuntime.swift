@@ -444,6 +444,43 @@ private func consoleIdentity() throws -> (uid_t, gid_t) {
     return (status.st_uid, status.st_gid)
 }
 
+private enum EDPFSKitHostRecovery {
+    static func restartConsoleAgentIfSafe() -> Bool {
+        guard geteuid() == 0 else { return false }
+
+        var mounts: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo(&mounts, MNT_NOWAIT)
+        guard count >= 0, let mounts else { return false }
+        for index in 0..<Int(count) {
+            if (mounts[index].f_flags_ext & UInt32(MNT_EXT_FSKIT)) != 0 {
+                NSLog("EDP refused FSKit agent recovery because an FSKit mount is still active")
+                return false
+            }
+        }
+
+        var console = stat()
+        guard stat("/dev/console", &console) == 0,
+              console.st_uid != 0 else {
+            return false
+        }
+
+        do {
+            let status = try EDPNativeBoundedProcess.run(
+                executable: "/usr/bin/pkill",
+                arguments: ["-9", "-U", String(console.st_uid), "-x", "fskit_agent"],
+                timeout: 3,
+                label: "restart console-user FSKit agent"
+            )
+            guard status == 0 else { return false }
+            NSLog("EDP restarted console-user fskit_agent after a mount-free stuck transport")
+            return true
+        } catch {
+            NSLog("EDP FSKit agent recovery failed: %@", String(describing: error))
+            return false
+        }
+    }
+}
+
 private final class EDPSpawnedProcess: EDPManagedProcess, @unchecked Sendable {
     private let lock = NSLock()
     private var pid: pid_t
@@ -658,8 +695,11 @@ private final class MountManager: EDPDaemonMountManaging {
                 try? FileManager.default.removeItem(atPath: mountpoint)
             }
             if let exposed = item["exposedBSD"], !exposed.isEmpty {
+                let backingPath = item["bridgeMount"].map { $0 + "/volume.raw" }
                 do {
-                    try blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: exposed))
+                    try blockPublisher.unpublish(
+                        EDPPublishedBlockDevice(bsdName: exposed, backingPath: backingPath)
+                    )
                 } catch {
                     NSLog(
                         "EDP persisted-session recovery kept published device %@: %@",
@@ -922,7 +962,8 @@ private final class MountManager: EDPDaemonMountManaging {
             if let publishedDevice { try? blockPublisher.unpublish(publishedDevice) }
             try? transportSession.stop(
                 unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
-                isMounted: { EDPNativeMountTable.isMountpoint($0) }
+                isMounted: { EDPNativeMountTable.isMountpoint($0) },
+                recoverStuckProcess: { EDPFSKitHostRecovery.restartConsoleAgentIfSafe() }
             )
             if runtimeStatus.backend == .macFUSELocal {
                 EDPMacFUSEScratchImageCleanup.cleanupNewOrphans(since: macFUSEScratchBaseline)
@@ -1076,7 +1117,12 @@ private final class MountManager: EDPDaemonMountManaging {
         session.filesystemProcess?.terminate()
         if !session.exposedBSD.isEmpty {
             do {
-                try blockPublisher.unpublish(EDPPublishedBlockDevice(bsdName: session.exposedBSD))
+                try blockPublisher.unpublish(
+                    EDPPublishedBlockDevice(
+                        bsdName: session.exposedBSD,
+                        backingPath: session.bridgeMount + "/volume.raw"
+                    )
+                )
             } catch {
                 NSLog("EDP published-device teardown failed for %@: %@", key, String(describing: error))
                 persistSessions()
@@ -1087,7 +1133,8 @@ private final class MountManager: EDPDaemonMountManaging {
         do {
             try session.transport.stop(
                 unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
-                isMounted: { EDPNativeMountTable.isMountpoint($0) }
+                isMounted: { EDPNativeMountTable.isMountpoint($0) },
+                recoverStuckProcess: { EDPFSKitHostRecovery.restartConsoleAgentIfSafe() }
             )
         } catch {
             NSLog("EDP transport teardown failed for %@: %@", key, String(describing: error))
@@ -1270,6 +1317,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private var failedMounts = [String: String]()
     private var manualUnmountSuppressions = Set<String>()
+    private var defaultProbeSuppressions = Set<String>()
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
@@ -1349,6 +1397,62 @@ final class EDPDaemonController: @unchecked Sendable {
                 vidPID: "\(disk.vidHex):\(disk.pidHex)",
                 sizeBytes: disk.sizeBytes
             )
+        }
+    }
+
+    private func probeDefaultPasswordsLocked(
+        disks: [PhysicalDisk],
+        policyDocument: EDPPolicyDocument
+    ) throws {
+        var records = try store.load().records
+        for disk in disks where ejectingUSBRegistryIDs[disk.deviceID] == nil {
+            guard let devicePolicy = policyDocument.devices.first(
+                where: { $0.deviceID == disk.deviceID }
+            ) else { continue }
+
+            for partitionType in [UInt32(2), 4] {
+                let partitionKey = key(disk.deviceID, partitionType)
+                guard devicePolicy.policy(for: partitionType).autoProbePassword,
+                      records.first(where: { $0.deviceID == disk.deviceID })?
+                        .partitionTypes.contains(partitionType) != true,
+                      !defaultProbeSuppressions.contains(partitionKey) else {
+                    continue
+                }
+
+                do {
+                    var password = try store.defaultProbePassword(partitionType: partitionType)
+                    defer { secureZero(&password) }
+                    let rawLease = try requireRawAccessLeaseLocked(for: disk)
+                    try credentialVerifier(disk, partitionType, password, rawLease.fd)
+                    try store.put(
+                        deviceID: disk.deviceID,
+                        partitionType: partitionType,
+                        password: password
+                    )
+                    records = try store.load().records
+                    failedMounts.removeValue(forKey: partitionKey)
+                    addActivity(
+                        "默认密码探测成功并已保存",
+                        deviceID: disk.deviceID,
+                        partitionType: partitionType
+                    )
+                } catch {
+                    let detail = String(describing: error)
+                    if detail.contains("EDP_RAW_BROKER_")
+                        || detail.contains("EDP_RAW_LEASE_")
+                        || isRawAccessPermissionFailure(error) {
+                        rawAccessReadyByDeviceID[disk.deviceID] = false
+                        rawAccessErrorsByDeviceID[disk.deviceID] = detail
+                        continue
+                    }
+                    defaultProbeSuppressions.insert(partitionKey)
+                    addActivity(
+                        "默认密码未匹配，本次插盘不再自动探测",
+                        deviceID: disk.deviceID,
+                        partitionType: partitionType
+                    )
+                }
+            }
         }
     }
 
@@ -1501,8 +1605,13 @@ final class EDPDaemonController: @unchecked Sendable {
                     guard let separator = item.lastIndex(of: ":") else { return false }
                     return connectedDeviceIDs.contains(String(item[..<separator]))
                 }
+                defaultProbeSuppressions = defaultProbeSuppressions.filter { item in
+                    guard let separator = item.lastIndex(of: ":") else { return false }
+                    return connectedDeviceIDs.contains(String(item[..<separator]))
+                }
                 try observe(disks)
                 let policyDocument = try policies.load()
+                try probeDefaultPasswordsLocked(disks: disks, policyDocument: policyDocument)
                 let records = try store.load().records
                 for disk in disks {
                     if ejectingUSBRegistryIDs[disk.deviceID] != nil {
@@ -1520,11 +1629,14 @@ final class EDPDaemonController: @unchecked Sendable {
                     let bootKey = key(disk.deviceID, EDPPartitionKind.boot.rawValue)
                     if policyDocument.globalAutoMountEnabled,
                        bootAutoMount,
-                       !manualUnmountSuppressions.contains(bootKey) {
+                       !manualUnmountSuppressions.contains(bootKey),
+                       !manager.contains(disk, EDPPartitionKind.boot.rawValue) {
                         try? setBootMounted(true, disk: disk)
-                    } else if !bootAutoMount {
-                        try? setBootMounted(false, disk: disk)
                     }
+                    // `autoMount == false` means "do not mount automatically".
+                    // It must never tear down a partition the user mounted
+                    // explicitly. Manual unmount is handled only by the user
+                    // action path below.
                     guard policyDocument.globalAutoMountEnabled,
                           let record = records.first(where: { $0.deviceID == disk.deviceID }) else {
                         continue
@@ -1623,7 +1735,7 @@ final class EDPDaemonController: @unchecked Sendable {
                             partitionType: kind.rawValue,
                             displayName: kind.displayName,
                             encrypted: kind.isEncrypted,
-                            autoMount: policy?.policy(for: kind.rawValue).autoMount ?? (kind == .boot),
+                            autoMount: policy?.policy(for: kind.rawValue).autoMount ?? false,
                             credentialStatus: credentialStatus,
                             mountState: disk == nil ? .unavailable : (isMounted ? .mounted : .unmounted),
                             filesystem: summary?["filesystem"],
@@ -1649,12 +1761,24 @@ final class EDPDaemonController: @unchecked Sendable {
                         partitions: partitions
                     )
                 }
+                let partitionDefaults = EDPPartitionKind.allCases.map { kind in
+                    let policy = policyDocument.defaultPolicy(for: kind.rawValue)
+                    return EDPXPCPartitionDefault(
+                        partitionType: kind.rawValue,
+                        displayName: kind.displayName,
+                        autoMount: policy.autoMount,
+                        autoProbePassword: kind.isEncrypted && policy.autoProbePassword,
+                        defaultProbePasswordCustomized: kind.isEncrypted
+                            && store.hasCustomizedDefaultProbePassword(partitionType: kind.rawValue)
+                    )
+                }
                 return try JSONEncoder().encode(EDPXPCSnapshot(
                     devices: devices,
                     activities: activities,
                     serviceVersion: installedProductVersion(),
                     timestamp: ISO8601DateFormatter().string(from: Date()),
-                    globalAutoMountEnabled: policyDocument.globalAutoMountEnabled
+                    globalAutoMountEnabled: policyDocument.globalAutoMountEnabled,
+                    partitionDefaults: partitionDefaults
                 ))
             } catch {
                 return Data("{\"error\":\"\(String(describing: error).replacingOccurrences(of: "\"", with: "'"))\"}".utf8)
@@ -1763,8 +1887,10 @@ final class EDPDaemonController: @unchecked Sendable {
         try queue.sync {
             try manager.unmount(deviceID: deviceID, partitionType: partitionType)
             try store.remove(deviceID: deviceID, partitionType: partitionType)
-            failedMounts.removeValue(forKey: key(deviceID, partitionType))
-            manualUnmountSuppressions.remove(key(deviceID, partitionType))
+            let partitionKey = key(deviceID, partitionType)
+            failedMounts.removeValue(forKey: partitionKey)
+            manualUnmountSuppressions.remove(partitionKey)
+            defaultProbeSuppressions.insert(partitionKey)
             addActivity("已删除保存的密码", deviceID: deviceID, partitionType: partitionType)
         }
     }
@@ -1783,8 +1909,60 @@ final class EDPDaemonController: @unchecked Sendable {
             manualUnmountSuppressions = manualUnmountSuppressions.filter {
                 !$0.hasPrefix("\(deviceID):")
             }
+            defaultProbeSuppressions = defaultProbeSuppressions.filter {
+                !$0.hasPrefix("\(deviceID):")
+            }
             addActivity("已删除设备记录和保存的密码", deviceID: deviceID)
         }
+    }
+
+    func setDefaultPartitionAutoMount(partitionType: UInt32, enabled: Bool) throws {
+        try queue.sync {
+            try policies.setDefaultAutoMount(partitionType: partitionType, enabled: enabled)
+            addActivity(
+                enabled ? "已开启新设备默认自动挂载" : "已关闭新设备默认自动挂载",
+                partitionType: partitionType
+            )
+        }
+    }
+
+    func setDefaultPartitionAutoProbePassword(partitionType: UInt32, enabled: Bool) throws {
+        try queue.sync {
+            try policies.setDefaultAutoProbePassword(partitionType: partitionType, enabled: enabled)
+            if enabled {
+                for disk in connectedDisks {
+                    defaultProbeSuppressions.remove(key(disk.deviceID, partitionType))
+                }
+            }
+            addActivity(
+                enabled ? "已开启新设备默认密码探测" : "已关闭新设备默认密码探测",
+                partitionType: partitionType
+            )
+        }
+    }
+
+    func setDefaultProbePassword(partitionType: UInt32, passwordData: Data) throws {
+        var password = [UInt8](passwordData)
+        defer { secureZero(&password) }
+        try queue.sync {
+            try store.setDefaultProbePassword(partitionType: partitionType, password: password)
+            for disk in connectedDisks {
+                defaultProbeSuppressions.remove(key(disk.deviceID, partitionType))
+            }
+            addActivity("已更新默认探测密码", partitionType: partitionType)
+        }
+        reconcile()
+    }
+
+    func resetDefaultProbePassword(partitionType: UInt32) throws {
+        try queue.sync {
+            try store.resetDefaultProbePassword(partitionType: partitionType)
+            for disk in connectedDisks {
+                defaultProbeSuppressions.remove(key(disk.deviceID, partitionType))
+            }
+            addActivity("默认探测密码已恢复为 0000aaaa", partitionType: partitionType)
+        }
+        reconcile()
     }
 
     func setPartitionAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool) throws {
@@ -2071,6 +2249,66 @@ final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol 
                 partitionType: partitionType,
                 enabled: enabled
             )
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func setDefaultPartitionAutoMount(
+        partitionType: UInt32,
+        enabled: Bool,
+        withReply reply: @escaping (String?) -> Void
+    ) {
+        do {
+            try controller.setDefaultPartitionAutoMount(
+                partitionType: partitionType,
+                enabled: enabled
+            )
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func setDefaultPartitionAutoProbePassword(
+        partitionType: UInt32,
+        enabled: Bool,
+        withReply reply: @escaping (String?) -> Void
+    ) {
+        do {
+            try controller.setDefaultPartitionAutoProbePassword(
+                partitionType: partitionType,
+                enabled: enabled
+            )
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func setDefaultProbePassword(
+        partitionType: UInt32,
+        password: Data,
+        withReply reply: @escaping (String?) -> Void
+    ) {
+        do {
+            try controller.setDefaultProbePassword(
+                partitionType: partitionType,
+                passwordData: password
+            )
+            reply(nil)
+        } catch {
+            reply(String(describing: error))
+        }
+    }
+
+    func resetDefaultProbePassword(
+        partitionType: UInt32,
+        withReply reply: @escaping (String?) -> Void
+    ) {
+        do {
+            try controller.resetDefaultProbePassword(partitionType: partitionType)
             reply(nil)
         } catch {
             reply(String(describing: error))

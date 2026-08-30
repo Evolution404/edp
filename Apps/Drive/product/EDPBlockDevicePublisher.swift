@@ -3,6 +3,12 @@ import Foundation
 
 struct EDPPublishedBlockDevice: Sendable {
     let bsdName: String
+    let backingPath: String?
+
+    init(bsdName: String, backingPath: String? = nil) {
+        self.bsdName = bsdName
+        self.backingPath = backingPath
+    }
 }
 
 /// Explicitly writable publication boundary used by the existing read/write
@@ -33,6 +39,24 @@ private struct EDPBoundedProcessResult {
     let status: Int32
     let stdout: Data
     let stderr: Data
+}
+
+private func publisherConsoleIdentity() throws -> (uid_t, gid_t) {
+    var status = stat()
+    guard stat("/dev/console", &status) == 0,
+          status.st_uid != 0,
+          getpwuid(status.st_uid) != nil else {
+        throw EDPBlockDevicePublisherError("no authenticated console user is available for DiskImages2 publication")
+    }
+    return (status.st_uid, status.st_gid)
+}
+
+private func processExecutablePath(_ pid: pid_t) -> String? {
+    guard pid > 1 else { return nil }
+    var buffer = [CChar](repeating: 0, count: 4096)
+    let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    guard length > 0 else { return nil }
+    return String(cString: buffer)
 }
 
 private func runBoundedProcess(
@@ -363,10 +387,12 @@ enum EDPMacFUSEScratchImageCleanup {
 
 final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
     private let helperPath: String
-    private let diskArbitration: EDPDiskArbitrationController
+    private let consoleLauncherPath: String
+    private let diskArbitration: any EDPDaemonDiskArbitrating
 
-    init(binaryRoot: String, diskArbitration: EDPDiskArbitrationController) {
+    init(binaryRoot: String, diskArbitration: any EDPDaemonDiskArbitrating) {
         helperPath = binaryRoot + "/diskimages2-attach"
+        consoleLauncherPath = binaryRoot + "/edp-console-exec"
         self.diskArbitration = diskArbitration
     }
 
@@ -377,12 +403,25 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
         guard FileManager.default.isExecutableFile(atPath: helperPath) else {
             throw EDPBlockDevicePublisherError("DiskImages2 adapter helper is missing: \(helperPath)")
         }
+        guard FileManager.default.isExecutableFile(atPath: consoleLauncherPath) else {
+            throw EDPBlockDevicePublisherError("console launcher is missing: \(consoleLauncherPath)")
+        }
+        let identity = try publisherConsoleIdentity()
 
+        // The macFUSE Local transport and volume.raw are owned by the logged-in
+        // console user.  Publishing the same file from the root daemon creates
+        // a DiskImages2 device with no IOMedia identity on macOS 26; Disk
+        // Arbitration then rejects teardown with kDAReturnBadArgument.  Keep
+        // publication in the same user session as the transport so attach and
+        // eject use the normal, TEST-F-covered IOMedia lifecycle.
         let result = try runBoundedProcess(
-            executable: helperPath,
-            arguments: ["--writable-noautomount", path],
+            executable: consoleLauncherPath,
+            arguments: [
+                String(identity.0), String(identity.1), "--",
+                helperPath, "--writable-noautomount", path,
+            ],
             timeout: 15,
-            label: "DiskImages2 writable attach"
+            label: "console-user DiskImages2 writable attach"
         )
         guard result.status == 0 else {
             throw EDPBlockDevicePublisherError(
@@ -398,11 +437,165 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
             FileManager.default.fileExists(atPath: "/dev/\(bsdName)") else {
             throw EDPBlockDevicePublisherError("DiskImages2 adapter did not publish a BSD device")
         }
-        return EDPPublishedBlockDevice(bsdName: bsdName)
+        return EDPPublishedBlockDevice(
+            bsdName: bsdName,
+            backingPath: URL(fileURLWithPath: path).standardizedFileURL.path
+        )
     }
 
     func unpublish(_ device: EDPPublishedBlockDevice) throws {
-        try diskArbitration.eject(device.bsdName)
+        guard let backingPath = device.backingPath,
+              isEDPTransportBackingPath(backingPath) else {
+            throw EDPBlockDevicePublisherError("DiskImages2 publication is missing its EDP backing identity")
+        }
+
+        // Never trust a persisted diskN by itself. macOS can reuse that BSD name
+        // for an unrelated device (including the physical EDP USB) after the
+        // synthetic publication disappears. The authoritative identity is the
+        // exact volume.raw backing path plus its DiskImages2 owner process.
+        guard let candidate = publication(backingPath: backingPath) else {
+            NSLog(
+                "EDP DiskImages2 publication already absent for %@; ignoring stale BSD name %@",
+                backingPath,
+                device.bsdName
+            )
+            return
+        }
+
+        if candidate.devicePaths.isEmpty {
+            guard recoverPublication(candidate, backingPath: backingPath) else {
+                throw EDPBlockDevicePublisherError(
+                    "DiskImages2 publication owner did not exit for \(backingPath)"
+                )
+            }
+            NSLog("EDP released owner-only DiskImages2 publication for %@", backingPath)
+            return
+        }
+
+        let expectedDevicePath = "/dev/\(device.bsdName)"
+        guard candidate.devicePaths.contains(expectedDevicePath) else {
+            throw EDPBlockDevicePublisherError(
+                "DiskImages2 BSD identity changed for \(backingPath); refusing to touch \(device.bsdName)"
+            )
+        }
+
+        do {
+            try diskArbitration.eject(device.bsdName)
+        } catch {
+            guard recoverPublication(candidate, backingPath: backingPath) else { throw error }
+            NSLog("EDP recovered DiskImages2 publication %@", device.bsdName)
+        }
+    }
+
+    private struct DiskImagesPublication {
+        let pid: pid_t
+        let imagePath: String
+        let ownerUID: uid_t
+        let devicePaths: [String]
+    }
+
+    private func recoverPublication(
+        _ candidate: DiskImagesPublication,
+        backingPath: String
+    ) -> Bool {
+        guard geteuid() == 0,
+              processExecutablePath(candidate.pid) == "/usr/libexec/diskimagesiod" else {
+            return false
+        }
+
+        _ = Darwin.kill(candidate.pid, SIGTERM)
+        if waitForPublicationToDisappear(backingPath, timeout: 1.5) { return true }
+
+        guard let revalidated = publication(backingPath: backingPath),
+              revalidated.pid == candidate.pid,
+              revalidated.ownerUID == candidate.ownerUID,
+              revalidated.devicePaths == candidate.devicePaths,
+              processExecutablePath(revalidated.pid) == "/usr/libexec/diskimagesiod" else {
+            return false
+        }
+        _ = Darwin.kill(revalidated.pid, SIGKILL)
+        return waitForPublicationToDisappear(backingPath, timeout: 2.0)
+    }
+
+    private func publication(backingPath: String) -> DiskImagesPublication? {
+        guard let result = try? runBoundedProcess(
+            executable: "/usr/bin/hdiutil",
+            arguments: ["info", "-plist"],
+            timeout: 8,
+            label: "hdiutil info for legacy DiskImages2 recovery"
+        ), result.status == 0,
+        let root = try? PropertyListSerialization.propertyList(
+            from: result.stdout,
+            options: [],
+            format: nil
+        ) as? [String: Any],
+        let images = root["images"] as? [[String: Any]] else {
+            return nil
+        }
+
+        let expected = URL(fileURLWithPath: backingPath).standardizedFileURL.path
+        var backingStatus = stat()
+        guard stat(expected, &backingStatus) == 0 else { return nil }
+        var consoleStatus = stat()
+        let consoleUID: uid_t? = stat("/dev/console", &consoleStatus) == 0
+            ? consoleStatus.st_uid
+            : nil
+
+        for item in images {
+            guard let imagePath = item["image-path"] as? String,
+                  URL(fileURLWithPath: imagePath).standardizedFileURL.path == expected,
+                  let ownerValue = item["owner-uid"] as? NSNumber,
+                  ownerValue.intValue >= 0,
+                  let ownerUID = uid_t(exactly: ownerValue.uint64Value),
+                  ownerUID == 0 || ownerUID == consoleUID,
+                  backingStatus.st_uid == ownerUID,
+                  (item["diskimages2"] as? NSNumber)?.boolValue == true,
+                  (item["autodiskmount"] as? NSNumber)?.boolValue == false,
+                  (item["image-encrypted"] as? NSNumber)?.boolValue == false,
+                  (item["owner-mode"] as? NSNumber)?.intValue == 0o600,
+                  let entities = item["system-entities"] as? [[String: Any]],
+                  let pidValue = item["hdid-pid"] as? NSNumber,
+                  pidValue.intValue > 1 else {
+                continue
+            }
+            let devicePaths = entities.compactMap { $0["dev-entry"] as? String }
+            guard devicePaths.allSatisfy({ path in
+                var status = stat()
+                return stat(path, &status) == 0
+                    && (status.st_mode & S_IFMT) == S_IFBLK
+                    && status.st_uid == ownerUID
+            }) else {
+                continue
+            }
+            return DiskImagesPublication(
+                pid: pid_t(pidValue.intValue),
+                imagePath: imagePath,
+                ownerUID: ownerUID,
+                devicePaths: devicePaths
+            )
+        }
+        return nil
+    }
+
+    private func isEDPTransportBackingPath(_ path: String) -> Bool {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.path.hasPrefix("/Volumes/.edp-block-"),
+              url.lastPathComponent == "volume.raw",
+              url.deletingLastPathComponent().lastPathComponent.hasPrefix(".edp-block-") else {
+            return false
+        }
+        return true
+    }
+
+    private func waitForPublicationToDisappear(
+        _ backingPath: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while publication(backingPath: backingPath) != nil, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return publication(backingPath: backingPath) == nil
     }
 }
 

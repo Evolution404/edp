@@ -349,6 +349,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
         }
         let fixtureDirectory = CommandLine.arguments[1]
         try validateCredentialAndPolicyScenarios(fixtureDirectory: fixtureDirectory)
+        try validateDefaultPolicyScenarios(fixtureDirectory: fixtureDirectory)
         try validateServiceScenarios(fixtureDirectory: fixtureDirectory)
         print("RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK")
     }
@@ -477,6 +478,282 @@ struct ValidateCredentialPolicyServiceLifecycle {
         print("SCENARIO=C08_OK policy_and_credential_persistence")
     }
 
+    private static func validateDefaultPolicyScenarios(fixtureDirectory: String) throws {
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let snapshot = try env.snapshot()
+            guard snapshot.partitionDefaults.allSatisfy({ !$0.autoMount && !$0.autoProbePassword }),
+                  env.manager.mounted.isEmpty,
+                  try env.credentials.load().records.isEmpty else {
+                throw LifecycleValidationError("D01 safe defaults performed an automatic action")
+            }
+            print("SCENARIO=D01_OK safe_defaults_no_automatic_actions")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            try env.policies.setDefaultAutoMount(partitionType: 1, enabled: true)
+            try env.policies.setDefaultAutoMount(partitionType: 2, enabled: true)
+            try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
+            env.controller.reconcileSynchronouslyForTesting()
+            let unchanged = try env.snapshot().devices.first { $0.deviceID == device.deviceID }
+            guard unchanged?.partitions.allSatisfy({ !$0.autoMount }) == true,
+                  try env.policies.load().devices.first(where: { $0.deviceID == device.deviceID })?
+                    .policy(for: 2).autoProbePassword == false else {
+                throw LifecycleValidationError("D02 changing defaults mutated an existing device")
+            }
+            print("SCENARIO=D02_OK defaults_do_not_mutate_existing_device")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            try env.policies.setDefaultAutoMount(partitionType: 1, enabled: true)
+            try env.policies.setDefaultAutoMount(partitionType: 2, enabled: true)
+            try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
+            try env.policies.setDefaultAutoProbePassword(partitionType: 4, enabled: true)
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            let record = try env.credentials.load().records.first { $0.deviceID == device.deviceID }
+            guard device.partitions.first(where: { $0.partitionType == 1 })?.autoMount == true,
+                  device.partitions.first(where: { $0.partitionType == 2 })?.autoMount == true,
+                  device.partitions.first(where: { $0.partitionType == 4 })?.autoMount == false,
+                  record?.partitionTypes.sorted() == [2, 4],
+                  env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1),
+                  env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 2),
+                  !env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 4) else {
+                throw LifecycleValidationError("D03/D04 inherited defaults did not preserve probe/mount independence")
+            }
+            print("SCENARIO=D03_OK new_device_inherits_partition_defaults")
+            print("SCENARIO=D04_OK password_probe_does_not_imply_auto_mount")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            try env.policies.setDefaultAutoMount(partitionType: 2, enabled: true)
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            guard !env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 2),
+                  try env.credentials.load().records.first(where: { $0.deviceID == device.deviceID }) == nil else {
+                throw LifecycleValidationError("D05 auto-mount bypassed the missing credential")
+            }
+            print("SCENARIO=D05_OK auto_mount_without_probe_or_credential_stays_unmounted")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
+            try env.credentials.setDefaultProbePassword(
+                partitionType: 2,
+                password: Array("wrong-default".utf8)
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let deviceID = try env.connectedDevice().deviceID
+            func mismatchCount() throws -> Int {
+                try env.snapshot().activities.filter {
+                    $0.deviceID == deviceID
+                        && $0.partitionType == 2
+                        && $0.message.contains("默认密码未匹配")
+                }.count
+            }
+            guard try mismatchCount() == 1 else {
+                throw LifecycleValidationError("D06 first wrong default password was not recorded once")
+            }
+            env.controller.reconcileSynchronouslyForTesting()
+            guard try mismatchCount() == 1 else {
+                throw LifecycleValidationError("D06 wrong default password retried during the same insertion")
+            }
+            env.state.remove("disk90")
+            env.controller.reconcileSynchronouslyForTesting()
+            env.state.insert(
+                env.fixture,
+                as: "disk90",
+                registryEntryID: 0x9A00,
+                usbRegistryEntryID: 0x9A01
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            guard try mismatchCount() == 2 else {
+                throw LifecycleValidationError("D06 reconnect did not allow one new password probe")
+            }
+            print("SCENARIO=D06_OK wrong_password_once_per_insertion")
+
+            try env.controller.setDefaultProbePassword(
+                partitionType: 2,
+                passwordData: Data(env.correctPassword)
+            )
+            env.controller.drainForTesting()
+            guard try env.credentials.password(deviceID: deviceID, partitionType: 2) == env.correctPassword else {
+                throw LifecycleValidationError("D07 changing the default password did not clear probe suppression")
+            }
+            print("SCENARIO=D07_OK password_change_retries_suppressed_probe")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
+            try env.policies.setDefaultAutoProbePassword(partitionType: 4, enabled: true)
+            try env.credentials.setDefaultProbePassword(
+                partitionType: 2,
+                password: Array("wrong-exchange-only".utf8)
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let deviceID = try env.connectedDevice().deviceID
+            try expectThrows("D08 wrong exchange default unexpectedly saved") {
+                _ = try env.credentials.password(deviceID: deviceID, partitionType: 2)
+            }
+            guard try env.credentials.password(deviceID: deviceID, partitionType: 4) == env.correctPassword else {
+                throw LifecycleValidationError("D08 exchange password failure contaminated secure probing")
+            }
+            print("SCENARIO=D08_OK partition_probe_passwords_are_isolated")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            try env.policies.setDefaultAutoMount(partitionType: 2, enabled: true)
+            try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
+            try env.policies.setGlobalAutoMount(false)
+            env.controller.reconcileSynchronouslyForTesting()
+            let deviceID = try env.connectedDevice().deviceID
+            guard try env.credentials.password(deviceID: deviceID, partitionType: 2) == env.correctPassword,
+                  !env.manager.containsPhysical(deviceID: deviceID, partitionType: 2) else {
+                throw LifecycleValidationError("D09 global mount pause incorrectly suppressed probing or allowed mounting")
+            }
+            print("SCENARIO=D09_OK global_mount_pause_does_not_disable_password_probe")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            try env.controller.saveCredential(
+                deviceID: device.deviceID,
+                partitionType: 2,
+                passwordData: Data(env.correctPassword)
+            )
+            try env.controller.mountPartition(deviceID: device.deviceID, partitionType: 2)
+            env.controller.reconcileSynchronouslyForTesting()
+            guard env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 2),
+                  device.partitions.first(where: { $0.partitionType == 2 })?.autoMount == false else {
+                throw LifecycleValidationError("D10 reconcile tore down a manually mounted partition")
+            }
+            print("SCENARIO=D10_OK manual_mount_survives_reconcile_when_auto_mount_off")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: false
+            )
+            let custom = Array("custom-default-secret".utf8)
+            try env.credentials.setDefaultProbePassword(partitionType: 2, password: custom)
+            guard env.credentials.hasCustomizedDefaultProbePassword(partitionType: 2),
+                  try env.credentials.defaultProbePassword(partitionType: 2) == custom else {
+                throw LifecycleValidationError("D11 customized default probe password did not round-trip")
+            }
+            let policyText = (try? String(contentsOf: env.security.policyURL, encoding: .utf8)) ?? ""
+            let indexText = (try? String(contentsOf: env.security.credentialIndexURL, encoding: .utf8)) ?? ""
+            guard !policyText.contains("custom-default-secret"),
+                  !indexText.contains("custom-default-secret") else {
+                throw LifecycleValidationError("D11 default password leaked outside Keychain storage")
+            }
+            try env.credentials.resetDefaultProbePassword(partitionType: 2)
+            guard !env.credentials.hasCustomizedDefaultProbePassword(partitionType: 2),
+                  try env.credentials.defaultProbePassword(partitionType: 2)
+                    == EDPCredentialStore.builtInDefaultProbePassword else {
+                throw LifecycleValidationError("D11 reset did not restore built-in 0000aaaa")
+            }
+            print("SCENARIO=D11_OK default_password_keychain_only_and_resettable")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: false
+            )
+            let service = EDPXPCService(controller: env.controller, didRequestShutdown: {})
+            var reply: String?
+            service.setDefaultPartitionAutoMount(partitionType: 1, enabled: true) { reply = $0 }
+            guard reply == nil else { throw LifecycleValidationError("D12 XPC boot default auto-mount failed: \(reply!)") }
+            service.setDefaultPartitionAutoMount(partitionType: 2, enabled: true) { reply = $0 }
+            guard reply == nil else { throw LifecycleValidationError("D12 XPC exchange default auto-mount failed: \(reply!)") }
+            service.setDefaultPartitionAutoProbePassword(partitionType: 2, enabled: true) { reply = $0 }
+            guard reply == nil else { throw LifecycleValidationError("D12 XPC exchange probe toggle failed: \(reply!)") }
+            service.setDefaultProbePassword(
+                partitionType: 2,
+                password: Data("xpc-custom-default".utf8)
+            ) { reply = $0 }
+            guard reply == nil else { throw LifecycleValidationError("D12 XPC default password save failed: \(reply!)") }
+
+            var snapshotData = Data()
+            service.snapshot { snapshotData = $0 }
+            let snapshot = try JSONDecoder().decode(EDPXPCSnapshot.self, from: snapshotData)
+            guard snapshot.partitionDefaults.first(where: { $0.partitionType == 1 })?.autoMount == true,
+                  snapshot.partitionDefaults.first(where: { $0.partitionType == 2 })?.autoMount == true,
+                  snapshot.partitionDefaults.first(where: { $0.partitionType == 2 })?.autoProbePassword == true,
+                  snapshot.partitionDefaults.first(where: { $0.partitionType == 2 })?.defaultProbePasswordCustomized == true else {
+                throw LifecycleValidationError("D12 XPC default-policy snapshot did not round-trip")
+            }
+
+            reply = nil
+            service.setDefaultPartitionAutoProbePassword(partitionType: 1, enabled: true) { reply = $0 }
+            guard reply?.contains("partition 2 or 4") == true else {
+                throw LifecycleValidationError("D12 XPC accepted boot password probing")
+            }
+            reply = nil
+            service.resetDefaultProbePassword(partitionType: 2) { reply = $0 }
+            guard reply == nil else { throw LifecycleValidationError("D12 XPC default password reset failed: \(reply!)") }
+            service.snapshot { snapshotData = $0 }
+            let resetSnapshot = try JSONDecoder().decode(EDPXPCSnapshot.self, from: snapshotData)
+            guard resetSnapshot.partitionDefaults.first(where: { $0.partitionType == 2 })?
+                .defaultProbePasswordCustomized == false else {
+                throw LifecycleValidationError("D12 XPC reset did not clear customized default state")
+            }
+            print("SCENARIO=D12_OK xpc_default_policy_round_trip_and_validation")
+        }
+
+        do {
+            let fakeDA = FakeDiskArbitration()
+            let publisher = EDPDiskImages2Publisher(
+                binaryRoot: "/nonexistent-edp-runtime",
+                diskArbitration: fakeDA
+            )
+            try publisher.unpublish(EDPPublishedBlockDevice(
+                bsdName: "disk31",
+                backingPath: "/Volumes/.edp-block-stale-disk31/volume.raw"
+            ))
+            guard fakeDA.ejectCalls.isEmpty else {
+                throw LifecycleValidationError("D13 stale synthetic BSD name triggered a physical eject")
+            }
+            print("SCENARIO=D13_OK stale_diskn_reuse_never_ejects_without_backing_identity")
+        }
+    }
+
     private static func validateServiceScenarios(fixtureDirectory: String) throws {
         do {
             let env = try ControllerEnvironment.make(
@@ -497,10 +774,11 @@ struct ValidateCredentialPolicyServiceLifecycle {
             )
             env.controller.reconcileSynchronouslyForTesting()
             let device = try env.connectedDevice()
-            guard env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
-                throw LifecycleValidationError("S02 startup did not discover/auto-mount present boot partition")
+            guard env.manager.mounted.isEmpty,
+                  device.partitions.allSatisfy({ !$0.autoMount }) else {
+                throw LifecycleValidationError("S02 startup performed an automatic mount under safe defaults")
             }
-            print("SCENARIO=S02_OK startup_device_already_present")
+            print("SCENARIO=S02_OK startup_device_present_safe_defaults_stay_manual")
         }
 
         do {
@@ -521,8 +799,10 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 insertDevice: true
             )
             env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            try env.controller.mountPartition(deviceID: device.deviceID, partitionType: 1)
             guard !env.manager.mounted.isEmpty else {
-                throw LifecycleValidationError("S04 fixture did not establish a mounted session")
+                throw LifecycleValidationError("S04 fixture did not establish a manual mounted session")
             }
             try env.controller.shutdownGracefully()
             guard env.manager.mounted.isEmpty, env.manager.unmountAllCount == 1 else {
@@ -677,6 +957,8 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 insertDevice: true
             )
             env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            try env.controller.mountPartition(deviceID: device.deviceID, partitionType: 1)
             let requested = SendableFlag()
             let service = EDPXPCService(
                 controller: env.controller,
@@ -700,6 +982,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
             )
             env.controller.reconcileSynchronouslyForTesting()
             let device = try env.connectedDevice()
+            try env.controller.mountPartition(deviceID: device.deviceID, partitionType: 1)
             let service = EDPXPCService(controller: env.controller, didRequestShutdown: {})
 
             env.manager.failNextUnmounts(

@@ -34,6 +34,8 @@ private struct LegacyCredentialFile: Codable {
 
 final class EDPCredentialStore {
     static let serviceName = "com.edp.drive.partition-password.v1"
+    static let defaultProbeServiceName = "com.edp.drive.default-probe-password.v1"
+    static let builtInDefaultProbePassword = Array("0000aaaa".utf8)
     static let legacyPartitionServiceName = "com.edp.usbvault.partition-password.v4"
     static let legacyDeviceServiceName = "com.edp.usbvault.device-password.v3"
     static let legacyServiceName = "com.edp.usbvault.device-password"
@@ -90,6 +92,51 @@ final class EDPCredentialStore {
         return try JSONDecoder().decode(
             EDPCredentialIndex.self,
             from: Data(contentsOf: URL(fileURLWithPath: indexPath))
+        )
+    }
+
+    func defaultProbePassword(partitionType: UInt32) throws -> [UInt8] {
+        guard [UInt32(2), 4].contains(partitionType) else {
+            throw EDPCredentialStoreError("default probe password is only valid for partition 2 or 4")
+        }
+        return try passwordIfPresent(
+            service: EDPCredentialStore.defaultProbeServiceName,
+            account: defaultProbeAccount(partitionType: partitionType)
+        ) ?? EDPCredentialStore.builtInDefaultProbePassword
+    }
+
+    func hasCustomizedDefaultProbePassword(partitionType: UInt32) -> Bool {
+        guard [UInt32(2), 4].contains(partitionType) else { return false }
+        var query = searchQuery(
+            service: EDPCredentialStore.defaultProbeServiceName,
+            account: defaultProbeAccount(partitionType: partitionType)
+        )
+        query[kSecReturnAttributes] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    func setDefaultProbePassword(partitionType: UInt32, password: [UInt8]) throws {
+        guard [UInt32(2), 4].contains(partitionType) else {
+            throw EDPCredentialStoreError("default probe password is only valid for partition 2 or 4")
+        }
+        guard !password.isEmpty else {
+            throw EDPCredentialStoreError("default probe password must not be empty")
+        }
+        try upsertGenericPassword(
+            service: EDPCredentialStore.defaultProbeServiceName,
+            account: defaultProbeAccount(partitionType: partitionType),
+            password: password
+        )
+    }
+
+    func resetDefaultProbePassword(partitionType: UInt32) throws {
+        guard [UInt32(2), 4].contains(partitionType) else {
+            throw EDPCredentialStoreError("default probe password is only valid for partition 2 or 4")
+        }
+        try deleteItem(
+            service: EDPCredentialStore.defaultProbeServiceName,
+            account: defaultProbeAccount(partitionType: partitionType)
         )
     }
 
@@ -221,6 +268,10 @@ final class EDPCredentialStore {
         searchQuery(account: account(deviceID: deviceID, partitionType: partitionType))
     }
 
+    private func defaultProbeAccount(partitionType: UInt32) -> String {
+        "partition:\(partitionType)"
+    }
+
     private func passwordIfPresent(service: String, account: String) throws -> [UInt8]? {
         var query = searchQuery(service: service, account: account)
         query[kSecReturnData] = true
@@ -248,7 +299,19 @@ final class EDPCredentialStore {
         partitionType: UInt32,
         password: [UInt8]
     ) throws {
-        let query = searchQuery(deviceID: deviceID, partitionType: partitionType)
+        try upsertGenericPassword(
+            service: EDPCredentialStore.serviceName,
+            account: account(deviceID: deviceID, partitionType: partitionType),
+            password: password
+        )
+    }
+
+    private func upsertGenericPassword(
+        service: String,
+        account: String,
+        password: [UInt8]
+    ) throws {
+        let query = searchQuery(service: service, account: account)
         let secret = Data(password)
         let access = try restrictToRoot ? rootOnlyAccess() : nil
         var updates: [CFString: Any] = [kSecValueData: secret]
@@ -262,9 +325,7 @@ final class EDPCredentialStore {
             throw EDPCredentialStoreError("Keychain update failed: status=\(updateStatus)")
         }
 
-        var attributes = itemIdentity(
-            account: account(deviceID: deviceID, partitionType: partitionType)
-        )
+        var attributes = itemIdentity(service: service, account: account)
         attributes[kSecUseKeychain] = keychain
         attributes[kSecValueData] = secret
         if let access { attributes[kSecAttrAccess] = access }

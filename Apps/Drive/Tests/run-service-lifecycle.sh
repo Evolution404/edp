@@ -61,6 +61,9 @@ printf '%s\n' "$OUTPUT"
 for scenario in C01 C02 C03 C04 C05 C06 C07 C08; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
+for scenario in D01 D02 D03 D04 D05 D06 D07 D08 D09 D10 D11 D12 D13; do
+  grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
+done
 for scenario in S01 S02 S03 S04 S05 S06 S07 S08 S09 S10; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done

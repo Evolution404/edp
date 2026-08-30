@@ -26,6 +26,38 @@ wait_for_ucomm_to_exit() {
   return 1
 }
 
+recover_stale_console_fskit_agent() {
+  # Only recover the exact no-mount stale-host state observed with macFUSE
+  # Local. Never restart the user's FSKit agent while any FSKit filesystem is
+  # still mounted, and never touch the root fskitd daemon.
+  if /sbin/mount | /usr/bin/grep -Fq 'fskit'; then
+    return 1
+  fi
+
+  local console_uid agent_pid agent_uid agent_command
+  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
+  [[ "${console_uid}" =~ ^[0-9]+$ && "${console_uid}" -gt 0 ]] || return 1
+
+  agent_pid="$(/bin/ps -axo pid=,uid=,command= \
+    | /usr/bin/awk -v uid="${console_uid}" '$2 == uid && $3 == "/usr/libexec/fskit_agent" { print $1; exit }')"
+  [[ "${agent_pid}" =~ ^[0-9]+$ && "${agent_pid}" -gt 1 ]] || return 1
+
+  agent_uid="$(/bin/ps -p "${agent_pid}" -o uid= 2>/dev/null | /usr/bin/xargs || true)"
+  agent_command="$(/bin/ps -p "${agent_pid}" -o command= 2>/dev/null | /usr/bin/xargs || true)"
+  [[ "${agent_uid}" == "${console_uid}" && "${agent_command}" == "/usr/libexec/fskit_agent" ]] || return 1
+
+  echo "EDP Drive upgrade restarting stale console-user fskit_agent (${agent_pid})."
+  /bin/kill -KILL "${agent_pid}" >/dev/null 2>&1 || return 1
+  local i
+  for ((i = 0; i < 100; i++)); do
+    if ! /bin/kill -0 "${agent_pid}" >/dev/null 2>&1; then
+      return 0
+    fi
+    /bin/sleep 0.1
+  done
+  return 1
+}
+
 stop_unmounted_processes() {
   local process_name="$1"
   local description="$2"
@@ -35,14 +67,20 @@ stop_unmounted_processes() {
   [[ -n "${pids}" ]] || return 0
 
   /bin/kill -TERM ${pids} >/dev/null 2>&1 || true
-  if wait_for_ucomm_to_exit "${process_name}" 20; then
+  if wait_for_ucomm_to_exit "${process_name}" 100; then
     return 0
   fi
 
   pids="$(pids_for_ucomm "${process_name}")"
   [[ -n "${pids}" ]] || return 0
   /bin/kill -KILL ${pids} >/dev/null 2>&1 || true
-  if wait_for_ucomm_to_exit "${process_name}" 10; then
+  if wait_for_ucomm_to_exit "${process_name}" 50; then
+    return 0
+  fi
+
+  if [[ "${process_name}" == "${TRANSPORT_UCOMM}" ]] \
+    && recover_stale_console_fskit_agent \
+    && wait_for_ucomm_to_exit "${process_name}" 100; then
     return 0
   fi
 
@@ -50,13 +88,244 @@ stop_unmounted_processes() {
   exit 1
 }
 
-# Never let a package upgrade tear down an active EDP block session. The user
-# must first stop EDP Drive or safely eject the device so filesystem durability
-# completes through the product lifecycle path.
-if /sbin/mount | /usr/bin/grep -Fq ' on /Volumes/.edp-block-'; then
-  echo "EDP Drive upgrade refused because an encrypted EDP session is still mounted. Stop EDP Drive or safely eject the device, then retry." >&2
-  exit 1
-fi
+SESSION_STATE="/var/db/com.edp.drive/sessions.json"
+
+session_value() {
+  local index="$1"
+  local key="$2"
+  /usr/bin/plutil -extract "${index}.${key}" raw -o - "${SESSION_STATE}" 2>/dev/null || true
+}
+
+is_session_index() {
+  local index="$1"
+  /usr/bin/plutil -type "${index}" "${SESSION_STATE}" >/dev/null 2>&1
+}
+
+refuse_active_user_filesystems() {
+  if [[ ! -f "${SESSION_STATE}" ]]; then
+    if /sbin/mount | /usr/bin/grep -Fq ' on /Volumes/.edp-block-'; then
+      echo "EDP Drive upgrade refused because hidden EDP sessions exist without recoverable session state. Restart macOS and retry." >&2
+      exit 1
+    fi
+    return 0
+  fi
+
+  local index=0
+  local bridge mountpoint exposed
+  while is_session_index "${index}"; do
+    bridge="$(session_value "${index}" bridgeMount)"
+    mountpoint="$(session_value "${index}" mountpoint)"
+    exposed="$(session_value "${index}" exposedBSD)"
+
+    if [[ -n "${mountpoint}" ]] \
+      && /sbin/mount | /usr/bin/grep -Fq " on ${mountpoint} ("; then
+      echo "EDP Drive upgrade refused because an EDP user filesystem is still mounted at ${mountpoint}. Safely eject it first." >&2
+      exit 1
+    fi
+    if [[ -n "${exposed}" ]]; then
+      if [[ ! "${exposed}" =~ ^disk[0-9]+$ ]]; then
+        echo "EDP Drive upgrade refused because persisted exposed BSD state is invalid." >&2
+        exit 1
+      fi
+      if /sbin/mount | /usr/bin/grep -Eq "^/dev/${exposed}[^[:space:]]* on "; then
+        echo "EDP Drive upgrade refused because published EDP media ${exposed} still has a mounted filesystem." >&2
+        exit 1
+      fi
+    fi
+    if [[ -n "${bridge}" && ! "${bridge}" == /Volumes/.edp-block-* ]]; then
+      echo "EDP Drive upgrade refused because persisted bridge state is outside the EDP namespace." >&2
+      exit 1
+    fi
+    ((index += 1))
+  done
+}
+
+hdi_value() {
+  local plist="$1"
+  local index="$2"
+  local key="$3"
+  /usr/bin/plutil -extract "images.${index}.${key}" raw -o - "${plist}" 2>/dev/null || true
+}
+
+legacy_orphan_pid_for_backing() {
+  local plist="$1"
+  local backing="$2"
+  local image_index=0
+  local image_path owner_uid diskimages2 autodiskmount encrypted owner_mode entities pid
+
+  while /usr/bin/plutil -type "images.${image_index}" "${plist}" >/dev/null 2>&1; do
+    image_path="$(hdi_value "${plist}" "${image_index}" image-path)"
+    if [[ "${image_path}" == "${backing}" ]]; then
+      owner_uid="$(hdi_value "${plist}" "${image_index}" owner-uid)"
+      diskimages2="$(hdi_value "${plist}" "${image_index}" diskimages2)"
+      autodiskmount="$(hdi_value "${plist}" "${image_index}" autodiskmount)"
+      encrypted="$(hdi_value "${plist}" "${image_index}" image-encrypted)"
+      owner_mode="$(hdi_value "${plist}" "${image_index}" owner-mode)"
+      entities="$(/usr/bin/plutil -extract "images.${image_index}.system-entities" json -o - "${plist}" 2>/dev/null | /usr/bin/tr -d '[:space:]' || true)"
+      pid="$(hdi_value "${plist}" "${image_index}" hdid-pid)"
+      if [[ "${owner_uid}" == "0" \
+        && "${diskimages2}" == "true" \
+        && "${autodiskmount}" == "false" \
+        && "${encrypted}" == "false" \
+        && "${owner_mode}" == "384" \
+        && "${entities}" == "[]" \
+        && "${pid}" =~ ^[0-9]+$ \
+        && "${pid}" -gt 1 ]]; then
+        printf '%s\n' "${pid}"
+      fi
+      return 0
+    fi
+    ((image_index += 1))
+  done
+  return 0
+}
+
+validate_diskimagesiod_pid() {
+  local pid="$1"
+  local owner command
+  owner="$(/bin/ps -p "${pid}" -o user= 2>/dev/null | /usr/bin/xargs || true)"
+  command="$(/bin/ps -p "${pid}" -o comm= 2>/dev/null | /usr/bin/xargs || true)"
+  [[ "${owner}" == "_diskimagesiod" && "${command}" == "/usr/libexec/diskimagesiod" ]]
+}
+
+wait_for_device_to_disappear() {
+  local bsd="$1"
+  local attempts="$2"
+  local i
+  for ((i = 0; i < attempts; i++)); do
+    [[ ! -e "/dev/${bsd}" ]] && return 0
+    /bin/sleep 0.1
+  done
+  [[ ! -e "/dev/${bsd}" ]]
+}
+
+validate_diskimages_helper_pid() {
+  local pid="$1"
+  local owner command
+  owner="$(/bin/ps -p "${pid}" -o user= 2>/dev/null | /usr/bin/xargs || true)"
+  command="$(/bin/ps -p "${pid}" -o command= 2>/dev/null | /usr/bin/xargs || true)"
+  [[ "${owner}" == "root" \
+    && "${command}" == /System/Library/PrivateFrameworks/DiskImages.framework/Resources/diskimages-helper\ -uuid\ *\ -post-exec\ 4 ]]
+}
+
+is_uuid_dmg_path() {
+  local path="$1"
+  local base
+  [[ "${path}" == /var/folders/zz/*/T/*.dmg || "${path}" == /private/var/folders/zz/*/T/*.dmg ]] || return 1
+  base="${path##*/}"
+  base="${base%.dmg}"
+  [[ "${base}" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
+}
+
+recover_macfuse_scratch_orphans() {
+  local info
+  info="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/edp-preinstall-scratch.XXXXXX")"
+  trap '/bin/rm -f "'"${info}"'"' EXIT
+  /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
+
+  local image_index=0 image_path owner_uid diskimages2 autodiskmount writable removable
+  local blockcount blocksize entities_count device pid refreshed_pid
+  while /usr/bin/plutil -type "images.${image_index}" "${info}" >/dev/null 2>&1; do
+    image_path="$(hdi_value "${info}" "${image_index}" image-path)"
+    owner_uid="$(hdi_value "${info}" "${image_index}" owner-uid)"
+    diskimages2="$(hdi_value "${info}" "${image_index}" diskimages2)"
+    autodiskmount="$(hdi_value "${info}" "${image_index}" autodiskmount)"
+    writable="$(hdi_value "${info}" "${image_index}" writeable)"
+    removable="$(hdi_value "${info}" "${image_index}" removable)"
+    blockcount="$(hdi_value "${info}" "${image_index}" blockcount)"
+    blocksize="$(hdi_value "${info}" "${image_index}" blocksize)"
+    pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"
+    if /usr/bin/plutil -type "images.${image_index}.system-entities.0" "${info}" >/dev/null 2>&1 \
+      && ! /usr/bin/plutil -type "images.${image_index}.system-entities.1" "${info}" >/dev/null 2>&1; then
+      entities_count="1"
+    else
+      entities_count="0"
+    fi
+    device="$(/usr/bin/plutil -extract "images.${image_index}.system-entities.0.dev-entry" raw -o - "${info}" 2>/dev/null || true)"
+
+    if [[ "${owner_uid}" == "0" \
+      && "${diskimages2}" == "false" \
+      && "${autodiskmount}" == "false" \
+      && "${writable}" == "true" \
+      && "${removable}" == "true" \
+      && "${blockcount}" == "8" \
+      && "${blocksize}" == "512" \
+      && "${entities_count}" == "1" \
+      && "${device}" =~ ^/dev/disk[0-9]+$ \
+      && "${pid}" =~ ^[0-9]+$ \
+      && "${pid}" -gt 1 ]] \
+      && is_uuid_dmg_path "${image_path}" \
+      && validate_diskimages_helper_pid "${pid}"; then
+      echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
+      /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
+      if [[ -e "${device}" ]]; then
+        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"
+        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+          /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
+          wait_for_device_to_disappear "${device#/dev/}" 20 || true
+        fi
+      fi
+      if [[ -e "${device}" ]]; then
+        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"
+        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+          /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
+          wait_for_device_to_disappear "${device#/dev/}" 20 || true
+        fi
+      fi
+      if [[ -e "${device}" ]]; then
+        echo "EDP Drive upgrade could not recover macFUSE scratch orphan ${device}; restart macOS and retry." >&2
+        exit 1
+      fi
+    fi
+    ((image_index += 1))
+  done
+  /bin/rm -f "${info}"
+  trap - EXIT
+}
+
+recover_legacy_root_diskimages2_orphans() {
+  [[ -f "${SESSION_STATE}" ]] || return 0
+  local info
+  info="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/edp-preinstall-hdi.XXXXXX")"
+  trap '/bin/rm -f "'"${info}"'"' EXIT
+  /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
+
+  local index=0
+  local bridge exposed backing pid refreshed_pid
+  while is_session_index "${index}"; do
+    bridge="$(session_value "${index}" bridgeMount)"
+    exposed="$(session_value "${index}" exposedBSD)"
+    if [[ -n "${bridge}" && -n "${exposed}" && "${bridge}" == /Volumes/.edp-block-* && "${exposed}" =~ ^disk[0-9]+$ ]]; then
+      backing="${bridge}/volume.raw"
+      pid="$(legacy_orphan_pid_for_backing "${info}" "${backing}")"
+      if [[ -n "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
+        echo "EDP Drive upgrade recovering legacy DiskImages2 orphan ${exposed} (${pid})."
+        /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
+        if ! wait_for_device_to_disappear "${exposed}" 20; then
+          /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+          refreshed_pid="$(legacy_orphan_pid_for_backing "${info}" "${backing}")"
+          if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
+            /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
+          fi
+          if ! wait_for_device_to_disappear "${exposed}" 20; then
+            echo "EDP Drive upgrade could not recover legacy DiskImages2 orphan ${exposed}; restart macOS and retry." >&2
+            exit 1
+          fi
+        fi
+      fi
+    fi
+    ((index += 1))
+  done
+  /bin/rm -f "${info}"
+  trap - EXIT
+}
+
+# Preserve filesystem durability: an upgrade may recover the known legacy
+# root/no-IOMedia publication bug only after every user-visible filesystem has
+# already been unmounted. Any active user filesystem remains a hard stop.
+refuse_active_user_filesystems
 
 # Remove the current launchd registration first. launchctl can report before a
 # process has fully left the kernel, so verify both the job and exact processes.
@@ -72,10 +341,19 @@ if /bin/launchctl print "system/${SERVICE_LABEL}" >/dev/null 2>&1; then
   exit 1
 fi
 
-# At this point no EDP hidden filesystem is mounted, so stale transport/service
-# processes are not serving a live filesystem and may be boundedly terminated.
+# The old root daemon can leave DiskImages2 publications without an IOMedia
+# identity. Recover only those exact persisted orphans before stopping their
+# now-unpublished macFUSE transports.
+recover_legacy_root_diskimages2_orphans
+
 stop_unmounted_processes "${TRANSPORT_UCOMM}" "transport process"
 stop_unmounted_processes "${SERVICE_UCOMM}" "service process"
+recover_macfuse_scratch_orphans
+
+if /sbin/mount | /usr/bin/grep -Fq ' on /Volumes/.edp-block-'; then
+  echo "EDP Drive upgrade could not clear all hidden block transports; restart macOS and retry." >&2
+  exit 1
+fi
 
 for LABEL in com.edp.usbvault.mountd com.edp.usbvault.mountd.v2; do
   /bin/launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true

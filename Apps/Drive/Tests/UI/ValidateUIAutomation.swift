@@ -14,12 +14,12 @@ struct EDPUIAutomationMain {
         NSApplication.shared.finishLaunching()
         do {
             if CommandLine.arguments.contains("--hitch-only") {
-                try validateSidebarGeometry(toggleCount: 6, emitScenarioMarkers: false, warmupSeconds: 3)
+                try validateSidebarHitches(toggleCount: 6, warmupSeconds: 3)
                 print("RESULT=DRIVE_UI_HITCH_AUTOMATION_OK")
             } else {
                 try validatePreviewScenarios()
                 try validatePageRendering()
-                try validateSidebarGeometry(toggleCount: 20, emitScenarioMarkers: true, warmupSeconds: 0)
+                try validateSidebarGeometry(toggleCount: 20, emitScenarioMarkers: true)
                 print("RESULT=DRIVE_UI_AUTOMATION_OK")
             }
             fflush(stdout)
@@ -72,6 +72,12 @@ struct EDPUIAutomationMain {
     private static func validatePageRendering() throws {
         let configuration = EDPPreviewScenarioFactory.configuration(for: .healthyOneDevice)
         let model = EDPVaultViewModel(previewConfiguration: configuration)
+        let twoDeviceModel = EDPVaultViewModel(
+            previewConfiguration: EDPPreviewScenarioFactory.configuration(for: .twoDevices)
+        )
+        let credentialMissingModel = EDPVaultViewModel(
+            previewConfiguration: EDPPreviewScenarioFactory.configuration(for: .credentialMissing)
+        )
         guard let device = configuration.snapshot.devices.first else {
             throw EDPUIAutomationFailure(description: "healthy preview device missing")
         }
@@ -79,6 +85,7 @@ struct EDPUIAutomationMain {
         let pages: [(String, AnyView, NSSize)] = [
             ("overview-light", AnyView(EDPOverviewView(model: model).environment(\.colorScheme, .light)), NSSize(width: 720, height: 620)),
             ("overview-dark", AnyView(EDPOverviewView(model: model).environment(\.colorScheme, .dark)), NSSize(width: 720, height: 620)),
+            ("overview-two-devices", AnyView(EDPOverviewView(model: twoDeviceModel)), NSSize(width: 720, height: 620)),
             ("devices", AnyView(EDPDevicesView(model: model)), NSSize(width: 720, height: 620)),
             ("device-overview", AnyView(EDPDeviceDetailView(device: device, model: model, previewSection: .overview)), NSSize(width: 720, height: 620)),
             ("device-partitions", AnyView(EDPDeviceDetailView(device: device, model: model, previewSection: .partitions)), NSSize(width: 720, height: 620)),
@@ -86,6 +93,7 @@ struct EDPUIAutomationMain {
             ("activity", AnyView(EDPActivityView(model: model)), NSSize(width: 720, height: 620)),
             ("settings", AnyView(EDPSettingsView(model: model)), NSSize(width: 720, height: 620)),
             ("menu-bar", AnyView(EDPMenuBarView(model: model)), NSSize(width: 390, height: 640)),
+            ("menu-bar-credential-missing", AnyView(EDPMenuBarView(model: credentialMissingModel)), NSSize(width: 390, height: 640)),
         ]
 
         for (name, view, size) in pages {
@@ -104,10 +112,38 @@ struct EDPUIAutomationMain {
         print("RESULT=DRIVE_UI_PAGE_RENDERING_OK")
     }
 
+    private static func validateSidebarHitches(
+        toggleCount: Int,
+        warmupSeconds: TimeInterval
+    ) throws {
+        let model = EDPVaultViewModel(
+            previewConfiguration: EDPPreviewScenarioFactory.configuration(for: .healthyOneDevice)
+        )
+        let root = AnyView(EDPMainView(model: model).environment(\.colorScheme, .light))
+        let window = makeWindow(rootView: root, size: NSSize(width: 900, height: 680))
+        defer { window.close() }
+        spin(seconds: 0.15)
+
+        guard let contentView = window.contentView,
+              let split = findSplitController(in: contentView) else {
+            throw EDPUIAutomationFailure(description: "native NSSplitViewController not found for hitch test")
+        }
+        print("UI_HITCH_AUTOMATION_READY=1")
+        fflush(stdout)
+        spin(seconds: warmupSeconds)
+        print("UI_HITCH_TOGGLES_BEGIN_EPOCH=\(Date().timeIntervalSince1970)")
+        fflush(stdout)
+        for _ in 0..<toggleCount {
+            edpAutomationToggleSidebar(split)
+            spin(seconds: 0.25)
+        }
+        print("UI_HITCH_TOGGLES_END_EPOCH=\(Date().timeIntervalSince1970)")
+        fflush(stdout)
+    }
+
     private static func validateSidebarGeometry(
         toggleCount: Int,
-        emitScenarioMarkers: Bool,
-        warmupSeconds: TimeInterval
+        emitScenarioMarkers: Bool
     ) throws {
         let model = EDPVaultViewModel(
             previewConfiguration: EDPPreviewScenarioFactory.configuration(for: .healthyOneDevice)
@@ -130,14 +166,6 @@ struct EDPUIAutomationMain {
         try require(!sidebar.canCollapseFromWindowResize, "sidebar auto-collapse on resize re-enabled")
         try require(window.contentLayoutRect.width >= 899 && window.contentLayoutRect.width <= 901, "900px content geometry drifted")
         try require(window.contentLayoutRect.height >= 679 && window.contentLayoutRect.height <= 681, "680px content geometry drifted")
-        if warmupSeconds > 0 {
-            print("UI_HITCH_AUTOMATION_READY=1")
-            fflush(stdout)
-            spin(seconds: warmupSeconds)
-            print("UI_HITCH_TOGGLES_BEGIN_EPOCH=\(Date().timeIntervalSince1970)")
-            fflush(stdout)
-        }
-
         var expandedSidebarWidths = [CGFloat]()
         var collapsedDetailWidths = [CGFloat]()
         for index in 0..<toggleCount {
@@ -165,10 +193,6 @@ struct EDPUIAutomationMain {
             try require(collapsedDetailWidths.allSatisfy { abs($0 - first) <= 1.5 }, "collapsed detail width drifted across cycles")
         }
         try require(sidebar.isCollapsed == (toggleCount % 2 == 1), "sidebar final collapse parity mismatch")
-        if warmupSeconds > 0 {
-            print("UI_HITCH_TOGGLES_END_EPOCH=\(Date().timeIntervalSince1970)")
-            fflush(stdout)
-        }
         if emitScenarioMarkers {
             print("RESULT=DRIVE_UI_900X680_SIDEBAR_OK")
         }

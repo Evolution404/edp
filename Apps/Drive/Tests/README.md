@@ -43,9 +43,9 @@ From the repository root:
 make drive-test-fast
 ```
 
-`drive-test-fast` runs the EDPCore package tests, strict Swift 6 UI typecheck, native golden core validation, media-classification validation, and transport lifecycle validation. It is deliberately hardware-free.
+`drive-test-fast` runs the EDPCore package tests, strict Swift 6 UI typecheck, native golden core validation, media-classification validation, transport lifecycle validation, and the product policy-model contract. The policy-model gate locks all three partition types to safe opt-in defaults and verifies that later default changes never mutate existing device records. It is deliberately hardware-free.
 
-`drive-test-virtual-usb` extends that baseline through TEST-C/TEST-D/TEST-E. It drives production discovery and daemon state through injected virtual whole-USB media, virtual metadata/raw devices, temporary Keychain/policy stores, and fake mount/Disk Arbitration dependencies. It covers P01–P30, C01–C08, and S01–S10 without opening a physical raw disk. `Tests/run-service-lifecycle.sh` is the focused C/S runner used by that target.
+`drive-test-virtual-usb` extends that baseline through TEST-C/TEST-D/TEST-E. It drives production discovery and daemon state through injected virtual whole-USB media, virtual metadata/raw devices, temporary Keychain/policy stores, and fake mount/Disk Arbitration dependencies. It covers P01–P30, C01–C08, D01–D13, and S01–S10 without opening a physical raw disk. D01–D13 cover safe new-device defaults, independent auto-mount/password-probe policy, built-in/custom default passwords, once-per-insertion wrong-password suppression, reconnect retry, XPC round-trips, Keychain-only default-password storage, manual-mount persistence, and stale synthetic `diskN` reuse protection. `Tests/run-service-lifecycle.sh` is the focused credential/default-policy/service runner used by that target.
 
 `drive-test-virtual-usb` includes the production discovery dependency seam plus
 the complete P16–P30 lifecycle/fault matrix. It reads only immutable fixture
@@ -59,6 +59,21 @@ Finder-style operations, large/random I/O, unmount failure propagation,
 transport crash recovery, durability failure propagation, and concurrent
 type 1/2/4 session isolation. No sudo, physical USB, real raw node, or real EDP
 credential is used.
+
+`drive-test-ui` is an independent macOS UI gate. It builds the preview scenario
+factory, renders main/device/menu-bar surfaces in Light/Dark mode (including a
+credential-missing menu-bar state with direct password entry), executes 20
+900×680 native sidebar toggles, checks accessibility structure, and parses an
+Instruments `Animation Hitches` trace. Frames above 33 ms fail the gate.
+
+`drive-test-system` is the release safety ratchet. It rejects sudo dependencies,
+literal physical `/dev/rdisk*` opens, unguarded destructive disk operations,
+legacy device-ID migration, and regressions away from the native
+`NSSplitViewController`/window-style menu bar architecture.
+
+The phase targets are intentionally independent so CI can isolate failures.
+`drive-test-all` is the only aggregate target and runs every hardware-free gate.
+Nightly CI sets `EDP_STORAGE_LOOP_COUNT=100`; normal storage validation uses 50.
 
 Canonical targets:
 
