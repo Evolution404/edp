@@ -497,6 +497,24 @@ struct ValidateEDPMetadataProbe {
         ) == .ordinaryUSB else {
             throw ValidationError.mismatch("ordinary USB fixture was not classified as ordinaryUSB")
         }
+
+        let alphaOnlyID = makeLBA4(markerOffset: 8, payload: Array("LEXAR-001".utf8))
+        let overflowOnlyID = makeLBA4(markerOffset: 8, payload: Array("18446744073709551616".utf8))
+        for (scenario, candidate) in [
+            ("P07", zeros),
+            ("P08", alphaOnlyID),
+            ("P09", overflowOnlyID),
+        ] {
+            guard EDPMetadataProbe.classifyMedia(
+                lba0: standardMBR,
+                lba4: candidate,
+                lba7: standardLBA7,
+                lba12Plain: standardLBA12
+            ) == .unrecognizedEDP else {
+                throw ValidationError.mismatch("\(scenario): invalid/missing LBA4 onlyId was claimed as standardEncrypted")
+            }
+            print("SCENARIO=\(scenario)_OK")
+        }
         guard EDPMetadataProbe.classifyMedia(
             lba0: zeros,
             lba4: zeros,
@@ -512,6 +530,10 @@ struct ValidateEDPMetadataProbe {
         print("MEDIA_CLASS_CURRENT_NOPWD=OK")
         print("MEDIA_CLASS_UNRECOGNIZED_EDP=OK")
         print("MEDIA_CLASS_ORDINARY_USB=OK")
+        print("SCENARIO=P03_OK kind=ordinaryUSB")
+        print("SCENARIO=P04_OK kind=legacyNoPassword")
+        print("SCENARIO=P05_OK kind=currentNoPassword")
+        print("SCENARIO=P06_OK kind=unrecognizedEDP")
     }
 
     private static func validateRealStandardClassification(goldenPath: String) throws {
@@ -557,6 +579,11 @@ struct ValidateEDPMetadataProbe {
                 throw ValidationError.mismatch("\(diskDir): real standard EDP fixture was not classified as standardEncrypted")
             }
             print("REAL_STANDARD_CLASSIFICATION_OK=\(diskDir)")
+            if diskDir == "disk4" {
+                print("SCENARIO=P01_OK fixture=disk4")
+            } else if diskDir == "disk5" {
+                print("SCENARIO=P02_OK fixture=disk5")
+            }
         }
     }
 

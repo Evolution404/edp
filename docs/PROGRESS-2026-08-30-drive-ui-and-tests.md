@@ -198,19 +198,30 @@ RESULT=DRIVE_FAST_OK
 
 The fast runner is hardware-free and reuses the existing production validators rather than cloning parser/crypto logic. Stable Makefile entry points for later phases are reserved now and will be replaced by dedicated harnesses as TEST-B through TEST-H land.
 
-Commit: `pending commit`
+Commit: `4a5c48d test(drive): unify regression suite entrypoints`
 
 ## TEST-B — Identity / Classification matrix
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] P01–P15.
-- [ ] Real disk4/disk5 anchors.
-- [ ] Generated mutation fixtures.
-- [ ] Five-factor one-at-a-time mutation.
-- [ ] onlyId invalid cases.
+- [x] P01–P15.
+- [x] Real disk4/disk5 anchors.
+- [x] Deterministic generated/mutated metadata cases without duplicate binary fixtures.
+- [x] Five-factor one-at-a-time mutation.
+- [x] onlyId missing / non-numeric / UInt64 overflow cases.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+git diff --check = PASS
+make drive-test-identity = PASS
+SCENARIO=P01_OK ... SCENARIO=P15_OK
+RESULT=DRIVE_IDENTITY_OK
+```
+
+P01/P02 are pinned to captured disk4/disk5 truth. P03–P09 exercise production `EDPMetadataProbe` classification and LBA4 parsing. P10–P15 exercise production `EDPVolumeMetadata.stablePhysicalDeviceID`, including per-factor mutation and VID/PID case normalization.
+
+Commit: `pending commit`
 
 ## TEST-C — Production dependency seam
 

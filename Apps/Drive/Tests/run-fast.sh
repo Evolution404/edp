@@ -42,6 +42,9 @@ run_and_require \
   'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' \
   "$BUILD_ROOT/native-core.txt" \
   "$BUILD_ROOT/validate-edp-native-core" fixtures/golden/disks.json
+for scenario in P10 P11 P12 P13 P14 P15; do
+  grep -Fq "SCENARIO=${scenario}_OK" "$BUILD_ROOT/native-core.txt"
+done
 
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
@@ -59,6 +62,9 @@ grep -Fq 'MEDIA_CLASS_CURRENT_NOPWD=OK' "$BUILD_ROOT/media-classifier.txt"
 grep -Fq 'MEDIA_CLASS_UNRECOGNIZED_EDP=OK' "$BUILD_ROOT/media-classifier.txt"
 grep -Fq 'MEDIA_CLASS_ORDINARY_USB=OK' "$BUILD_ROOT/media-classifier.txt"
 grep -Fq 'LBA4_ONLY_ID_NEGATIVE_CONTROLS=OK' "$BUILD_ROOT/media-classifier.txt"
+for scenario in P01 P02 P03 P04 P05 P06 P07 P08 P09; do
+  grep -Fq "SCENARIO=${scenario}_OK" "$BUILD_ROOT/media-classifier.txt"
+done
 
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   product/EDPTransportProvider.swift \
@@ -70,4 +76,5 @@ run_and_require \
   "$BUILD_ROOT/validate-transport-lifecycle"
 
 echo 'RESULT=DRIVE_CORE_OK'
+echo 'RESULT=DRIVE_IDENTITY_OK'
 echo 'RESULT=DRIVE_FAST_OK'

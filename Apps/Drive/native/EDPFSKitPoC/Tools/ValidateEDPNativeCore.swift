@@ -412,17 +412,23 @@ struct ValidateEDPNativeCore {
         let baseline = identity()
         try require(baseline == identity(), "physical device ID must be deterministic")
         try require(baseline != identity(vidHex: "0781"), "VID must participate in physical device ID")
+        print("SCENARIO=P10_OK factor=vid")
         try require(baseline != identity(pidHex: "5583"), "PID must participate in physical device ID")
+        print("SCENARIO=P11_OK factor=pid")
         try require(baseline != identity(labelOnlyID: 1_625_940_068), "LBA4 onlyId must participate in physical device ID")
+        print("SCENARIO=P12_OK factor=onlyId")
         try require(baseline != identity(sizeBytes: 128 * 1024 * 1024), "capacity must participate in physical device ID")
+        print("SCENARIO=P13_OK factor=capacity")
         try require(
             baseline != identity(metadataDeviceID: "disk&ven_fixture&prod_usb_2"),
             "LBA11 deviceId must participate in physical device ID"
         )
+        print("SCENARIO=P14_OK factor=lba11-deviceId")
         try require(
             baseline == identity(vidHex: "21C4", pidHex: "0CD1"),
             "hex VID/PID casing must not create a different physical identity"
         )
+        print("SCENARIO=P15_OK factor=hex-casing")
         print("RESULT=STABLE_PHYSICAL_DEVICE_ID_FIVE_FACTOR_STRICT")
     }
 
