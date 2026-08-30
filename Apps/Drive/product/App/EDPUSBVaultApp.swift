@@ -808,6 +808,7 @@ final class EDPVaultViewModel: ObservableObject {
 }
 
 private enum EDPMainSection: String, CaseIterable, Identifiable {
+    case overview = "总览"
     case devices = "设备"
     case activity = "活动"
     case settings = "设置"
@@ -815,11 +816,20 @@ private enum EDPMainSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var icon: String {
         switch self {
+        case .overview: return "square.grid.2x2"
         case .devices: return "externaldrive"
         case .activity: return "clock.arrow.circlepath"
         case .settings: return "gearshape"
         }
     }
+}
+
+private enum EDPDeviceSection: String, CaseIterable, Identifiable {
+    case overview = "概览"
+    case partitions = "分区"
+    case security = "安全"
+
+    var id: String { rawValue }
 }
 
 struct EDPCredentialTarget: Identifiable {
@@ -831,7 +841,7 @@ struct EDPCredentialTarget: Identifiable {
 
 struct EDPMainView: View {
     @ObservedObject var model: EDPVaultViewModel
-    @State private var section: EDPMainSection? = .devices
+    @State private var section: EDPMainSection? = .overview
     @StateObject private var splitBridge = EDPNativeSplitBridge()
 
     var body: some View {
@@ -905,7 +915,8 @@ private struct EDPNativeDetailView: View {
     var body: some View {
         ZStack {
             EDPWindowBackdrop()
-            switch section ?? .devices {
+            switch section ?? .overview {
+            case .overview: EDPOverviewView(model: model)
             case .devices: EDPDevicesView(model: model)
             case .activity: EDPActivityView(model: model)
             case .settings: EDPSettingsView(model: model)
@@ -955,6 +966,93 @@ private final class EDPNativeSplitViewController: NSSplitViewController {
         detailHost.rootView = EDPNativeDetailView(model: model, section: section.wrappedValue)
     }
 
+}
+
+struct EDPOverviewView: View {
+    @ObservedObject var model: EDPVaultViewModel
+
+    private var primaryDevice: EDPXPCDevice? {
+        model.snapshot.devices.first(where: \.connected) ?? model.snapshot.devices.first
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: EDPTheme.Spacing.lg) {
+                if let device = primaryDevice {
+                    EDPContentCard {
+                        HStack(spacing: EDPTheme.Spacing.md) {
+                            Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
+                                .font(.system(size: 30, weight: .medium))
+                                .foregroundStyle(device.connected ? Color.accentColor : .secondary)
+                                .frame(width: 56, height: 56)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(device.displayName)
+                                    .font(.title2.weight(.semibold))
+                                Text("\(ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file)) · \(device.vidPID)")
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            EDPStatusPill(
+                                title: device.connected ? "已连接" : "已保存",
+                                systemImage: device.connected ? "checkmark.circle.fill" : "circle.dashed",
+                                tone: device.connected ? .success : .neutral
+                            )
+                        }
+                    }
+                } else {
+                    EDPEmptyState(
+                        "未发现 EDP U 盘",
+                        message: "插入标准 EDP 加密盘后会自动显示在这里。",
+                        systemImage: "externaldrive.badge.questionmark"
+                    )
+                }
+
+                EDPSectionHeader(
+                    "系统状态",
+                    subtitle: "后台服务、磁盘访问与自动挂载概况",
+                    systemImage: "checklist"
+                )
+                EDPContentCard(padding: EDPTheme.Spacing.md) {
+                    HStack(spacing: EDPTheme.Spacing.lg) {
+                        Label(model.serviceStatus, systemImage: "gearshape.2")
+                        Divider().frame(height: 20)
+                        Label(model.rawAccessStatusText, systemImage: "externaldrive.badge.checkmark")
+                        Divider().frame(height: 20)
+                        Label(model.snapshot.globalAutoMountEnabled ? "自动挂载已开启" : "自动挂载已暂停", systemImage: "bolt.horizontal.circle")
+                        Spacer()
+                    }
+                    .font(.callout)
+                }
+
+                EDPSectionHeader(
+                    "最近活动",
+                    subtitle: "最新的设备与挂载事件",
+                    systemImage: "clock.arrow.circlepath"
+                )
+                if model.snapshot.activities.isEmpty {
+                    Text("暂无活动记录")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(model.snapshot.activities.prefix(4))) { activity in
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Image(systemName: activity.level == "error" ? "exclamationmark.triangle.fill" : "circle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(activity.level == "error" ? .red : .secondary)
+                                Text(activity.message)
+                                Spacer()
+                                Text(activity.timestamp)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(EDPTheme.Spacing.lg)
+        }
+        .navigationTitle("总览")
+    }
 }
 
 struct EDPDevicesView: View {
@@ -1068,10 +1166,21 @@ struct EDPDeviceDetailView: View {
     @State private var credentialTarget: EDPCredentialTarget?
     @State private var displayName = ""
     @State private var confirmingRecordDeletion = false
+    @State private var deviceSection: EDPDeviceSection = .overview
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                Picker("设备页面", selection: $deviceSection) {
+                    ForEach(EDPDeviceSection.allCases) { item in
+                        Text(item.rawValue).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 360)
+                .accessibilityLabel("设备页面")
+
+                if deviceSection == .overview {
                 EDPContentCard {
                     HStack(alignment: .center, spacing: EDPTheme.Spacing.md) {
                         Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
@@ -1106,7 +1215,9 @@ struct EDPDeviceDetailView: View {
                         .fixedSize()
                     }
                 }
+                }
 
+                if deviceSection == .partitions {
                 EDPSectionHeader(
                     "分区",
                     subtitle: "管理自动挂载、凭据和 Finder 访问",
@@ -1132,7 +1243,51 @@ struct EDPDeviceDetailView: View {
                         }
                     )
                 }
+                }
 
+                if deviceSection == .security {
+                    EDPSectionHeader(
+                        "分区凭据",
+                        subtitle: "交换区与保密区密码相互独立",
+                        systemImage: "lock.shield"
+                    )
+                    ForEach(device.partitions.filter(\.encrypted)) { partition in
+                        EDPContentCard(padding: 14) {
+                            HStack(spacing: 12) {
+                                Image(systemName: partition.partitionType == EDPPartitionKind.secure.rawValue ? "lock.shield" : "arrow.left.arrow.right.circle")
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("\(partition.displayName)密码")
+                                        .font(.headline)
+                                    Text(partition.credentialStatus == .saved ? "已保存到系统钥匙串" : "尚未保存")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(partition.credentialStatus == .saved ? "更新" : "设置") {
+                                    credentialTarget = EDPCredentialTarget(
+                                        deviceID: device.deviceID,
+                                        partitionType: partition.partitionType,
+                                        partitionName: partition.displayName
+                                    )
+                                }
+                                .buttonStyle(.glass)
+                                if partition.credentialStatus == .saved {
+                                    Button("删除", role: .destructive) {
+                                        model.deleteCredential(
+                                            deviceID: device.deviceID,
+                                            partitionType: partition.partitionType
+                                        )
+                                    }
+                                    .buttonStyle(.glass)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if deviceSection == .overview {
                 HStack {
                     Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
                         .buttonStyle(.glass)
@@ -1148,6 +1303,7 @@ struct EDPDeviceDetailView: View {
                     Text("关闭窗口不会停止自动挂载服务")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
                 }
             }
             .padding(EDPTheme.Spacing.lg)

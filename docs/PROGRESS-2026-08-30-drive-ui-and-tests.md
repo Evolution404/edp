@@ -59,15 +59,26 @@ docs/PLAN-2026-08-30-drive-ui-redesign.md
 
 ## UI-A — Information architecture
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Sidebar = 总览 / 设备 / 活动 / 设置.
-- [ ] Default page = 总览.
-- [ ] Device subnavigation = 概览 / 分区 / 安全.
-- [ ] Keep native split controller unchanged.
-- [ ] Swift 6 warnings-as-errors.
+- [x] Sidebar = 总览 / 设备 / 活动 / 设置.
+- [x] Default page = 总览.
+- [x] Device subnavigation = 概览 / 分区 / 安全.
+- [x] Keep native split controller unchanged.
+- [x] Swift 6 warnings-as-errors.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+git diff --check = PASS
+make drive-check = PASS
+NSSplitViewController geometry ratchet preserved
+.menuBarExtraStyle(.window) preserved
+```
+
+The new overview is intentionally a first-pass shell in UI-A; detailed hero/status/partition/quick-action composition is completed in UI-B. Device subnavigation is functional now, while the denser layout refinement remains UI-C.
+
+Commit: `pending commit`
 
 ## UI-B — Overview
 
@@ -221,7 +232,7 @@ RESULT=DRIVE_IDENTITY_OK
 
 P01/P02 are pinned to captured disk4/disk5 truth. P03–P09 exercise production `EDPMetadataProbe` classification and LBA4 parsing. P10–P15 exercise production `EDPVolumeMetadata.stablePhysicalDeviceID`, including per-factor mutation and VID/PID case normalization.
 
-Commit: `pending commit`
+Commit: `b18a3dd test(drive): add strict physical identity matrix`
 
 ## TEST-C — Production dependency seam
 
