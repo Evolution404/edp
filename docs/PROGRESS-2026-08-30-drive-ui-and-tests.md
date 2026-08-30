@@ -428,7 +428,7 @@ rdonly` for the final system-level FAT16 mount. Crash recovery only matches an
 exact persisted mount source to the narrow root-owned 4 KiB macFUSE UUID
 scratch signature before cleanup; unrelated devices and images are rejected.
 
-Commit: `pending commit`
+Commit: `aafb3b5 test(drive): automate sparse-image storage lifecycle`
 
 ## TEST-G — UI automation
 
