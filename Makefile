@@ -12,7 +12,7 @@ STUDIO_DERIVED_DATA := $(ARTIFACTS)/DerivedData/EDPStudio
 STUDIO_PROJECT := $(ROOT)/Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj
 
 .PHONY: help status check build core-test drive-check drive-build drive-ui-status drive-stop drive-restart \
-	drive-ui-package drive-ui-install drive-ui-deploy drive-installer \
+	drive-ui-package drive-ui-install drive-ui-deploy drive-installer drive-env-status drive-clean-environment \
 	drive-test-fast drive-test-identity drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system drive-test-all \
 	studio-generate studio-build
 
@@ -27,6 +27,8 @@ help:
 	@echo "  make drive-stop         Close every Drive foreground UI"
 	@echo "  make drive-restart      Close old UIs and start exactly one official UI"
 	@echo "  make drive-installer    Build the full Drive native installer"
+	@echo "  make drive-env-status   Read-only EDP Drive/macFUSE environment audit"
+	@echo "  make drive-clean-environment  Remove EDP Drive + old Vault + macFUSE test environment"
 	@echo "  make drive-test-fast    Hardware-free core/classifier regression"
 	@echo "  make drive-test-storage Sparse-image M01-M14 storage E2E (50 loops)"
 	@echo "  make drive-test-all     All hardware-free Drive regression gates"
@@ -112,6 +114,12 @@ drive-installer:
 		EDP_SELF_SIGNED_DISTRIBUTION=1 \
 		EDP_SERVICE_MODE=legacy \
 		./installer/build-native-installer.sh "$(ARTIFACTS)"
+
+drive-env-status:
+	@"$(ROOT)/Tools/drive-environment.sh" status
+
+drive-clean-environment:
+	@"$(ROOT)/Tools/drive-environment.sh" clean
 
 studio-generate:
 	@cd "$(ROOT)/Apps/Studio/native/EDPStudioNative" && \
