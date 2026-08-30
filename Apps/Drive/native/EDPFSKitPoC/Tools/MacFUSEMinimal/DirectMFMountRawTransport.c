@@ -41,6 +41,7 @@ struct direct_state {
     gid_t gid;
     MFChannelRef channel;
     bool running;
+    bool read_only;
     uint64_t write_calls;
     uint64_t write_generation;
     uint64_t synced_generation;
@@ -263,6 +264,9 @@ static int handle_write(struct direct_state *state,
                         const struct fuse_in_header *in,
                         const uint8_t *body,
                         size_t body_size) {
+    if (state->read_only) {
+        return send_error(state->channel, in->unique, EROFS);
+    }
     size_t prefix = sizeof(*in) + sizeof(struct fuse_write_in);
     if (in->nodeid != RAW_NODE_ID || body_size < prefix) {
         return send_error(state->channel, in->unique, EINVAL);
@@ -604,16 +608,21 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3 || argc > 4) {
-        fprintf(stderr, "usage: %s <backing-file> <mountpoint> [volume-name]\n", argv[0]);
+    if (argc < 3 || argc > 5) {
+        fprintf(stderr, "usage: %s <backing-file> <mountpoint> [volume-name] [readonly]\n", argv[0]);
         return 64;
     }
 
     const char *backing_path = argv[1];
     const char *mountpoint = argv[2];
-    const char *volume_name = argc == 4 ? argv[3] : "EDP Direct MFMount";
+    const char *volume_name = argc >= 4 ? argv[3] : "EDP Direct MFMount";
+    bool read_only = argc == 5;
+    if (read_only && strcmp(argv[4], "readonly") != 0) {
+        fprintf(stderr, "unsupported transport mode: %s\n", argv[4]);
+        return 64;
+    }
 
-    int backing_fd = open(backing_path, O_RDWR);
+    int backing_fd = open(backing_path, read_only ? O_RDONLY : O_RDWR);
     if (backing_fd < 0) {
         perror("open backing");
         return 1;
@@ -666,11 +675,13 @@ int main(int argc, char **argv) {
         .gid = getgid(),
         .channel = channel,
         .running = true,
+        .read_only = read_only,
     };
     fprintf(stderr,
-            "DIRECT_MFMOUNT_STARTED size=%" PRIu64 " mountpoint=%s\n",
+            "DIRECT_MFMOUNT_STARTED size=%" PRIu64 " mountpoint=%s readonly=%d\n",
             state.backing_size,
-            mountpoint);
+            mountpoint,
+            state.read_only ? 1 : 0);
 
     int exit_code = 0;
     while (state.running) {
@@ -712,8 +723,9 @@ int main(int argc, char **argv) {
         EDPDirectMFMountMarkTransportReleased != NULL &&
         EDPDirectMFMountTeardownActive();
 
-    if (fsync(backing_fd) != 0) {
+    if (!state.read_only && fsync(backing_fd) != 0) {
         perror("fsync backing");
+        if (exit_code == 0) exit_code = 5;
     }
 
     if (lifecycle_teardown) {

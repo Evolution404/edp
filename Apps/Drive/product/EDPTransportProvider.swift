@@ -174,6 +174,7 @@ enum EDPTransportProvider {
             "--control-fd", String(request.controlFD),
             "--mountpoint", request.mountpoint,
             "--volume-name", request.volumeName,
+            "--read-only", request.readOnly ? "1" : "0",
         ]
 
         let executable = request.binaryRoot + "/" + executableName(

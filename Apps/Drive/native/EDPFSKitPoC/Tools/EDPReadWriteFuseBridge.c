@@ -42,7 +42,7 @@ extern long long edp_rw_write(void *handle, unsigned long long offset,
                               const void *buffer,
                               unsigned long long requested_length);
 extern int32_t edp_rw_sync(void *handle);
-extern void edp_rw_close(void *handle);
+extern int32_t edp_rw_close(void *handle);
 extern void *edp_ro_open_device_fd(int raw_fd, const char *vid_hex,
                                    const char *pid_hex,
                                    unsigned long long device_size_bytes,
@@ -415,7 +415,7 @@ int main(int argc, char **argv) {
         if (read_only_mode) {
             edp_ro_close(block_handle);
         } else {
-            edp_rw_close(block_handle);
+            (void)edp_rw_close(block_handle);
         }
         block_handle = NULL;
         fprintf(stderr, "EDP_FUSE_BRIDGE_INVALID_SIZE\n"); return 66;
@@ -434,8 +434,9 @@ int main(int argc, char **argv) {
     if (read_only_mode) {
         edp_ro_close(block_handle);
     } else {
-        (void)edp_rw_sync(block_handle);
-        edp_rw_close(block_handle);
+        int32_t sync_result = edp_rw_sync(block_handle);
+        int32_t close_result = edp_rw_close(block_handle);
+        if (rc == 0 && (sync_result != 0 || close_result != 0)) rc = 5;
     }
     block_handle = NULL;
     return rc;

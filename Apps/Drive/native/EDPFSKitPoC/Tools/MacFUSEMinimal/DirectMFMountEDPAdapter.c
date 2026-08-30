@@ -22,7 +22,7 @@ extern long long edp_rw_write(void *handle, unsigned long long offset,
                               const void *buffer,
                               unsigned long long requested_length);
 extern int32_t edp_rw_sync(void *handle);
-extern void edp_rw_close(void *handle);
+extern int32_t edp_rw_close(void *handle);
 
 static void *g_edp_handle = NULL;
 static const int g_virtual_fd = 0x4d46;
@@ -158,7 +158,7 @@ static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --raw-device /dev/rdiskN --raw-fd FD --vid HEX --pid HEX "
             "--device-size BYTES --partition-type {1|2|4} --control-fd FD "
-            "--mountpoint PATH --volume-name NAME\n",
+            "--mountpoint PATH --volume-name NAME --read-only {0|1}\n",
             program);
 }
 
@@ -179,9 +179,10 @@ int main(int argc, char **argv) {
     const char *control_fd_text = value_after(argc, argv, "--control-fd");
     const char *mountpoint = value_after(argc, argv, "--mountpoint");
     const char *volume_name = value_after(argc, argv, "--volume-name");
+    const char *read_only_text = value_after(argc, argv, "--read-only");
     if (!raw_device || !raw_fd_text || !vid || !pid || !device_size_text ||
         !partition_text || !control_fd_text || !mountpoint || !volume_name ||
-        strncmp(raw_device, "/dev/rdisk", 10) != 0) {
+        !read_only_text || strncmp(raw_device, "/dev/rdisk", 10) != 0) {
         usage(argv[0]);
         return 64;
     }
@@ -199,6 +200,12 @@ int main(int argc, char **argv) {
     end = NULL;
     long control_fd_long = strtol(control_fd_text, &end, 10);
     if (!end || *end || control_fd_long < 0 || control_fd_long > INT32_MAX) return 64;
+    bool read_only = strcmp(read_only_text, "1") == 0;
+    if (!read_only && strcmp(read_only_text, "0") != 0) return 64;
+    if ((partition == 1) != read_only) {
+        fprintf(stderr, "EDP_DIRECT_READONLY_POLICY_MISMATCH\n");
+        return 64;
+    }
 
     struct stat raw_stat;
     if (fcntl(raw_fd, F_GETFD) < 0 || fstat(raw_fd, &raw_stat) != 0 || !S_ISCHR(raw_stat.st_mode)) {
@@ -233,17 +240,21 @@ int main(int argc, char **argv) {
         "EDP_BLOCK_BACKING",
         (char *)mountpoint,
         (char *)volume_name,
+        read_only ? "readonly" : NULL,
         NULL,
     };
-    int result = edp_direct_raw_main(4, direct_argv);
+    int direct_argc = read_only ? 5 : 4;
+    int result = edp_direct_raw_main(direct_argc, direct_argv);
     /* edp_rw_close performs the final strong durability barrier. The transport
      * loop has already handled any filesystem-requested FUSE_FSYNC calls. */
     unsigned long long close_started_us = adapter_monotonic_us();
-    edp_rw_close(g_edp_handle);
+    int32_t close_result = edp_rw_close(g_edp_handle);
     unsigned long long close_ended_us = adapter_monotonic_us();
     fprintf(stderr,
-            "EDP_FINAL_DURABILITY elapsed_us=%llu\n",
+            "EDP_FINAL_DURABILITY status=%d elapsed_us=%llu\n",
+            close_result,
             close_ended_us >= close_started_us ? close_ended_us - close_started_us : 0ULL);
+    if (close_result != 0 && result == 0) result = 5;
     g_edp_handle = NULL;
     g_mountpoint = NULL;
     return result;

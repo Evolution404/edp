@@ -28,6 +28,7 @@ private struct Arguments {
     let plaintextPath: String
     let outputPath: String
     let passwordFile: String
+    let mergeExisting: Bool
 }
 
 private func parseArguments() throws -> Arguments {
@@ -68,6 +69,12 @@ private func parseArguments() throws -> Arguments {
     guard [UInt32(2), 4].contains(partitionType), deviceSizeBytes > 0 else {
         throw PrepareError.usage("invalid device size or partition type")
     }
+    let mergeExisting: Bool
+    switch values["--merge-existing"] {
+    case nil, "0": mergeExisting = false
+    case "1": mergeExisting = true
+    default: throw PrepareError.usage("--merge-existing must be 0 or 1")
+    }
     return Arguments(
         lba4Path: lba4Path,
         lba7Path: lba7Path,
@@ -79,7 +86,8 @@ private func parseArguments() throws -> Arguments {
         partitionType: partitionType,
         plaintextPath: plaintextPath,
         outputPath: outputPath,
-        passwordFile: passwordFile
+        passwordFile: passwordFile,
+        mergeExisting: mergeExisting
     )
 }
 
@@ -182,15 +190,28 @@ private enum PrepareEDPFilesystemFixtureMain {
         }
 
         let outputURL = URL(fileURLWithPath: args.outputPath)
-        try? FileManager.default.removeItem(at: outputURL)
-        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil) else {
-            throw PrepareError.invalid("unable to create sparse EDP image")
+            .standardizedFileURL
+        guard !outputURL.path.hasPrefix("/dev/") else {
+            throw PrepareError.invalid("refusing to write a device node")
+        }
+        if args.mergeExisting {
+            let attributes = try FileManager.default.attributesOfItem(atPath: outputURL.path)
+            guard let existingSize = attributes[.size] as? NSNumber,
+                  existingSize.uint64Value == args.deviceSizeBytes else {
+                throw PrepareError.invalid("merge target must already have the declared device size")
+            }
+        } else {
+            try? FileManager.default.removeItem(at: outputURL)
+            guard FileManager.default.createFile(atPath: outputURL.path, contents: nil) else {
+                throw PrepareError.invalid("unable to create sparse EDP image")
+            }
         }
 
         let outputFD = Darwin.open(outputURL.path, O_RDWR | O_CLOEXEC)
         guard outputFD >= 0 else { throw PrepareError.posix("open output", errno) }
         defer { Darwin.close(outputFD) }
-        guard Darwin.ftruncate(outputFD, off_t(args.deviceSizeBytes)) == 0 else {
+        if !args.mergeExisting,
+           Darwin.ftruncate(outputFD, off_t(args.deviceSizeBytes)) != 0 {
             throw PrepareError.posix("ftruncate sparse EDP image", errno)
         }
 
@@ -240,6 +261,7 @@ private enum PrepareEDPFilesystemFixtureMain {
         print("PREPARED_PLAINTEXT_BYTES=\(plaintextSize)")
         print("PREPARED_DEVICE_SIZE_BYTES=\(args.deviceSizeBytes)")
         print("PREPARED_SECRET_OUTPUT=false")
+        print("PREPARED_MERGED_EXISTING=\(args.mergeExisting)")
         print("RESULT=EDP_REAL_METADATA_FILESYSTEM_FIXTURE_READY")
     }
 }

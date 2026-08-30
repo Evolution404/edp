@@ -90,6 +90,20 @@ private enum ValidateMacFUSEScratchCleanup {
         try require(valid.isOrphanCleanupCandidate, "known macFUSE scratch signature must match")
         try require(valid.helperPID == 86105, "helper PID changed during plist parsing")
         try require(valid.devices == ["/dev/disk7"], "whole BSD device changed during plist parsing")
+        try require(
+            EDPMacFUSEScratchImageCleanup.orphanCandidate(
+                forSource: "/dev/disk7",
+                in: [try candidate(device: "/dev/disk8"), valid]
+            ) == valid,
+            "exact persisted mount source did not select its matching scratch image"
+        )
+        try require(
+            EDPMacFUSEScratchImageCleanup.orphanCandidate(
+                forSource: "/dev/disk8",
+                in: [valid]
+            ) == nil,
+            "orphan recovery selected a different mount source"
+        )
 
         try require(!(try candidate(ownerUID: 501)).isOrphanCleanupCandidate,
                     "non-root disk image must be rejected")

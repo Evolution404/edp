@@ -68,8 +68,11 @@ xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
   -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${FRAMEWORKS}" \
   -framework MFMount -framework CoreFoundation -framework DiskArbitration \
   -o "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
+cp "${OUTPUT_BIN}/edp-mfmount-local-readwrite" "${OUTPUT_BIN}/edp-mfmount-local-readonly"
+chmod 0755 "${OUTPUT_BIN}/edp-mfmount-local-readonly"
 
 test -x "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
+test -x "${OUTPUT_BIN}/edp-mfmount-local-readonly"
 
 otool -L "${OUTPUT_BIN}/edp-mfmount-local-readwrite" > "${BUILD_ROOT}/local-otool.txt"
 grep -Fq 'MFMount.framework' "${BUILD_ROOT}/local-otool.txt"

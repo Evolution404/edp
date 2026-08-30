@@ -385,23 +385,50 @@ git diff --check = PASS
 
 TEST-E instantiates the production `EDPDaemonController` with explicit test dependencies rather than duplicating its state machine. The normal executable still constructs the controller with the original real dependencies, and the regression harness uses only temporary Keychain/policy paths plus virtual media/raw state.
 
-Commit: `pending commit`
+Commit: `a78e417 test(drive): cover credential policy and service lifecycle`
 
 ## TEST-F — Sparse-image Storage E2E
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Reuse `PrepareEDPFilesystemFixture.swift`.
-- [ ] Reuse `DirectMFMountEDPFixtureAdapter.c`.
-- [ ] Reuse macFUSE Local + DiskImages2 path.
-- [ ] M01–M14.
-- [ ] Atomic-save pattern.
-- [ ] Random I/O.
-- [ ] 50–100 mount/unmount loop.
-- [ ] Failure propagation.
-- [ ] No leaked mount/process/fd.
+- [x] Reuse `PrepareEDPFilesystemFixture.swift` with combined sparse type 1/2/4 media.
+- [x] Reuse `DirectMFMountEDPFixtureAdapter.c` and production `edp_rw_open_device()`.
+- [x] Reuse macFUSE Local + writable DiskImages2 publication + Apple native filesystems.
+- [x] M01–M14.
+- [x] Boot FAT16 native read-only mount plus transport-level `EROFS` fail-closed write.
+- [x] Atomic-save pattern.
+- [x] Random I/O.
+- [x] 50 mount/unmount/remount loops by default (configurable only within 50–100).
+- [x] XPC unmount/eject failure propagation with retained session state.
+- [x] Transport crash bounded cleanup and successful remount.
+- [x] `synchronize()` and final durability failure propagation.
+- [x] Concurrent type 1/2/4 sessions remain independent.
+- [x] No leaked mount/process/synthetic device/fd.
 
-Commit: `TBD`
+Validation at implementation worktree:
+
+```text
+make drive-test-storage = PASS
+make drive-test-virtual-usb = PASS
+SCENARIO=M01_OK ... SCENARIO=M14_OK
+M10 loops = 50/50
+M10 fd baseline/max = 9/9
+RESULT=DRIVE_STORAGE_FAILURE_CONTRACTS_OK
+RESULT=DRIVE_STORAGE_PRODUCTION_SWIFT6_C17_STRICT_OK
+RESULT=DRIVE_STORAGE_E2E_OK
+RESULT=MACFUSE_SCRATCH_CLEANUP_CONTRACT_OK
+post-test synthetic images = []
+git diff --check = PASS
+```
+
+The boot product path keeps `volume.raw` metadata writable enough for macFUSE
+Local activation, rejects every transport WRITE with `EROFS`, publishes the
+slice through writable Private DiskImages2, and uses Apple `mount_msdos -o
+rdonly` for the final system-level FAT16 mount. Crash recovery only matches an
+exact persisted mount source to the narrow root-owned 4 KiB macFUSE UUID
+scratch signature before cleanup; unrelated devices and images are rejected.
+
+Commit: `pending commit`
 
 ## TEST-G — UI automation
 

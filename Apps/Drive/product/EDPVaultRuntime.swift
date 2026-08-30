@@ -617,7 +617,7 @@ private final class MountManager: EDPDaemonMountManaging {
     private var missingSince = [String: Date]()
     private let binaryRoot: String
     private let diskArbitration: EDPDiskArbitrationController
-    private let blockPublisher: EDPBlockDevicePublisher
+    private let blockPublisher: any EDPBlockDevicePublisher
 
     init() throws {
         if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
@@ -670,6 +670,9 @@ private final class MountManager: EDPDaemonMountManaging {
                 }
             }
             if let bridge = item["bridgeMount"], !bridge.isEmpty {
+                if EDPNativeMountTable.isMountpoint(bridge) {
+                    _ = EDPMacFUSEScratchImageCleanup.cleanupOrphan(mountedAt: bridge)
+                }
                 do {
                     try EDPNativeMountTable.unmountPath(bridge)
                     if EDPNativeMountTable.isMountpoint(bridge) {
@@ -730,11 +733,16 @@ private final class MountManager: EDPDaemonMountManaging {
             switch resolved.magic {
             case "EXFAT": filesystem = "ExFAT"
             case "NTFS": filesystem = "NTFS"
-            case "FAT": filesystem = "FAT"
+            case "FAT":
+                filesystem = session.partitionType == EDPPartitionKind.boot.rawValue
+                    ? "FAT16 (read-only)"
+                    : "FAT"
             default: filesystem = "Unformatted or unsupported"
             }
             mountpoint = EDPNativeMountTable.mountPoint(forBSD: resolved.bsdName) ?? ""
-            if !mountpoint.isEmpty, EDPNativeMountTable.isReadOnly(mountpoint) == true {
+            if session.partitionType != EDPPartitionKind.boot.rawValue,
+               !mountpoint.isEmpty,
+               EDPNativeMountTable.isReadOnly(mountpoint) == true {
                 filesystem += " (read-only; Finder erasable)"
             }
         }
@@ -806,7 +814,7 @@ private final class MountManager: EDPDaemonMountManaging {
             controlFD: 0,
             mountpoint: bridgeMount,
             volumeName: volumeName,
-            readOnly: false
+            readOnly: partitionType == EDPPartitionKind.boot.rawValue
         )
         let launchSpec = try EDPTransportProvider.launchSpec(
             for: runtimeStatus.backend,
@@ -866,10 +874,11 @@ private final class MountManager: EDPDaemonMountManaging {
             }
 
             let decryptedVolume = bridgeMount + "/volume.raw"
+            let isBoot = partitionType == EDPPartitionKind.boot.rawValue
             let published = try blockPublisher.publishWritableImage(at: decryptedVolume)
             publishedDevice = published
             let resolved = try resolveFilesystemDevice(published.bsdName)
-            if ["EXFAT", "NTFS", "FAT"].contains(resolved.magic) {
+            if !isBoot, ["EXFAT", "NTFS", "FAT"].contains(resolved.magic) {
                 try prepareFinderDefaults(
                     bsd: resolved.bsdName,
                     sessionSuffix: suffix,
@@ -890,7 +899,9 @@ private final class MountManager: EDPDaemonMountManaging {
                     nil
                 )
             case "FAT":
-                mounted = ("FAT", try diskArbitration.mount(resolved.bsdName), nil)
+                mounted = isBoot
+                    ? ("FAT16 (read-only)", try mountFATReadOnly(resolved.bsdName, owner: identity), nil)
+                    : ("FAT", try diskArbitration.mount(resolved.bsdName), nil)
             default:
                 mounted = ("Unformatted or unsupported", nil, nil)
             }
@@ -984,6 +995,40 @@ private final class MountManager: EDPDaemonMountManaging {
             throw fail("native ExFAT mounted read-only")
         }
         return ("ExFAT", mountpoint, nil)
+    }
+
+    private func mountFATReadOnly(_ bsd: String, owner: (uid_t, gid_t)) throws -> String {
+        let mountpoint = uniqueMountpoint("EDP Boot")
+        try FileManager.default.createDirectory(
+            atPath: mountpoint,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: NSNumber(value: mode_t(0o755))]
+        )
+        do {
+            let status = try EDPNativeBoundedProcess.run(
+                executable: "/sbin/mount_msdos",
+                arguments: [
+                    "-o", "rdonly",
+                    "-u", String(owner.0),
+                    "-g", String(owner.1),
+                    "-m", "755",
+                    "/dev/\(bsd)",
+                    mountpoint,
+                ],
+                timeout: 20,
+                label: "mount FAT16 read-only"
+            )
+            guard status == 0,
+                  EDPNativeMountTable.isMountpoint(mountpoint),
+                  EDPNativeMountTable.isReadOnly(mountpoint) == true else {
+                throw fail("native FAT16 read-only mount failed for \(bsd): status=\(status)")
+            }
+            return mountpoint
+        } catch {
+            try? EDPNativeMountTable.unmountPath(mountpoint, force: true)
+            try? FileManager.default.removeItem(atPath: mountpoint)
+            throw error
+        }
     }
 
     @discardableResult
@@ -2145,11 +2190,10 @@ private func doctor() -> Int32 {
     ok = ok && runtimeStatus != nil
     let binaryRoot = runtimeBinaryRoot()
     let transportBackend = runtimeStatus?.backend ?? .macFUSELocal
-    let transportTool = EDPTransportProvider.executableName(
-        for: transportBackend,
-        readOnly: false
-    )
-    for tool in [transportTool, "edp-console-exec", "edp-raw-metadata", "diskimages2-attach"] {
+    let transportTools = [false, true].map {
+        EDPTransportProvider.executableName(for: transportBackend, readOnly: $0)
+    }
+    for tool in transportTools + ["edp-console-exec", "edp-raw-metadata", "diskimages2-attach"] {
         let path = binaryRoot + "/" + tool
         let present = FileManager.default.isExecutableFile(atPath: path)
         print("TOOL_\(tool.uppercased().replacingOccurrences(of: ".", with: "_"))=\(present ? "OK" : "MISSING")")

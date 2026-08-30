@@ -28,6 +28,7 @@ help:
 	@echo "  make drive-restart      Close old UIs and start exactly one official UI"
 	@echo "  make drive-installer    Build the full Drive native installer"
 	@echo "  make drive-test-fast    Hardware-free core/classifier regression"
+	@echo "  make drive-test-storage Sparse-image M01-M14 storage E2E (50 loops)"
 	@echo "  make drive-test-all     All hardware-free Drive regression gates"
 	@echo "  make studio-generate    Regenerate the Studio Xcode project"
 	@echo "  make studio-build       Build Studio Release without signing"
@@ -62,6 +63,7 @@ drive-test-virtual-usb: drive-test-identity
 	@"$(ROOT)/Apps/Drive/Tests/run-virtual-usb.sh"
 
 drive-test-storage: drive-test-virtual-usb
+	@"$(ROOT)/Apps/Drive/Tests/run-storage.sh"
 
 drive-test-ui: drive-test-storage
 

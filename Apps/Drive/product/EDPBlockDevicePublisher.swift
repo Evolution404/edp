@@ -183,6 +183,40 @@ enum EDPMacFUSEScratchImageCleanup {
         }
     }
 
+    /// Recovers one persisted macFUSE Local bridge after its transport process
+    /// crashed before the normal signal-driven teardown could close MFChannel.
+    /// The mountpoint and its exact /dev/diskN source must still match a narrow
+    /// 4 KiB macFUSE scratch image candidate before its helper can be signalled.
+    @discardableResult
+    static func cleanupOrphan(mountedAt mountpoint: String) -> Bool {
+        guard let source = mountSource(mountedAt: mountpoint),
+              source.hasPrefix("/dev/disk") else {
+            return false
+        }
+        let images: [EDPMacFUSEScratchImage]
+        do {
+            images = try currentImages()
+        } catch {
+            NSLog("EDP exact macFUSE orphan lookup failed: %@", String(describing: error))
+            return false
+        }
+        guard let image = orphanCandidate(forSource: source, in: images) else {
+            return false
+        }
+        cleanup(image)
+        return waitUntilGone(source, timeout: 2.0) && mountSource(mountedAt: mountpoint) == nil
+    }
+
+    static func orphanCandidate(
+        forSource source: String,
+        in images: [EDPMacFUSEScratchImage]
+    ) -> EDPMacFUSEScratchImage? {
+        guard source.hasPrefix("/dev/disk") else { return nil }
+        return images.first {
+            $0.devices == [source] && $0.isOrphanCleanupCandidate
+        }
+    }
+
     static func parseInfoPlist(_ data: Data) throws -> [EDPMacFUSEScratchImage] {
         guard let root = try PropertyListSerialization.propertyList(
             from: data,
@@ -279,6 +313,31 @@ enum EDPMacFUSEScratchImageCleanup {
             Thread.sleep(forTimeInterval: 0.05)
         }
         return !FileManager.default.fileExists(atPath: device)
+    }
+
+    private static func mountSource(mountedAt mountpoint: String) -> String? {
+        let expectedTarget = URL(fileURLWithPath: mountpoint)
+            .resolvingSymlinksInPath().standardizedFileURL.path
+        var entries: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo(&entries, MNT_NOWAIT)
+        guard count > 0, let entries else { return nil }
+        for index in 0..<Int(count) {
+            let entry = entries[index]
+            let target = withUnsafePointer(to: entry.f_mntonname) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MNAMELEN)) {
+                    String(cString: $0)
+                }
+            }
+            let actualTarget = URL(fileURLWithPath: target)
+                .resolvingSymlinksInPath().standardizedFileURL.path
+            guard actualTarget == expectedTarget else { continue }
+            return withUnsafePointer(to: entry.f_mntfromname) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MNAMELEN)) {
+                    String(cString: $0)
+                }
+            }
+        }
+        return nil
     }
 
     private static func integer(_ value: Any?) -> Int? {

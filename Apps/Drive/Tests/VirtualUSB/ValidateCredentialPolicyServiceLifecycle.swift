@@ -86,6 +86,8 @@ private final class FakeMountManager: EDPDaemonMountManaging {
     private(set) var recoverCount = 0
     private(set) var unmountAllCount = 0
     private var failures = [String: (remaining: Int, message: String)]()
+    private var unmountFailures = [String: (remaining: Int, message: String)]()
+    private var ejectFailures = [String: (remaining: Int, message: String)]()
     var staleSessionCount = 0
 
     private func key(_ deviceID: String, _ partitionType: UInt32) -> String {
@@ -94,6 +96,14 @@ private final class FakeMountManager: EDPDaemonMountManaging {
 
     func failNextMounts(deviceID: String, partitionType: UInt32, count: Int, message: String) {
         failures[key(deviceID, partitionType)] = (count, message)
+    }
+
+    func failNextUnmounts(deviceID: String, partitionType: UInt32, count: Int, message: String) {
+        unmountFailures[key(deviceID, partitionType)] = (count, message)
+    }
+
+    func failNextEjects(deviceID: String, count: Int, message: String) {
+        ejectFailures[deviceID] = (count, message)
     }
 
     func recoverPersistedSessions() {
@@ -135,11 +145,22 @@ private final class FakeMountManager: EDPDaemonMountManaging {
     }
 
     func eject(deviceID: String) throws {
+        if var failure = ejectFailures[deviceID], failure.remaining > 0 {
+            failure.remaining -= 1
+            ejectFailures[deviceID] = failure
+            throw LifecycleValidationError(failure.message)
+        }
         mounted = mounted.filter { $0.value.deviceID != deviceID }
     }
 
     func unmount(deviceID: String, partitionType: UInt32) throws {
-        mounted.removeValue(forKey: key(deviceID, partitionType))
+        let sessionKey = key(deviceID, partitionType)
+        if var failure = unmountFailures[sessionKey], failure.remaining > 0 {
+            failure.remaining -= 1
+            unmountFailures[sessionKey] = failure
+            throw LifecycleValidationError(failure.message)
+        }
+        mounted.removeValue(forKey: sessionKey)
     }
 
     func mount(
@@ -670,6 +691,57 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 throw LifecycleValidationError("S10 XPC graceful full exit did not teardown service state")
             }
             print("SCENARIO=S10_OK graceful_full_exit")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            let service = EDPXPCService(controller: env.controller, didRequestShutdown: {})
+
+            env.manager.failNextUnmounts(
+                deviceID: device.deviceID,
+                partitionType: 1,
+                count: 1,
+                message: "EBUSY: injected user-volume unmount failure"
+            )
+            var unmountReplyCalled = false
+            var unmountReplyError: String?
+            service.unmountPartition(deviceID: device.deviceID, partitionType: 1) { error in
+                unmountReplyCalled = true
+                unmountReplyError = error
+            }
+            guard unmountReplyCalled,
+                  unmountReplyError?.contains("EBUSY") == true,
+                  env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
+                throw LifecycleValidationError(
+                    "M11 XPC unmount failure was hidden or session state was discarded"
+                )
+            }
+
+            env.manager.failNextEjects(
+                deviceID: device.deviceID,
+                count: 1,
+                message: "EBUSY: injected published-device eject failure"
+            )
+            try expectThrows("M11 controller eject unexpectedly succeeded") {
+                try env.controller.eject(deviceID: device.deviceID)
+            }
+            guard env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1),
+                  env.diskArbitration.ejectCalls.isEmpty else {
+                throw LifecycleValidationError(
+                    "M11 eject did not fail closed before physical device release"
+                )
+            }
+
+            try env.controller.unmountPartition(deviceID: device.deviceID, partitionType: 1)
+            guard !env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
+                throw LifecycleValidationError("M11 retained session could not be cleaned up")
+            }
+            print("SCENARIO=M11_OK unmount_error_xpc_state_retained_eject_fail_closed")
         }
     }
 

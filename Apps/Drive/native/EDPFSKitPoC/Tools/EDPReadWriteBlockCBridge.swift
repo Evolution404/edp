@@ -1,8 +1,15 @@
 import Foundation
 
-private final class EDPReadWriteBridgeContext {
-    let raw: EDPFileRawDevice
+final class EDPReadWriteBridgeContext {
+    let raw: any EDPRawWritable
     let block: any EDPBlockWritable
+
+#if EDP_REGRESSION_TESTS
+    init(raw: any EDPRawWritable, block: any EDPBlockWritable) {
+        self.raw = raw
+        self.block = block
+    }
+#endif
 
     init(cipherPath: String, key: [UInt8]) throws {
         raw = try EDPFileRawDevice(path: cipherPath, writable: true)
@@ -307,13 +314,15 @@ public func edp_rw_sync(_ opaque: UnsafeMutableRawPointer?) -> Int32 {
 }
 
 @_cdecl("edp_rw_close")
-public func edp_rw_close(_ opaque: UnsafeMutableRawPointer?) {
-    guard let opaque else { return }
+public func edp_rw_close(_ opaque: UnsafeMutableRawPointer?) -> Int32 {
+    guard let opaque else { return -22 }
     let context = Unmanaged<EDPReadWriteBridgeContext>.fromOpaque(opaque)
         .takeRetainedValue()
     do {
         try context.block.forceDurability()
+        return 0
     } catch {
         logReadWriteBridgeError("EDP_RW_CLOSE_DURABILITY_ERROR=\(error)\n")
+        return -5
     }
 }

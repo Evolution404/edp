@@ -64,5 +64,6 @@ done
 for scenario in S01 S02 S03 S04 S05 S06 S07 S08 S09 S10; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
+grep -Fq 'SCENARIO=M11_OK' <<<"$OUTPUT"
 grep -Fq 'RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK' <<<"$OUTPUT"
 printf '%s\n' 'RESULT=DRIVE_SERVICE_LIFECYCLE_OK'

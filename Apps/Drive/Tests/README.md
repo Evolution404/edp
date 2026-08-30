@@ -28,7 +28,12 @@ The initial unified runner intentionally reuses production validators instead of
 
 `VirtualUSB/ValidateDiscoverySeam.swift` is the first executable consumer of the production dependency seam. It injects a virtual whole-USB inventory and metadata reader into `EDPPhysicalDiskDiscovery`, while the shipping daemon defaults to `EDPIOKitWholeUSBMediaProvider` + `EDPPrivilegedRawMetadataReader`. There is no environment-variable selector in the production App or service.
 
-Storage E2E remains backed by the existing sparse fixture and macFUSE/DiskImages2 tools and will be wired into `drive-test-storage` in TEST-F.
+`Storage/run-storage.sh` is the TEST-F sparse-image harness. It builds one
+combined virtual physical disk from captured disk4 LBA4/LBA7/LBA11/LBA12,
+then exercises production boot/type 2/type 4 unlock through macFUSE Local,
+DiskImages2, and Apple FAT16/ExFAT filesystems. Every DiskImages2 device is
+matched back to its exact temporary backing file before any filesystem format
+operation is allowed.
 
 ## Commands
 
@@ -42,9 +47,20 @@ make drive-test-fast
 
 `drive-test-virtual-usb` extends that baseline through TEST-C/TEST-D/TEST-E. It drives production discovery and daemon state through injected virtual whole-USB media, virtual metadata/raw devices, temporary Keychain/policy stores, and fake mount/Disk Arbitration dependencies. It covers P01–P30, C01–C08, and S01–S10 without opening a physical raw disk. `Tests/run-service-lifecycle.sh` is the focused C/S runner used by that target.
 
-`drive-test-virtual-usb` currently adds the production discovery dependency-seam validator and will grow into the P16–P30 lifecycle/fault matrix in TEST-D. It reads only immutable fixture files and never opens `/dev/rdisk*`.
+`drive-test-virtual-usb` includes the production discovery dependency seam plus
+the complete P16–P30 lifecycle/fault matrix. It reads only immutable fixture
+files and never opens `/dev/rdisk*`.
 
-Additional canonical targets are reserved now and populated phase-by-phase:
+`drive-test-storage` covers M01–M14. Its default stress gate performs 50 full
+mount/attach/filesystem/unmount/eject/transport-remount cycles and rejects a
+loop count outside the accepted 50–100 range. It verifies boot FAT16 at both
+the native read-only mount and transport `EROFS` layers, encrypted persistence,
+Finder-style operations, large/random I/O, unmount failure propagation,
+transport crash recovery, durability failure propagation, and concurrent
+type 1/2/4 session isolation. No sudo, physical USB, real raw node, or real EDP
+credential is used.
+
+Canonical targets:
 
 ```text
 drive-test-identity
