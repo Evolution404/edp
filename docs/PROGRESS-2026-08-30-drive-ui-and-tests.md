@@ -347,18 +347,45 @@ git diff --check = PASS
 
 The lifecycle harness operates entirely on injected IOKit-equivalent inventory, captured immutable metadata, mutable virtual device state, and an in-memory raw block backend. It does not open `/dev/rdisk*`. P24 proves detach/error propagation at the production plaintext block boundary; full macFUSE/DiskImages2 detach cleanup remains a storage-lifecycle responsibility for TEST-F rather than being overclaimed here.
 
-Commit: `pending commit`
+Commit: `4e38088 test(drive): simulate physical usb lifecycle failures`
 
 ## TEST-E — Credential / Policy / Service lifecycle
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] C01–C08.
-- [ ] S01–S10.
-- [ ] New physical identity never inherits old state.
-- [ ] Service stop/restart/recovery.
+- [x] C01–C08 credential and policy matrix.
+- [x] S01–S10 daemon/service lifecycle matrix.
+- [x] Wrong password fails before Keychain persistence.
+- [x] Partition 2/4 credentials remain independently removable.
+- [x] New five-factor physical identity never inherits display name, auto-mount policy, or credential state.
+- [x] Policy/credential state persists across service reconstruction for the same identity.
+- [x] Startup with no device and startup with an already-present virtual EDP device.
+- [x] Service stop with zero mounts and with active mounts.
+- [x] Service restart preserves stable identity; foreground/XPC client reconstruction does not stop the daemon.
+- [x] Explicit macFUSE transient retry clears the retained failure and succeeds on the second production reconcile.
+- [x] One broken virtual device does not poison another good device.
+- [x] Stale-session recovery runs at controller initialization.
+- [x] XPC graceful full-exit tears down sessions before requesting process shutdown.
+- [x] Production controller dependencies are initializer-injected; production defaults remain real IOKit/raw lease/Keychain/policy/mount/Disk Arbitration implementations.
+- [x] Test-only synchronous queue helpers compile only under `EDP_REGRESSION_TESTS`; no environment selector/backdoor was added.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+make drive-test-virtual-usb = PASS
+SCENARIO=C01_OK ... SCENARIO=C08_OK
+SCENARIO=S01_OK ... SCENARIO=S10_OK
+RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK
+RESULT=DRIVE_SERVICE_LIFECYCLE_OK
+RESULT=DRIVE_VIRTUAL_USB_OK
+shipping native daemon Swift 6 warnings-as-errors compile = PASS
+RESULT=DRIVE_TEST_E_PRODUCTION_BUILD_OK
+git diff --check = PASS
+```
+
+TEST-E instantiates the production `EDPDaemonController` with explicit test dependencies rather than duplicating its state machine. The normal executable still constructs the controller with the original real dependencies, and the regression harness uses only temporary Keychain/policy paths plus virtual media/raw state.
+
+Commit: `pending commit`
 
 ## TEST-F — Sparse-image Storage E2E
 

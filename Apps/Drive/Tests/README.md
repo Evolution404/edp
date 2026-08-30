@@ -40,6 +40,8 @@ make drive-test-fast
 
 `drive-test-fast` runs the EDPCore package tests, strict Swift 6 UI typecheck, native golden core validation, media-classification validation, and transport lifecycle validation. It is deliberately hardware-free.
 
+`drive-test-virtual-usb` extends that baseline through TEST-C/TEST-D/TEST-E. It drives production discovery and daemon state through injected virtual whole-USB media, virtual metadata/raw devices, temporary Keychain/policy stores, and fake mount/Disk Arbitration dependencies. It covers P01–P30, C01–C08, and S01–S10 without opening a physical raw disk. `Tests/run-service-lifecycle.sh` is the focused C/S runner used by that target.
+
 `drive-test-virtual-usb` currently adds the production discovery dependency-seam validator and will grow into the P16–P30 lifecycle/fault matrix in TEST-D. It reads only immutable fixture files and never opens `/dev/rdisk*`.
 
 Additional canonical targets are reserved now and populated phase-by-phase:

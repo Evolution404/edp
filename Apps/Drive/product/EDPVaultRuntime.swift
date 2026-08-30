@@ -196,7 +196,7 @@ private func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
     }
 }
 
-private final class EDPRawAccessLease: @unchecked Sendable {
+final class EDPRawAccessLease: @unchecked Sendable {
     let deviceID: String
     let registryEntryID: UInt64
     let rawPath: String
@@ -597,7 +597,22 @@ private final class MountSession {
     }
 }
 
-private final class MountManager {
+protocol EDPDaemonMountManaging: AnyObject {
+    func recoverPersistedSessions()
+    func contains(_ disk: PhysicalDisk, _ type: UInt32) -> Bool
+    func mountedPhysicalDisks() -> Set<String>
+    func isMounted(deviceID: String) -> Bool
+    func mountedSummaries() -> [[String: String]]
+    func summary(deviceID: String, partitionType: UInt32) -> [String: String]?
+    func eject(deviceID: String) throws
+    func unmount(deviceID: String, partitionType: UInt32) throws
+    func mount(disk: PhysicalDisk, partitionType: UInt32, password: [UInt8], rawFD: Int32) throws
+    @discardableResult
+    func removeMissing(availableDisks: [String: String], graceSeconds: TimeInterval) -> Bool
+    func unmountAll()
+}
+
+private final class MountManager: EDPDaemonMountManaging {
     private var sessions = [String: MountSession]()
     private var missingSince = [String: Date]()
     private let binaryRoot: String
@@ -1195,13 +1210,18 @@ private func authorize(_ diskArgument: String?) throws {
     print("AUTHORIZED_PARTITIONS=\(verified.map(String.init).joined(separator: ","))")
 }
 
-private final class EDPDaemonController: @unchecked Sendable {
+typealias EDPRawAccessLeaseOpening = @Sendable (PhysicalDisk) throws -> EDPRawAccessLease
+typealias EDPCredentialVerifying = @Sendable (PhysicalDisk, UInt32, [UInt8], Int32) throws -> Void
+
+final class EDPDaemonController: @unchecked Sendable {
     private let store: EDPCredentialStore
     private let policies: EDPDevicePolicyStore
-    private let manager: MountManager
-    private let diskArbitration: EDPDiskArbitrationController
+    private let manager: any EDPDaemonMountManaging
+    private let diskArbitration: any EDPDaemonDiskArbitrating
     private let mediaProvider: any EDPWholeUSBMediaProviding
     private let metadataReader: any EDPRawMetadataReading
+    private let rawAccessLeaseOpener: EDPRawAccessLeaseOpening
+    private let credentialVerifier: EDPCredentialVerifying
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private var failedMounts = [String: String]()
     private var manualUnmountSuppressions = Set<String>()
@@ -1217,20 +1237,42 @@ private final class EDPDaemonController: @unchecked Sendable {
     private var lastDiscoveryTimestamp = ""
 
     init(
+        store: EDPCredentialStore? = nil,
+        policies: EDPDevicePolicyStore? = nil,
+        manager: (any EDPDaemonMountManaging)? = nil,
+        diskArbitration: (any EDPDaemonDiskArbitrating)? = nil,
         mediaProvider: any EDPWholeUSBMediaProviding = EDPIOKitWholeUSBMediaProvider(),
-        metadataReader: any EDPRawMetadataReading = EDPPrivilegedRawMetadataReader()
+        metadataReader: any EDPRawMetadataReading = EDPPrivilegedRawMetadataReader(),
+        rawAccessLeaseOpener: EDPRawAccessLeaseOpening? = nil,
+        credentialVerifier: EDPCredentialVerifying? = nil,
+        performLegacyRuntimeMigration: Bool = true
     ) throws {
         self.mediaProvider = mediaProvider
         self.metadataReader = metadataReader
-        try migrateLegacyRuntimeState()
-        store = try makeCredentialStore()
-        policies = try makePolicyStore()
-        manager = try MountManager()
-        diskArbitration = try EDPDiskArbitrationController()
-        manager.recoverPersistedSessions()
-        _ = try store.load()
-        _ = try policies.load()
-        finalizeLegacyRuntimeStateMigration()
+        self.rawAccessLeaseOpener = rawAccessLeaseOpener ?? { disk in
+            try openPersistentRawAccess(for: disk, mediaProvider: mediaProvider)
+        }
+        self.credentialVerifier = credentialVerifier ?? { disk, partitionType, password, rawFD in
+            try verifyPartitionType(
+                disk: disk,
+                partitionType: partitionType,
+                password: password,
+                rawFD: rawFD
+            )
+        }
+        if performLegacyRuntimeMigration {
+            try migrateLegacyRuntimeState()
+        }
+        self.store = try store ?? makeCredentialStore()
+        self.policies = try policies ?? makePolicyStore()
+        self.manager = try manager ?? MountManager()
+        self.diskArbitration = try diskArbitration ?? EDPDiskArbitrationController()
+        self.manager.recoverPersistedSessions()
+        _ = try self.store.load()
+        _ = try self.policies.load()
+        if performLegacyRuntimeMigration {
+            finalizeLegacyRuntimeStateMigration()
+        }
     }
 
     private func key(_ deviceID: String, _ partitionType: UInt32) -> String {
@@ -1284,7 +1326,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             try diskArbitration.unmountWhole(disk.bsdName)
         }
         do {
-            let lease = try openPersistentRawAccess(for: disk, mediaProvider: mediaProvider)
+            let lease = try rawAccessLeaseOpener(disk)
             rawAccessLeases[disk.deviceID] = lease
             rawAccessReadyByDeviceID[disk.deviceID] = true
             rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
@@ -1339,6 +1381,16 @@ private final class EDPDaemonController: @unchecked Sendable {
         queue.async { [weak self] in self?.reconcileLocked() }
     }
 
+#if EDP_REGRESSION_TESTS
+    func reconcileSynchronouslyForTesting() {
+        queue.sync { reconcileLocked() }
+    }
+
+    func drainForTesting() {
+        queue.sync {}
+    }
+#endif
+
     private func reconcileLocked() {
         autoreleasepool {
             do {
@@ -1381,7 +1433,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 let availableDisks = Dictionary(
                     uniqueKeysWithValues: disks.map { ($0.deviceID, $0.bsdName) }
                 )
-                if manager.removeMissing(availableDisks: availableDisks),
+                if manager.removeMissing(availableDisks: availableDisks, graceSeconds: 5),
                    !missingCleanupScheduled {
                     missingCleanupScheduled = true
                     queue.asyncAfter(deadline: .now() + 6) { [weak self] in
@@ -1577,11 +1629,11 @@ private final class EDPDaemonController: @unchecked Sendable {
                 throw fail("EDP device is no longer connected")
             }
             let rawLease = try requireRawAccessLeaseLocked(for: disk)
-            try verifyPartitionType(
-                disk: disk,
-                partitionType: partitionType,
-                password: password,
-                rawFD: rawLease.fd
+            try credentialVerifier(
+                disk,
+                partitionType,
+                password,
+                rawLease.fd
             )
             try store.put(
                 deviceID: deviceID,
@@ -1863,7 +1915,7 @@ private final class EDPDaemonController: @unchecked Sendable {
     }
 }
 
-private final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol {
+final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol {
     private let controller: EDPDaemonController
     private let didRequestShutdown: @Sendable () -> Void
 
@@ -2134,6 +2186,7 @@ private func usage() {
     """)
 }
 
+#if !EDP_REGRESSION_TESTS
 @main
 private enum EDPVaultMain {
     static func main() {
@@ -2174,3 +2227,4 @@ private enum EDPVaultMain {
         }
     }
 }
+#endif

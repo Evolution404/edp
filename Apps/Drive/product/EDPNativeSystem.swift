@@ -529,7 +529,14 @@ private func daOperationCallback(
     box.semaphore.signal()
 }
 
-final class EDPDiskArbitrationController: @unchecked Sendable {
+protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
+    func suppressAutomount(usbRegistryEntryID: UInt64)
+    func allowAutomount(usbRegistryEntryID: UInt64)
+    func unmountWhole(_ bsdName: String) throws
+    func eject(_ bsdName: String) throws
+}
+
+final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked Sendable {
     private let session: DASession
     private let queue = DispatchQueue(label: "com.edp.drive.disk-arbitration")
     private let stateLock = NSLock()

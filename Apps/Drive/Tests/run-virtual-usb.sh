@@ -58,4 +58,10 @@ for scenario in $(seq 16 30); do
   grep -Fq "SCENARIO=P${scenario}_OK" <<<"$LIFECYCLE_OUTPUT"
 done
 grep -Fq 'RESULT=DRIVE_VIRTUAL_PHYSICAL_USB_OK' <<<"$LIFECYCLE_OUTPUT"
+
+SERVICE_OUTPUT="$(Tests/run-service-lifecycle.sh)"
+printf '%s\n' "$SERVICE_OUTPUT"
+grep -Fq 'RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK' <<<"$SERVICE_OUTPUT"
+grep -Fq 'RESULT=DRIVE_SERVICE_LIFECYCLE_OK' <<<"$SERVICE_OUTPUT"
+
 printf '%s\n' 'RESULT=DRIVE_VIRTUAL_USB_OK'
