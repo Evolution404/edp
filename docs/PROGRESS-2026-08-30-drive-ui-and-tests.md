@@ -171,21 +171,35 @@ RESULT=DRIVE_UI_D_STRUCTURE_OK
 
 Activity filtering is a presentation-only projection over the existing 200-entry runtime activity feed; persistence and XPC activity semantics are unchanged.
 
-Commit: `pending commit`
+Commit: `250b9d8 feat(drive): redesign activity and settings surfaces`
 
 ## UI-E — Menu Bar Mini Control Center
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Keep `.menuBarExtraStyle(.window)`.
-- [ ] Header/service status.
-- [ ] Device compact card(s).
-- [ ] Partition quick controls.
-- [ ] Global auto-mount.
-- [ ] Service start/stop/restart.
-- [ ] Footer: 刷新 / 仅退出界面 / 完全退出.
+- [x] Keep `.menuBarExtraStyle(.window)`.
+- [x] Header with service status and direct 打开主窗口 action.
+- [x] Device compact card(s) with capacity and connected state.
+- [x] Partition quick controls with filesystem/mount status and credential-missing guidance.
+- [x] Global auto-mount toggle.
+- [x] Service start/stop/restart.
+- [x] Footer: 刷新 / 仅退出界面 / 完全退出.
+- [x] Full exit still requests graceful service shutdown before terminating the UI.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+git diff --check = PASS
+make drive-check = PASS
+EDP_UI_PREVIEW Swift 6 warnings-as-errors typecheck = PASS
+.menuBarExtraStyle(.window) preserved
+RESULT=DRIVE_UI_E_COMPILE_OK
+RESULT=DRIVE_UI_E_STRUCTURE_OK
+```
+
+The menu bar is now the approved compact control center instead of a navigation-heavy menu surface. Existing XPC partition/service actions are reused without changing lifecycle semantics.
+
+Commit: `pending commit`
 
 ## UI-F — Accessibility / Dark / Performance
 

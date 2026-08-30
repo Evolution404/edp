@@ -2197,26 +2197,23 @@ struct EDPMenuBarView: View {
 
     private var bodyHeight: CGFloat {
         let partitionCount = connectedDevices.reduce(0) { $0 + $1.partitions.count }
-        let estimated = 288 + connectedDevices.count * 58 + partitionCount * 52
-        return min(520, max(340, CGFloat(estimated)))
+        let estimated = 230 + connectedDevices.count * 60 + partitionCount * 48
+        return min(500, max(300, CGFloat(estimated)))
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            EDPMenuPanelHeader(title: "EDP Drive", subtitle: "标准 EDP 加密盘")
+            menuHeader
 
             ScrollView {
                 VStack(spacing: 0) {
-                    openMainAppRow
-
-                    Divider().padding(.horizontal, 12)
-                    serviceControls
+                    devicesSection
 
                     Divider().padding(.horizontal, 12)
                     autoMountRow
 
                     Divider().padding(.horizontal, 12)
-                    devicesSection
+                    serviceControls
 
                     if !connectedDevices.isEmpty && model.needsFullDiskAccess {
                         Divider().padding(.horizontal, 12)
@@ -2235,17 +2232,40 @@ struct EDPMenuBarView: View {
         .onAppear { model.refresh() }
     }
 
-    private var openMainAppRow: some View {
-        EDPMenuNavigationRow(
-            title: "打开 EDP Drive",
-            subtitle: "设备、密码与自动挂载设置",
-            systemImage: "macwindow",
-            trailingSystemImage: "arrow.up.forward.app"
-        ) {
-            openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
+    private var menuHeader: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "externaldrive.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.tint)
+                .frame(width: 28, height: 28)
+                .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("EDP Drive")
+                    .font(.system(size: 14, weight: .semibold))
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(serviceIsRunning ? Color.green : Color.secondary.opacity(0.7))
+                        .frame(width: 6, height: 6)
+                    Text("后台服务\(model.serviceStatus)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Button("打开主窗口") {
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+            .keyboardShortcut("o")
         }
-        .keyboardShortcut("o")
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.025))
     }
 
     private var serviceControls: some View {
@@ -2303,13 +2323,30 @@ struct EDPMenuBarView: View {
     }
 
     private var autoMountRow: some View {
-        EDPMenuNavigationRow(
-            title: model.snapshot.globalAutoMountEnabled ? "暂停自动挂载" : "恢复自动挂载",
-            subtitle: model.snapshot.globalAutoMountEnabled ? "当前自动挂载已启用" : "当前自动挂载已暂停",
-            systemImage: model.snapshot.globalAutoMountEnabled ? "pause.circle" : "play.circle"
-        ) {
-            model.setGlobalAutoMount(!model.snapshot.globalAutoMountEnabled)
+        HStack(spacing: 10) {
+            Image(systemName: "bolt.horizontal.circle")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("自动挂载")
+                    .font(.system(size: 13, weight: .medium))
+                Text(model.snapshot.globalAutoMountEnabled ? "已开启" : "已暂停")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("自动挂载", isOn: Binding(
+                get: { model.snapshot.globalAutoMountEnabled },
+                set: { model.setGlobalAutoMount($0) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .disabled(model.isBusy)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 
     private var devicesSection: some View {
@@ -2359,7 +2396,7 @@ struct EDPMenuBarView: View {
                     Text(device.displayName)
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
-                    Text(device.vidPID)
+                    Text("\(ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file)) · 已连接")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -2398,7 +2435,7 @@ struct EDPMenuBarView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(partition.displayName)
                     .font(.caption.weight(.medium))
-                Text(mountAvailabilityText(partition) ?? partitionStatus(partition))
+                Text(mountAvailabilityText(partition) ?? partitionSummary(partition))
                     .font(.caption2)
                     .foregroundStyle(partition.mountState == .failed ? Color.red : .secondary)
                     .lineLimit(1)
@@ -2503,14 +2540,19 @@ struct EDPMenuBarView: View {
         return nil
     }
 
-    private func partitionStatus(_ partition: EDPXPCPartition) -> String {
+    private func partitionSummary(_ partition: EDPXPCPartition) -> String {
+        let status: String
         switch partition.mountState {
-        case .unavailable: return "不可用"
-        case .unmounted: return "未挂载"
-        case .mounting: return "正在挂载"
-        case .mounted: return partition.readOnly == true ? "只读" : "已挂载"
-        case .failed: return "挂载失败"
+        case .unavailable: status = "不可用"
+        case .unmounted: status = "未挂载"
+        case .mounting: status = "正在挂载"
+        case .mounted: status = partition.readOnly == true ? "只读" : "已挂载"
+        case .failed: status = "挂载失败"
         }
+        if let filesystem = partition.filesystem, !filesystem.isEmpty {
+            return "\(filesystem) · \(status)"
+        }
+        return status
     }
 
     private func partitionIcon(_ partition: EDPXPCPartition) -> String {
