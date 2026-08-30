@@ -990,42 +990,129 @@ struct EDPCredentialTarget: Identifiable {
 struct EDPMainView: View {
     @ObservedObject var model: EDPVaultViewModel
     @State private var section: EDPMainSection? = .devices
+    @StateObject private var splitBridge = EDPNativeSplitBridge()
 
     var body: some View {
-        NavigationSplitView {
-            List(EDPMainSection.allCases, selection: $section) { item in
-                Label(item.rawValue, systemImage: item.icon)
-                    .padding(.vertical, 3)
-                    .tag(item)
-            }
-            .listStyle(.sidebar)
-            .navigationTitle("EDP Drive")
-            // Let NavigationSplitView own the column geometry so its native
-            // show/hide transition is not fighting a fixed child frame.
-            .navigationSplitViewColumnWidth(min: 180, ideal: 180, max: 220)
-        } detail: {
-            ZStack {
-                EDPWindowBackdrop()
-                switch section ?? .devices {
-                case .devices: EDPDevicesView(model: model)
-                case .activity: EDPActivityView(model: model)
-                case .settings: EDPSettingsView(model: model)
+        EDPNativeSplitView(model: model, section: $section, bridge: splitBridge)
+            .frame(minWidth: 900, minHeight: 620)
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button { splitBridge.toggleSidebar() } label: {
+                        Label("显示或隐藏侧栏", systemImage: "sidebar.leading")
+                    }
+                    .labelStyle(.iconOnly)
+                    .focusEffectDisabled()
+                    .help("显示或隐藏侧栏")
                 }
             }
-        }
-        // Keep the detail canvas stable while the glass sidebar moves in or out;
-        // large partition cards no longer relayout on every animation frame.
-        .navigationSplitViewStyle(.prominentDetail)
-        .frame(minWidth: 900, minHeight: 620)
-        .alert("操作失败", isPresented: Binding(
-            get: { model.lastError != nil },
-            set: { if !$0 { model.lastError = nil } }
-        )) {
-            Button("好") { model.lastError = nil }
-        } message: {
-            Text(model.lastError ?? "未知错误")
-        }
+            .alert("操作失败", isPresented: Binding(
+                get: { model.lastError != nil },
+                set: { if !$0 { model.lastError = nil } }
+            )) {
+                Button("好") { model.lastError = nil }
+            } message: {
+                Text(model.lastError ?? "未知错误")
+            }
     }
+}
+
+@MainActor
+private final class EDPNativeSplitBridge: ObservableObject {
+    weak var controller: EDPNativeSplitViewController?
+
+    func toggleSidebar() {
+        controller?.toggleSidebar(nil)
+    }
+}
+
+private struct EDPNativeSplitView: NSViewControllerRepresentable {
+    @ObservedObject var model: EDPVaultViewModel
+    @Binding var section: EDPMainSection?
+    @ObservedObject var bridge: EDPNativeSplitBridge
+
+    func makeNSViewController(context: Context) -> EDPNativeSplitViewController {
+        let controller = EDPNativeSplitViewController(model: model, section: $section)
+        bridge.controller = controller
+        return controller
+    }
+
+    func updateNSViewController(_ nsViewController: EDPNativeSplitViewController, context: Context) {
+        nsViewController.update(model: model, section: $section)
+        bridge.controller = nsViewController
+    }
+}
+
+private struct EDPNativeSidebarView: View {
+    @Binding var section: EDPMainSection?
+
+    var body: some View {
+        List(EDPMainSection.allCases, selection: $section) { item in
+            Label(item.rawValue, systemImage: item.icon)
+                .padding(.vertical, 3)
+                .tag(item)
+        }
+        .listStyle(.sidebar)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct EDPNativeDetailView: View {
+    @ObservedObject var model: EDPVaultViewModel
+    let section: EDPMainSection?
+
+    var body: some View {
+        ZStack {
+            EDPWindowBackdrop()
+            switch section ?? .devices {
+            case .devices: EDPDevicesView(model: model)
+            case .activity: EDPActivityView(model: model)
+            case .settings: EDPSettingsView(model: model)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+@MainActor
+private final class EDPNativeSplitViewController: NSSplitViewController {
+    private let sidebarHost: NSHostingController<EDPNativeSidebarView>
+    private let detailHost: NSHostingController<EDPNativeDetailView>
+
+    init(model: EDPVaultViewModel, section: Binding<EDPMainSection?>) {
+        sidebarHost = NSHostingController(rootView: EDPNativeSidebarView(section: section))
+        detailHost = NSHostingController(
+            rootView: EDPNativeDetailView(model: model, section: section.wrappedValue)
+        )
+        super.init(nibName: nil, bundle: nil)
+
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        minimumThicknessForInlineSidebars = 0
+
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarHost)
+        sidebarItem.minimumThickness = 180
+        sidebarItem.maximumThickness = 220
+        sidebarItem.canCollapse = true
+        sidebarItem.canCollapseFromWindowResize = false
+        sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+
+        let detailItem = NSSplitViewItem(viewController: detailHost)
+        detailItem.minimumThickness = 500
+
+        addSplitViewItem(sidebarItem)
+        addSplitViewItem(detailItem)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(model: EDPVaultViewModel, section: Binding<EDPMainSection?>) {
+        sidebarHost.rootView = EDPNativeSidebarView(section: section)
+        detailHost.rootView = EDPNativeDetailView(model: model, section: section.wrappedValue)
+    }
+
 }
 
 struct EDPDevicesView: View {
