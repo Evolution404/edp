@@ -5,18 +5,81 @@ import Dispatch
 import Foundation
 import IOKit
 
-struct PhysicalDisk: Hashable, Sendable {
+struct EDPWholeUSBMedia: Hashable, Sendable {
     let bsdName: String
-    let rawPath: String
     let sizeBytes: UInt64
     let mediaName: String
     let vidHex: String
     let pidHex: String
     let registryEntryID: UInt64
     let usbRegistryEntryID: UInt64
+
+    var rawPath: String { "/dev/r\(bsdName)" }
+}
+
+struct EDPRawMetadataSnapshot: Sendable {
+    let lba0: Data
+    let lba4: Data
+    let lba7: Data
+    let lba11: Data
+    let lba12: Data
+}
+
+struct EDPPhysicalIdentity: Hashable, Sendable {
+    let vidHex: String
+    let pidHex: String
     let labelOnlyID: UInt64
+    let sizeBytes: UInt64
     let metadataDeviceID: String
-    let deviceID: String
+
+    init(
+        vidHex: String,
+        pidHex: String,
+        labelOnlyID: UInt64,
+        sizeBytes: UInt64,
+        metadataDeviceID: String
+    ) {
+        self.vidHex = vidHex.lowercased()
+        self.pidHex = pidHex.lowercased()
+        self.labelOnlyID = labelOnlyID
+        self.sizeBytes = sizeBytes
+        self.metadataDeviceID = metadataDeviceID
+    }
+
+    var stableDeviceID: String {
+        EDPVolumeMetadata.stablePhysicalDeviceID(
+            metadataDeviceID: metadataDeviceID,
+            labelOnlyID: labelOnlyID,
+            vidHex: vidHex,
+            pidHex: pidHex,
+            sizeBytes: sizeBytes
+        )
+    }
+}
+
+protocol EDPWholeUSBMediaProviding: Sendable {
+    func allWholeUSBMedia() throws -> [EDPWholeUSBMedia]
+    func registryEntryExists(_ registryEntryID: UInt64) -> Bool
+}
+
+protocol EDPRawMetadataReading: Sendable {
+    func snapshot(for media: EDPWholeUSBMedia) throws -> EDPRawMetadataSnapshot
+}
+
+struct PhysicalDisk: Hashable, Sendable {
+    let bsdName: String
+    let rawPath: String
+    let mediaName: String
+    let registryEntryID: UInt64
+    let usbRegistryEntryID: UInt64
+    let identity: EDPPhysicalIdentity
+
+    var sizeBytes: UInt64 { identity.sizeBytes }
+    var vidHex: String { identity.vidHex }
+    var pidHex: String { identity.pidHex }
+    var labelOnlyID: UInt64 { identity.labelOnlyID }
+    var metadataDeviceID: String { identity.metadataDeviceID }
+    var deviceID: String { identity.stableDeviceID }
 }
 
 private func ioRegistryProperty(_ entry: io_registry_entry_t, _ key: String) -> CFTypeRef? {
@@ -112,8 +175,8 @@ private func hasAncestorBSDName(_ service: io_registry_entry_t, _ target: String
     return false
 }
 
-enum EDPNativeDeviceDiscovery {
-    static func allWholeUSBMedia() throws -> [(bsdName: String, size: UInt64, mediaName: String, vid: String, pid: String, registryEntryID: UInt64, usbRegistryEntryID: UInt64)] {
+struct EDPIOKitWholeUSBMediaProvider: EDPWholeUSBMediaProviding {
+    func allWholeUSBMedia() throws -> [EDPWholeUSBMedia] {
         guard let matching = IOServiceMatching("IOMedia") else {
             throw RuntimeNativeError("IOServiceMatching(IOMedia) failed")
         }
@@ -124,7 +187,7 @@ enum EDPNativeDeviceDiscovery {
         }
         defer { IOObjectRelease(iterator) }
 
-        var answer: [(String, UInt64, String, String, String, UInt64, UInt64)] = []
+        var answer = [EDPWholeUSBMedia]()
         while case let service = IOIteratorNext(iterator), service != 0 {
             defer { IOObjectRelease(service) }
             guard ioBool(ioRegistryProperty(service, "Whole")) == true,
@@ -142,25 +205,119 @@ enum EDPNativeDeviceDiscovery {
             let mediaName = usb.productName
                 ?? (ioRegistryProperty(service, "Media Name") as? String)
                 ?? "EDP USB"
-            answer.append((
-                bsd,
-                size,
-                mediaName,
-                String(format: "%04x", usb.vid),
-                String(format: "%04x", usb.pid),
-                registryEntryID,
-                usb.registryEntryID
+            answer.append(EDPWholeUSBMedia(
+                bsdName: bsd,
+                sizeBytes: size,
+                mediaName: mediaName,
+                vidHex: String(format: "%04x", usb.vid),
+                pidHex: String(format: "%04x", usb.pid),
+                registryEntryID: registryEntryID,
+                usbRegistryEntryID: usb.registryEntryID
             ))
         }
         return answer
     }
 
-    static func registryEntryExists(_ registryEntryID: UInt64) -> Bool {
+    func registryEntryExists(_ registryEntryID: UInt64) -> Bool {
         guard let matching = IORegistryEntryIDMatching(registryEntryID) else { return false }
         let service = IOServiceGetMatchingService(kIOMainPortDefault, matching)
         guard service != 0 else { return false }
         IOObjectRelease(service)
         return true
+    }
+}
+
+struct EDPFileRawMetadataReader: EDPRawMetadataReading {
+    func snapshot(for media: EDPWholeUSBMedia) throws -> EDPRawMetadataSnapshot {
+        guard FileManager.default.fileExists(atPath: media.rawPath) else {
+            throw RuntimeNativeError("raw device missing: \(media.rawPath)")
+        }
+        let raw = try EDPFileRawDevice(path: media.rawPath, declaredSizeBytes: media.sizeBytes)
+        let sector = Int(EDPMetadataProbe.legacySectorByteLength)
+        return EDPRawMetadataSnapshot(
+            lba0: try raw.readExact(at: 0, length: sector),
+            lba4: try raw.readExact(at: EDPMetadataProbe.lba4ByteOffset, length: sector),
+            lba7: try raw.readExact(at: EDPMetadataProbe.lba7ByteOffset, length: sector),
+            lba11: try raw.readExact(at: EDPVolumeMetadata.lba11ByteOffset, length: sector),
+            lba12: try raw.readExact(at: EDPVolumeMetadata.lba12ByteOffset, length: sector)
+        )
+    }
+}
+
+struct EDPPhysicalDiskDiscovery: Sendable {
+    let mediaProvider: any EDPWholeUSBMediaProviding
+    let metadataReader: any EDPRawMetadataReading
+
+    func discover(diagnostic: ((String) -> Void)? = nil) throws -> [PhysicalDisk] {
+        var answer = [PhysicalDisk]()
+        for media in try mediaProvider.allWholeUSBMedia() {
+            let metadata: EDPRawMetadataSnapshot
+            do {
+                metadata = try metadataReader.snapshot(for: media)
+            } catch {
+                let detail = String(describing: error).trimmingCharacters(in: .whitespacesAndNewlines)
+                diagnostic?("bsd=\(media.bsdName);result=raw_metadata_failed;error=\(detail)")
+                continue
+            }
+
+            let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](metadata.lba4))
+            let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+                [UInt8](metadata.lba11),
+                vidHex: media.vidHex,
+                pidHex: media.pidHex,
+                sizeBytes: media.sizeBytes
+            )
+            let lba12Plain = metadataDeviceID.flatMap { deviceID in
+                try? EDPVolumeMetadata.decodeLBA12([UInt8](metadata.lba12), deviceID: deviceID)
+            }
+            let mediaKind = EDPMetadataProbe.classifyMedia(
+                lba0: [UInt8](metadata.lba0),
+                lba4: [UInt8](metadata.lba4),
+                lba7: [UInt8](metadata.lba7),
+                lba12Plain: lba12Plain,
+                hasLBA11Identity: metadataDeviceID != nil
+            )
+            diagnostic?("bsd=\(media.bsdName);classification=\(mediaKind.rawValue)")
+            guard mediaKind == .standardEncrypted else { continue }
+            guard let labelOnlyID else {
+                diagnostic?("bsd=\(media.bsdName);result=lba4_only_id_invalid")
+                continue
+            }
+            guard let metadataDeviceID else {
+                diagnostic?("bsd=\(media.bsdName);result=device_id_invalid")
+                continue
+            }
+
+            let identity = EDPPhysicalIdentity(
+                vidHex: media.vidHex,
+                pidHex: media.pidHex,
+                labelOnlyID: labelOnlyID,
+                sizeBytes: media.sizeBytes,
+                metadataDeviceID: metadataDeviceID
+            )
+            diagnostic?(
+                "bsd=\(media.bsdName);result=recognized;onlyID=\(labelOnlyID);deviceID=\(identity.stableDeviceID)"
+            )
+            answer.append(PhysicalDisk(
+                bsdName: media.bsdName,
+                rawPath: media.rawPath,
+                mediaName: media.mediaName,
+                registryEntryID: media.registryEntryID,
+                usbRegistryEntryID: media.usbRegistryEntryID,
+                identity: identity
+            ))
+        }
+        return answer.sorted { $0.bsdName < $1.bsdName }
+    }
+}
+
+enum EDPNativeDeviceDiscovery {
+    static func allWholeUSBMedia() throws -> [EDPWholeUSBMedia] {
+        try EDPIOKitWholeUSBMediaProvider().allWholeUSBMedia()
+    }
+
+    static func registryEntryExists(_ registryEntryID: UInt64) -> Bool {
+        EDPIOKitWholeUSBMediaProvider().registryEntryExists(registryEntryID)
     }
 
     static func diagnosticReport() -> [String] {
@@ -170,8 +327,8 @@ enum EDPNativeDeviceDiscovery {
             return media.map { item in
                 [
                     "bsd=\(item.bsdName)",
-                    "usb=\(item.vid):\(item.pid)",
-                    "size=\(item.size)",
+                    "usb=\(item.vidHex):\(item.pidHex)",
+                    "size=\(item.sizeBytes)",
                     "name=\(item.mediaName)",
                     "rawAccess=fda-broker",
                 ].joined(separator: ";")
@@ -182,78 +339,10 @@ enum EDPNativeDeviceDiscovery {
     }
 
     static func discoverEDPDisks() throws -> [PhysicalDisk] {
-        var answer: [PhysicalDisk] = []
-        for media in try allWholeUSBMedia() {
-            let rawPath = "/dev/r\(media.bsdName)"
-            guard FileManager.default.fileExists(atPath: rawPath) else { continue }
-            let raw: EDPFileRawDevice
-            do {
-                raw = try EDPFileRawDevice(path: rawPath, declaredSizeBytes: media.size)
-            } catch {
-                continue
-            }
-            guard let lba0 = try? raw.readExact(
-                at: 0,
-                length: Int(EDPMetadataProbe.legacySectorByteLength)
-            ),
-            let lba4 = try? raw.readExact(
-                at: EDPMetadataProbe.lba4ByteOffset,
-                length: Int(EDPMetadataProbe.legacySectorByteLength)
-            ),
-            let lba7 = try? raw.readExact(
-                at: EDPMetadataProbe.lba7ByteOffset,
-                length: Int(EDPMetadataProbe.legacySectorByteLength)
-            ),
-            let lba11 = try? raw.readExact(
-                at: EDPVolumeMetadata.lba11ByteOffset,
-                length: Int(EDPMetadataProbe.legacySectorByteLength)
-            ),
-            let lba12 = try? raw.readExact(
-                at: EDPVolumeMetadata.lba12ByteOffset,
-                length: Int(EDPMetadataProbe.legacySectorByteLength)
-            ),
-            let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](lba4)),
-            let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-                [UInt8](lba11),
-                vidHex: media.vid,
-                pidHex: media.pid,
-                sizeBytes: media.size
-            ),
-            let lba12Plain = try? EDPVolumeMetadata.decodeLBA12(
-                [UInt8](lba12),
-                deviceID: metadataDeviceID
-            ),
-            EDPMetadataProbe.classifyMedia(
-                lba0: [UInt8](lba0),
-                lba4: [UInt8](lba4),
-                lba7: [UInt8](lba7),
-                lba12Plain: lba12Plain,
-                hasLBA11Identity: true
-            ) == .standardEncrypted else {
-                continue
-            }
-            let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(
-                metadataDeviceID: metadataDeviceID,
-                labelOnlyID: labelOnlyID,
-                vidHex: media.vid,
-                pidHex: media.pid,
-                sizeBytes: media.size
-            )
-            answer.append(PhysicalDisk(
-                bsdName: media.bsdName,
-                rawPath: rawPath,
-                sizeBytes: media.size,
-                mediaName: media.mediaName,
-                vidHex: media.vid,
-                pidHex: media.pid,
-                registryEntryID: media.registryEntryID,
-                usbRegistryEntryID: media.usbRegistryEntryID,
-                labelOnlyID: labelOnlyID,
-                metadataDeviceID: metadataDeviceID,
-                deviceID: deviceID
-            ))
-        }
-        return answer.sorted { $0.bsdName < $1.bsdName }
+        try EDPPhysicalDiskDiscovery(
+            mediaProvider: EDPIOKitWholeUSBMediaProvider(),
+            metadataReader: EDPFileRawMetadataReader()
+        ).discover()
     }
 
     static func usbRegistryEntryID(forBSDName bsdName: String) -> UInt64? {

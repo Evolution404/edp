@@ -26,6 +26,8 @@ The initial unified runner intentionally reuses production validators instead of
 - `product/Tests/ValidateMacFUSEScratchCleanup.swift` — macFUSE scratch cleanup.
 - `product/Tests/ValidateProductModels.swift` — product model contract.
 
+`VirtualUSB/ValidateDiscoverySeam.swift` is the first executable consumer of the production dependency seam. It injects a virtual whole-USB inventory and metadata reader into `EDPPhysicalDiskDiscovery`, while the shipping daemon defaults to `EDPIOKitWholeUSBMediaProvider` + `EDPPrivilegedRawMetadataReader`. There is no environment-variable selector in the production App or service.
+
 Storage E2E remains backed by the existing sparse fixture and macFUSE/DiskImages2 tools and will be wired into `drive-test-storage` in TEST-F.
 
 ## Commands
@@ -37,6 +39,8 @@ make drive-test-fast
 ```
 
 `drive-test-fast` runs the EDPCore package tests, strict Swift 6 UI typecheck, native golden core validation, media-classification validation, and transport lifecycle validation. It is deliberately hardware-free.
+
+`drive-test-virtual-usb` currently adds the production discovery dependency-seam validator and will grow into the P16–P30 lifecycle/fault matrix in TEST-D. It reads only immutable fixture files and never opens `/dev/rdisk*`.
 
 Additional canonical targets are reserved now and populated phase-by-phase:
 

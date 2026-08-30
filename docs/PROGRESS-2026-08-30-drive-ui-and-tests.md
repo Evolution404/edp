@@ -199,7 +199,7 @@ RESULT=DRIVE_UI_E_STRUCTURE_OK
 
 The menu bar is now the approved compact control center instead of a navigation-heavy menu surface. Existing XPC partition/service actions are reused without changing lifecycle semantics.
 
-Commit: `pending commit`
+Commit: `d0937ce feat(drive): redesign menu bar control center`
 
 ## UI-F — Accessibility / Dark / Performance
 
@@ -287,16 +287,33 @@ Commit: `b18a3dd test(drive): add strict physical identity matrix`
 
 ## TEST-C — Production dependency seam
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] `EDPWholeUSBMedia` value model.
-- [ ] Media provider protocol.
-- [ ] Raw metadata reader protocol.
-- [ ] Central `EDPPhysicalIdentity`.
-- [ ] Production adapters preserve semantics.
-- [ ] No production environment backdoor.
+- [x] `EDPWholeUSBMedia` value model.
+- [x] `EDPWholeUSBMediaProviding` media/registry provider protocol.
+- [x] `EDPRawMetadataReading` protocol and shared raw metadata snapshot.
+- [x] Central `EDPPhysicalIdentity` used by discovery and retained raw-FD revalidation.
+- [x] Production `EDPIOKitWholeUSBMediaProvider` + `EDPPrivilegedRawMetadataReader` preserve the default service path.
+- [x] `EDPDaemonController` receives production dependencies by initializer injection.
+- [x] No production environment-variable selector or hidden provider backdoor.
+- [x] Virtual provider/reader validator calls production `EDPPhysicalDiskDiscovery` directly.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+make drive-test-virtual-usb = PASS
+SCENARIO=TEST_C_INJECTED_DISCOVERY_OK
+SCENARIO=TEST_C_METADATA_READER_FAILURE_ISOLATED
+RESULT=DRIVE_DISCOVERY_SEAM_OK
+RESULT=DRIVE_VIRTUAL_USB_OK
+full native daemon Swift 6 warnings-as-errors compile = PASS
+RESULT=DRIVE_TEST_C_PRODUCTION_BUILD_OK
+git diff --check = PASS
+```
+
+The old duplicate runtime classifier/identity assembly has been removed. IOKit inventory, privileged metadata reads, injected virtual media, and retained raw-FD validation now converge on the same production identity/classification logic.
+
+Commit: `pending commit`
 
 ## TEST-D — Virtual Physical USB Harness
 

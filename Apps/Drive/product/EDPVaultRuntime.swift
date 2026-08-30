@@ -196,14 +196,6 @@ private func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
     }
 }
 
-private struct EDPRawMetadataSnapshot {
-    let lba0: Data
-    let lba4: Data
-    let lba7: Data
-    let lba11: Data
-    let lba12: Data
-}
-
 private final class EDPRawAccessLease: @unchecked Sendable {
     let deviceID: String
     let registryEntryID: UInt64
@@ -264,19 +256,25 @@ private func rawMetadataSnapshot(fd: Int32) throws -> EDPRawMetadataSnapshot {
     )
 }
 
-private func wholeUSBMediaStillMatches(_ disk: PhysicalDisk) throws -> Bool {
-    try EDPNativeDeviceDiscovery.allWholeUSBMedia().contains {
+private func wholeUSBMediaStillMatches(
+    _ disk: PhysicalDisk,
+    mediaProvider: any EDPWholeUSBMediaProviding
+) throws -> Bool {
+    try mediaProvider.allWholeUSBMedia().contains {
         $0.bsdName == disk.bsdName
-            && $0.size == disk.sizeBytes
-            && $0.vid == disk.vidHex
-            && $0.pid == disk.pidHex
+            && $0.sizeBytes == disk.sizeBytes
+            && $0.vidHex.lowercased() == disk.vidHex
+            && $0.pidHex.lowercased() == disk.pidHex
             && $0.registryEntryID == disk.registryEntryID
             && $0.usbRegistryEntryID == disk.usbRegistryEntryID
     }
 }
 
-private func openPersistentRawAccess(for disk: PhysicalDisk) throws -> EDPRawAccessLease {
-    guard geteuid() == 0, try wholeUSBMediaStillMatches(disk) else {
+private func openPersistentRawAccess(
+    for disk: PhysicalDisk,
+    mediaProvider: any EDPWholeUSBMediaProviding = EDPIOKitWholeUSBMediaProvider()
+) throws -> EDPRawAccessLease {
+    guard geteuid() == 0, try wholeUSBMediaStillMatches(disk, mediaProvider: mediaProvider) else {
         throw fail("EDP_RAW_LEASE_TARGET_REFUSED")
     }
     var before = stat()
@@ -297,7 +295,7 @@ private func openPersistentRawAccess(for disk: PhysicalDisk) throws -> EDPRawAcc
               (after.st_mode & S_IFMT) == S_IFCHR,
               opened.st_rdev == before.st_rdev,
               opened.st_rdev == after.st_rdev,
-              try wholeUSBMediaStillMatches(disk) else {
+              try wholeUSBMediaStillMatches(disk, mediaProvider: mediaProvider) else {
             throw fail("EDP_RAW_LEASE_TYPE_REFUSED")
         }
 
@@ -322,13 +320,13 @@ private func openPersistentRawAccess(for disk: PhysicalDisk) throws -> EDPRawAcc
                   lba12Plain: lba12Plain,
                   hasLBA11Identity: true
               ) == .standardEncrypted,
-              EDPVolumeMetadata.stablePhysicalDeviceID(
-                  metadataDeviceID: metadataDeviceID,
-                  labelOnlyID: labelOnlyID,
+              EDPPhysicalIdentity(
                   vidHex: disk.vidHex,
                   pidHex: disk.pidHex,
-                  sizeBytes: disk.sizeBytes
-              ) == disk.deviceID else {
+                  labelOnlyID: labelOnlyID,
+                  sizeBytes: disk.sizeBytes,
+                  metadataDeviceID: metadataDeviceID
+              ) == disk.identity else {
             throw fail("EDP_RAW_LEASE_METADATA_REFUSED")
         }
         return EDPRawAccessLease(
@@ -418,82 +416,24 @@ private func decodeRawMetadataOutput(_ output: Data) throws -> EDPRawMetadataSna
     )
 }
 
+struct EDPPrivilegedRawMetadataReader: EDPRawMetadataReading {
+    func snapshot(for media: EDPWholeUSBMedia) throws -> EDPRawMetadataSnapshot {
+        guard FileManager.default.fileExists(atPath: media.rawPath) else {
+            throw fail("raw device missing: \(media.rawPath)")
+        }
+        return try rawMetadataSnapshot(for: media.rawPath)
+    }
+}
+
 private func discoverEDPDisks(
+    mediaProvider: any EDPWholeUSBMediaProviding = EDPIOKitWholeUSBMediaProvider(),
+    metadataReader: any EDPRawMetadataReading = EDPPrivilegedRawMetadataReader(),
     diagnostic: ((String) -> Void)? = nil
 ) throws -> [PhysicalDisk] {
-    var answer: [PhysicalDisk] = []
-    for media in try EDPNativeDeviceDiscovery.allWholeUSBMedia() {
-        let rawPath = "/dev/r\(media.bsdName)"
-        guard FileManager.default.fileExists(atPath: rawPath) else {
-            diagnostic?("bsd=\(media.bsdName);result=raw_device_missing;path=\(rawPath)")
-            continue
-        }
-        let metadata: EDPRawMetadataSnapshot
-        do {
-            metadata = try rawMetadataSnapshot(for: rawPath)
-        } catch {
-            let detail = String(describing: error).trimmingCharacters(in: .whitespacesAndNewlines)
-            diagnostic?("bsd=\(media.bsdName);result=raw_metadata_failed;error=\(detail)")
-            NSLog("EDP discovery skipped %@ because raw metadata read failed: %@", media.bsdName, detail)
-            continue
-        }
-        let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](metadata.lba4))
-        let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-            [UInt8](metadata.lba11),
-            vidHex: media.vid,
-            pidHex: media.pid,
-            sizeBytes: media.size
-        )
-        let lba12Plain = metadataDeviceID.flatMap { deviceID in
-            try? EDPVolumeMetadata.decodeLBA12(
-                [UInt8](metadata.lba12),
-                deviceID: deviceID
-            )
-        }
-        let mediaKind = EDPMetadataProbe.classifyMedia(
-            lba0: [UInt8](metadata.lba0),
-            lba4: [UInt8](metadata.lba4),
-            lba7: [UInt8](metadata.lba7),
-            lba12Plain: lba12Plain,
-            hasLBA11Identity: metadataDeviceID != nil
-        )
-        diagnostic?("bsd=\(media.bsdName);classification=\(mediaKind.rawValue)")
-        guard mediaKind == .standardEncrypted else {
-            // No-password conversions, malformed EDP media and ordinary USB
-            // storage remain entirely under macOS/Disk Arbitration ownership.
-            continue
-        }
-        guard let labelOnlyID else {
-            diagnostic?("bsd=\(media.bsdName);result=lba4_only_id_invalid")
-            continue
-        }
-        guard let metadataDeviceID else {
-            diagnostic?("bsd=\(media.bsdName);result=device_id_invalid")
-            continue
-        }
-        let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(
-            metadataDeviceID: metadataDeviceID,
-            labelOnlyID: labelOnlyID,
-            vidHex: media.vid,
-            pidHex: media.pid,
-            sizeBytes: media.size
-        )
-        diagnostic?("bsd=\(media.bsdName);result=recognized;onlyID=\(labelOnlyID);deviceID=\(deviceID)")
-        answer.append(PhysicalDisk(
-            bsdName: media.bsdName,
-            rawPath: rawPath,
-            sizeBytes: media.size,
-            mediaName: media.mediaName,
-            vidHex: media.vid,
-            pidHex: media.pid,
-            registryEntryID: media.registryEntryID,
-            usbRegistryEntryID: media.usbRegistryEntryID,
-            labelOnlyID: labelOnlyID,
-            metadataDeviceID: metadataDeviceID,
-            deviceID: deviceID
-        ))
-    }
-    return answer.sorted { $0.bsdName < $1.bsdName }
+    try EDPPhysicalDiskDiscovery(
+        mediaProvider: mediaProvider,
+        metadataReader: metadataReader
+    ).discover(diagnostic: diagnostic)
 }
 
 private func makeCredentialStore() throws -> EDPCredentialStore {
@@ -1286,6 +1226,8 @@ private final class EDPDaemonController: @unchecked Sendable {
     private let policies: EDPDevicePolicyStore
     private let manager: MountManager
     private let diskArbitration: EDPDiskArbitrationController
+    private let mediaProvider: any EDPWholeUSBMediaProviding
+    private let metadataReader: any EDPRawMetadataReading
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private var failedMounts = [String: String]()
     private var manualUnmountSuppressions = Set<String>()
@@ -1300,7 +1242,12 @@ private final class EDPDaemonController: @unchecked Sendable {
     private var discoveryScanCount: UInt64 = 0
     private var lastDiscoveryTimestamp = ""
 
-    init() throws {
+    init(
+        mediaProvider: any EDPWholeUSBMediaProviding = EDPIOKitWholeUSBMediaProvider(),
+        metadataReader: any EDPRawMetadataReading = EDPPrivilegedRawMetadataReader()
+    ) throws {
+        self.mediaProvider = mediaProvider
+        self.metadataReader = metadataReader
         try migrateLegacyRuntimeState()
         store = try makeCredentialStore()
         policies = try makePolicyStore()
@@ -1363,7 +1310,7 @@ private final class EDPDaemonController: @unchecked Sendable {
             try diskArbitration.unmountWhole(disk.bsdName)
         }
         do {
-            let lease = try openPersistentRawAccess(for: disk)
+            let lease = try openPersistentRawAccess(for: disk, mediaProvider: mediaProvider)
             rawAccessLeases[disk.deviceID] = lease
             rawAccessReadyByDeviceID[disk.deviceID] = true
             rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
@@ -1423,6 +1370,8 @@ private final class EDPDaemonController: @unchecked Sendable {
             do {
                 var scanDiagnostics = [String]()
                 let disks = try discoverEDPDisks(
+                    mediaProvider: mediaProvider,
+                    metadataReader: metadataReader,
                     diagnostic: { scanDiagnostics.append($0) }
                 )
                 discoveryScanCount &+= 1
@@ -1433,7 +1382,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 connectedDisks = disks
                 let connectedDeviceIDs = Set(disks.map(\.deviceID))
                 for (deviceID, usbRegistryEntryID) in ejectingUSBRegistryIDs
-                where !EDPNativeDeviceDiscovery.registryEntryExists(usbRegistryEntryID) {
+                where !mediaProvider.registryEntryExists(usbRegistryEntryID) {
                     ejectingUSBRegistryIDs.removeValue(forKey: deviceID)
                     diskArbitration.allowAutomount(usbRegistryEntryID: usbRegistryEntryID)
                 }
@@ -1889,7 +1838,7 @@ private final class EDPDaemonController: @unchecked Sendable {
                 diskArbitration.allowAutomount(usbRegistryEntryID: disk.usbRegistryEntryID)
                 // If eject failed for an unrelated reason, return the device
                 // to an operational state without asking for interactive administrator authorization.
-                if (try? wholeUSBMediaStillMatches(disk)) == true {
+                if (try? wholeUSBMediaStillMatches(disk, mediaProvider: mediaProvider)) == true {
                     try? rawAccessProbeLocked(for: disk, temporarilyUnmount: true)
                     restoreBootPolicy(disk: disk)
                 }

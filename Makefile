@@ -59,6 +59,7 @@ drive-test-fast: core-test drive-check
 drive-test-identity: drive-test-fast
 
 drive-test-virtual-usb: drive-test-identity
+	@"$(ROOT)/Apps/Drive/Tests/run-virtual-usb.sh"
 
 drive-test-storage: drive-test-virtual-usb
 
