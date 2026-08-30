@@ -313,25 +313,41 @@ git diff --check = PASS
 
 The old duplicate runtime classifier/identity assembly has been removed. IOKit inventory, privileged metadata reads, injected virtual media, and retained raw-FD validation now converge on the same production identity/classification logic.
 
-Commit: `pending commit`
+Commit: `223ac06 refactor(drive): inject physical media discovery dependencies`
 
 ## TEST-D — Virtual Physical USB Harness
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Insert/remove/reinsert.
-- [ ] diskN change.
-- [ ] diskN reuse.
-- [ ] replacement race.
-- [ ] registry mutation.
-- [ ] onlyId/LBA11 mutation.
-- [ ] short read/EIO.
-- [ ] detach mid-operation.
-- [ ] multiple devices.
-- [ ] failure isolation.
-- [ ] P16–P30 automated.
+- [x] Insert/remove/reinsert.
+- [x] diskN change with stable five-factor identity.
+- [x] diskN reuse by a different device.
+- [x] replacement race between discovery and retained raw access.
+- [x] registry mutation rejection.
+- [x] onlyId/LBA11 mutation rejection through production revalidation.
+- [x] short read/EIO fault injection.
+- [x] detach during metadata read and after discovery.
+- [x] detach propagated through the production plaintext block boundary.
+- [x] multiple same-model devices remain independent.
+- [x] one broken device does not poison discovery of another device.
+- [x] P16–P30 automated.
+- [x] 4K physical-transfer alignment and invalid-capacity guards retained.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+make drive-test-virtual-usb = PASS
+SCENARIO=P16_OK ... SCENARIO=P30_OK
+RESULT=DRIVE_VIRTUAL_PHYSICAL_USB_OK
+RESULT=DRIVE_VIRTUAL_USB_OK
+full native daemon Swift 6 warnings-as-errors compile = PASS
+RESULT=DRIVE_TEST_D_PRODUCTION_BUILD_OK
+git diff --check = PASS
+```
+
+The lifecycle harness operates entirely on injected IOKit-equivalent inventory, captured immutable metadata, mutable virtual device state, and an in-memory raw block backend. It does not open `/dev/rdisk*`. P24 proves detach/error propagation at the production plaintext block boundary; full macFUSE/DiskImages2 detach cleanup remains a storage-lifecycle responsibility for TEST-F rather than being overclaimed here.
+
+Commit: `pending commit`
 
 ## TEST-E — Credential / Policy / Service lifecycle
 

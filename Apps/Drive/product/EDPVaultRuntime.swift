@@ -300,33 +300,7 @@ private func openPersistentRawAccess(
         }
 
         let metadata = try rawMetadataSnapshot(fd: fd)
-        guard let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](metadata.lba4)),
-              labelOnlyID == disk.labelOnlyID,
-              let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-                  [UInt8](metadata.lba11),
-                  vidHex: disk.vidHex,
-                  pidHex: disk.pidHex,
-                  sizeBytes: disk.sizeBytes
-              ),
-              metadataDeviceID == disk.metadataDeviceID,
-              let lba12Plain = try? EDPVolumeMetadata.decodeLBA12(
-                  [UInt8](metadata.lba12),
-                  deviceID: metadataDeviceID
-              ),
-              EDPMetadataProbe.classifyMedia(
-                  lba0: [UInt8](metadata.lba0),
-                  lba4: [UInt8](metadata.lba4),
-                  lba7: [UInt8](metadata.lba7),
-                  lba12Plain: lba12Plain,
-                  hasLBA11Identity: true
-              ) == .standardEncrypted,
-              EDPPhysicalIdentity(
-                  vidHex: disk.vidHex,
-                  pidHex: disk.pidHex,
-                  labelOnlyID: labelOnlyID,
-                  sizeBytes: disk.sizeBytes,
-                  metadataDeviceID: metadataDeviceID
-              ) == disk.identity else {
+        guard EDPPhysicalDeviceRevalidation.metadataStillMatches(metadata, disk: disk) else {
             throw fail("EDP_RAW_LEASE_METADATA_REFUSED")
         }
         return EDPRawAccessLease(

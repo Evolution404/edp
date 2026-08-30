@@ -57,6 +57,82 @@ struct EDPPhysicalIdentity: Hashable, Sendable {
     }
 }
 
+struct EDPResolvedPhysicalMetadata: Sendable {
+    let mediaKind: EDPMetadataProbe.MediaKind
+    let labelOnlyID: UInt64?
+    let metadataDeviceID: String?
+    let identity: EDPPhysicalIdentity?
+}
+
+struct EDPPhysicalIdentityResolver {
+    static func resolve(
+        media: EDPWholeUSBMedia,
+        metadata: EDPRawMetadataSnapshot
+    ) -> EDPResolvedPhysicalMetadata {
+        let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](metadata.lba4))
+        let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+            [UInt8](metadata.lba11),
+            vidHex: media.vidHex,
+            pidHex: media.pidHex,
+            sizeBytes: media.sizeBytes
+        )
+        let lba12Plain = metadataDeviceID.flatMap { deviceID in
+            try? EDPVolumeMetadata.decodeLBA12([UInt8](metadata.lba12), deviceID: deviceID)
+        }
+        let mediaKind = EDPMetadataProbe.classifyMedia(
+            lba0: [UInt8](metadata.lba0),
+            lba4: [UInt8](metadata.lba4),
+            lba7: [UInt8](metadata.lba7),
+            lba12Plain: lba12Plain,
+            hasLBA11Identity: metadataDeviceID != nil
+        )
+        let identity: EDPPhysicalIdentity?
+        if mediaKind == .standardEncrypted,
+           let labelOnlyID,
+           let metadataDeviceID {
+            identity = EDPPhysicalIdentity(
+                vidHex: media.vidHex,
+                pidHex: media.pidHex,
+                labelOnlyID: labelOnlyID,
+                sizeBytes: media.sizeBytes,
+                metadataDeviceID: metadataDeviceID
+            )
+        } else {
+            identity = nil
+        }
+        return EDPResolvedPhysicalMetadata(
+            mediaKind: mediaKind,
+            labelOnlyID: labelOnlyID,
+            metadataDeviceID: metadataDeviceID,
+            identity: identity
+        )
+    }
+}
+
+struct EDPPhysicalDeviceRevalidation {
+    static func mediaStillMatches(_ media: EDPWholeUSBMedia, disk: PhysicalDisk) -> Bool {
+        media.bsdName == disk.bsdName
+            && media.sizeBytes == disk.sizeBytes
+            && media.vidHex.lowercased() == disk.vidHex
+            && media.pidHex.lowercased() == disk.pidHex
+            && media.registryEntryID == disk.registryEntryID
+            && media.usbRegistryEntryID == disk.usbRegistryEntryID
+    }
+
+    static func metadataStillMatches(_ metadata: EDPRawMetadataSnapshot, disk: PhysicalDisk) -> Bool {
+        let media = EDPWholeUSBMedia(
+            bsdName: disk.bsdName,
+            sizeBytes: disk.sizeBytes,
+            mediaName: disk.mediaName,
+            vidHex: disk.vidHex,
+            pidHex: disk.pidHex,
+            registryEntryID: disk.registryEntryID,
+            usbRegistryEntryID: disk.usbRegistryEntryID
+        )
+        return EDPPhysicalIdentityResolver.resolve(media: media, metadata: metadata).identity == disk.identity
+    }
+}
+
 protocol EDPWholeUSBMediaProviding: Sendable {
     func allWholeUSBMedia() throws -> [EDPWholeUSBMedia]
     func registryEntryExists(_ registryEntryID: UInt64) -> Bool
@@ -260,41 +336,18 @@ struct EDPPhysicalDiskDiscovery: Sendable {
                 continue
             }
 
-            let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](metadata.lba4))
-            let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
-                [UInt8](metadata.lba11),
-                vidHex: media.vidHex,
-                pidHex: media.pidHex,
-                sizeBytes: media.sizeBytes
-            )
-            let lba12Plain = metadataDeviceID.flatMap { deviceID in
-                try? EDPVolumeMetadata.decodeLBA12([UInt8](metadata.lba12), deviceID: deviceID)
-            }
-            let mediaKind = EDPMetadataProbe.classifyMedia(
-                lba0: [UInt8](metadata.lba0),
-                lba4: [UInt8](metadata.lba4),
-                lba7: [UInt8](metadata.lba7),
-                lba12Plain: lba12Plain,
-                hasLBA11Identity: metadataDeviceID != nil
-            )
-            diagnostic?("bsd=\(media.bsdName);classification=\(mediaKind.rawValue)")
-            guard mediaKind == .standardEncrypted else { continue }
-            guard let labelOnlyID else {
+            let resolved = EDPPhysicalIdentityResolver.resolve(media: media, metadata: metadata)
+            diagnostic?("bsd=\(media.bsdName);classification=\(resolved.mediaKind.rawValue)")
+            guard resolved.mediaKind == .standardEncrypted else { continue }
+            guard let labelOnlyID = resolved.labelOnlyID else {
                 diagnostic?("bsd=\(media.bsdName);result=lba4_only_id_invalid")
                 continue
             }
-            guard let metadataDeviceID else {
+            guard resolved.metadataDeviceID != nil else {
                 diagnostic?("bsd=\(media.bsdName);result=device_id_invalid")
                 continue
             }
-
-            let identity = EDPPhysicalIdentity(
-                vidHex: media.vidHex,
-                pidHex: media.pidHex,
-                labelOnlyID: labelOnlyID,
-                sizeBytes: media.sizeBytes,
-                metadataDeviceID: metadataDeviceID
-            )
+            guard let identity = resolved.identity else { continue }
             diagnostic?(
                 "bsd=\(media.bsdName);result=recognized;onlyID=\(labelOnlyID);deviceID=\(identity.stableDeviceID)"
             )

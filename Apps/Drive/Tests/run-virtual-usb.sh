@@ -11,6 +11,7 @@ REPO_ROOT="$PWD"
 
 CORE_SOURCES=(
   native/EDPFSKitPoC/Extension/EDPRawIO.swift
+  native/EDPFSKitPoC/Extension/EDPAlignedRead.swift
   native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
   native/EDPFSKitPoC/Extension/EDPCrypto.swift
   native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
@@ -36,4 +37,25 @@ printf '%s\n' "$OUTPUT"
 grep -Fq 'SCENARIO=TEST_C_INJECTED_DISCOVERY_OK' <<<"$OUTPUT"
 grep -Fq 'SCENARIO=TEST_C_METADATA_READER_FAILURE_ISOLATED' <<<"$OUTPUT"
 grep -Fq 'RESULT=DRIVE_DISCOVERY_SEAM_OK' <<<"$OUTPUT"
+
+LIFECYCLE_BINARY="$BUILD_DIR/validate-virtual-physical-usb"
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
+  "${EDP_CORE_SWIFTC_FLAGS[@]}" \
+  "${CORE_SOURCES[@]}" \
+  product/EDPNativeSystem.swift \
+  Tests/VirtualUSB/EDPFaultPlan.swift \
+  Tests/VirtualUSB/EDPVirtualMedia.swift \
+  Tests/VirtualUSB/EDPVirtualMediaProvider.swift \
+  Tests/VirtualUSB/EDPVirtualRawDevice.swift \
+  Tests/VirtualUSB/EDPVirtualDiskFactory.swift \
+  Tests/VirtualUSB/ValidateVirtualPhysicalUSB.swift \
+  -o "$LIFECYCLE_BINARY"
+
+LIFECYCLE_OUTPUT="$($LIFECYCLE_BINARY fixtures/real_disks/disk4)"
+printf '%s\n' "$LIFECYCLE_OUTPUT"
+for scenario in $(seq 16 30); do
+  grep -Fq "SCENARIO=P${scenario}_OK" <<<"$LIFECYCLE_OUTPUT"
+done
+grep -Fq 'RESULT=DRIVE_VIRTUAL_PHYSICAL_USB_OK' <<<"$LIFECYCLE_OUTPUT"
 printf '%s\n' 'RESULT=DRIVE_VIRTUAL_USB_OK'
