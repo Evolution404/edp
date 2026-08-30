@@ -699,6 +699,44 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
+    func mountAllAvailablePartitions(_ device: EDPXPCDevice) {
+        guard requireTransportRuntime() else { return }
+        let partitionTypes = device.partitions.compactMap { partition -> UInt32? in
+            guard partition.mountState != .mounted,
+                  !partition.encrypted || partition.credentialStatus == .saved else {
+                return nil
+            }
+            return partition.partitionType
+        }
+        guard !partitionTypes.isEmpty else { return }
+        isBusy = true
+        mountNextPartition(deviceID: device.deviceID, remaining: partitionTypes)
+    }
+
+    private func mountNextPartition(deviceID: String, remaining: [UInt32]) {
+        guard let partitionType = remaining.first else {
+            isBusy = false
+            refresh()
+            return
+        }
+        guard let proxy = proxy() else {
+            isBusy = false
+            return
+        }
+        proxy.mountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                if let errorMessage {
+                    self.isBusy = false
+                    self.lastError = errorMessage
+                    self.refresh()
+                    return
+                }
+                self.mountNextPartition(deviceID: deviceID, remaining: Array(remaining.dropFirst()))
+            }
+        }
+    }
+
     func unmountPartition(deviceID: String, partitionType: UInt32) {
         guard let proxy = proxy() else { return }
         isBusy = true
@@ -975,83 +1013,257 @@ struct EDPOverviewView: View {
         model.snapshot.devices.first(where: \.connected) ?? model.snapshot.devices.first
     }
 
+    private var firstFinderPartition: EDPXPCPartition? {
+        primaryDevice?.partitions.first { $0.mountState == .mounted && $0.mountPoint != nil }
+    }
+
+    private var mountablePartitionCount: Int {
+        primaryDevice?.partitions.filter {
+            $0.mountState != .mounted && (!$0.encrypted || $0.credentialStatus == .saved)
+        }.count ?? 0
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: EDPTheme.Spacing.lg) {
+                deviceHero
+                systemStatusStrip
+
                 if let device = primaryDevice {
-                    EDPContentCard {
-                        HStack(spacing: EDPTheme.Spacing.md) {
-                            Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
-                                .font(.system(size: 30, weight: .medium))
-                                .foregroundStyle(device.connected ? Color.accentColor : .secondary)
-                                .frame(width: 56, height: 56)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(device.displayName)
-                                    .font(.title2.weight(.semibold))
-                                Text("\(ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file)) · \(device.vidPID)")
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
+                    partitionStructure(device)
+                    quickActions(device)
+                }
+
+                recentActivity
+            }
+            .padding(EDPTheme.Spacing.lg)
+        }
+        .navigationTitle("总览")
+        .toolbar {
+            ToolbarItem {
+                Button { model.refresh() } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.glass)
+                .help("刷新设备与服务状态")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var deviceHero: some View {
+        if let device = primaryDevice {
+            EDPContentCard {
+                HStack(spacing: EDPTheme.Spacing.md) {
+                    Image(systemName: device.connected ? "externaldrive.fill" : "externaldrive")
+                        .font(.system(size: 32, weight: .medium))
+                        .foregroundStyle(device.connected ? Color.accentColor : .secondary)
+                        .frame(width: 62, height: 62)
+                        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            Text(device.displayName)
+                                .font(.title2.weight(.semibold))
                             EDPStatusPill(
                                 title: device.connected ? "已连接" : "已保存",
                                 systemImage: device.connected ? "checkmark.circle.fill" : "circle.dashed",
                                 tone: device.connected ? .success : .neutral
                             )
                         }
+                        Text(device.mediaName)
+                            .foregroundStyle(.secondary)
+                        Text("\(ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file)) · USB · \(device.vidPID)")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
-                } else {
-                    EDPEmptyState(
-                        "未发现 EDP U 盘",
-                        message: "插入标准 EDP 加密盘后会自动显示在这里。",
-                        systemImage: "externaldrive.badge.questionmark"
+                    Spacer()
+                }
+            }
+        } else {
+            EDPEmptyState(
+                "未发现 EDP U 盘",
+                message: "插入标准 EDP 加密盘后会自动识别；普通 U 盘和免密改造盘继续由 macOS 接管。",
+                systemImage: "externaldrive.badge.questionmark"
+            )
+        }
+    }
+
+    private var systemStatusStrip: some View {
+        VStack(alignment: .leading, spacing: EDPTheme.Spacing.sm) {
+            EDPSectionHeader(
+                "系统状态",
+                subtitle: "关键集成状态一览",
+                systemImage: "checklist"
+            )
+            EDPContentCard(padding: 0) {
+                HStack(spacing: 0) {
+                    EDPOverviewStatusCell(
+                        title: "后台服务",
+                        value: model.serviceStatus,
+                        systemImage: "gearshape.2",
+                        ready: model.serviceStatus == "运行中"
+                    )
+                    Divider().frame(height: 42)
+                    EDPOverviewStatusCell(
+                        title: "磁盘访问",
+                        value: model.rawAccessStatusText,
+                        systemImage: "externaldrive.badge.checkmark",
+                        ready: primaryDevice?.privilegedAccessReady == true || !model.needsFullDiskAccess
+                    )
+                    Divider().frame(height: 42)
+                    EDPOverviewStatusCell(
+                        title: "macFUSE Local",
+                        value: model.transportRuntimeReady == true ? "已就绪" : "需安装",
+                        systemImage: "point.3.connected.trianglepath.dotted",
+                        ready: model.transportRuntimeReady == true
+                    )
+                    Divider().frame(height: 42)
+                    EDPOverviewStatusCell(
+                        title: "自动挂载",
+                        value: model.snapshot.globalAutoMountEnabled ? "已开启" : "已暂停",
+                        systemImage: "bolt.horizontal.circle",
+                        ready: model.snapshot.globalAutoMountEnabled
                     )
                 }
+            }
+        }
+    }
 
-                EDPSectionHeader(
-                    "系统状态",
-                    subtitle: "后台服务、磁盘访问与自动挂载概况",
-                    systemImage: "checklist"
-                )
-                EDPContentCard(padding: EDPTheme.Spacing.md) {
-                    HStack(spacing: EDPTheme.Spacing.lg) {
-                        Label(model.serviceStatus, systemImage: "gearshape.2")
-                        Divider().frame(height: 20)
-                        Label(model.rawAccessStatusText, systemImage: "externaldrive.badge.checkmark")
-                        Divider().frame(height: 20)
-                        Label(model.snapshot.globalAutoMountEnabled ? "自动挂载已开启" : "自动挂载已暂停", systemImage: "bolt.horizontal.circle")
-                        Spacer()
+    private func partitionStructure(_ device: EDPXPCDevice) -> some View {
+        VStack(alignment: .leading, spacing: EDPTheme.Spacing.sm) {
+            EDPSectionHeader(
+                "分区结构",
+                subtitle: "当前设备的启动区、交换区与保密区",
+                systemImage: "rectangle.split.3x1"
+            )
+            HStack(spacing: 8) {
+                ForEach(device.partitions) { partition in
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Image(systemName: partitionIcon(partition))
+                            Text(partition.displayName)
+                                .font(.headline)
+                            Spacer(minLength: 4)
+                        }
+                        Text(partition.filesystem ?? (partition.encrypted ? "加密" : "文件系统待检测"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(partitionStatus(partition))
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(partition.mountState == .failed ? .red : .secondary)
                     }
-                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+            }
+        }
+    }
 
-                EDPSectionHeader(
-                    "最近活动",
-                    subtitle: "最新的设备与挂载事件",
-                    systemImage: "clock.arrow.circlepath"
-                )
-                if model.snapshot.activities.isEmpty {
-                    Text("暂无活动记录")
-                        .foregroundStyle(.secondary)
-                } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(model.snapshot.activities.prefix(4))) { activity in
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                Image(systemName: activity.level == "error" ? "exclamationmark.triangle.fill" : "circle.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(activity.level == "error" ? .red : .secondary)
-                                Text(activity.message)
-                                Spacer()
-                                Text(activity.timestamp)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+    private func quickActions(_ device: EDPXPCDevice) -> some View {
+        EDPGlassToolbar {
+            HStack(spacing: 10) {
+                if let partition = firstFinderPartition {
+                    Button("在 Finder 中显示") { model.openInFinder(partition) }
+                        .buttonStyle(.glass)
+                }
+                Button("挂载全部") { model.mountAllAvailablePartitions(device) }
+                    .buttonStyle(.glassProminent)
+                    .disabled(!device.connected || model.isBusy || mountablePartitionCount == 0)
+                Button("安全推出整盘") { model.eject(deviceID: device.deviceID) }
+                    .buttonStyle(.glass)
+                    .disabled(!device.connected || model.isBusy)
+                Spacer()
+                Text("\(device.partitions.filter { $0.mountState == .mounted }.count) / \(device.partitions.count) 已挂载")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+            }
+        }
+    }
+
+    private var recentActivity: some View {
+        VStack(alignment: .leading, spacing: EDPTheme.Spacing.sm) {
+            EDPSectionHeader(
+                "最近活动",
+                subtitle: "最新的设备与挂载事件",
+                systemImage: "clock.arrow.circlepath"
+            )
+            if model.snapshot.activities.isEmpty {
+                Text("暂无活动记录")
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(model.snapshot.activities.prefix(5)).indices, id: \.self) { index in
+                        let activity = model.snapshot.activities[index]
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: activity.level == "error" ? "exclamationmark.triangle.fill" : "circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(activity.level == "error" ? .red : .secondary)
+                            Text(activity.message)
+                                .lineLimit(2)
+                            Spacer()
+                            Text(activity.timestamp)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 9)
+                        if index < min(4, model.snapshot.activities.count - 1) {
+                            Divider().padding(.leading, 20)
                         }
                     }
                 }
             }
-            .padding(EDPTheme.Spacing.lg)
         }
-        .navigationTitle("总览")
+    }
+
+    private func partitionIcon(_ partition: EDPXPCPartition) -> String {
+        switch EDPPartitionKind(rawValue: partition.partitionType) {
+        case .boot: return "shippingbox"
+        case .exchange: return "arrow.left.arrow.right"
+        case .secure: return "lock.shield"
+        case nil: return "externaldrive"
+        }
+    }
+
+    private func partitionStatus(_ partition: EDPXPCPartition) -> String {
+        switch partition.mountState {
+        case .mounted: return partition.readOnly == true ? "已挂载 · 只读" : "已挂载"
+        case .mounting: return "正在挂载"
+        case .failed: return "挂载失败"
+        case .unavailable: return "不可用"
+        case .unmounted:
+            if partition.encrypted && partition.credentialStatus != .saved { return "未挂载 · 需要密码" }
+            return "未挂载"
+        }
+    }
+}
+
+private struct EDPOverviewStatusCell: View {
+    let title: String
+    let value: String
+    let systemImage: String
+    let ready: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: systemImage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(ready ? Color.green : Color.secondary.opacity(0.65))
+                    .frame(width: 7, height: 7)
+                Text(value)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
     }
 }
 

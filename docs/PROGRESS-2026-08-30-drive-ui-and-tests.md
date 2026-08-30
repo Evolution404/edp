@@ -78,19 +78,30 @@ NSSplitViewController geometry ratchet preserved
 
 The new overview is intentionally a first-pass shell in UI-A; detailed hero/status/partition/quick-action composition is completed in UI-B. Device subnavigation is functional now, while the denser layout refinement remains UI-C.
 
-Commit: `pending commit`
+Commit: `072381e feat(drive): establish redesigned information architecture`
 
 ## UI-B — Overview
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Device hero.
-- [ ] Service/FDA/macFUSE/auto-mount status strip.
-- [ ] Partition overview.
-- [ ] Quick actions.
-- [ ] Recent activity.
+- [x] Device hero.
+- [x] Service/FDA/macFUSE/auto-mount status strip.
+- [x] Partition overview without fabricated per-partition capacity.
+- [x] Quick actions including Finder, serial mount-all, and whole-device eject.
+- [x] Recent activity.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+git diff --check = PASS
+make drive-check = PASS
+EDP_UI_PREVIEW Swift 6 warnings-as-errors typecheck = PASS
+RESULT=DRIVE_UI_PREVIEW_COMPILE_OK
+```
+
+`mountAllAvailablePartitions` sequences the existing per-partition XPC operation and stops on the first surfaced failure; no mount-service protocol or raw-device semantics changed.
+
+Commit: `pending commit`
 
 ## UI-C — Device workspace
 
