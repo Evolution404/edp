@@ -1832,49 +1832,126 @@ struct EDPCredentialSheet: View {
     }
 }
 
+private enum EDPActivityFilter: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case device = "设备"
+    case mount = "挂载"
+    case security = "安全"
+    case error = "错误"
+
+    var id: String { rawValue }
+}
+
 struct EDPActivityView: View {
     @ObservedObject var model: EDPVaultViewModel
+    @State private var filter: EDPActivityFilter = .all
+
+    private var filteredActivities: [EDPXPCActivity] {
+        model.snapshot.activities.filter { activity in
+            switch filter {
+            case .all:
+                return true
+            case .device:
+                return activity.deviceID != nil && activity.partitionType == nil && activity.level != "error"
+            case .mount:
+                return activity.partitionType != nil
+                    || activity.message.contains("挂载")
+                    || activity.message.contains("卸载")
+                    || activity.message.contains("推出")
+            case .security:
+                return activity.message.contains("密码")
+                    || activity.message.contains("凭据")
+                    || activity.message.contains("权限")
+                    || activity.message.contains("磁盘访问")
+            case .error:
+                return activity.level == "error"
+            }
+        }
+    }
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            Picker("活动筛选", selection: $filter) {
+                ForEach(EDPActivityFilter.allCases) { item in
+                    Text(item.rawValue).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 420)
+            .padding(.top, EDPTheme.Spacing.lg)
+            .padding(.horizontal, EDPTheme.Spacing.lg)
+            .accessibilityLabel("活动筛选")
+
             if model.snapshot.activities.isEmpty {
                 EDPEmptyState(
                     "暂无活动记录",
                     message: "设备插入、挂载和凭据变更会显示在这里。",
                     systemImage: "clock.arrow.circlepath"
                 )
+            } else if filteredActivities.isEmpty {
+                EDPEmptyState(
+                    "当前筛选没有记录",
+                    message: "切换上方筛选条件查看其他活动。",
+                    systemImage: "line.3.horizontal.decrease.circle"
+                )
             } else {
                 ScrollView {
-                    LazyVStack(spacing: EDPTheme.Spacing.sm) {
-                        ForEach(model.snapshot.activities) { activity in
-                            EDPContentCard(padding: EDPTheme.Spacing.sm) {
-                                HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: activity.level == "error"
-                                          ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                                        .foregroundStyle(activity.level == "error" ? .red : .green)
-                                        .symbolEffect(.bounce, value: activity.timestamp)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(activity.message)
-                                        HStack {
-                                            Text(activity.timestamp)
-                                            if let type = activity.partitionType,
-                                               let kind = EDPPartitionKind(rawValue: type) {
-                                                Text("· \(kind.displayName)")
-                                            }
-                                        }
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                }
-                            }
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(filteredActivities.enumerated()), id: \.element.id) { index, activity in
+                            EDPActivityTimelineRow(activity: activity, isLast: index == filteredActivities.count - 1)
                         }
                     }
-                    .padding(EDPTheme.Spacing.lg)
+                    .padding(.horizontal, EDPTheme.Spacing.lg)
+                    .padding(.vertical, EDPTheme.Spacing.md)
                 }
             }
         }
         .navigationTitle("活动")
+    }
+}
+
+private struct EDPActivityTimelineRow: View {
+    let activity: EDPXPCActivity
+    let isLast: Bool
+
+    private var isError: Bool { activity.level == "error" }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(spacing: 0) {
+                Image(systemName: isError ? "exclamationmark.circle.fill" : "circle.fill")
+                    .font(isError ? .callout : .caption2)
+                    .foregroundStyle(isError ? Color.red : Color.secondary)
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+                if !isLast {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.18))
+                        .frame(width: 1)
+                        .frame(minHeight: 42)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(activity.message)
+                    .font(.body)
+                    .foregroundStyle(isError ? Color.red : Color.primary)
+                HStack(spacing: 6) {
+                    Text(activity.timestamp)
+                    if let type = activity.partitionType,
+                       let kind = EDPPartitionKind(rawValue: type) {
+                        Text("·")
+                        Text(kind.displayName)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.bottom, isLast ? 0 : 16)
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1884,101 +1961,210 @@ struct EDPSettingsView: View {
     @State private var loginItemEnabled = SMAppService.mainApp.status == .enabled
 
     var body: some View {
-        Form {
-            Section("首次设置") {
-                LabeledContent {
-                    Label(
-                        model.serviceStatus,
-                        systemImage: model.serviceStatus == "运行中"
-                            ? "checkmark.circle.fill" : "exclamationmark.circle"
-                    )
-                    .foregroundStyle(model.serviceStatus == "运行中" ? .green : .orange)
-                } label: {
-                    Text("特权后台服务")
-                }
-                LabeledContent {
-                    Label(
-                        model.transportRuntimeReady == true ? "已就绪" : "需要重新安装",
-                        systemImage: model.transportRuntimeReady == true
-                            ? "checkmark.circle.fill" : "exclamationmark.circle"
-                    )
-                    .foregroundStyle(model.transportRuntimeReady == true ? .green : .orange)
-                } label: {
-                    Text("macFUSE Local")
-                }
-                LabeledContent("完全磁盘访问", value: model.rawAccessStatusText)
-                Text(model.setupReady
-                     ? "首次设置已完成。后台服务会按需打开经校验的 EDP 整盘并把文件描述符交给降权桥进程；重启或重新插盘不再请求管理员密码。"
-                     : (model.needsFullDiskAccess
-                        ? "请为“EDP Drive 磁盘访问”开启一次完全磁盘访问，然后点击重新检测。"
-                        : "请完成后台服务、macFUSE Local 和磁盘访问组件设置；完全磁盘访问会在连接 EDP U 盘后进行验证。"))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                if model.serviceStatus != "运行中" {
-                    Button("打开登录项与扩展设置") { model.openServiceSettings() }
-                        .buttonStyle(.glass)
-                }
-            }
-            Section("自动挂载") {
-                Toggle("启用全局自动挂载", isOn: Binding(
-                    get: { model.snapshot.globalAutoMountEnabled },
-                    set: { model.setGlobalAutoMount($0) }
-                ))
-                Toggle("登录时启动菜单栏应用", isOn: Binding(
-                    get: { loginItemEnabled },
-                    set: { updateLoginItem($0) }
-                ))
-            }
-            Section("后台服务") {
-                LabeledContent("状态", value: model.serviceStatus)
-                LabeledContent("版本", value: model.snapshot.serviceVersion)
-                LabeledContent("磁盘访问", value: model.rawAccessStatusText)
-                LabeledContent(
-                    "文件系统运行组件",
-                    value: model.transportRuntimeReady == true ? "已就绪" : "需要重新安装"
+        ScrollView {
+            VStack(alignment: .leading, spacing: EDPTheme.Spacing.lg) {
+                EDPSectionHeader(
+                    "常规",
+                    subtitle: "EDP Drive 的全局行为",
+                    systemImage: "switch.2"
                 )
-                HStack {
-                    Button("启动") { model.startService() }
-                        .buttonStyle(.glassProminent)
-                        .disabled(model.isBusy || model.serviceStatus == "运行中")
-                    Button("停止") { model.stopService() }
-                        .buttonStyle(.glass)
-                        .disabled(model.isBusy || model.serviceStatus == "已停止")
-                    Button("重启") { model.restartService() }
-                        .buttonStyle(.glass)
-                        .disabled(model.isBusy || model.serviceStatus != "运行中")
+                EDPContentCard(padding: 0) {
+                    VStack(spacing: 0) {
+                        settingsToggleRow(
+                            title: "全局自动挂载",
+                            subtitle: "允许已配置设备按各分区策略自动挂载",
+                            isOn: Binding(
+                                get: { model.snapshot.globalAutoMountEnabled },
+                                set: { model.setGlobalAutoMount($0) }
+                            )
+                        )
+                        Divider().padding(.leading, 48)
+                        settingsToggleRow(
+                            title: "登录时启动 EDP Drive",
+                            subtitle: "登录后启动菜单栏界面，不改变后台服务策略",
+                            isOn: Binding(
+                                get: { loginItemEnabled },
+                                set: { updateLoginItem($0) }
+                            )
+                        )
+                    }
                 }
-                if model.serviceStatus == "需要系统批准" {
-                    Button("打开登录项与扩展设置") { model.openServiceSettings() }
+
+                EDPSectionHeader(
+                    "系统集成",
+                    subtitle: "磁盘访问、Raw Access 与 macFUSE Local",
+                    systemImage: "externaldrive.connected.to.line.below"
+                )
+                EDPContentCard(padding: 16) {
+                    VStack(spacing: 12) {
+                        settingsStatusRow(
+                            title: "完全磁盘访问",
+                            value: model.rawAccessStatusText,
+                            ready: !model.needsFullDiskAccess
+                        )
+                        Divider()
+                        settingsStatusRow(
+                            title: "Raw Access",
+                            value: model.snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
+                                ? "已就绪" : (model.needsFullDiskAccess ? "需要授权" : "等待设备验证"),
+                            ready: model.snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
+                        )
+                        Divider()
+                        settingsStatusRow(
+                            title: "macFUSE Local",
+                            value: model.transportRuntimeReady == true ? "已就绪" : "需要重新安装",
+                            ready: model.transportRuntimeReady == true
+                        )
+                        Divider()
+                        Text(setupDescription)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(spacing: 8) {
+                            Button("打开系统设置") { model.openFullDiskAccessSettings() }
+                                .buttonStyle(.glass)
+                            Button("重新检测权限") { model.refreshRawAccess() }
+                                .buttonStyle(.glassProminent)
+                                .disabled(model.isBusy)
+                            Button("显示组件") { model.revealRawAccessHelper() }
+                                .buttonStyle(.glass)
+                            Spacer()
+                        }
+                    }
+                }
+
+                EDPSectionHeader(
+                    "后台服务",
+                    subtitle: "特权服务状态与生命周期",
+                    systemImage: "gearshape.2"
+                )
+                EDPContentCard(padding: 16) {
+                    VStack(spacing: 12) {
+                        settingsStatusRow(
+                            title: "状态",
+                            value: model.serviceStatus,
+                            ready: model.serviceStatus == "运行中"
+                        )
+                        Divider()
+                        LabeledContent("版本", value: model.snapshot.serviceVersion)
+                        HStack(spacing: 8) {
+                            Button("启动") { model.startService() }
+                                .buttonStyle(.glassProminent)
+                                .disabled(model.isBusy || model.serviceStatus == "运行中")
+                            Button("停止") { model.stopService() }
+                                .buttonStyle(.glass)
+                                .disabled(model.isBusy || model.serviceStatus == "已停止")
+                            Button("重启") { model.restartService() }
+                                .buttonStyle(.glass)
+                                .disabled(model.isBusy || model.serviceStatus != "运行中")
+                            Spacer()
+                            if model.serviceStatus == "需要系统批准" {
+                                Button("打开登录项与扩展设置") { model.openServiceSettings() }
+                                    .buttonStyle(.glass)
+                            }
+                        }
+                    }
+                }
+
+                EDPSectionHeader(
+                    "高级",
+                    subtitle: "诊断和低频维护工具",
+                    systemImage: "wrench.and.screwdriver"
+                )
+                EDPContentCard(padding: 16) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("诊断信息")
+                                .font(.headline)
+                            Text("查看服务、设备、挂载和运行组件诊断输出")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("查看诊断") {
+                            model.diagnostics = ""
+                            model.loadDiagnostics()
+                            showingDiagnostics = true
+                        }
                         .buttonStyle(.glass)
+                    }
                 }
             }
-            Section("诊断") {
-                Button("查看诊断信息") {
-                    model.loadDiagnostics()
-                    showingDiagnostics = true
-                }
-                .buttonStyle(.glass)
-            }
+            .padding(EDPTheme.Spacing.lg)
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
         .navigationTitle("设置")
         .sheet(isPresented: $showingDiagnostics) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("诊断信息").font(.headline)
+                HStack {
+                    Text("诊断信息")
+                        .font(.headline)
+                    Spacer()
+                    Button("复制诊断") { copyDiagnostics() }
+                        .buttonStyle(.glass)
+                        .disabled(model.diagnostics.isEmpty)
+                    Button("关闭") { showingDiagnostics = false }
+                        .buttonStyle(.glassProminent)
+                }
+                Divider()
                 ScrollView {
                     Text(model.diagnostics.isEmpty ? "正在读取…" : model.diagnostics)
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                HStack { Spacer(); Button("关闭") { showingDiagnostics = false } }
             }
             .padding(20)
             .frame(width: 680, height: 460)
             .background { EDPWindowBackdrop() }
         }
+    }
+
+    private var setupDescription: String {
+        if model.setupReady {
+            return "系统集成已就绪。后台服务按需打开经校验的 EDP 整盘；App、Mac 重启或重新插盘不需要重复管理员授权。"
+        }
+        if model.needsFullDiskAccess {
+            return "请为 EDP Drive 磁盘访问组件开启一次完全磁盘访问，然后重新检测权限。"
+        }
+        return "完全磁盘访问会在连接标准 EDP 加密盘后进行验证；macFUSE Local 必须保持可用。"
+    }
+
+    @ViewBuilder
+    private func settingsToggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle(title, isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+    }
+
+    @ViewBuilder
+    private func settingsStatusRow(title: String, value: String, ready: Bool) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+            Spacer()
+            Circle()
+                .fill(ready ? Color.green : Color.secondary.opacity(0.65))
+                .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
+            Text(value)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(model.diagnostics, forType: .string)
     }
 
     private func updateLoginItem(_ enabled: Bool) {

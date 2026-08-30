@@ -144,19 +144,34 @@ RESULT=DRIVE_UI_C_FINAL_OK
 
 The device overview now exposes the five-factor identity evidence without treating `diskN` as stable identity. Partition bulk operations sequence the existing per-partition XPC APIs and surface the first failure; no XPC protocol, raw-device, credential, or mount-service semantics changed.
 
-Commit: `pending commit`
+Commit: `27ac58e feat(drive): redesign device partition and security views`
 
 ## UI-D — Activity + Settings
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Timeline activity UI.
-- [ ] Filter controls.
-- [ ] No bounce animation.
-- [ ] Settings grouped as 常规 / 系统集成 / 后台服务 / 高级.
-- [ ] Diagnostics preserved.
+- [x] Timeline activity UI.
+- [x] Filter controls for 全部 / 设备 / 挂载 / 安全 / 错误.
+- [x] No bounce animation.
+- [x] Settings grouped as 常规 / 系统集成 / 后台服务 / 高级 without the old generic `Form` shell.
+- [x] Diagnostics preserved with copy support.
+- [x] Permission recheck, component reveal, service controls, and login-item controls preserved.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+git diff --check = PASS
+make drive-check = PASS
+EDP_UI_PREVIEW Swift 6 warnings-as-errors typecheck = PASS
+no .symbolEffect(.bounce) in Drive UI
+no top-level Form shell in settings
+RESULT=DRIVE_UI_D_COMPILE_OK
+RESULT=DRIVE_UI_D_STRUCTURE_OK
+```
+
+Activity filtering is a presentation-only projection over the existing 200-entry runtime activity feed; persistence and XPC activity semantics are unchanged.
+
+Commit: `pending commit`
 
 ## UI-E — Menu Bar Mini Control Center
 
