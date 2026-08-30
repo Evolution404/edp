@@ -22,7 +22,7 @@ enum EDPTheme {
         static let hover = Animation.easeOut(duration: 0.12)
         static let navigation = Animation.snappy(duration: 0.22)
         static let layout = Animation.smooth(duration: 0.28)
-        static let reduced = Animation.easeOut(duration: 0.16)
+        static let reduced = Animation.linear(duration: 0)
     }
 
     static let cardStroke = Color.primary.opacity(0.10)
@@ -50,6 +50,7 @@ enum EDPStatusTone {
 
 struct EDPWindowBackdrop: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         ZStack {
@@ -57,9 +58,9 @@ struct EDPWindowBackdrop: View {
             if !reduceTransparency {
                 LinearGradient(
                     colors: [
-                        Color.accentColor.opacity(0.035),
+                        Color.accentColor.opacity(contrast == .increased ? 0.06 : 0.035),
                         Color.clear,
-                        Color.indigo.opacity(0.025)
+                        Color.indigo.opacity(contrast == .increased ? 0.045 : 0.025)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -72,6 +73,7 @@ struct EDPWindowBackdrop: View {
 
 struct EDPContentCard<Content: View>: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     private let padding: CGFloat
     private let content: Content
 
@@ -87,17 +89,21 @@ struct EDPContentCard<Content: View>: View {
                 RoundedRectangle(cornerRadius: EDPTheme.Radius.card, style: .continuous)
                     .fill(reduceTransparency
                           ? Color(nsColor: .controlBackgroundColor)
-                          : EDPTheme.quietFill)
+                          : Color.primary.opacity(contrast == .increased ? 0.075 : 0.045))
             }
             .overlay {
                 RoundedRectangle(cornerRadius: EDPTheme.Radius.card, style: .continuous)
-                    .stroke(EDPTheme.cardStroke, lineWidth: 0.5)
+                    .stroke(
+                        Color.primary.opacity(contrast == .increased ? 0.24 : 0.10),
+                        lineWidth: contrast == .increased ? 1 : 0.5
+                    )
             }
     }
 }
 
 struct EDPGlassToolbar<Content: View>: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -120,7 +126,10 @@ struct EDPGlassToolbar<Content: View>: View {
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: EDPTheme.Radius.floating, style: .continuous)
-                        .stroke(EDPTheme.cardStroke, lineWidth: 0.5)
+                        .stroke(
+                            Color.primary.opacity(contrast == .increased ? 0.24 : 0.10),
+                            lineWidth: contrast == .increased ? 1 : 0.5
+                        )
                 }
         } else {
             toolbar
@@ -131,6 +140,7 @@ struct EDPGlassToolbar<Content: View>: View {
 
 struct EDPGlassCard<Content: View>: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -147,7 +157,10 @@ struct EDPGlassCard<Content: View>: View {
                 )
                 .overlay {
                     RoundedRectangle(cornerRadius: EDPTheme.Radius.floating, style: .continuous)
-                        .stroke(EDPTheme.cardStroke, lineWidth: 0.5)
+                        .stroke(
+                            Color.primary.opacity(contrast == .increased ? 0.24 : 0.10),
+                            lineWidth: contrast == .increased ? 1 : 0.5
+                        )
                 }
         } else {
             content.glassEffect(.regular, in: .rect(cornerRadius: EDPTheme.Radius.floating))
@@ -158,6 +171,7 @@ struct EDPGlassCard<Content: View>: View {
 struct EDPStatusPill: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     let title: String
     let systemImage: String
     var tone: EDPStatusTone = .neutral
@@ -166,29 +180,43 @@ struct EDPStatusPill: View {
     var body: some View {
         let label = Label(title, systemImage: systemImage)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(tone.color.opacity(colorScheme == .dark ? 0.82 : 1))
+            .foregroundStyle(
+                tone.color.opacity(contrast == .increased ? 1 : (colorScheme == .dark ? 0.82 : 1))
+            )
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
 
         if reduceTransparency {
             label
                 .background(
-                    tone.color.opacity(colorScheme == .dark ? 0.055 : 0.10),
+                    tone.color.opacity(
+                        contrast == .increased ? (colorScheme == .dark ? 0.12 : 0.16) : (colorScheme == .dark ? 0.055 : 0.10)
+                    ),
                     in: Capsule()
                 )
                 .overlay {
                     Capsule()
-                        .stroke(tone.color.opacity(colorScheme == .dark ? 0.22 : 0.28), lineWidth: 0.5)
+                        .stroke(
+                            tone.color.opacity(contrast == .increased ? 0.55 : (colorScheme == .dark ? 0.22 : 0.28)),
+                            lineWidth: contrast == .increased ? 1 : 0.5
+                        )
                 }
         } else {
             label
                 .glassEffect(
-                    .regular.tint(tone.color.opacity(colorScheme == .dark ? 0.035 : 0.075)),
+                    .regular.tint(
+                        tone.color.opacity(
+                            contrast == .increased ? (colorScheme == .dark ? 0.08 : 0.12) : (colorScheme == .dark ? 0.035 : 0.075)
+                        )
+                    ),
                     in: .capsule
                 )
                 .overlay {
                     Capsule()
-                        .stroke(tone.color.opacity(colorScheme == .dark ? 0.18 : 0.22), lineWidth: 0.5)
+                        .stroke(
+                            tone.color.opacity(contrast == .increased ? 0.50 : (colorScheme == .dark ? 0.18 : 0.22)),
+                            lineWidth: contrast == .increased ? 1 : 0.5
+                        )
                 }
         }
     }

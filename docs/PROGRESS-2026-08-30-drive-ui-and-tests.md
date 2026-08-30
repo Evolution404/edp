@@ -203,7 +203,15 @@ Commit: `d0937ce feat(drive): redesign menu bar control center`
 
 ## UI-F — Accessibility / Dark / Performance
 
-Status: `TODO`
+Status: `IN PROGRESS`
+
+Implementation landed locally before UI automation validation:
+
+- Reduce Motion now removes navigation/layout animation duration instead of merely shortening it.
+- Reduce Transparency keeps opaque native control backgrounds.
+- Increased Contrast strengthens glass/card/status boundaries without hard-coded light/dark colors.
+- Decorative overview/device imagery is hidden from VoiceOver and overview status cells expose combined labels.
+- Swift 6 warnings-as-errors typecheck and `git diff --check` pass.
 
 - [ ] 900×680 sidebar 20-toggle automation.
 - [ ] No `»`.

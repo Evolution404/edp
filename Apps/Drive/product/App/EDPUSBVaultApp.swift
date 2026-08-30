@@ -1234,6 +1234,7 @@ struct EDPOverviewView: View {
                             Image(systemName: activity.level == "error" ? "exclamationmark.triangle.fill" : "circle.fill")
                                 .font(.caption2)
                                 .foregroundStyle(activity.level == "error" ? .red : .secondary)
+                                .accessibilityHidden(true)
                             Text(activity.message)
                                 .lineLimit(2)
                             Spacer()
@@ -1297,6 +1298,8 @@ private struct EDPOverviewStatusCell: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title)：\(value)")
     }
 }
 
@@ -1432,6 +1435,7 @@ struct EDPDeviceDetailView: View {
                             .font(.system(size: 29, weight: .medium))
                             .foregroundStyle(device.connected ? Color.accentColor : .secondary)
                             .frame(width: 62, height: 62)
+                            .accessibilityHidden(true)
                             .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                         VStack(alignment: .leading, spacing: 5) {
