@@ -13,6 +13,7 @@ STUDIO_PROJECT := $(ROOT)/Apps/Studio/native/EDPStudioNative/EDPStudioNative.xco
 
 .PHONY: help status check build core-test drive-check drive-build drive-ui-status drive-stop drive-restart \
 	drive-ui-package drive-ui-install drive-ui-deploy drive-installer \
+	drive-test-fast drive-test-identity drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system drive-test-all \
 	studio-generate studio-build
 
 help:
@@ -26,6 +27,8 @@ help:
 	@echo "  make drive-stop         Close every Drive foreground UI"
 	@echo "  make drive-restart      Close old UIs and start exactly one official UI"
 	@echo "  make drive-installer    Build the full Drive native installer"
+	@echo "  make drive-test-fast    Hardware-free core/classifier regression"
+	@echo "  make drive-test-all     All hardware-free Drive regression gates"
 	@echo "  make studio-generate    Regenerate the Studio Xcode project"
 	@echo "  make studio-build       Build Studio Release without signing"
 	@echo "  make status             Show branch and recent commits"
@@ -47,6 +50,23 @@ drive-check:
 		"$(ROOT)/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 
 check: core-test drive-check
+
+drive-test-fast: core-test drive-check
+	@"$(ROOT)/Apps/Drive/Tests/run-fast.sh"
+
+# Canonical phase targets. Later regression phases replace these aliases with
+# their dedicated harnesses while preserving a stable developer-facing API.
+drive-test-identity: drive-test-fast
+
+drive-test-virtual-usb: drive-test-identity
+
+drive-test-storage: drive-test-virtual-usb
+
+drive-test-ui: drive-test-storage
+
+drive-test-system: drive-test-ui
+
+drive-test-all: drive-test-system
 
 drive-build:
 	@mkdir -p "$(ARTIFACTS)"

@@ -180,14 +180,25 @@ docs/PLAN-2026-08-30-drive-regression-suite.md
 
 ## TEST-A — Unified test runner
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Create canonical `Apps/Drive/Tests/` structure.
-- [ ] Inventory existing validators.
-- [ ] `make drive-test-fast`.
-- [ ] Existing tests still green.
+- [x] Create canonical `Apps/Drive/Tests/` structure.
+- [x] Inventory existing validators.
+- [x] `make drive-test-fast`.
+- [x] Existing tests still green.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+git diff --check = PASS
+make drive-test-fast = PASS
+RESULT=DRIVE_CORE_OK
+RESULT=DRIVE_FAST_OK
+```
+
+The fast runner is hardware-free and reuses the existing production validators rather than cloning parser/crypto logic. Stable Makefile entry points for later phases are reserved now and will be replaced by dedicated harnesses as TEST-B through TEST-H land.
+
+Commit: `pending commit`
 
 ## TEST-B — Identity / Classification matrix
 
