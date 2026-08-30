@@ -66,6 +66,7 @@ drive-test-storage: drive-test-virtual-usb
 	@"$(ROOT)/Apps/Drive/Tests/run-storage.sh"
 
 drive-test-ui: drive-test-storage
+	@"$(ROOT)/Apps/Drive/Tests/run-ui.sh"
 
 drive-test-system: drive-test-ui
 

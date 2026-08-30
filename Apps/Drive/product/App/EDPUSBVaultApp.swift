@@ -156,6 +156,9 @@ final class EDPVaultViewModel: ObservableObject {
 
     private let serviceMode: String
     private let daemonService: SMAppService?
+#if EDP_UI_PREVIEW
+    private let previewConfiguration: EDPPreviewConfiguration
+#endif
     private let daemonPlistName = "com.edp.drive.service.plist"
     private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.drive.service.plist")
     private let servicePreferenceKey = "com.edp.drive.service.desired-running"
@@ -170,7 +173,11 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     var rawAccessHelperInstalled: Bool {
+#if EDP_UI_PREVIEW
+        previewConfiguration.rawAccessHelperInstalled
+#else
         FileManager.default.isExecutableFile(atPath: edpDriveServicePath)
+#endif
     }
 
     var rawAccessStatusText: String {
@@ -191,11 +198,16 @@ final class EDPVaultViewModel: ObservableObject {
 
     init() {
 #if EDP_UI_PREVIEW
+        let configuration = EDPPreviewScenarioFactory.configuration(
+            for: EDPPreviewScenario.fromCommandLine()
+        )
+        previewConfiguration = configuration
         serviceMode = "preview"
         daemonService = nil
-        snapshot = Self.previewSnapshot
-        serviceStatus = "运行中"
-        transportRuntimeReady = true
+        snapshot = configuration.snapshot
+        serviceStatus = configuration.serviceStatus
+        transportRuntimeReady = configuration.transportRuntimeReady
+        serviceDesiredRunning = configuration.serviceDesiredRunning
         return
 #else
         serviceMode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
@@ -226,106 +238,15 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
 #if EDP_UI_PREVIEW
-    private static let previewSnapshot = EDPXPCSnapshot(
-        devices: [
-            EDPXPCDevice(
-                deviceID: "disk&ven_lexar&prod_usb_flash_drive#preview-v3",
-                metadataDeviceID: "disk&ven_lexar&prod_usb_flash_drive",
-                bsdName: "disk6",
-                mediaName: "Lexar USB Flash Drive",
-                displayName: "EDP 工作盘",
-                vidPID: "21c4:0cd1",
-                labelOnlyID: 3_164_177_653,
-                sizeBytes: 124_736_503_808,
-                connected: true,
-                privilegedAccessReady: true,
-                partitions: [
-                    EDPXPCPartition(
-                        partitionType: EDPPartitionKind.boot.rawValue,
-                        displayName: "启动区",
-                        encrypted: false,
-                        autoMount: true,
-                        credentialStatus: .notRequired,
-                        mountState: .mounted,
-                        filesystem: "FAT16",
-                        readOnly: true,
-                        mountPoint: "/Volumes/EDP Boot",
-                        lastError: nil
-                    ),
-                    EDPXPCPartition(
-                        partitionType: EDPPartitionKind.exchange.rawValue,
-                        displayName: "交换区",
-                        encrypted: true,
-                        autoMount: true,
-                        credentialStatus: .saved,
-                        mountState: .mounted,
-                        filesystem: "ExFAT",
-                        readOnly: false,
-                        mountPoint: "/Volumes/交换区",
-                        lastError: nil
-                    ),
-                    EDPXPCPartition(
-                        partitionType: EDPPartitionKind.secure.rawValue,
-                        displayName: "保密区",
-                        encrypted: true,
-                        autoMount: false,
-                        credentialStatus: .saved,
-                        mountState: .unmounted,
-                        filesystem: "ExFAT",
-                        readOnly: false,
-                        mountPoint: nil,
-                        lastError: nil
-                    )
-                ]
-            ),
-            EDPXPCDevice(
-                deviceID: "disk&ven_edp&prod_backup_drive#preview-v3",
-                metadataDeviceID: nil,
-                bsdName: "disk7",
-                mediaName: "EDP Backup Drive",
-                displayName: "EDP 备份盘",
-                vidPID: "1209:ed02",
-                labelOnlyID: nil,
-                sizeBytes: 64_000_000_000,
-                connected: false,
-                privilegedAccessReady: true,
-                partitions: [
-                    EDPXPCPartition(
-                        partitionType: EDPPartitionKind.secure.rawValue,
-                        displayName: "保密区",
-                        encrypted: true,
-                        autoMount: true,
-                        credentialStatus: .saved,
-                        mountState: .unmounted,
-                        filesystem: "ExFAT",
-                        readOnly: false,
-                        mountPoint: nil,
-                        lastError: nil
-                    )
-                ]
-            )
-        ],
-        activities: [
-            EDPXPCActivity(
-                id: UUID(),
-                timestamp: "22:30:08",
-                level: "info",
-                deviceID: "disk&ven_lexar&prod_usb_flash_drive-49979b696404",
-                partitionType: EDPPartitionKind.exchange.rawValue,
-                message: "交换区已自动挂载"
-            ),
-            EDPXPCActivity(
-                id: UUID(),
-                timestamp: "22:29:56",
-                level: "info",
-                deviceID: "disk&ven_lexar&prod_usb_flash_drive-49979b696404",
-                partitionType: nil,
-                message: "已识别标准 EDP 加密盘"
-            )
-        ],
-        serviceVersion: "0.6.0",
-        timestamp: "2026-08-29T22:30:08+08:00"
-    )
+    init(previewConfiguration configuration: EDPPreviewConfiguration) {
+        previewConfiguration = configuration
+        serviceMode = "preview"
+        daemonService = nil
+        snapshot = configuration.snapshot
+        serviceStatus = configuration.serviceStatus
+        transportRuntimeReady = configuration.transportRuntimeReady
+        serviceDesiredRunning = configuration.serviceDesiredRunning
+    }
 #endif
 
     private func currentServiceStatus() -> SMAppService.Status {
@@ -895,7 +816,7 @@ private enum EDPMainSection: String, CaseIterable, Identifiable {
     }
 }
 
-private enum EDPDeviceSection: String, CaseIterable, Identifiable {
+enum EDPDeviceSection: String, CaseIterable, Identifiable {
     case overview = "概览"
     case partitions = "分区"
     case security = "安全"
@@ -924,6 +845,7 @@ struct EDPMainView: View {
                         Label("显示或隐藏侧栏", systemImage: "sidebar.leading")
                     }
                     .labelStyle(.iconOnly)
+                    .accessibilityLabel("显示或隐藏侧栏")
                     .focusEffectDisabled()
                     .help("显示或隐藏侧栏")
                 }
@@ -944,7 +866,7 @@ private final class EDPNativeSplitBridge: ObservableObject {
     weak var controller: EDPNativeSplitViewController?
 
     func toggleSidebar() {
-        controller?.toggleSidebar(nil)
+        controller?.toggleSidebarDeterministically()
     }
 }
 
@@ -1037,7 +959,19 @@ private final class EDPNativeSplitViewController: NSSplitViewController {
         detailHost.rootView = EDPNativeDetailView(model: model, section: section.wrappedValue)
     }
 
+    func toggleSidebarDeterministically() {
+        guard let sidebarItem = splitViewItems.first else { return }
+        sidebarItem.isCollapsed.toggle()
+    }
 }
+
+#if EDP_UI_AUTOMATION
+@MainActor
+func edpAutomationToggleSidebar(_ controller: NSSplitViewController) {
+    guard let controller = controller as? EDPNativeSplitViewController else { return }
+    controller.toggleSidebarDeterministically()
+}
+#endif
 
 struct EDPOverviewView: View {
     @ObservedObject var model: EDPVaultViewModel
@@ -1414,7 +1348,21 @@ struct EDPDeviceDetailView: View {
     @State private var credentialTarget: EDPCredentialTarget?
     @State private var displayName = ""
     @State private var confirmingRecordDeletion = false
-    @State private var deviceSection: EDPDeviceSection = .overview
+    @State private var deviceSection: EDPDeviceSection
+
+    init(device: EDPXPCDevice, model: EDPVaultViewModel) {
+        self.device = device
+        _model = ObservedObject(wrappedValue: model)
+        _deviceSection = State(initialValue: .overview)
+    }
+
+#if EDP_UI_PREVIEW
+    init(device: EDPXPCDevice, model: EDPVaultViewModel, previewSection: EDPDeviceSection) {
+        self.device = device
+        _model = ObservedObject(wrappedValue: model)
+        _deviceSection = State(initialValue: previewSection)
+    }
+#endif
 
     var body: some View {
         ScrollView {
@@ -2952,7 +2900,9 @@ private enum EDPXPCPolicySmokeRunner {
     }
 }
 
+#if !EDP_UI_AUTOMATION
 @main
+#endif
 struct EDPUSBVaultApp: App {
     @StateObject private var model = EDPVaultViewModel()
 

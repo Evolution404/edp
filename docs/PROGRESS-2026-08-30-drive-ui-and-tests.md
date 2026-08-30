@@ -203,29 +203,45 @@ Commit: `d0937ce feat(drive): redesign menu bar control center`
 
 ## UI-F — Accessibility / Dark / Performance
 
-Status: `IN PROGRESS`
+Status: `DONE`
 
-Implementation landed locally before UI automation validation:
+Implementation and automation validation:
 
-- Reduce Motion now removes navigation/layout animation duration instead of merely shortening it.
+- Reduce Motion removes navigation/layout animation duration instead of merely shortening it.
 - Reduce Transparency keeps opaque native control backgrounds.
 - Increased Contrast strengthens glass/card/status boundaries without hard-coded light/dark colors.
 - Decorative overview/device imagery is hidden from VoiceOver and overview status cells expose combined labels.
-- Swift 6 warnings-as-errors typecheck and `git diff --check` pass.
+- The native sidebar remains `NSSplitViewController`; deterministic toggling no longer forces a synchronous full-tree layout pass.
+- 900×680 sidebar geometry survives 20 collapse/expand cycles without clipping, overflow chevrons, or overshoot/bounce.
+- Light/Dark page rendering and required accessibility labels are exercised by the UI regression harness.
+- Instruments `Animation Hitches` records the sidebar test window with zero frames above 33 ms; observed maximum was 16.667 ms.
 
-- [ ] 900×680 sidebar 20-toggle automation.
-- [ ] No `»`.
-- [ ] No overshoot.
-- [ ] No focus ring.
-- [ ] Light mode.
-- [ ] Dark mode.
-- [ ] Reduce Motion.
-- [ ] Reduce Transparency.
-- [ ] Increased Contrast.
-- [ ] Accessibility labels.
-- [ ] Instruments Animation Hitches = 0 for sidebar test.
+- [x] 900×680 sidebar 20-toggle automation.
+- [x] No `»`.
+- [x] No overshoot.
+- [x] No focus ring.
+- [x] Light mode.
+- [x] Dark mode.
+- [x] Reduce Motion.
+- [x] Reduce Transparency.
+- [x] Increased Contrast.
+- [x] Accessibility labels.
+- [x] Instruments Animation Hitches = 0 for sidebar test.
 
-Commit: `TBD`
+Validation:
+
+```text
+./Apps/Drive/Tests/run-ui.sh = PASS
+SCENARIO=UI_SIDEBAR_TOGGLE_1_OK ... UI_SIDEBAR_TOGGLE_20_OK
+RESULT=DRIVE_UI_900X680_SIDEBAR_OK
+RESULT=DRIVE_UI_ACCESSIBILITY_STRUCTURE_OK
+UI_HITCH_MAX_MS=16.667
+UI_HITCH_COUNT_GT33MS=0
+RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO
+RESULT=DRIVE_UI_OK
+```
+
+Commit: `2c1a149 feat(drive): harden accessibility presentation` + TEST-G automation commit
 
 ## UI-G — Final UI acceptance
 
@@ -440,16 +456,29 @@ Commit: `aafb3b5 test(drive): automate sparse-image storage lifecycle`
 
 ## TEST-G — UI automation
 
-Status: `TODO`
+Status: `DONE`
 
-- [ ] Preview scenario factory.
-- [ ] Main navigation automation.
-- [ ] Device subpages.
-- [ ] Menu bar.
-- [ ] 900px geometry.
-- [ ] Light/Dark.
-- [ ] Accessibility.
-- [ ] Instruments trace parsing.
+- [x] Preview scenario factory: healthy/no-device/two-device/FDA/service-stopped/credential-missing/partition-error/all-mounted/offline-saved.
+- [x] Main navigation/page rendering automation.
+- [x] Device overview/partitions/security subpages.
+- [x] Menu bar compact control center rendering.
+- [x] 900×680 native sidebar geometry with 20 deterministic toggles.
+- [x] Light/Dark rendering.
+- [x] Accessibility structure ratchets.
+- [x] Instruments `Animation Hitches` trace export and time-window parser.
+
+Validation:
+
+```text
+RESULT=DRIVE_UI_PREVIEW_SCENARIOS_OK
+RESULT=DRIVE_UI_PAGE_RENDERING_OK
+RESULT=DRIVE_UI_900X680_SIDEBAR_OK
+RESULT=DRIVE_UI_AUTOMATION_OK
+RESULT=DRIVE_UI_ACCESSIBILITY_STRUCTURE_OK
+UI_HITCH_COUNT_GT33MS=0
+RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO
+RESULT=DRIVE_UI_OK
+```
 
 Commit: `TBD`
 
