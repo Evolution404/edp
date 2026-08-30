@@ -53,10 +53,12 @@ private enum ValidateProductModels {
         let snapshot = EDPXPCSnapshot(
             devices: [EDPXPCDevice(
                 deviceID: initial.deviceID,
+                metadataDeviceID: "disk&ven_fixture&prod_usb",
                 bsdName: "disk99",
                 mediaName: "Fixture EDP",
                 displayName: "财务安全盘",
                 vidPID: "21c4:0cd1",
+                labelOnlyID: 1_625_940_067,
                 sizeBytes: 128 * 1024 * 1024,
                 connected: true,
                 privilegedAccessReady: false,
@@ -72,17 +74,28 @@ private enum ValidateProductModels {
                     "partition snapshot round-trip changed partition ordering")
         try require(!decoded.globalAutoMountEnabled, "snapshot round-trip changed global policy")
 
-        let physicalID = initial.deviceID + "#0123456789abcdef"
-        try store.migrateDeviceID(from: initial.deviceID, to: physicalID)
-        let migrated = try store.load()
-        try require(migrated.devices.count == 1, "device-ID migration created a duplicate policy")
-        try require(migrated.devices[0].deviceID == physicalID, "physical device ID was not migrated")
-        try require(migrated.devices[0].displayName == "财务安全盘", "device-ID migration lost display name")
-        try require(migrated.devices[0].policy(for: 2).autoMount, "device-ID migration lost auto-mount policy")
+        let differentPhysicalID = initial.deviceID + "#different-five-factor-identity"
+        _ = try store.observe(
+            deviceID: differentPhysicalID,
+            mediaName: "Fixture EDP",
+            vidPID: "21c4:0cd1",
+            sizeBytes: 128 * 1024 * 1024
+        )
+        let distinct = try store.load()
+        try require(distinct.devices.count == 2, "a different physical identity must create a separate device record")
+        try require(
+            distinct.devices.first(where: { $0.deviceID == differentPhysicalID })?.displayName == "Fixture EDP",
+            "a new physical identity must not inherit the old display name"
+        )
+        try require(
+            distinct.devices.first(where: { $0.deviceID == differentPhysicalID })?.policy(for: 2).autoMount == false,
+            "a new physical identity must not inherit the old auto-mount policy"
+        )
 
-        try store.remove(deviceID: physicalID)
+        try store.remove(deviceID: differentPhysicalID)
+        try store.remove(deviceID: initial.deviceID)
         let removed = try store.load()
-        try require(removed.devices.isEmpty, "device policy removal did not delete the record")
+        try require(removed.devices.isEmpty, "device policy removal did not delete the records")
 
         print("RESULT=EDP_PRODUCT_MODELS_OK")
     }

@@ -56,19 +56,21 @@ enum EDPVolumeMetadata {
 
     static func stablePhysicalDeviceID(
         metadataDeviceID: String,
+        labelOnlyID: UInt64,
         vidHex: String,
         pidHex: String,
         sizeBytes: UInt64
     ) -> String {
-        var material = Array("EDP-PHYSICAL-ID-V2\0".utf8)
-        material.append(contentsOf: Array(vidHex.utf8))
+        var material = Array("EDP-PHYSICAL-ID-V3\0".utf8)
+        material.append(contentsOf: Array(vidHex.lowercased().utf8))
         material.append(0)
-        material.append(contentsOf: Array(pidHex.utf8))
+        material.append(contentsOf: Array(pidHex.lowercased().utf8))
+        material.append(0)
+        material.append(contentsOf: EDPCrypto.littleEndianBytes(labelOnlyID))
+        material.append(contentsOf: EDPCrypto.littleEndianBytes(sizeBytes))
         material.append(0)
         material.append(contentsOf: Array(metadataDeviceID.utf8))
-        material.append(0)
-        material.append(contentsOf: EDPCrypto.littleEndianBytes(sizeBytes))
-        let suffix = EDPCrypto.sha256(material).prefix(10)
+        let suffix = EDPCrypto.sha256(material).prefix(12)
             .map { String(format: "%02x", $0) }
             .joined()
         return "\(metadataDeviceID)#\(suffix)"

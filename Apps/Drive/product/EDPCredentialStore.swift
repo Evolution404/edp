@@ -193,22 +193,6 @@ final class EDPCredentialStore {
         try save(updated)
     }
 
-    func migrateDeviceID(from legacyDeviceID: String, to deviceID: String) throws {
-        guard legacyDeviceID != deviceID else { return }
-        let index = try load()
-        guard let legacy = index.records.first(where: { $0.deviceID == legacyDeviceID }),
-              !index.records.contains(where: { $0.deviceID == deviceID }) else { return }
-        for partitionType in legacy.partitionTypes {
-            var secret = try password(
-                deviceID: legacyDeviceID,
-                partitionType: partitionType
-            )
-            defer { credentialSecureZero(&secret) }
-            try put(deviceID: deviceID, partitionType: partitionType, password: secret)
-        }
-        try remove(deviceID: legacyDeviceID)
-    }
-
     private func account(deviceID: String, partitionType: UInt32) -> String {
         "\(deviceID):\(partitionType)"
     }

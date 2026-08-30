@@ -100,6 +100,11 @@ jobs:
           grep -Fq 'Packages/EDPCore' Apps/Drive/scripts/prepare-shared-edp-core.sh
           ! grep -Fq 'cachedDisks' Apps/Drive/product/EDPVaultRuntime.swift
           ! grep -Fq 'recognized_cached' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'static func lba4OnlyID' Apps/Drive/native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+          grep -Fq 'EDP-PHYSICAL-ID-V3' Apps/Drive/native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+          grep -Fq 'labelOnlyID: labelOnlyID' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'labelOnlyID == disk.labelOnlyID' Apps/Drive/product/EDPVaultRuntime.swift
+          ! grep -Fq 'migrateDeviceID' Apps/Drive/product/EDPVaultRuntime.swift Apps/Drive/product/EDPDevicePolicyStore.swift Apps/Drive/product/EDPCredentialStore.swift
           grep -Fq 'func forceDurability() throws' Apps/Drive/native/EDPFSKitPoC/Extension/EDPRawIO.swift
           grep -Fq 'try context.block.forceDurability()' Apps/Drive/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift
           grep -Fq 'state->flush_calls += 1;' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c

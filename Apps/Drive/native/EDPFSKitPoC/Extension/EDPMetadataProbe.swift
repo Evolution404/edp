@@ -60,7 +60,7 @@ enum EDPMetadataProbe {
     }
 
     struct Recognition: Sendable {
-        let serial: String
+        let onlyID: UInt64
         let lba7K0: UInt16
         let partitionTypes: [UInt32]
     }
@@ -124,7 +124,7 @@ enum EDPMetadataProbe {
     }
 
     static func recognizeReservedSectors(lba4: [UInt8], lba7: [UInt8]) -> Recognition? {
-        guard let serial = lba4Serial(lba4),
+        guard let onlyID = lba4OnlyID(lba4),
               let oldFormat = recognizeOldFormatLBA7(lba7) else {
             return nil
         }
@@ -144,7 +144,7 @@ enum EDPMetadataProbe {
         }
 
         return Recognition(
-            serial: serial,
+            onlyID: onlyID,
             lba7K0: oldFormat.k0,
             partitionTypes: expectedPartitionTypes
         )
@@ -185,20 +185,21 @@ enum EDPMetadataProbe {
         lba12Plain: [UInt8]?,
         hasLBA11Identity: Bool = false
     ) -> MediaKind {
-        let serialPresent = lba4Serial(lba4) != nil
+        let onlyIDPresent = lba4OnlyID(lba4) != nil
         let decodedLBA7 = recognizeOldFormatLBA7(lba7)?.plaintext
         let lba7Entries = decodedLBA7.map { parseEntries($0, stride: lba7EntrySize) } ?? []
         let lba12Entries = lba12Plain.map { parseEntries($0, stride: lba12EntrySize) } ?? []
         let mbrFirst = firstMBRPartition(lba0)
 
-        let hasEDPEvidence = hasLBA11Identity || serialPresent || !lba7Entries.isEmpty || !lba12Entries.isEmpty
+        let hasEDPEvidence = hasLBA11Identity || onlyIDPresent || !lba7Entries.isEmpty || !lba12Entries.isEmpty
         guard hasEDPEvidence else { return .ordinaryUSB }
 
         // Factory-standard encrypted EDP media. This is the only shape Drive
         // is allowed to claim. The original first entry is Boot/type=1 in both
         // EDPF tables and the physical MBR still exposes that same small Boot
         // partition rather than a widened plaintext Share partition.
-        if entryTypes(lba7Entries) == [1, 2, 4],
+        if onlyIDPresent,
+           entryTypes(lba7Entries) == [1, 2, 4],
            entryTypes(lba12Entries) == [1, 2, 4],
            let first7 = lba7Entries.first,
            let first12 = lba12Entries.first,
@@ -283,9 +284,10 @@ enum EDPMetadataProbe {
         )
     }
 
-    /// Extracts the plaintext `$$$serial$$$` marker from LBA4 with conservative
-    /// bounds so random media is not claimed accidentally.
-    static func lba4Serial(_ raw: [UInt8]) -> String? {
+    /// Extracts the plaintext decimal `$$$<onlyId>$$$` marker from LBA4.
+    /// `onlyId` is part of the physical-device identity and must be present,
+    /// numeric, and representable as UInt64 before Drive may claim the disk.
+    static func lba4OnlyID(_ raw: [UInt8]) -> UInt64? {
         guard raw.count == Int(legacySectorByteLength) else {
             return nil
         }
@@ -305,19 +307,15 @@ enum EDPMetadataProbe {
             return nil
         }
 
-        let payloadLength = markerEnd - payloadStart
-        guard (1...96).contains(payloadLength) else {
-            return nil
-        }
-
         let payload = Array(raw[payloadStart..<markerEnd])
-        guard payload.allSatisfy({ byte in
-            byte != 0x24 && (byte == 0x20 || (0x21...0x7e).contains(byte))
-        }) else {
+        guard !payload.isEmpty,
+              payload.count <= 20,
+              payload.allSatisfy({ (0x30...0x39).contains($0) }),
+              let text = String(bytes: payload, encoding: .utf8),
+              let onlyID = UInt64(text) else {
             return nil
         }
-
-        return String(bytes: payload, encoding: .utf8)
+        return onlyID
     }
 
     /// Decodes the legacy LBA7 rolling-XOR format natively in Swift.

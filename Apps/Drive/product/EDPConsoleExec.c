@@ -186,7 +186,7 @@ static uint64_t read_u64_le(const unsigned char *bytes) {
     return value;
 }
 
-static int lba4_has_serial_marker(const unsigned char sector[EDP_SECTOR_SIZE]) {
+static int lba4_has_only_id(const unsigned char sector[EDP_SECTOR_SIZE]) {
     int first = -1;
     for (int index = 0; index <= EDP_SECTOR_SIZE - 3; ++index) {
         if (sector[index] == '$' && sector[index + 1] == '$' && sector[index + 2] == '$') {
@@ -205,10 +205,14 @@ static int lba4_has_serial_marker(const unsigned char sector[EDP_SECTOR_SIZE]) {
     }
     if (second < 0) return 0;
     int payload_length = second - payload_start;
-    if (payload_length < 1 || payload_length > 96) return 0;
+    if (payload_length < 1 || payload_length > 20) return 0;
+    uint64_t only_id = 0;
     for (int index = payload_start; index < second; ++index) {
         unsigned char byte = sector[index];
-        if (byte == '$' || !(byte == 0x20 || (byte >= 0x21 && byte <= 0x7e))) return 0;
+        if (byte < '0' || byte > '9') return 0;
+        uint64_t digit = (uint64_t)(byte - '0');
+        if (only_id > (UINT64_MAX - digit) / 10u) return 0;
+        only_id = only_id * 10u + digit;
     }
     return 1;
 }
@@ -249,7 +253,7 @@ static int fd_has_edp_metadata(int fd) {
         pread_exact(fd, lba7, sizeof(lba7), (off_t)EDP_LBA7 * EDP_SECTOR_SIZE) != 0) {
         return 0;
     }
-    return lba4_has_serial_marker(lba4) && lba7_has_edp_layout(lba7);
+    return lba4_has_only_id(lba4) && lba7_has_edp_layout(lba7);
 }
 
 static int open_validated_edp_raw(const char *raw_device) {

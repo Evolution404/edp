@@ -393,27 +393,37 @@ struct ValidateEDPNativeCore {
     }
 
     private static func validateStablePhysicalDeviceID() throws {
-        let first = EDPVolumeMetadata.stablePhysicalDeviceID(
-            metadataDeviceID: "disk&ven_fixture&prod_usb",
-            vidHex: "21c4",
-            pidHex: "0cd1",
-            sizeBytes: 64 * 1024 * 1024
+        func identity(
+            metadataDeviceID: String = "disk&ven_fixture&prod_usb",
+            labelOnlyID: UInt64 = 1_625_940_067,
+            vidHex: String = "21c4",
+            pidHex: String = "0cd1",
+            sizeBytes: UInt64 = 64 * 1024 * 1024
+        ) -> String {
+            EDPVolumeMetadata.stablePhysicalDeviceID(
+                metadataDeviceID: metadataDeviceID,
+                labelOnlyID: labelOnlyID,
+                vidHex: vidHex,
+                pidHex: pidHex,
+                sizeBytes: sizeBytes
+            )
+        }
+
+        let baseline = identity()
+        try require(baseline == identity(), "physical device ID must be deterministic")
+        try require(baseline != identity(vidHex: "0781"), "VID must participate in physical device ID")
+        try require(baseline != identity(pidHex: "5583"), "PID must participate in physical device ID")
+        try require(baseline != identity(labelOnlyID: 1_625_940_068), "LBA4 onlyId must participate in physical device ID")
+        try require(baseline != identity(sizeBytes: 128 * 1024 * 1024), "capacity must participate in physical device ID")
+        try require(
+            baseline != identity(metadataDeviceID: "disk&ven_fixture&prod_usb_2"),
+            "LBA11 deviceId must participate in physical device ID"
         )
-        let repeated = EDPVolumeMetadata.stablePhysicalDeviceID(
-            metadataDeviceID: "disk&ven_fixture&prod_usb",
-            vidHex: "21c4",
-            pidHex: "0cd1",
-            sizeBytes: 64 * 1024 * 1024
+        try require(
+            baseline == identity(vidHex: "21C4", pidHex: "0CD1"),
+            "hex VID/PID casing must not create a different physical identity"
         )
-        let second = EDPVolumeMetadata.stablePhysicalDeviceID(
-            metadataDeviceID: "disk&ven_fixture&prod_usb",
-            vidHex: "21c4",
-            pidHex: "0cd1",
-            sizeBytes: 128 * 1024 * 1024
-        )
-        try require(first == repeated, "physical device ID must be deterministic")
-        try require(first != second, "capacity must participate in physical device ID")
-        print("RESULT=STABLE_PHYSICAL_DEVICE_ID_UNIQUE")
+        print("RESULT=STABLE_PHYSICAL_DEVICE_ID_FIVE_FACTOR_STRICT")
     }
 
     private static func validateCRC() throws {

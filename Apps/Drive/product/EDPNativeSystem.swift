@@ -14,6 +14,7 @@ struct PhysicalDisk: Hashable, Sendable {
     let pidHex: String
     let registryEntryID: UInt64
     let usbRegistryEntryID: UInt64
+    let labelOnlyID: UInt64
     let metadataDeviceID: String
     let deviceID: String
 }
@@ -211,6 +212,7 @@ enum EDPNativeDeviceDiscovery {
                 at: EDPVolumeMetadata.lba12ByteOffset,
                 length: Int(EDPMetadataProbe.legacySectorByteLength)
             ),
+            let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](lba4)),
             let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
                 [UInt8](lba11),
                 vidHex: media.vid,
@@ -232,6 +234,7 @@ enum EDPNativeDeviceDiscovery {
             }
             let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(
                 metadataDeviceID: metadataDeviceID,
+                labelOnlyID: labelOnlyID,
                 vidHex: media.vid,
                 pidHex: media.pid,
                 sizeBytes: media.size
@@ -245,6 +248,7 @@ enum EDPNativeDeviceDiscovery {
                 pidHex: media.pid,
                 registryEntryID: media.registryEntryID,
                 usbRegistryEntryID: media.usbRegistryEntryID,
+                labelOnlyID: labelOnlyID,
                 metadataDeviceID: metadataDeviceID,
                 deviceID: deviceID
             ))

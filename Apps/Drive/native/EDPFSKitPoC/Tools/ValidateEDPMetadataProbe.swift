@@ -244,28 +244,32 @@ struct ValidateEDPMetadataProbe {
     }
 
     private static func validateLBA4SerialRules() throws {
-        let valid = makeLBA4(markerOffset: 8, payload: Array("LEXAR-EDP-001".utf8))
-        guard EDPMetadataProbe.lba4Serial(valid) == "LEXAR-EDP-001" else {
-            throw ValidationError.mismatch("valid LBA4 serial marker was rejected")
+        let valid = makeLBA4(markerOffset: 8, payload: Array("1625940067".utf8))
+        guard EDPMetadataProbe.lba4OnlyID(valid) == 1_625_940_067 else {
+            throw ValidationError.mismatch("valid LBA4 onlyId marker was rejected")
         }
 
         let empty = makeLBA4(markerOffset: 0, payload: [])
-        let tooLong = makeLBA4(markerOffset: 0, payload: [UInt8](repeating: 0x41, count: 97))
-        let tooLate = makeLBA4(markerOffset: 65, payload: Array("serial".utf8))
-        let control = makeLBA4(markerOffset: 0, payload: [0x41, 0x1f, 0x42])
-        let dollar = makeLBA4(markerOffset: 0, payload: [0x41, 0x24, 0x42])
+        let tooLong = makeLBA4(markerOffset: 0, payload: Array("184467440737095516150".utf8))
+        let overflow = makeLBA4(markerOffset: 0, payload: Array("18446744073709551616".utf8))
+        let tooLate = makeLBA4(markerOffset: 65, payload: Array("12345".utf8))
+        let alpha = makeLBA4(markerOffset: 0, payload: Array("LEXAR-EDP-001".utf8))
+        let control = makeLBA4(markerOffset: 0, payload: [0x31, 0x1f, 0x32])
+        let dollar = makeLBA4(markerOffset: 0, payload: [0x31, 0x24, 0x32])
 
-        guard EDPMetadataProbe.lba4Serial([UInt8](repeating: 0, count: 511)) == nil,
-              EDPMetadataProbe.lba4Serial([UInt8](repeating: 0, count: 512)) == nil,
-              EDPMetadataProbe.lba4Serial(empty) == nil,
-              EDPMetadataProbe.lba4Serial(tooLong) == nil,
-              EDPMetadataProbe.lba4Serial(tooLate) == nil,
-              EDPMetadataProbe.lba4Serial(control) == nil,
-              EDPMetadataProbe.lba4Serial(dollar) == nil else {
-            throw ValidationError.mismatch("LBA4 serial parser accepted an invalid marker")
+        guard EDPMetadataProbe.lba4OnlyID([UInt8](repeating: 0, count: 511)) == nil,
+              EDPMetadataProbe.lba4OnlyID([UInt8](repeating: 0, count: 512)) == nil,
+              EDPMetadataProbe.lba4OnlyID(empty) == nil,
+              EDPMetadataProbe.lba4OnlyID(tooLong) == nil,
+              EDPMetadataProbe.lba4OnlyID(overflow) == nil,
+              EDPMetadataProbe.lba4OnlyID(tooLate) == nil,
+              EDPMetadataProbe.lba4OnlyID(alpha) == nil,
+              EDPMetadataProbe.lba4OnlyID(control) == nil,
+              EDPMetadataProbe.lba4OnlyID(dollar) == nil else {
+            throw ValidationError.mismatch("LBA4 onlyId parser accepted an invalid marker")
         }
 
-        print("LBA4_SERIAL_NEGATIVE_CONTROLS=OK")
+        print("LBA4_ONLY_ID_NEGATIVE_CONTROLS=OK")
     }
 
     private static func validateLBA7ShapeGuards() throws {
@@ -338,12 +342,12 @@ struct ValidateEDPMetadataProbe {
             guard let evidence = EDPMetadataProbe.recognizeReservedSectors(lba4: lba4, lba7: lba7) else {
                 throw ValidationError.recognitionFailed("\(diskName) reserved sectors")
             }
-            guard evidence.partitionTypes == [1, 2, 4], !evidence.serial.isEmpty else {
+            guard evidence.partitionTypes == [1, 2, 4], evidence.onlyID > 0 else {
                 throw ValidationError.mismatch("\(diskName): invalid reserved-sector evidence")
             }
 
             print(
-                "RESERVED_PROBE_OK=\(diskName) serial=\(evidence.serial) " +
+                "RESERVED_PROBE_OK=\(diskName) onlyID=\(evidence.onlyID) " +
                 "k0=\(String(format: "0x%04x", evidence.lba7K0))"
             )
 
@@ -358,7 +362,7 @@ struct ValidateEDPMetadataProbe {
     }
 
     private static func validateMediaClassification() throws {
-        let lba4 = makeLBA4(markerOffset: 8, payload: Array("EDP-CLASSIFIER".utf8))
+        let lba4 = makeLBA4(markerOffset: 8, payload: Array("1625940067".utf8))
         let bootSectors: UInt64 = 20_417
         let bootBytes = bootSectors * 512
         let shareStart: UInt64 = 20_480

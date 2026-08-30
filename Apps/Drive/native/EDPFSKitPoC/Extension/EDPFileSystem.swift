@@ -52,7 +52,7 @@ final class EDPFileSystem: FSUnaryFileSystem, FSUnaryFileSystemOperations {
             }
 
             logger.notice("PROBE_EDP_RESERVED_SIGNATURE=true")
-            logger.notice("PROBE_EDP_SERIAL=\(evidence.serial, privacy: .public)")
+            logger.notice("PROBE_EDP_ONLY_ID=\(evidence.onlyID, privacy: .public)")
 
             // The passwordless reserved-sector evidence does not expose a
             // durable container UUID. A stable identifier can be introduced

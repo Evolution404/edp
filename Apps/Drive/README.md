@@ -28,7 +28,9 @@ unrecognizedEDP     存在 EDP 证据但结构异常/不完整
 ordinaryUSB         普通 U 盘
 ```
 
-只有 `standardEncrypted` 才进入 FDA retained raw fd、密码、EDPCore、macFUSE/DiskImages2 挂载链。其余四类不创建 EDP mount session、不取得持久 raw lease、不改写或卸载物理卷，直接由 macOS / Disk Arbitration / Finder 接管。
+只有 `standardEncrypted` 才进入 FDA retained raw fd、密码、EDPCore、macFUSE/DiskImages2 挂载链。标准盘还必须存在可解析的 LBA4 数字 `onlyId`（`$$$<onlyId>$$$`）；缺失、非数字或溢出的 onlyId 均不得被 Drive 接管。其余四类不创建 EDP mount session、不取得持久 raw lease、不改写或卸载物理卷，直接由 macOS / Disk Arbitration / Finder 接管。
+
+Drive 的物理设备身份使用 V3 五因素：**USB VID + USB PID + LBA4 onlyId + 整盘容量 + LBA11 deviceId**。只有五项全部一致才认定为同一台设备；任意一项变化都产生新的 `deviceID`、策略命名空间和钥匙串命名空间。旧版 physical device ID 不自动迁移到 V3 身份。
 
 每个被 Drive 接管的标准 EDP 设备按三个分区独立管理：
 

@@ -229,11 +229,13 @@ final class EDPVaultViewModel: ObservableObject {
     private static let previewSnapshot = EDPXPCSnapshot(
         devices: [
             EDPXPCDevice(
-                deviceID: "disk&ven_lexar&prod_usb_flash_drive-49979b696404",
+                deviceID: "disk&ven_lexar&prod_usb_flash_drive#preview-v3",
+                metadataDeviceID: "disk&ven_lexar&prod_usb_flash_drive",
                 bsdName: "disk6",
                 mediaName: "Lexar USB Flash Drive",
                 displayName: "EDP 工作盘",
                 vidPID: "21c4:0cd1",
+                labelOnlyID: 3_164_177_653,
                 sizeBytes: 124_736_503_808,
                 connected: true,
                 privilegedAccessReady: true,
@@ -277,11 +279,13 @@ final class EDPVaultViewModel: ObservableObject {
                 ]
             ),
             EDPXPCDevice(
-                deviceID: "disk&ven_edp&prod_backup_drive-preview",
+                deviceID: "disk&ven_edp&prod_backup_drive#preview-v3",
+                metadataDeviceID: nil,
                 bsdName: "disk7",
                 mediaName: "EDP Backup Drive",
                 displayName: "EDP 备份盘",
                 vidPID: "1209:ed02",
+                labelOnlyID: nil,
                 sizeBytes: 64_000_000_000,
                 connected: false,
                 privilegedAccessReady: true,
@@ -2448,7 +2452,7 @@ struct EDPUSBVaultApp: App {
             print("SNAPSHOT_SERVICE_VERSION=\(snapshot.serviceVersion)")
             print("SNAPSHOT_DEVICE_COUNT=\(snapshot.devices.count)")
             for device in snapshot.devices {
-                print("SNAPSHOT_DEVICE=\(device.bsdName)|\(device.deviceID)|\(device.vidPID)|\(device.sizeBytes)|authorized=\(device.authorized)|mounted=\(device.mounted)|privilegedAccessReady=\(device.privilegedAccessReady)|partitions=\(device.partitionTypes.map(String.init).joined(separator: ","))")
+                print("SNAPSHOT_DEVICE=\(device.bsdName)|\(device.deviceID)|metadataDeviceID=\(device.metadataDeviceID ?? "-")|\(device.vidPID)|onlyID=\(device.labelOnlyID.map(String.init) ?? "-")|\(device.sizeBytes)|authorized=\(device.authorized)|mounted=\(device.mounted)|privilegedAccessReady=\(device.privilegedAccessReady)|partitions=\(device.partitionTypes.map(String.init).joined(separator: ","))")
                 for partition in device.partitions.sorted(by: { $0.partitionType < $1.partitionType }) {
                     print("SNAPSHOT_PARTITION=\(device.deviceID)|type=\(partition.partitionType)|autoMount=\(partition.autoMount)|credential=\(partition.credentialStatus.rawValue)|mount=\(partition.mountState.rawValue)|filesystem=\(partition.filesystem ?? "-")|readOnly=\(partition.readOnly.map(String.init) ?? "-")|mountPoint=\(partition.mountPoint ?? "-")")
                 }

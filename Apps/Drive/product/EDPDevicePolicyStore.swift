@@ -135,26 +135,6 @@ final class EDPDevicePolicyStore {
         try save(document)
     }
 
-    func migrateDeviceID(from legacyDeviceID: String, to deviceID: String) throws {
-        guard legacyDeviceID != deviceID else { return }
-        var document = try load()
-        guard !document.devices.contains(where: { $0.deviceID == deviceID }),
-              let index = document.devices.firstIndex(where: { $0.deviceID == legacyDeviceID }) else {
-            return
-        }
-        let legacy = document.devices.remove(at: index)
-        document.devices.append(EDPDevicePolicy(
-            deviceID: deviceID,
-            displayName: legacy.displayName,
-            lastMediaName: legacy.lastMediaName,
-            lastVIDPID: legacy.lastVIDPID,
-            lastSizeBytes: legacy.lastSizeBytes,
-            partitions: legacy.partitions
-        ))
-        document.devices.sort { $0.deviceID < $1.deviceID }
-        try save(document)
-    }
-
     func remove(deviceID: String) throws {
         var document = try load()
         document.devices.removeAll { $0.deviceID == deviceID }

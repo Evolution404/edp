@@ -302,12 +302,15 @@ private func openPersistentRawAccess(for disk: PhysicalDisk) throws -> EDPRawAcc
         }
 
         let metadata = try rawMetadataSnapshot(fd: fd)
-        guard let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
+        guard let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](metadata.lba4)),
+              labelOnlyID == disk.labelOnlyID,
+              let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
                   [UInt8](metadata.lba11),
                   vidHex: disk.vidHex,
                   pidHex: disk.pidHex,
                   sizeBytes: disk.sizeBytes
               ),
+              metadataDeviceID == disk.metadataDeviceID,
               let lba12Plain = try? EDPVolumeMetadata.decodeLBA12(
                   [UInt8](metadata.lba12),
                   deviceID: metadataDeviceID
@@ -321,6 +324,7 @@ private func openPersistentRawAccess(for disk: PhysicalDisk) throws -> EDPRawAcc
               ) == .standardEncrypted,
               EDPVolumeMetadata.stablePhysicalDeviceID(
                   metadataDeviceID: metadataDeviceID,
+                  labelOnlyID: labelOnlyID,
                   vidHex: disk.vidHex,
                   pidHex: disk.pidHex,
                   sizeBytes: disk.sizeBytes
@@ -433,6 +437,7 @@ private func discoverEDPDisks(
             NSLog("EDP discovery skipped %@ because raw metadata read failed: %@", media.bsdName, detail)
             continue
         }
+        let labelOnlyID = EDPMetadataProbe.lba4OnlyID([UInt8](metadata.lba4))
         let metadataDeviceID = EDPVolumeMetadata.deviceIDFromLBA11(
             [UInt8](metadata.lba11),
             vidHex: media.vid,
@@ -458,17 +463,22 @@ private func discoverEDPDisks(
             // storage remain entirely under macOS/Disk Arbitration ownership.
             continue
         }
+        guard let labelOnlyID else {
+            diagnostic?("bsd=\(media.bsdName);result=lba4_only_id_invalid")
+            continue
+        }
         guard let metadataDeviceID else {
             diagnostic?("bsd=\(media.bsdName);result=device_id_invalid")
             continue
         }
         let deviceID = EDPVolumeMetadata.stablePhysicalDeviceID(
             metadataDeviceID: metadataDeviceID,
+            labelOnlyID: labelOnlyID,
             vidHex: media.vid,
             pidHex: media.pid,
             sizeBytes: media.size
         )
-        diagnostic?("bsd=\(media.bsdName);result=recognized;deviceID=\(deviceID)")
+        diagnostic?("bsd=\(media.bsdName);result=recognized;onlyID=\(labelOnlyID);deviceID=\(deviceID)")
         answer.append(PhysicalDisk(
             bsdName: media.bsdName,
             rawPath: rawPath,
@@ -478,6 +488,7 @@ private func discoverEDPDisks(
             pidHex: media.pid,
             registryEntryID: media.registryEntryID,
             usbRegistryEntryID: media.usbRegistryEntryID,
+            labelOnlyID: labelOnlyID,
             metadataDeviceID: metadataDeviceID,
             deviceID: deviceID
         ))
@@ -1324,25 +1335,6 @@ private final class EDPDaemonController: @unchecked Sendable {
 
     private func observe(_ disks: [PhysicalDisk]) throws {
         for disk in disks {
-            let document = try policies.load()
-            if !document.devices.contains(where: { $0.deviceID == disk.deviceID }),
-               let legacy = document.devices.first(where: {
-                   $0.deviceID == disk.metadataDeviceID
-                       && $0.lastVIDPID == "\(disk.vidHex):\(disk.pidHex)"
-                       && $0.lastSizeBytes == disk.sizeBytes
-               }) {
-                do {
-                    try store.migrateDeviceID(from: legacy.deviceID, to: disk.deviceID)
-                } catch {
-                    NSLog(
-                        "EDP legacy credential could not be migrated from %@ to %@: %@",
-                        legacy.deviceID,
-                        disk.deviceID,
-                        String(describing: error)
-                    )
-                }
-                try policies.migrateDeviceID(from: legacy.deviceID, to: disk.deviceID)
-            }
             _ = try policies.observe(
                 deviceID: disk.deviceID,
                 mediaName: disk.mediaName,
@@ -1622,11 +1614,13 @@ private final class EDPDaemonController: @unchecked Sendable {
                     }
                     return EDPXPCDevice(
                         deviceID: deviceID,
+                        metadataDeviceID: disk?.metadataDeviceID,
                         bsdName: disk?.bsdName ?? "",
                         mediaName: disk?.mediaName ?? policy?.lastMediaName ?? "EDP USB",
                         displayName: policy?.displayName ?? disk?.mediaName ?? "EDP USB",
                         vidPID: disk.map { "\($0.vidHex):\($0.pidHex)" }
                             ?? policy?.lastVIDPID ?? "-",
+                        labelOnlyID: disk?.labelOnlyID,
                         sizeBytes: disk?.sizeBytes ?? policy?.lastSizeBytes ?? 0,
                         connected: disk != nil,
                         privilegedAccessReady: disk.map {

@@ -50,10 +50,12 @@ struct EDPXPCPartition: Codable, Hashable, Sendable, Identifiable {
 struct EDPXPCDevice: Codable, Hashable, Sendable, Identifiable {
     var id: String { deviceID }
     let deviceID: String
+    let metadataDeviceID: String?
     let bsdName: String
     let mediaName: String
     let displayName: String
     let vidPID: String
+    let labelOnlyID: UInt64?
     let sizeBytes: UInt64
     let connected: Bool
     let privilegedAccessReady: Bool
