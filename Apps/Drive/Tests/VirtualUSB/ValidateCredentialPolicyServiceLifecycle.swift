@@ -74,13 +74,31 @@ private final class TemporaryKeychainContext {
     }
 }
 
-private final class FakeMountManager: EDPDaemonMountManaging {
+private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendable {
     struct Mounted: Sendable {
         let physicalBSD: String
         let deviceID: String
         let partitionType: UInt32
     }
 
+    private final class PendingMount: @unchecked Sendable {
+        let mounted: Mounted
+        let primary: EDPDaemonMountCompletion
+        var duplicateWaiters = [EDPDaemonMountCompletion]()
+        var unmountWaiters = [EDPDaemonMountCompletion]()
+        var cancelled = false
+
+        init(mounted: Mounted, primary: @escaping EDPDaemonMountCompletion) {
+            self.mounted = mounted
+            self.primary = primary
+        }
+    }
+
+    private let asyncLock = NSLock()
+    private var heldMountKeys = Set<String>()
+    private var pendingMounts = [String: PendingMount]()
+    private var pendingEjectWaiters = [String: [EDPDaemonMountCompletion]]()
+    private var pendingUnmountAllWaiters = [EDPDaemonMountCompletion]()
     private(set) var mounted = [String: Mounted]()
     private(set) var mountAttempts = [String: Int]()
     private(set) var recoverCount = 0
@@ -98,6 +116,79 @@ private final class FakeMountManager: EDPDaemonMountManaging {
         failures[key(deviceID, partitionType)] = (count, message)
     }
 
+    func holdNextMount(deviceID: String, partitionType: UInt32) {
+        asyncLock.lock()
+        heldMountKeys.insert(key(deviceID, partitionType))
+        asyncLock.unlock()
+    }
+
+    func hasPendingMount(deviceID: String, partitionType: UInt32) -> Bool {
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        return pendingMounts[key(deviceID, partitionType)] != nil
+    }
+
+    func pendingDuplicateWaiterCount(deviceID: String, partitionType: UInt32) -> Int {
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        return pendingMounts[key(deviceID, partitionType)]?.duplicateWaiters.count ?? 0
+    }
+
+    func pendingMountIsCancelled(deviceID: String, partitionType: UInt32) -> Bool {
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        return pendingMounts[key(deviceID, partitionType)]?.cancelled == true
+    }
+
+    func mountAttemptCount(deviceID: String, partitionType: UInt32) -> Int {
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        return mountAttempts[key(deviceID, partitionType), default: 0]
+    }
+
+    func releaseHeldMount(
+        deviceID: String,
+        partitionType: UInt32,
+        errorMessage: String? = nil
+    ) {
+        let sessionKey = key(deviceID, partitionType)
+        var mountCallbacks = [EDPDaemonMountCompletion]()
+        var mountResult = errorMessage
+        var unmountCallbacks = [EDPDaemonMountCompletion]()
+        var ejectCallbacks = [EDPDaemonMountCompletion]()
+        var shutdownCallbacks = [EDPDaemonMountCompletion]()
+
+        asyncLock.lock()
+        guard let pending = pendingMounts.removeValue(forKey: sessionKey) else {
+            asyncLock.unlock()
+            return
+        }
+        mountCallbacks = [pending.primary] + pending.duplicateWaiters
+        unmountCallbacks = pending.unmountWaiters
+        if pending.cancelled {
+            mountResult = "mount operation cancelled"
+        } else if mountResult == nil {
+            mounted[sessionKey] = pending.mounted
+        }
+
+        if pendingMounts.values.allSatisfy({ $0.mounted.deviceID != deviceID }),
+           let callbacks = pendingEjectWaiters.removeValue(forKey: deviceID) {
+            mounted = mounted.filter { $0.value.deviceID != deviceID }
+            ejectCallbacks = callbacks
+        }
+        if pendingMounts.isEmpty, !pendingUnmountAllWaiters.isEmpty {
+            mounted.removeAll()
+            shutdownCallbacks = pendingUnmountAllWaiters
+            pendingUnmountAllWaiters.removeAll()
+        }
+        asyncLock.unlock()
+
+        for callback in mountCallbacks { callback(mountResult) }
+        for callback in unmountCallbacks { callback(nil) }
+        for callback in ejectCallbacks { callback(nil) }
+        for callback in shutdownCallbacks { callback(nil) }
+    }
+
     func failNextUnmounts(deviceID: String, partitionType: UInt32, count: Int, message: String) {
         unmountFailures[key(deviceID, partitionType)] = (count, message)
     }
@@ -106,13 +197,17 @@ private final class FakeMountManager: EDPDaemonMountManaging {
         ejectFailures[deviceID] = (count, message)
     }
 
-    func recoverPersistedSessions() {
+    func recoverPersistedSessionsAsync(completion: @escaping EDPDaemonMountCompletion) {
         recoverCount += 1
         staleSessionCount = 0
+        completion(nil)
     }
 
     func contains(_ disk: PhysicalDisk, _ type: UInt32) -> Bool {
-        mounted[key(disk.deviceID, type)] != nil
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        let sessionKey = key(disk.deviceID, type)
+        return mounted[sessionKey] != nil || pendingMounts[sessionKey] != nil
     }
 
     func mountedPhysicalDisks() -> Set<String> {
@@ -120,7 +215,10 @@ private final class FakeMountManager: EDPDaemonMountManaging {
     }
 
     func isMounted(deviceID: String) -> Bool {
-        mounted.values.contains { $0.deviceID == deviceID }
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        return mounted.values.contains { $0.deviceID == deviceID }
+            || pendingMounts.values.contains { $0.mounted.deviceID == deviceID }
     }
 
     func mountedSummaries() -> [[String: String]] {
@@ -144,43 +242,95 @@ private final class FakeMountManager: EDPDaemonMountManaging {
         ]
     }
 
-    func eject(deviceID: String) throws {
+    func ejectAsync(deviceID: String, completion: @escaping EDPDaemonMountCompletion) {
+        asyncLock.lock()
         if var failure = ejectFailures[deviceID], failure.remaining > 0 {
             failure.remaining -= 1
             ejectFailures[deviceID] = failure
-            throw LifecycleValidationError(failure.message)
+            asyncLock.unlock()
+            completion(failure.message)
+            return
+        }
+        let pending = pendingMounts.values.filter { $0.mounted.deviceID == deviceID }
+        if !pending.isEmpty {
+            for item in pending { item.cancelled = true }
+            pendingEjectWaiters[deviceID, default: []].append(completion)
+            asyncLock.unlock()
+            return
         }
         mounted = mounted.filter { $0.value.deviceID != deviceID }
+        asyncLock.unlock()
+        completion(nil)
     }
 
-    func unmount(deviceID: String, partitionType: UInt32) throws {
+    func unmountAsync(
+        deviceID: String,
+        partitionType: UInt32,
+        completion: @escaping EDPDaemonMountCompletion
+    ) {
         let sessionKey = key(deviceID, partitionType)
+        asyncLock.lock()
         if var failure = unmountFailures[sessionKey], failure.remaining > 0 {
             failure.remaining -= 1
             unmountFailures[sessionKey] = failure
-            throw LifecycleValidationError(failure.message)
+            asyncLock.unlock()
+            completion(failure.message)
+            return
+        }
+        if let pending = pendingMounts[sessionKey] {
+            pending.cancelled = true
+            pending.unmountWaiters.append(completion)
+            asyncLock.unlock()
+            return
         }
         mounted.removeValue(forKey: sessionKey)
+        asyncLock.unlock()
+        completion(nil)
     }
 
-    func mount(
+    func mountAsync(
         disk: PhysicalDisk,
         partitionType: UInt32,
         password: [UInt8],
-        rawFD: Int32
-    ) throws {
+        rawFD: Int32,
+        completion: @escaping EDPDaemonMountCompletion
+    ) {
         let sessionKey = key(disk.deviceID, partitionType)
+        asyncLock.lock()
+        if mounted[sessionKey] != nil {
+            asyncLock.unlock()
+            completion(nil)
+            return
+        }
+        if let pending = pendingMounts[sessionKey] {
+            pending.duplicateWaiters.append(completion)
+            asyncLock.unlock()
+            return
+        }
         mountAttempts[sessionKey, default: 0] += 1
         if var failure = failures[sessionKey], failure.remaining > 0 {
             failure.remaining -= 1
             failures[sessionKey] = failure
-            throw LifecycleValidationError(failure.message)
+            asyncLock.unlock()
+            completion(failure.message)
+            return
         }
-        mounted[sessionKey] = Mounted(
+        let mountedValue = Mounted(
             physicalBSD: disk.bsdName,
             deviceID: disk.deviceID,
             partitionType: partitionType
         )
+        if heldMountKeys.remove(sessionKey) != nil {
+            pendingMounts[sessionKey] = PendingMount(
+                mounted: mountedValue,
+                primary: completion
+            )
+            asyncLock.unlock()
+            return
+        }
+        mounted[sessionKey] = mountedValue
+        asyncLock.unlock()
+        completion(nil)
     }
 
     @discardableResult
@@ -191,31 +341,62 @@ private final class FakeMountManager: EDPDaemonMountManaging {
         return false
     }
 
-    func unmountAll() {
+    func unmountAllAsync(completion: @escaping EDPDaemonMountCompletion) {
+        asyncLock.lock()
         unmountAllCount += 1
+        if !pendingMounts.isEmpty {
+            for pending in pendingMounts.values { pending.cancelled = true }
+            pendingUnmountAllWaiters.append(completion)
+            asyncLock.unlock()
+            return
+        }
         mounted.removeAll()
+        asyncLock.unlock()
+        completion(nil)
     }
 }
 
 private final class FakeDiskArbitration: EDPDaemonDiskArbitrating, @unchecked Sendable {
+    private let callbackQueue = DispatchQueue(label: "com.edp.drive.tests.fake-da")
+    private let lock = NSLock()
     private(set) var suppressed = Set<UInt64>()
     private(set) var unmountWholeCalls = [String]()
     private(set) var ejectCalls = [String]()
 
     func suppressAutomount(usbRegistryEntryID: UInt64) {
-        suppressed.insert(usbRegistryEntryID)
+        lock.lock(); suppressed.insert(usbRegistryEntryID); lock.unlock()
     }
 
     func allowAutomount(usbRegistryEntryID: UInt64) {
-        suppressed.remove(usbRegistryEntryID)
+        lock.lock(); suppressed.remove(usbRegistryEntryID); lock.unlock()
     }
 
-    func unmountWhole(_ bsdName: String) throws {
-        unmountWholeCalls.append(bsdName)
+    func unmountWholeAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
+        lock.lock(); unmountWholeCalls.append(bsdName); lock.unlock()
+        callbackQueue.async { completion(nil) }
     }
 
-    func eject(_ bsdName: String) throws {
-        ejectCalls.append(bsdName)
+    func ejectAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
+        lock.lock(); ejectCalls.append(bsdName); lock.unlock()
+        callbackQueue.async { completion(nil) }
+    }
+}
+
+private extension FakeDiskArbitration {
+    func snapshotUnmountWholeCalls() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return unmountWholeCalls
+    }
+
+    func snapshotEjectCalls() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return ejectCalls
     }
 }
 
@@ -233,6 +414,25 @@ private final class SendableFlag: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return value
+    }
+}
+
+private final class SendableOptionalStringBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var called = false
+    private var value: String?
+
+    func set(_ value: String?) {
+        lock.lock()
+        called = true
+        self.value = value
+        lock.unlock()
+    }
+
+    func snapshot() -> (Bool, String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (called, value)
     }
 }
 
@@ -743,11 +943,20 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 binaryRoot: "/nonexistent-edp-runtime",
                 diskArbitration: fakeDA
             )
-            try publisher.unpublish(EDPPublishedBlockDevice(
+            let unpublishDone = DispatchSemaphore(value: 0)
+            let unpublishResult = SendableOptionalStringBox()
+            publisher.unpublishAsync(EDPPublishedBlockDevice(
                 bsdName: "disk31",
                 backingPath: "/Volumes/.edp-block-stale-disk31/volume.raw"
-            ))
-            guard fakeDA.ejectCalls.isEmpty else {
+            )) { errorMessage in
+                unpublishResult.set(errorMessage)
+                unpublishDone.signal()
+            }
+            guard unpublishDone.wait(timeout: .now() + 5) == .success,
+                  unpublishResult.snapshot().1 == nil else {
+                throw LifecycleValidationError("D13 stale publication async teardown did not complete")
+            }
+            guard fakeDA.snapshotEjectCalls().isEmpty else {
                 throw LifecycleValidationError("D13 stale synthetic BSD name triggered a physical eject")
             }
             print("SCENARIO=D13_OK stale_diskn_reuse_never_ejects_without_backing_identity")
@@ -965,14 +1174,434 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 didRequestShutdown: { requested.set() }
             )
             var replyError: String?
-            service.requestGracefulShutdown { replyError = $0 }
-            guard replyError == nil,
+            let shutdownReply = DispatchSemaphore(value: 0)
+            service.requestGracefulShutdown {
+                replyError = $0
+                shutdownReply.signal()
+            }
+            guard shutdownReply.wait(timeout: .now() + 2) == .success,
+                  replyError == nil,
                   requested.get(),
                   env.manager.mounted.isEmpty,
                   env.manager.unmountAllCount == 1 else {
-                throw LifecycleValidationError("S10 XPC graceful full exit did not teardown service state")
+                throw LifecycleValidationError("S10 async XPC graceful full exit did not teardown service state")
             }
             print("SCENARIO=S10_OK graceful_full_exit")
+        }
+
+        do {
+            guard EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                timedOut: true,
+                transportStillRunning: true,
+                bridgeMounted: false,
+                logDetail: nil
+            ) else {
+                throw LifecycleValidationError("S11 timed-out live transport was not classified recoverable")
+            }
+            guard EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                timedOut: false,
+                transportStillRunning: false,
+                bridgeMounted: false,
+                logDetail: "MFMount: Failed to mount volume: mount(8) returned 69"
+            ) else {
+                throw LifecycleValidationError("S11 mount(8)=69 was not classified recoverable")
+            }
+            guard EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                timedOut: false,
+                transportStillRunning: false,
+                bridgeMounted: false,
+                logDetail: "File system extension not found"
+            ) else {
+                throw LifecycleValidationError("S11 missing FSKit extension was not classified recoverable")
+            }
+            guard !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                timedOut: false,
+                transportStillRunning: false,
+                bridgeMounted: false,
+                logDetail: "password validation failed"
+            ) else {
+                throw LifecycleValidationError("S11 password failure incorrectly triggered FSKit recovery")
+            }
+            guard !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                timedOut: false,
+                transportStillRunning: false,
+                bridgeMounted: false,
+                logDetail: "DiskImages2 attach failed"
+            ) else {
+                throw LifecycleValidationError("S11 DiskImages2 failure incorrectly triggered FSKit recovery")
+            }
+            guard !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                timedOut: true,
+                transportStillRunning: true,
+                bridgeMounted: true,
+                logDetail: "mount(8) returned 69"
+            ) else {
+                throw LifecycleValidationError("S11 active bridge incorrectly triggered FSKit recovery")
+            }
+            print("SCENARIO=S11_OK fskit_bridge_recovery_classifier_is_narrow")
+        }
+
+        do {
+            let security = try TemporaryKeychainContext()
+            let state = EDPVirtualUSBState()
+            let fixture = try EDPVirtualDiskFactory.capturedDisk4(fixtureDirectory: fixtureDirectory)
+            state.insert(fixture, as: "disk93", registryEntryID: 0x9300, usbRegistryEntryID: 0x9301)
+            let credentials = try security.credentialStore()
+            let policies = try security.policyStore()
+            var stableDeviceID: String?
+            for iteration in 1...20 {
+                let manager = FakeMountManager()
+                let controller = try makeController(
+                    state: state,
+                    credentials: credentials,
+                    policies: policies,
+                    manager: manager,
+                    correctPassword: Array("0000aaaa".utf8),
+                    verifierMetadata: fixture.metadata
+                )
+                controller.reconcileSynchronouslyForTesting()
+                let snapshot = try JSONDecoder().decode(EDPXPCSnapshot.self, from: controller.snapshotData())
+                guard let device = snapshot.devices.first(where: \.connected) else {
+                    throw LifecycleValidationError("S12 cycle \(iteration) lost the connected device")
+                }
+                if let stableDeviceID {
+                    guard device.deviceID == stableDeviceID else {
+                        throw LifecycleValidationError("S12 cycle \(iteration) changed stable device identity")
+                    }
+                } else {
+                    stableDeviceID = device.deviceID
+                }
+                guard manager.mounted.isEmpty else {
+                    throw LifecycleValidationError("S12 cycle \(iteration) accumulated an unexpected mount")
+                }
+                try controller.shutdownGracefully()
+                guard manager.unmountAllCount == 1, manager.mounted.isEmpty else {
+                    throw LifecycleValidationError("S12 cycle \(iteration) did not fully teardown")
+                }
+            }
+            print("SCENARIO=S12_OK repeated_service_start_stop_no_state_growth")
+        }
+
+        do {
+            var success = EDPFSKitMountLifecycleMachine()
+            guard success.start() == .launchAttempt(attempt: 0),
+                  success.attemptLaunched(0) == .waitForBridge(attempt: 0),
+                  success.bridgeActivated(0) == .publish(attempt: 0),
+                  success.publicationFinished(0) == .mountFilesystem(attempt: 0),
+                  success.filesystemMounted(0) == .complete,
+                  success.state == .mounted,
+                  success.recoveryBudget == 1 else {
+                throw LifecycleValidationError("S13 normal mount lifecycle did not reach mounted state")
+            }
+
+            var retry = EDPFSKitMountLifecycleMachine()
+            _ = retry.start()
+            _ = retry.attemptLaunched(0)
+            guard retry.bridgeFailed(0, recoverable: true, failure: "timeout")
+                    == .cleanup(attempt: 0, allowHostRecoveryDuringStop: true),
+                  retry.cleanupFinished(0, hostAlreadyRecovered: false) == .restartHost,
+                  retry.hostRecoveryFinished(true) == .launchAttempt(attempt: 1),
+                  retry.recoveryBudget == 0,
+                  retry.attemptLaunched(1) == .waitForBridge(attempt: 1),
+                  retry.bridgeFailed(1, recoverable: true, failure: "timeout-again")
+                    == .cleanup(attempt: 1, allowHostRecoveryDuringStop: false),
+                  retry.cleanupFinished(1, hostAlreadyRecovered: false) == .fail("timeout-again"),
+                  retry.state == .failed("timeout-again") else {
+                throw LifecycleValidationError("S13 recovery budget did not enforce one recovery and one retry")
+            }
+
+            var alreadyRecovered = EDPFSKitMountLifecycleMachine()
+            _ = alreadyRecovered.start()
+            _ = alreadyRecovered.attemptLaunched(0)
+            _ = alreadyRecovered.bridgeFailed(0, recoverable: true, failure: "mount69")
+            guard alreadyRecovered.cleanupFinished(0, hostAlreadyRecovered: true)
+                    == .launchAttempt(attempt: 1),
+                  alreadyRecovered.recoveryBudget == 0 else {
+                throw LifecycleValidationError("S13 teardown-owned host recovery consumed the wrong budget")
+            }
+
+            var nonRecoverable = EDPFSKitMountLifecycleMachine()
+            _ = nonRecoverable.start()
+            _ = nonRecoverable.attemptLaunched(0)
+            guard nonRecoverable.bridgeFailed(0, recoverable: false, failure: "DiskImages2")
+                    == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
+                  nonRecoverable.cleanupFinished(0, hostAlreadyRecovered: false)
+                    == .fail("DiskImages2"),
+                  nonRecoverable.recoveryBudget == 1 else {
+                throw LifecycleValidationError("S13 non-FSKit failure incorrectly consumed recovery budget")
+            }
+
+            var invalid = EDPFSKitMountLifecycleMachine()
+            guard invalid.bridgeActivated(0) == .fail(
+                "invalid FSKit mount lifecycle transition: bridgeActivated from idle"
+            ),
+            case .failed = invalid.state else {
+                throw LifecycleValidationError("S13 out-of-order lifecycle event did not fail closed")
+            }
+            print("SCENARIO=S13_OK async_fskit_mount_state_machine_transitions")
+        }
+
+        do {
+            var waiting = EDPFSKitMountLifecycleMachine()
+            _ = waiting.start()
+            _ = waiting.attemptLaunched(0)
+            guard waiting.cancel() == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
+                  waiting.recoveryBudget == 1,
+                  waiting.cleanupFinished(0, hostAlreadyRecovered: false)
+                    == .fail("mount operation cancelled"),
+                  waiting.state == .failed("mount operation cancelled") else {
+                throw LifecycleValidationError("S14 waiting-bridge cancellation did not bypass recovery")
+            }
+
+            var cleanupRace = EDPFSKitMountLifecycleMachine()
+            _ = cleanupRace.start()
+            _ = cleanupRace.attemptLaunched(0)
+            _ = cleanupRace.bridgeFailed(0, recoverable: true, failure: "timeout")
+            guard cleanupRace.cancel() == .fail("mount operation cancelled"),
+                  cleanupRace.recoveryBudget == 1,
+                  cleanupRace.hostRecoveryFinished(true) == .fail("mount operation cancelled"),
+                  cleanupRace.state == .failed("mount operation cancelled") else {
+                throw LifecycleValidationError("S14 cancellation during recoverable cleanup allowed late recovery")
+            }
+
+            var publishing = EDPFSKitMountLifecycleMachine()
+            _ = publishing.start()
+            _ = publishing.attemptLaunched(0)
+            _ = publishing.bridgeActivated(0)
+            guard publishing.cancel() == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
+                  publishing.cleanupFinished(0, hostAlreadyRecovered: false)
+                    == .fail("mount operation cancelled") else {
+                throw LifecycleValidationError("S14 publication cancellation did not require cleanup")
+            }
+
+            var filesystem = EDPFSKitMountLifecycleMachine()
+            _ = filesystem.start()
+            _ = filesystem.attemptLaunched(0)
+            _ = filesystem.bridgeActivated(0)
+            _ = filesystem.publicationFinished(0)
+            guard filesystem.cancel() == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
+                  filesystem.cleanupFinished(0, hostAlreadyRecovered: false)
+                    == .fail("mount operation cancelled") else {
+                throw LifecycleValidationError("S14 filesystem-mount cancellation did not require cleanup")
+            }
+
+            var terminal = EDPFSKitMountLifecycleMachine()
+            _ = terminal.start()
+            _ = terminal.attemptLaunched(0)
+            _ = terminal.bridgeActivated(0)
+            _ = terminal.publicationFinished(0)
+            _ = terminal.filesystemMounted(0)
+            guard terminal.bridgeFailed(0, recoverable: true, failure: "late") == .complete,
+                  terminal.state == .mounted else {
+                throw LifecycleValidationError("S14 late callback corrupted mounted terminal state")
+            }
+
+            print("SCENARIO=S14_OK cancellation_priority_and_late_callback_idempotence")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.manager.holdNextMount(deviceID: device.deviceID, partitionType: 1)
+
+            let first = SendableOptionalStringBox()
+            let second = SendableOptionalStringBox()
+            let firstDone = DispatchSemaphore(value: 0)
+            let secondDone = DispatchSemaphore(value: 0)
+            env.controller.mountPartitionAsync(deviceID: device.deviceID, partitionType: 1) { error in
+                first.set(error)
+                firstDone.signal()
+            }
+            env.controller.mountPartitionAsync(deviceID: device.deviceID, partitionType: 1) { error in
+                second.set(error)
+                secondDone.signal()
+            }
+            try waitForCondition("S15 duplicate mount did not join pending single-flight") {
+                env.manager.pendingDuplicateWaiterCount(deviceID: device.deviceID, partitionType: 1) == 1
+            }
+            guard env.manager.mountAttemptCount(deviceID: device.deviceID, partitionType: 1) == 1,
+                  !first.snapshot().0,
+                  !second.snapshot().0 else {
+                throw LifecycleValidationError("S15 duplicate mount completed early or launched twice")
+            }
+            env.manager.releaseHeldMount(deviceID: device.deviceID, partitionType: 1)
+            guard firstDone.wait(timeout: .now() + 5) == .success,
+                  secondDone.wait(timeout: .now() + 5) == .success,
+                  first.snapshot().1 == nil,
+                  second.snapshot().1 == nil,
+                  env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
+                throw LifecycleValidationError("S15 single-flight completion fanout failed")
+            }
+            try env.controller.unmountPartition(deviceID: device.deviceID, partitionType: 1)
+            print("SCENARIO=S15_OK duplicate_mount_single_flight_fanout")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.manager.holdNextMount(deviceID: device.deviceID, partitionType: 1)
+
+            let mountResult = SendableOptionalStringBox()
+            let unmountResult = SendableOptionalStringBox()
+            let mountDone = DispatchSemaphore(value: 0)
+            let unmountDone = DispatchSemaphore(value: 0)
+            env.controller.mountPartitionAsync(deviceID: device.deviceID, partitionType: 1) { error in
+                mountResult.set(error)
+                mountDone.signal()
+            }
+            try waitForCondition("S16 mount did not reach deferred state") {
+                env.manager.hasPendingMount(deviceID: device.deviceID, partitionType: 1)
+            }
+            env.controller.unmountPartitionAsync(deviceID: device.deviceID, partitionType: 1) { error in
+                unmountResult.set(error)
+                unmountDone.signal()
+            }
+            try waitForCondition("S16 unmount did not mark pending mount cancelled") {
+                env.manager.pendingMountIsCancelled(deviceID: device.deviceID, partitionType: 1)
+            }
+            env.manager.releaseHeldMount(deviceID: device.deviceID, partitionType: 1)
+            guard mountDone.wait(timeout: .now() + 5) == .success,
+                  unmountDone.wait(timeout: .now() + 5) == .success,
+                  mountResult.snapshot().1?.contains("cancelled") == true,
+                  unmountResult.snapshot().1 == nil,
+                  !env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
+                throw LifecycleValidationError("S16 mount→unmount cancellation ordering failed")
+            }
+            print("SCENARIO=S16_OK mount_then_unmount_cancels_without_residue")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.manager.holdNextMount(deviceID: device.deviceID, partitionType: 1)
+
+            let mountResult = SendableOptionalStringBox()
+            let ejectResult = SendableOptionalStringBox()
+            let mountDone = DispatchSemaphore(value: 0)
+            let ejectDone = DispatchSemaphore(value: 0)
+            env.controller.mountPartitionAsync(deviceID: device.deviceID, partitionType: 1) { error in
+                mountResult.set(error)
+                mountDone.signal()
+            }
+            try waitForCondition("S17 mount did not reach deferred state") {
+                env.manager.hasPendingMount(deviceID: device.deviceID, partitionType: 1)
+            }
+            env.controller.ejectAsync(deviceID: device.deviceID) { error in
+                ejectResult.set(error)
+                ejectDone.signal()
+            }
+            try waitForCondition("S17 eject did not cancel pending mount") {
+                env.manager.pendingMountIsCancelled(deviceID: device.deviceID, partitionType: 1)
+            }
+            env.manager.releaseHeldMount(deviceID: device.deviceID, partitionType: 1)
+            guard mountDone.wait(timeout: .now() + 5) == .success,
+                  ejectDone.wait(timeout: .now() + 5) == .success,
+                  mountResult.snapshot().1?.contains("cancelled") == true,
+                  ejectResult.snapshot().1 == nil,
+                  env.diskArbitration.ejectCalls == [device.bsdName],
+                  !env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
+                throw LifecycleValidationError("S17 mount→eject did not serialize cancellation before physical eject")
+            }
+            print("SCENARIO=S17_OK mount_then_eject_serializes_before_physical_release")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.manager.holdNextMount(deviceID: device.deviceID, partitionType: 1)
+
+            let mountResult = SendableOptionalStringBox()
+            let firstShutdown = SendableOptionalStringBox()
+            let secondShutdown = SendableOptionalStringBox()
+            let rejectedMount = SendableOptionalStringBox()
+            let mountDone = DispatchSemaphore(value: 0)
+            let firstShutdownDone = DispatchSemaphore(value: 0)
+            let secondShutdownDone = DispatchSemaphore(value: 0)
+            let rejectedDone = DispatchSemaphore(value: 0)
+            env.controller.mountPartitionAsync(deviceID: device.deviceID, partitionType: 1) { error in
+                mountResult.set(error)
+                mountDone.signal()
+            }
+            try waitForCondition("S18 mount did not reach deferred state") {
+                env.manager.hasPendingMount(deviceID: device.deviceID, partitionType: 1)
+            }
+            env.controller.shutdownGracefullyAsync { error in
+                firstShutdown.set(error)
+                firstShutdownDone.signal()
+            }
+            env.controller.shutdownGracefullyAsync { error in
+                secondShutdown.set(error)
+                secondShutdownDone.signal()
+            }
+            env.controller.mountPartitionAsync(deviceID: device.deviceID, partitionType: 1) { error in
+                rejectedMount.set(error)
+                rejectedDone.signal()
+            }
+            guard rejectedDone.wait(timeout: .now() + 5) == .success,
+                  rejectedMount.snapshot().1?.contains("shutting down") == true else {
+                throw LifecycleValidationError("S18 shutdown did not reject new mount work")
+            }
+            try waitForCondition("S18 shutdown did not cancel pending mount") {
+                env.manager.pendingMountIsCancelled(deviceID: device.deviceID, partitionType: 1)
+            }
+            env.manager.releaseHeldMount(deviceID: device.deviceID, partitionType: 1)
+            guard mountDone.wait(timeout: .now() + 5) == .success,
+                  firstShutdownDone.wait(timeout: .now() + 5) == .success,
+                  secondShutdownDone.wait(timeout: .now() + 5) == .success,
+                  mountResult.snapshot().1?.contains("cancelled") == true,
+                  firstShutdown.snapshot().1 == nil,
+                  secondShutdown.snapshot().1 == nil,
+                  env.manager.unmountAllCount == 1,
+                  env.manager.mounted.isEmpty else {
+                throw LifecycleValidationError("S18 duplicate shutdown did not coalesce around in-flight mount")
+            }
+            print("SCENARIO=S18_OK shutdown_coalesces_and_cancels_inflight_mount")
+        }
+
+        do {
+            var callbackFirst = EDPDiskArbitrationCompletionGate()
+            guard callbackFirst.accept(.callback),
+                  !callbackFirst.accept(.timeout),
+                  callbackFirst.terminalEvent == .callback else {
+                throw LifecycleValidationError(
+                    "S19 callback-first DA completion gate was not once-only"
+                )
+            }
+
+            var timeoutFirst = EDPDiskArbitrationCompletionGate()
+            guard timeoutFirst.accept(.timeout),
+                  !timeoutFirst.accept(.callback),
+                  timeoutFirst.terminalEvent == .timeout else {
+                throw LifecycleValidationError(
+                    "S19 timeout-first late callback was not ignored"
+                )
+            }
+
+            var duplicateCallback = EDPDiskArbitrationCompletionGate()
+            guard duplicateCallback.accept(.callback),
+                  !duplicateCallback.accept(.callback),
+                  duplicateCallback.terminalEvent == .callback else {
+                throw LifecycleValidationError(
+                    "S19 duplicate DA callback completed more than once"
+                )
+            }
+            print("SCENARIO=S19_OK disk_arbitration_completion_once_timeout_late_callback")
         }
 
         do {
@@ -991,14 +1620,18 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 count: 1,
                 message: "EBUSY: injected user-volume unmount failure"
             )
-            var unmountReplyCalled = false
-            var unmountReplyError: String?
+            let unmountReply = SendableOptionalStringBox()
+            let unmountReplySemaphore = DispatchSemaphore(value: 0)
             service.unmountPartition(deviceID: device.deviceID, partitionType: 1) { error in
-                unmountReplyCalled = true
-                unmountReplyError = error
+                unmountReply.set(error)
+                unmountReplySemaphore.signal()
             }
-            guard unmountReplyCalled,
-                  unmountReplyError?.contains("EBUSY") == true,
+            guard unmountReplySemaphore.wait(timeout: .now() + 5) == .success else {
+                throw LifecycleValidationError("M11 XPC unmount reply timed out")
+            }
+            let unmountSnapshot = unmountReply.snapshot()
+            guard unmountSnapshot.0,
+                  unmountSnapshot.1?.contains("EBUSY") == true,
                   env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
                 throw LifecycleValidationError(
                     "M11 XPC unmount failure was hidden or session state was discarded"
@@ -1073,6 +1706,19 @@ struct ValidateCredentialPolicyServiceLifecycle {
             },
             performLegacyRuntimeMigration: false
         )
+    }
+
+    private static func waitForCondition(
+        _ message: String,
+        timeout: TimeInterval = 5,
+        condition: () -> Bool
+    ) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        throw LifecycleValidationError(message)
     }
 
     private static func expectThrows(_ message: String, _ operation: () throws -> Void) throws {

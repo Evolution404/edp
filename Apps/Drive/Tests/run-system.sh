@@ -6,8 +6,12 @@ TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
+NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
+MACFUSE_POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPMacFUSERuntimePolicy.swift"
 POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPDevicePolicyStore.swift"
 CREDENTIAL_SOURCE="${ROOT}/Apps/Drive/product/EDPCredentialStore.swift"
+EMBEDDED_SERVICE_PLIST="${ROOT}/Apps/Drive/product/App/com.edp.drive.service.plist"
+LEGACY_SERVICE_PLIST="${ROOT}/Apps/Drive/installer/com.edp.drive.service.plist"
 
 # The default regression suite must never gain an interactive elevation path.
 if /usr/bin/grep -RInE '(^|[[:space:]])sudo([[:space:]]|$)|/usr/bin/sudo' "${TEST_ROOT}" \
@@ -27,10 +31,12 @@ fi
 # Destructive filesystem preparation is allowed only through the storage
 # runner's synthetic-device proof. Whole-disk erase is never permitted.
 ! /usr/bin/grep -RInF 'diskutil eraseDisk' "${TEST_ROOT}" --exclude='run-system.sh'
-/usr/bin/grep -Fq 'assert_synthetic_device "$bsd" "$path"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'assert_fixture_device "$bsd" "$path"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'assert_synthetic_device "$attached_bsd" "$backing"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'diskutil eraseVolume "$filesystem" "$label" "$bsd"' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'backing escaped test root' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'Virtual' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'fixture backing escaped test root' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'synthetic backing escaped test root' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'Virtual:                   Yes' "${STORAGE_RUNNER}"
 
 # The console launcher must allow both transport modes.  A missing read-only
 # target breaks the boot FAT16 path while leaving encrypted partitions healthy,
@@ -61,7 +67,81 @@ echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 ! /usr/bin/grep -Fq '请先在主界面保存密码' "${APP_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_DEFAULT_POLICY_RATCHETS_OK'
 
+# Full in-place upgrades must terminate the old foreground UI before replacing
+# the signed App bundle. Otherwise that stale process correctly fails the XPC
+# peer signature check against the newly installed bundle and cannot control the
+# privileged service.
+PREINSTALL_SOURCE="${ROOT}/Apps/Drive/installer/scripts/native-preinstall"
+/usr/bin/grep -Fq 'stop_running_drive_ui' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'DRIVE_UI_EXECUTABLE="/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'EDP Drive upgrade stopping the currently running foreground UI before bundle replacement.' "${PREINSTALL_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_UPGRADE_UI_HANDOFF_OK'
+
+# launchd defaults to a 10-second minimum runtime. The Drive daemon is explicitly
+# user-stoppable and restartable, so both packaging modes must override that
+# throttle without reintroducing KeepAlive/RunAtLoad semantics.
+for plist in "${EMBEDDED_SERVICE_PLIST}" "${LEGACY_SERVICE_PLIST}"; do
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :ThrottleInterval' "${plist}")" == "1" ]]
+  ! /usr/libexec/PlistBuddy -c 'Print :KeepAlive' "${plist}" >/dev/null 2>&1
+  ! /usr/libexec/PlistBuddy -c 'Print :RunAtLoad' "${plist}" >/dev/null 2>&1
+done
+echo 'RESULT=DRIVE_SYSTEM_SERVICE_RESTART_THROTTLE_OK'
+
+# Mount/unmount/eject/shutdown lifecycle is intentionally single-path and
+# asynchronous. Never reintroduce polling sleeps or synchronous manager
+# fallbacks into the production daemon; regression-only wait adapters stay
+# isolated behind EDP_REGRESSION_TESTS.
+TRANSPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPTransportProvider.swift"
+! /usr/bin/grep -Fq 'private func waitUntil(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'usleep(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'com.edp.drive.transport-stop-sync' "${TRANSPORT_SOURCE}"
+! /usr/bin/grep -Fq 'func stop(' "${TRANSPORT_SOURCE}"
+! /usr/bin/grep -Fq 'manager.mount(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'manager.unmount(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'manager.eject(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'manager.unmountAll(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func mountAsync(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func unmountAsync(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func ejectAsync(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func unmountAllAsync(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func shutdownGracefullyAsync(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq '#if EDP_REGRESSION_TESTS' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_ASYNC_LIFECYCLE_RATCHET_OK'
+
+# Disk Arbitration is a callback-driven subsystem. Production code must not
+# turn DA callbacks back into synchronous waits, and all runtime callers must
+# consume the async API. Regression-only adapters may wait behind the test flag.
+/usr/bin/grep -Fq 'func unmountWholeAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'func unmountAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'func mountAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'func mountNobrowseAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'func ejectAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'EDPDiskArbitrationCompletionGate' "${NATIVE_SYSTEM_SOURCE}"
+! /usr/bin/grep -Fq 'box.semaphore.wait' "${NATIVE_SYSTEM_SOURCE}"
+! /usr/bin/grep -Fq 'diskArbitration.unmountWhole(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'diskArbitration.eject(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'diskArbitration.mount(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'diskArbitration.mountNobrowse(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'func unpublish(' "${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
+/usr/bin/grep -Fq 'func unpublishAsync(' "${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
+echo 'RESULT=DRIVE_SYSTEM_ASYNC_DISK_ARBITRATION_OK'
+
+# Normal product lifecycle must not fall back to shell-side process inspection
+# or codesign/umount helpers. Runtime signature validation is Security.framework,
+# service liveness is SMAppService + XPC, and VFS teardown is unmount(2).
+! /usr/bin/grep -Fq '/bin/launchctl' "${APP_SOURCE}"
+! /usr/bin/grep -Fq '/usr/bin/codesign' "${MACFUSE_POLICY_SOURCE}"
+/usr/bin/grep -Fq 'SecStaticCodeCheckValidity' "${MACFUSE_POLICY_SOURCE}"
+/usr/bin/grep -Fq 'kSecCodeInfoTeamIdentifier' "${MACFUSE_POLICY_SOURCE}"
+! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${MACFUSE_POLICY_SOURCE}"
+! /usr/bin/grep -Fq '/sbin/umount' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'Darwin.unmount(path, flags)' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'Task.detached(priority: .utility)' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
+
 # Canonical top-level gates must remain wired and hardware-free by construction.
+/usr/bin/grep -Fq 'drive-test-storage-smoke:' "${ROOT}/Makefile"
+/usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'drive-test-system:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system' "${ROOT}/Makefile"
 

@@ -54,7 +54,7 @@ private func macFUSEModulesEnabledInSettings() -> Bool {
 /// while FSKit keeps module enablement in the console user's settings. Perform
 /// this user-context step once from the signed App so a clean install does not
 /// require a terminal workaround before the first Direct MFMount.
-private func ensureMacFUSELocalEnablement() throws {
+private func ensureMacFUSELocalEnablement() throws -> Bool {
     let genericModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
     let localModule = edpMacFUSEHostPath
@@ -62,7 +62,7 @@ private func ensureMacFUSELocalEnablement() throws {
     guard FileManager.default.fileExists(atPath: edpMacFUSEHostPath),
           FileManager.default.fileExists(atPath: genericModule),
           FileManager.default.fileExists(atPath: localModule) else {
-        return
+        return false
     }
 
     let pluginKit = "/usr/bin/pluginkit"
@@ -76,7 +76,7 @@ private func ensureMacFUSELocalEnablement() throws {
     }
     let settingsWereEnabled = macFUSEModulesEnabledInSettings()
     if pluginsWereEnabled && settingsWereEnabled {
-        return
+        return false
     }
 
     if !pluginsWereEnabled {
@@ -138,9 +138,32 @@ private func ensureMacFUSELocalEnablement() throws {
 
     if settingsChanged || !pluginsWereEnabled {
         // Only the current user's agents can be restarted here. The system
-        // fskitd observes their new registration without requiring sudo.
+        // fskitd observes their new registration without requiring sudo. Agent
+        // readiness is awaited asynchronously by the view model; never block
+        // the main actor after sending this reset.
         _ = try? runUserTool("/usr/bin/killall", ["-9", "fskit_agent", "extensionkitservice"])
-        Thread.sleep(forTimeInterval: 3)
+        return true
+    }
+    return false
+}
+
+private enum EDPServiceLifecycleState {
+    case stopped
+    case starting(id: UUID)
+    case running
+    case stopping(id: UUID, restartAfterStop: Bool, completion: (() -> Void)?)
+    case failed(message: String)
+
+    var operationID: UUID? {
+        switch self {
+        case .starting(let id), .stopping(let id, _, _): return id
+        case .stopped, .running, .failed: return nil
+        }
+    }
+
+    var restartAfterStop: Bool {
+        if case .stopping(_, let restartAfterStop, _) = self { return restartAfterStop }
+        return false
     }
 }
 
@@ -164,9 +187,7 @@ final class EDPVaultViewModel: ObservableObject {
     private let servicePreferenceKey = "com.edp.drive.service.desired-running"
     private var connection: NSXPCConnection?
     private var connectionGeneration: UUID?
-    private var serviceOperationID: UUID?
-    private var restartAfterStop = false
-    private var stopCompletion: (() -> Void)?
+    private var serviceLifecycle: EDPServiceLifecycleState = .running
 
     var needsFullDiskAccess: Bool {
         snapshot.devices.contains { $0.connected && !$0.privilegedAccessReady }
@@ -218,15 +239,28 @@ final class EDPVaultViewModel: ObservableObject {
             serviceDesiredRunning = UserDefaults.standard.bool(forKey: servicePreferenceKey)
         }
         ensureServiceRegistration()
-        do {
-            try ensureMacFUSELocalEnablement()
-        } catch {
-            lastError = "macFUSE Local 启用失败：\(error.localizedDescription)"
-        }
         refreshTransportRuntimeState()
         refresh()
-        if transportRuntimeReady == true {
-            retryTransientAutomaticMounts()
+        Task { [weak self] in
+            let enablement = await Task.detached(priority: .utility) { () -> (restartedAgents: Bool, error: String?) in
+                do {
+                    return (try ensureMacFUSELocalEnablement(), nil)
+                } catch {
+                    return (false, error.localizedDescription)
+                }
+            }.value
+            guard let self else { return }
+            if let error = enablement.error {
+                self.lastError = "macFUSE Local 启用失败：\(error)"
+            }
+            if enablement.restartedAgents {
+                try? await Task.sleep(for: .seconds(3))
+            }
+            self.refreshTransportRuntimeState()
+            if self.transportRuntimeReady == true {
+                self.retryTransientAutomaticMounts()
+            }
+            self.refresh()
         }
         Task { [weak self] in
             while !Task.isCancelled {
@@ -301,10 +335,21 @@ final class EDPVaultViewModel: ObservableObject {
     func refreshServiceStatus() {
         switch currentServiceStatus() {
         case .enabled:
-            if !serviceDesiredRunning {
-                serviceStatus = launchdServiceIsRunning() ? "正在停止…" : "已停止"
-            } else if connection == nil {
-                serviceStatus = launchdServiceIsRunning() ? "正在连接…" : "等待按需启动"
+            switch serviceLifecycle {
+            case .stopping(_, let restartAfterStop, _):
+                serviceStatus = restartAfterStop ? "正在重启…" : "正在停止…"
+            case .starting:
+                serviceStatus = "正在启动…"
+            case .running:
+                if connection != nil {
+                    serviceStatus = "运行中"
+                } else {
+                    serviceStatus = serviceDesiredRunning ? "等待按需启动" : "已停止"
+                }
+            case .stopped:
+                serviceStatus = serviceDesiredRunning ? "等待按需启动" : "已停止"
+            case .failed:
+                serviceStatus = serviceDesiredRunning ? "状态异常" : "已停止"
             }
         case .requiresApproval: serviceStatus = "需要系统批准"
         case .notRegistered: serviceStatus = "未注册"
@@ -313,71 +358,82 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    private func launchdServiceIsRunning() -> Bool {
-        guard let output = try? runUserTool(
-            "/bin/launchctl",
-            ["print", "system/com.edp.drive.service"]
-        ) else { return false }
-        return output.contains("state = running") || output.contains("\n\tpid = ")
-    }
-
     private func persistServicePreference() {
         UserDefaults.standard.set(serviceDesiredRunning, forKey: servicePreferenceKey)
     }
 
     private func armServiceTimeout(id: UUID, operation: String, seconds: Double = 12) {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            guard let self, self.serviceOperationID == id else { return }
-            self.serviceOperationID = nil
+            guard let self, self.serviceLifecycle.operationID == id else { return }
+            self.serviceLifecycle = .failed(message: "后台服务\(operation)超时")
+            // A timeout is an unknown state, not proof that launchd stopped the
+            // daemon. Keep desired-running true so the next XPC health probe
+            // reconciles reality instead of trusting a shell-side process list.
+            self.serviceDesiredRunning = true
+            self.persistServicePreference()
             self.isBusy = false
-            if operation == "重启" {
-                self.serviceDesiredRunning = true
-                self.persistServicePreference()
-            }
-            self.restartAfterStop = false
-            self.stopCompletion = nil
             self.lastError = "后台服务\(operation)超时"
-            self.refreshServiceStatus()
+            self.serviceStatus = "状态未知（\(operation)超时）"
         }
     }
 
     private func serviceConnectionEnded() {
         connection = nil
         connectionGeneration = nil
-        guard !serviceDesiredRunning else {
-            serviceStatus = "连接已中断"
-            return
-        }
+        let priorState = serviceLifecycle
 
-        // A service exit can report both interruption and invalidation. Clear
-        // the lifecycle operation exactly once so an intentional restart can
-        // never be scheduled twice by the two NSXPCConnection callbacks.
-        let shouldRestart = restartAfterStop
-        let completion = stopCompletion
-        restartAfterStop = false
-        stopCompletion = nil
-        serviceOperationID = nil
-        isBusy = false
-        serviceStatus = "已停止"
-        if shouldRestart {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.startService()
+        switch priorState {
+        case .stopping(_, let restartAfterStop, let completion):
+            serviceLifecycle = .stopped
+            serviceDesiredRunning = false
+            persistServicePreference()
+            isBusy = false
+            serviceStatus = "已停止"
+            if restartAfterStop {
+                startService()
+            } else {
+                completion?()
             }
-        } else {
-            completion?()
+        case .starting:
+            serviceLifecycle = .failed(message: "后台服务启动期间连接中断")
+            isBusy = false
+            serviceStatus = "启动失败"
+            lastError = "后台服务启动期间连接中断"
+        case .running:
+            serviceLifecycle = .failed(message: "后台服务连接已中断")
+            isBusy = false
+            serviceStatus = "连接已中断"
+        case .stopped, .failed:
+            isBusy = false
+            serviceStatus = "已停止"
         }
     }
 
     func startService() {
-        restartAfterStop = false
-        stopCompletion = nil
+        switch serviceLifecycle {
+        case .running, .starting:
+            serviceDesiredRunning = true
+            persistServicePreference()
+            return
+        case .stopping(let id, _, _):
+            // User intent changed while teardown is in flight. Do not create a
+            // second XPC connection; queue exactly one start after invalidation.
+            serviceLifecycle = .stopping(id: id, restartAfterStop: true, completion: nil)
+            return
+        case .stopped, .failed:
+            break
+        }
+
         serviceDesiredRunning = true
         persistServicePreference()
         ensureServiceRegistration()
         guard currentServiceStatus() == .enabled else {
-            lastError = "后台服务尚未注册、启用或批准"
+            let message = "后台服务尚未注册、启用或批准"
+            serviceLifecycle = .failed(message: message)
+            lastError = message
             return
         }
+
         connection?.invalidate()
         connection = nil
         connectionGeneration = nil
@@ -385,33 +441,42 @@ final class EDPVaultViewModel: ObservableObject {
         serviceStatus = "正在启动…"
         lastError = nil
         let operationID = UUID()
-        serviceOperationID = operationID
+        serviceLifecycle = .starting(id: operationID)
         armServiceTimeout(id: operationID, operation: "启动")
+
         guard let connection = connectIfNeeded(),
               let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
                   Task { @MainActor in
-                      guard let self, self.serviceOperationID == operationID else { return }
-                      self.serviceOperationID = nil
+                      guard let self,
+                            case .starting(let currentID) = self.serviceLifecycle,
+                            currentID == operationID else { return }
+                      let message = "后台服务启动失败：\(error.localizedDescription)"
+                      self.serviceLifecycle = .failed(message: message)
                       self.isBusy = false
-                      self.lastError = "后台服务启动失败：\(error.localizedDescription)"
+                      self.lastError = message
                       self.refreshServiceStatus()
                   }
               }) as? EDPVaultXPCProtocol else {
-            serviceOperationID = nil
+            let message = "无法建立后台服务连接"
+            serviceLifecycle = .failed(message: message)
             isBusy = false
-            lastError = "无法建立后台服务连接"
+            lastError = message
             return
         }
+
         proxy.healthCheck { @Sendable [weak self] response in
             Task { @MainActor in
-                guard let self, self.serviceOperationID == operationID else { return }
+                guard let self,
+                      case .starting(let currentID) = self.serviceLifecycle,
+                      currentID == operationID else { return }
                 guard response == "com.edp.drive.service:running" else {
-                    self.lastError = "后台服务返回了无效健康状态"
+                    let message = "后台服务返回了无效健康状态"
+                    self.serviceLifecycle = .failed(message: message)
+                    self.lastError = message
                     self.isBusy = false
-                    self.serviceOperationID = nil
                     return
                 }
-                self.serviceOperationID = nil
+                self.serviceLifecycle = .running
                 self.isBusy = false
                 self.serviceStatus = "运行中"
                 self.retryTransientAutomaticMounts()
@@ -421,64 +486,90 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func stopService(restart: Bool = false, completion: (() -> Void)? = nil) {
+        switch serviceLifecycle {
+        case .stopped:
+            serviceDesiredRunning = false
+            persistServicePreference()
+            if restart { startService() } else { completion?() }
+            return
+        case .stopping(let id, _, let existingCompletion):
+            // Collapse repeated Stop/Restart clicks into the one teardown that
+            // is already running. The newest intent wins without a second XPC
+            // shutdown request.
+            serviceLifecycle = .stopping(
+                id: id,
+                restartAfterStop: restart,
+                completion: restart ? nil : (completion ?? existingCompletion)
+            )
+            return
+        case .running, .starting, .failed:
+            break
+        }
+
         let activeConnection = connection ?? connectIfNeeded()
         guard let activeConnection,
               let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
                   Task { @MainActor in
-                      guard let self else { return }
+                      guard let self,
+                            case .stopping = self.serviceLifecycle else { return }
+                      let message = "后台服务停止失败：\(error.localizedDescription)"
+                      self.serviceLifecycle = .failed(message: message)
                       self.serviceDesiredRunning = true
                       self.persistServicePreference()
-                      self.restartAfterStop = false
-                      self.stopCompletion = nil
-                      self.serviceOperationID = nil
                       self.isBusy = false
-                      self.lastError = "后台服务停止失败：\(error.localizedDescription)"
+                      self.lastError = message
                       self.refreshServiceStatus()
                   }
               }) as? EDPVaultXPCProtocol else {
-            if launchdServiceIsRunning() {
+            // No usable XPC connection and no enabled service registration means
+            // there is no safe process-level operation to perform here. Never
+            // fall back to launchctl/pkill; reconcile through SMAppService + XPC.
+            if currentServiceStatus() == .enabled {
+                let message = "后台服务已启用，但无法建立安全 XPC 连接；未执行强制终止。"
+                serviceLifecycle = .failed(message: message)
                 serviceDesiredRunning = true
                 persistServicePreference()
-                restartAfterStop = false
-                stopCompletion = nil
-                serviceStatus = "运行中（XPC 不可用）"
-                lastError = "后台服务仍在运行，但无法建立安全 XPC 连接；未执行强制终止。"
+                serviceStatus = "状态异常"
+                lastError = message
                 return
             }
+            serviceLifecycle = .stopped
             serviceDesiredRunning = false
             persistServicePreference()
-            restartAfterStop = false
-            stopCompletion = nil
             serviceStatus = "已停止"
-            if restart { startService() }
-            else { completion?() }
+            if restart { startService() } else { completion?() }
             return
         }
+
         serviceDesiredRunning = false
         persistServicePreference()
-        restartAfterStop = restart
-        stopCompletion = restart ? nil : completion
         isBusy = true
         serviceStatus = restart ? "正在重启…" : "正在停止…"
         lastError = nil
         let operationID = UUID()
-        serviceOperationID = operationID
+        serviceLifecycle = .stopping(
+            id: operationID,
+            restartAfterStop: restart,
+            completion: restart ? nil : completion
+        )
         armServiceTimeout(id: operationID, operation: restart ? "重启" : "停止")
+
         proxy.requestGracefulShutdown { @Sendable [weak self] errorMessage in
             Task { @MainActor in
-                guard let self, self.serviceOperationID == operationID else { return }
+                guard let self,
+                      case .stopping(let currentID, _, _) = self.serviceLifecycle,
+                      currentID == operationID else { return }
                 if let errorMessage {
+                    let message = "后台服务停止失败：\(errorMessage)"
+                    self.serviceLifecycle = .failed(message: message)
                     self.serviceDesiredRunning = true
                     self.persistServicePreference()
-                    self.restartAfterStop = false
-                    self.stopCompletion = nil
-                    self.serviceOperationID = nil
                     self.isBusy = false
-                    self.lastError = "后台服务停止失败：\(errorMessage)"
+                    self.lastError = message
                     self.refreshServiceStatus()
                 }
-                // Success completes through XPC invalidation after the service
-                // has torn down every session and exited normally.
+                // Success completes only when this exact connection generation
+                // invalidates. The state machine ignores duplicate callbacks.
             }
         }
     }
@@ -3493,30 +3584,7 @@ struct EDPUSBVaultApp: App {
                 print("RESULT=EDP_SERVICE_GRACEFUL_STOP_FAILED")
                 exit(1)
             }
-            var disconnected = false
-            let deadline = Date().addingTimeInterval(12)
-            while Date() < deadline {
-                if disconnectSemaphore.wait(timeout: .now() + 0.25) == .success {
-                    disconnected = true
-                    break
-                }
-                let launchctl = Process()
-                launchctl.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-                launchctl.arguments = ["print", "system/com.edp.drive.service"]
-                launchctl.standardOutput = FileHandle.nullDevice
-                launchctl.standardError = FileHandle.nullDevice
-                do {
-                    try launchctl.run()
-                    launchctl.waitUntilExit()
-                    if launchctl.terminationStatus != 0 {
-                        disconnected = true
-                        break
-                    }
-                } catch {
-                    disconnected = true
-                    break
-                }
-            }
+            let disconnected = disconnectSemaphore.wait(timeout: .now() + 12) == .success
             connection.invalidate()
             guard disconnected else {
                 print("RESULT=XPC_GRACEFUL_STOP_EXIT_TIMEOUT")

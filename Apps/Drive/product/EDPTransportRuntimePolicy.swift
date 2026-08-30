@@ -27,7 +27,7 @@ enum EDPTransportRuntimePolicy {
         return EDPTransportRuntimeStatus(
             backend: backend,
             finderHidden: capabilities.finderHidden,
-            runtimeDescription: "macFUSE Local \(status.localModuleBundleID) team=\(status.teamID) userRegistered=\(status.localRegisteredWithPluginKit)"
+            runtimeDescription: "macFUSE Local \(status.localModuleBundleID) team=\(status.teamID)"
         )
     }
 }

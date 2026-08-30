@@ -45,15 +45,13 @@ make drive-test-fast
 
 `drive-test-fast` runs the EDPCore package tests, strict Swift 6 UI typecheck, native golden core validation, media-classification validation, transport lifecycle validation, and the product policy-model contract. The policy-model gate locks all three partition types to safe opt-in defaults and verifies that later default changes never mutate existing device records. It is deliberately hardware-free.
 
-`drive-test-virtual-usb` extends that baseline through TEST-C/TEST-D/TEST-E. It drives production discovery and daemon state through injected virtual whole-USB media, virtual metadata/raw devices, temporary Keychain/policy stores, and fake mount/Disk Arbitration dependencies. It covers P01–P30, C01–C08, D01–D13, and S01–S10 without opening a physical raw disk. D01–D13 cover safe new-device defaults, independent auto-mount/password-probe policy, built-in/custom default passwords, once-per-insertion wrong-password suppression, reconnect retry, XPC round-trips, Keychain-only default-password storage, manual-mount persistence, and stale synthetic `diskN` reuse protection. `Tests/run-service-lifecycle.sh` is the focused credential/default-policy/service runner used by that target.
+`drive-test-virtual-usb` extends that baseline through TEST-C/TEST-D/TEST-E. It drives production discovery and daemon state through injected virtual whole-USB media, virtual metadata/raw devices, temporary Keychain/policy stores, and fake mount/Disk Arbitration dependencies. It covers P01–P30, C01–C08, D01–D13, and S01–S19 without opening a physical raw disk. D01–D13 cover safe new-device defaults, independent auto-mount/password-probe policy, built-in/custom default passwords, once-per-insertion wrong-password suppression, reconnect retry, XPC round-trips, Keychain-only default-password storage, manual-mount persistence, and stale synthetic `diskN` reuse protection. S13–S19 lock the asynchronous lifecycle itself: bounded one-shot FSKit host recovery/retry, cancellation priority, terminal-state idempotence, duplicate-mount single-flight fanout, mount→unmount cancellation, mount→eject serialization, coalesced shutdown while a mount is in flight, and once-only Disk Arbitration completion when timeout/late/duplicate callbacks race. `Tests/run-service-lifecycle.sh` is the focused credential/default-policy/service runner used by that target.
 
 `drive-test-virtual-usb` includes the production discovery dependency seam plus
 the complete P16–P30 lifecycle/fault matrix. It reads only immutable fixture
 files and never opens `/dev/rdisk*`.
 
-`drive-test-storage` covers M01–M14. Its default stress gate performs 50 full
-mount/attach/filesystem/unmount/eject/transport-remount cycles and rejects a
-loop count outside the accepted 50–100 range. It verifies boot FAT16 at both
+`drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. The smoke profile runs 5 complete cycles for rapid functional regression; the release profile remains the authoritative stress gate at 50 full mount/attach/filesystem/unmount/eject/transport-remount cycles and rejects a loop count outside the accepted 50–100 range. It verifies boot FAT16 at both
 the native read-only mount and transport `EROFS` layers, encrypted persistence,
 Finder-style operations, large/random I/O, unmount failure propagation,
 transport crash recovery, durability failure propagation, and concurrent
@@ -68,8 +66,12 @@ Instruments `Animation Hitches` trace. Frames above 33 ms fail the gate.
 
 `drive-test-system` is the release safety ratchet. It rejects sudo dependencies,
 literal physical `/dev/rdisk*` opens, unguarded destructive disk operations,
-legacy device-ID migration, and regressions away from the native
-`NSSplitViewController`/window-style menu bar architecture.
+legacy device-ID migration, synchronous mount/unmount/eject/shutdown fallbacks,
+and regressions away from the native `NSSplitViewController`/window-style menu
+bar architecture. It also locks normal runtime control to native APIs: macFUSE
+signature validation uses Security.framework rather than `codesign`, daemon
+liveness uses SMAppService/XPC rather than `launchctl`, and VFS teardown uses
+`unmount(2)` rather than `/sbin/umount`.
 
 The phase targets are intentionally independent so CI can isolate failures.
 `drive-test-all` is the only aggregate target and runs every hardware-free gate.
@@ -80,6 +82,7 @@ Canonical targets:
 ```text
 drive-test-identity
 drive-test-virtual-usb
+drive-test-storage-smoke
 drive-test-storage
 drive-test-ui
 drive-test-system

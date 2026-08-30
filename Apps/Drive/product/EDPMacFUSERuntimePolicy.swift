@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 
 struct EDPMacFUSERuntimeStatus: Sendable {
     let appPath: String
@@ -7,7 +8,6 @@ struct EDPMacFUSERuntimeStatus: Sendable {
     let genericModuleBundleID: String
     let localModuleBundleID: String
     let teamID: String
-    let localRegisteredWithPluginKit: Bool
     let mfMountFrameworkPresent: Bool
 }
 
@@ -92,16 +92,32 @@ enum EDPMacFUSERuntimePolicy {
             genericModuleBundleID: genericModuleBundleID,
             localModuleBundleID: localModuleBundleID,
             teamID: teamID,
-            localRegisteredWithPluginKit: pluginKitContainsModule(localModuleBundleID),
             mfMountFrameworkPresent: fileManager.fileExists(atPath: frameworkPath)
         )
     }
 
-    private static func verifyCodesign(path: String) throws {
-        let result = try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", path])
-        guard result.status == 0 else {
+    private static func staticCode(path: String) throws -> SecStaticCode {
+        var code: SecStaticCode?
+        let status = SecStaticCodeCreateWithPath(
+            URL(fileURLWithPath: path) as CFURL,
+            [],
+            &code
+        )
+        guard status == errSecSuccess, let code else {
             throw EDPMacFUSERuntimePolicyError(
-                "macFUSE codesign verification failed at \(path): \(result.stderr)"
+                "cannot create macFUSE static-code reference at \(path): status=\(status)"
+            )
+        }
+        return code
+    }
+
+    private static func verifyCodesign(path: String) throws {
+        let code = try staticCode(path: path)
+        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate)
+        let status = SecStaticCodeCheckValidity(code, flags, nil)
+        guard status == errSecSuccess else {
+            throw EDPMacFUSERuntimePolicyError(
+                "macFUSE code signature validation failed at \(path): status=\(status)"
             )
         }
     }
@@ -147,50 +163,21 @@ enum EDPMacFUSERuntimePolicy {
     }
 
     private static func codesignTeamIdentifier(path: String) throws -> String {
-        let result = try run("/usr/bin/codesign", ["-dv", "--verbose=4", path])
-        guard result.status == 0 else {
-            throw EDPMacFUSERuntimePolicyError("cannot inspect macFUSE code signature at \(path)")
-        }
-        let combined = result.stdout + "\n" + result.stderr
-        guard let line = combined.split(separator: "\n")
-            .first(where: { $0.hasPrefix("TeamIdentifier=") }) else {
-            throw EDPMacFUSERuntimePolicyError("macFUSE signature has no TeamIdentifier at \(path)")
-        }
-        return String(line.dropFirst("TeamIdentifier=".count))
-    }
-
-    private static func pluginKitContainsModule(_ bundleID: String) -> Bool {
-        guard let result = try? run(
-            "/usr/bin/pluginkit",
-            ["-m", "-p", "com.apple.fskit.fsmodule", "-A", "-D", "-vv"]
-        ) else {
-            return false
-        }
-        return result.status == 0 && (result.stdout + result.stderr).contains(bundleID)
-    }
-
-    private struct CommandResult {
-        let status: Int32
-        let stdout: String
-        let stderr: String
-    }
-
-    private static func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
-        let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let stdout = output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return CommandResult(
-            status: process.terminationStatus,
-            stdout: String(decoding: stdout, as: UTF8.self),
-            stderr: String(decoding: stderr, as: UTF8.self)
+        let code = try staticCode(path: path)
+        var information: CFDictionary?
+        let status = SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &information
         )
+        guard status == errSecSuccess,
+              let values = information as? [CFString: Any],
+              let teamIdentifier = values[kSecCodeInfoTeamIdentifier] as? String,
+              !teamIdentifier.isEmpty else {
+            throw EDPMacFUSERuntimePolicyError(
+                "macFUSE signature has no TeamIdentifier at \(path): status=\(status)"
+            )
+        }
+        return teamIdentifier
     }
 }

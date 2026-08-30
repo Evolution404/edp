@@ -9,12 +9,28 @@ cd "$DRIVE_ROOT"
 REPO_ROOT="$PWD"
 . scripts/prepare-shared-edp-core.sh
 
-LOOP_COUNT="${EDP_STORAGE_LOOP_COUNT:-50}"
+STORAGE_PROFILE="${EDP_STORAGE_PROFILE:-release}"
+case "$STORAGE_PROFILE" in
+  smoke)
+    LOOP_COUNT="${EDP_STORAGE_LOOP_COUNT:-5}"
+    MIN_LOOPS=3
+    MAX_LOOPS=10
+    ;;
+  release)
+    LOOP_COUNT="${EDP_STORAGE_LOOP_COUNT:-50}"
+    MIN_LOOPS=50
+    MAX_LOOPS=100
+    ;;
+  *)
+    echo "EDP_STORAGE_PROFILE must be smoke or release" >&2
+    exit 64
+    ;;
+esac
 case "$LOOP_COUNT" in
   ''|*[!0-9]*) echo "EDP_STORAGE_LOOP_COUNT must be an integer" >&2; exit 64 ;;
 esac
-if (( LOOP_COUNT < 50 || LOOP_COUNT > 100 )); then
-  echo "EDP_STORAGE_LOOP_COUNT must remain within the accepted 50-100 range" >&2
+if (( LOOP_COUNT < MIN_LOOPS || LOOP_COUNT > MAX_LOOPS )); then
+  echo "EDP_STORAGE_LOOP_COUNT for $STORAGE_PROFILE must remain within $MIN_LOOPS-$MAX_LOOPS" >&2
   exit 64
 fi
 
@@ -24,10 +40,12 @@ BUILD_DIR="$WORK_DIR/build"
 MOUNT_ROOT="$WORK_DIR/mounts"
 LOG_ROOT="$WORK_DIR/logs"
 ACTIVE_DEVICES="$WORK_DIR/active-devices.txt"
+ACTIVE_FIXTURE_DEVICES="$WORK_DIR/active-fixture-devices.txt"
 ACTIVE_PROCESSES="$WORK_DIR/active-processes.txt"
 ACTIVE_MOUNTS="$WORK_DIR/active-mounts.txt"
 mkdir -p "$BUILD_DIR" "$MOUNT_ROOT" "$LOG_ROOT"
 : >"$ACTIVE_DEVICES"
+: >"$ACTIVE_FIXTURE_DEVICES"
 : >"$ACTIVE_PROCESSES"
 : >"$ACTIVE_MOUNTS"
 
@@ -132,6 +150,135 @@ raise SystemExit(1)
 PY
 }
 
+assert_fixture_device() {
+  local bsd="$1"
+  local backing="$2"
+  local info="$WORK_DIR/hdiutil-fixture-info.plist"
+  [[ "$bsd" =~ ^disk[0-9]+$ ]] || {
+    echo "unsafe fixture BSD name: $bsd" >&2
+    return 1
+  }
+  [[ "$backing" == "$WORK_DIR"/* ]] || {
+    echo "fixture backing escaped test root: $backing" >&2
+    return 1
+  }
+  /usr/bin/hdiutil info -plist >"$info"
+  /usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
+import os
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    root = plistlib.load(handle)
+expected_device = "/dev/" + sys.argv[2]
+expected_path = os.path.realpath(sys.argv[3])
+for image in root.get("images", []):
+    devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
+    if expected_device not in devices:
+        continue
+    actual_path = os.path.realpath(image.get("image-path", ""))
+    valid = (
+        actual_path == expected_path
+        and image.get("diskimages2") is False
+        and image.get("autodiskmount") is False
+        and image.get("owner-uid") == os.getuid()
+        and image.get("writeable") is True
+        and image.get("removable") is True
+    )
+    raise SystemExit(0 if valid else 1)
+raise SystemExit(1)
+PY
+  /usr/sbin/diskutil info "$bsd" \
+    | /usr/bin/grep -Fq 'Virtual:                   Yes'
+}
+
+recover_fixture_image() {
+  local bsd="$1"
+  local backing="$2"
+  local info="$WORK_DIR/hdiutil-fixture-recovery.plist"
+  local pid=""
+  [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
+  [[ "$backing" == "$WORK_DIR"/* ]] || return 1
+
+  /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 1
+  pid="$(/usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
+import os
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    root = plistlib.load(handle)
+expected_device = "/dev/" + sys.argv[2]
+expected_path = os.path.realpath(sys.argv[3])
+for image in root.get("images", []):
+    if os.path.realpath(image.get("image-path", "")) != expected_path:
+        continue
+    devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
+    pid = image.get("hdid-pid")
+    valid = (
+        image.get("diskimages2") is False
+        and image.get("autodiskmount") is False
+        and image.get("owner-uid") == os.getuid()
+        and image.get("writeable") is True
+        and image.get("removable") is True
+        and (not devices or expected_device in devices)
+        and isinstance(pid, int)
+        and pid > 1
+    )
+    if not valid:
+        raise SystemExit(1)
+    print(pid)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+)" || return 1
+
+  local process_uid process_command
+  process_uid="$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')"
+  process_command="$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$process_uid" == "$(/usr/bin/id -u)" ]] || return 1
+  [[ "$process_command" == /System/Library/PrivateFrameworks/DiskImages.framework/Resources/diskimages-helper* ]] || return 1
+
+  /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
+  for _ in $(/usr/bin/seq 1 60); do
+    /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
+    if ! /usr/bin/python3 - "$info" "$backing" <<'PY'
+import os
+import plistlib
+import sys
+with open(sys.argv[1], "rb") as handle:
+    root = plistlib.load(handle)
+expected = os.path.realpath(sys.argv[2])
+raise SystemExit(0 if any(os.path.realpath(item.get("image-path", "")) == expected for item in root.get("images", [])) else 1)
+PY
+    then
+      return 0
+    fi
+    /bin/sleep 0.1
+  done
+
+  [[ "$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')" == "$(/usr/bin/id -u)" ]] || return 1
+  [[ "$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)" == /System/Library/PrivateFrameworks/DiskImages.framework/Resources/diskimages-helper* ]] || return 1
+  /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
+  for _ in $(/usr/bin/seq 1 40); do
+    /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
+    if ! /usr/bin/python3 - "$info" "$backing" <<'PY'
+import os
+import plistlib
+import sys
+with open(sys.argv[1], "rb") as handle:
+    root = plistlib.load(handle)
+expected = os.path.realpath(sys.argv[2])
+raise SystemExit(0 if any(os.path.realpath(item.get("image-path", "")) == expected for item in root.get("images", [])) else 1)
+PY
+    then
+      return 0
+    fi
+    /bin/sleep 0.1
+  done
+  return 1
+}
+
 bounded() {
   local seconds="$1"
   shift
@@ -141,6 +288,19 @@ bounded() {
 cleanup() {
   local status=$?
   set +e
+  if [[ -f "$ACTIVE_FIXTURE_DEVICES" ]]; then
+    while IFS='|' read -r bsd backing; do
+      [[ -n "$bsd" && -n "$backing" ]] || continue
+      if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$backing" >/dev/null 2>&1; then
+        bounded 12 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
+        if ! bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1; then
+          recover_fixture_image "$bsd" "$backing" >/dev/null 2>&1 || true
+        fi
+      else
+        recover_fixture_image "$bsd" "$backing" >/dev/null 2>&1 || true
+      fi
+    done <"$ACTIVE_FIXTURE_DEVICES"
+  fi
   if [[ -f "$ACTIVE_DEVICES" ]]; then
     while IFS='|' read -r bsd backing; do
       [[ -n "$bsd" && -e "/dev/$bsd" ]] || continue
@@ -238,16 +398,64 @@ format_raw_filesystem() {
   local label="$4"
   local tag="$5"
   /usr/bin/truncate -s "$size" "$path"
-  local bsd=""
-  attach_image "$path" bsd "format-$tag"
-  # The immediately preceding identity proof is the mandatory guard for this
-  # destructive operation. The target is a test-created DiskImages2 device
-  # backed by a regular file below WORK_DIR, never a physical disk.
-  assert_synthetic_device "$bsd" "$path"
-  bounded 30 /usr/sbin/diskutil eraseVolume "$filesystem" "$label" "$bsd" \
-    >"$LOG_ROOT/format-$tag.log"
+
+  local attach_output bsd
+  attach_output="$(/usr/bin/hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "$path")"
+  bsd="$(printf '%s\n' "$attach_output" \
+    | /usr/bin/awk '/\/dev\/disk[0-9]+/ { gsub("/dev/", "", $1); print $1; exit }')"
+  [[ -n "$bsd" && -b "/dev/$bsd" ]]
+  assert_fixture_device "$bsd" "$path"
+  printf '%s|%s\n' "$bsd" "$path" >>"$ACTIVE_FIXTURE_DEVICES"
+
+  # hdiutil can publish the BSD name before the raw device can be opened by
+  # Disk Arbitration. Require repeated identity checks plus one harmless read
+  # before any destructive formatter is allowed to run.
+  local ready=0
+  for _ in $(/usr/bin/seq 1 100); do
+    if assert_fixture_device "$bsd" "$path" >/dev/null 2>&1 \
+      && /usr/bin/head -c 512 "/dev/r$bsd" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    /bin/sleep 0.05
+  done
+  [[ "$ready" -eq 1 ]] || {
+    echo "fixture device did not become safely openable: $bsd" >&2
+    return 1
+  }
+
+  # Fixture creation is deliberately separate from the product publication
+  # path. Every destructive attempt revalidates the exact WORK_DIR backing and
+  # diskutil Virtual: Yes identity, so a transient BSD-name reuse can never
+  # redirect eraseVolume to physical media.
+  local format_log="$LOG_ROOT/format-$tag.log"
+  local erased=0
+  local format_rc=0
+  for attempt in 1 2 3; do
+    assert_fixture_device "$bsd" "$path"
+    if bounded 30 /usr/sbin/diskutil eraseVolume "$filesystem" "$label" "$bsd" \
+      >"$format_log" 2>&1; then
+      erased=1
+      break
+    else
+      format_rc=$?
+    fi
+    if (( format_rc == 124 )) \
+      || ! /usr/bin/grep -Eq -- '-69879|Couldn.t open disk' "$format_log"; then
+      /bin/cat "$format_log" >&2 || true
+      return "$format_rc"
+    fi
+    assert_fixture_device "$bsd" "$path"
+    /bin/sleep 0.25
+  done
+  [[ "$erased" -eq 1 ]] || {
+    /bin/cat "$format_log" >&2 || true
+    return 1
+  }
   /usr/sbin/diskutil info "$bsd" | /usr/bin/grep -Fq "File System Personality"
-  eject_image "$bsd" "$path"
+  assert_fixture_device "$bsd" "$path"
+  bounded 15 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
+  bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null
 }
 
 start_adapter() {
@@ -525,6 +733,7 @@ run_exchange_core() {
   printf '%s\n' "$output"
   expected_hash="$(printf '%s\n' "$output" | /usr/bin/awk -F= '/^M02_SHA256=/{print $2}')"
   [[ -n "$expected_hash" ]]
+  unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m02-stage1
 
@@ -534,6 +743,7 @@ run_exchange_core() {
   mount_native "$bsd" mountpoint
   /usr/bin/python3 Tests/Storage/ExerciseNativeFilesystem.py \
     verify-remount "$mountpoint" "$expected_hash"
+  unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m02-remount
   assert_no_test_artifacts M02-M09
@@ -550,6 +760,7 @@ run_secure_core() {
   printf '%s\n' "$output"
   expected_hash="$(printf '%s\n' "$output" | /usr/bin/awk -F= '/^M03_SHA256=/{print $2}')"
   [[ -n "$expected_hash" ]]
+  unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m03-stage1
 
@@ -559,6 +770,7 @@ run_secure_core() {
   mount_native "$bsd" mountpoint
   /usr/bin/python3 Tests/Storage/ExerciseNativeFilesystem.py \
     verify-secure-remount "$mountpoint" "$expected_hash"
+  unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m03-remount
   assert_no_test_artifacts M03
@@ -576,6 +788,7 @@ run_m10() {
     attach_image "$bridge/volume.raw" bsd "m10-$iteration"
     mount_native "$bsd" mountpoint
     [[ -f "$mountpoint/m02-exchange-proof.bin" ]]
+    unmount_path "$mountpoint"
     eject_image "$bsd" "$bridge/volume.raw"
     stop_adapter "$pid" "$bridge" "m10-$iteration"
     assert_no_test_artifacts "M10-$iteration"
@@ -613,6 +826,7 @@ run_m12() {
   attach_image "$bridge/volume.raw" bsd m12-recovery
   mount_native "$bsd" mountpoint
   [[ -f "$mountpoint/m02-exchange-proof.bin" ]]
+  unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m12-recovery
   assert_no_test_artifacts M12-recovery
@@ -658,6 +872,7 @@ if (exchange / secure_marker.name).exists() or (secure / exchange_marker.name).e
     raise SystemExit("M14 partition state crossed between sessions")
 PY
 
+  unmount_path "$exchange_mount"
   eject_image "$exchange_bsd" "$exchange_bridge/volume.raw"
   stop_adapter "$exchange_pid" "$exchange_bridge" m14-exchange
   is_mounted "$boot_mount"
@@ -667,6 +882,7 @@ PY
   eject_image "$boot_bsd" "$boot_bridge/volume.raw"
   stop_adapter "$boot_pid" "$boot_bridge" m14-boot
   [[ -f "$secure_mount/m14-secure-only.txt" ]]
+  unmount_path "$secure_mount"
   eject_image "$secure_bsd" "$secure_bridge/volume.raw"
   stop_adapter "$secure_pid" "$secure_bridge" m14-secure
   assert_no_test_artifacts M14

@@ -12,7 +12,7 @@
 | Phase | 内容 | 状态 |
 |---|---|---|
 | A | 基线、计划、架构 ratchet | DONE |
-| B | Disk Arbitration async | TODO |
+| B | Disk Arbitration async | DONE |
 | C | BlockPublisher / DiskImages2 async | TODO |
 | D | Typed lifecycle errors | TODO |
 | E | Virtual clock / scheduler | TODO |
@@ -63,19 +63,24 @@
 
 ## Phase B — Disk Arbitration async
 
-状态：TODO
+状态：DONE
 
 目标：删除生产 `DAOperationBox + DispatchSemaphore.wait()` 同步化路径，把 DA callback 直接转成 async lifecycle event。
 
 验收项：
 
-- [ ] async protocol/API
-- [ ] timeout/late callback once-only
-- [ ] production 无 DA semaphore wait
-- [ ] mount/unmount/eject 调用点迁移
-- [ ] 边界测试
-- [ ] fast/system/virtual-usb PASS
-- [ ] storage smoke PASS
+- [x] async protocol/API：`unmountWholeAsync` / `unmountAsync` / `mountAsync` / `mountNobrowseAsync` / `ejectAsync`
+- [x] timeout/late callback once-only：`EDPDiskArbitrationCompletionGate`
+- [x] production 无 DA semaphore wait；同步 adapter 仅存在于 `EDP_REGRESSION_TESTS`
+- [x] mount/unmount/eject/Finder staging/physical eject 调用点全部迁移
+- [x] raw-access acquire 顺带改成 per-device single-flight async，避免 controller 等 DA unmount
+- [x] persisted-session recovery 改 async，startup reconcile 等 recovery completion 后才启动
+- [x] S19：callback-first / timeout-first late callback / duplicate callback once-only
+- [x] service lifecycle C01-C08、D01-D13、S01-S19、M11 PASS
+- [x] `make drive-test-system` PASS，含 `RESULT=DRIVE_SYSTEM_ASYNC_DISK_ARBITRATION_OK`
+- [x] `make drive-test-virtual-usb` PASS
+- [x] `make drive-test-storage-smoke` PASS，M10 5/5，FD 9/9，M12/M13/M14 PASS
+- [x] `git diff --check` PASS
 - [ ] commit/push
 
 ## Phase C — BlockPublisher / DiskImages2 async
@@ -186,3 +191,12 @@
 - 创建本轮完整实施计划与实时 tracker。
 - 明确本轮不再继续增加同步 fallback；后续以 async callback/state-event 为唯一产品路径。
 - Phase A 基线验证完成：`git diff --check`、`make drive-test-fast`、`make drive-test-system` 全部 PASS。
+
+### 2026-08-31 00:14 — Phase B
+
+- Disk Arbitration production API 已完全 callback-based；不再通过 semaphore 把 DA callback 同步化。
+- MountManager 的 physical whole-unmount、filesystem mount、Finder staging mount/unmount、DiskImages2 eject、controller physical eject 已迁移到 async chain。
+- raw-access acquisition 改为 per-device single-flight async；device identity 在真正 open lease 前重新验证。
+- startup persisted-session recovery 改为 async gate，reconcile 仅在 recovery terminal 后启动。
+- 新增 S19 once-only completion gate，覆盖 timeout 与 late/duplicate callback 竞态。
+- 验证：service lifecycle、system、virtual-usb、storage smoke、`git diff --check` 全部 PASS。

@@ -9,6 +9,57 @@ private enum ValidationFailure: Error, CustomStringConvertible {
     }
 }
 
+private final class TransportStopResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recovered = false
+    private var error: String?
+
+    func set(recovered: Bool, error: String?) {
+        lock.lock()
+        self.recovered = recovered
+        self.error = error
+        lock.unlock()
+    }
+
+    func snapshot() -> (Bool, String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (recovered, error)
+    }
+}
+
+private extension EDPTransportSession {
+    @discardableResult
+    func stop(
+        unmount: @escaping (String) throws -> Void,
+        isMounted: @escaping (String) -> Bool,
+        gracefulExitSeconds: TimeInterval = 5,
+        recoverStuckProcess: (() -> Bool)? = nil
+    ) throws -> Bool {
+        let queue = DispatchQueue(label: "com.edp.drive.tests.transport-stop")
+        let semaphore = DispatchSemaphore(value: 0)
+        let result = TransportStopResultBox()
+        stopAsync(
+            on: queue,
+            unmount: unmount,
+            isMounted: isMounted,
+            gracefulExitSeconds: gracefulExitSeconds,
+            recoverStuckProcess: recoverStuckProcess
+        ) { recovered, _, error in
+            result.set(recovered: recovered, error: error)
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + 15) == .success else {
+            throw ValidationFailure.message("async transport stop timed out")
+        }
+        let snapshot = result.snapshot()
+        if let error = snapshot.1 {
+            throw ValidationFailure.message(error)
+        }
+        return snapshot.0
+    }
+}
+
 private final class FakeManagedProcess: EDPManagedProcess {
     enum ExitBehavior {
         case alreadyExited
@@ -56,6 +107,8 @@ private enum ValidateTransportLifecycle {
         try validateForceTerminateFallback()
         try validateHostRecoveryAfterForceTerminate()
         try validateRecoveryFailureStillFailsClosed()
+        try validateRecoverySuccessClaimWithoutExitStillFailsClosed()
+        try validateNoRecoveryCallbackStillFailsClosed()
         try validateMountedTransportIsNeverKilled()
         print("RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK")
     }
@@ -63,11 +116,12 @@ private enum ValidateTransportLifecycle {
     private static func validateAlreadyExited() throws {
         let process = FakeManagedProcess(.alreadyExited)
         let session = makeSession(process)
-        try session.stop(
+        let recovered = try session.stop(
             unmount: { _ in },
             isMounted: { _ in false },
             gracefulExitSeconds: 0
         )
+        try require(!recovered, "already-exited process incorrectly reported host recovery")
         try require(process.terminateCount == 0, "already-exited process received SIGTERM")
         try require(process.forceTerminateCount == 0, "already-exited process received SIGKILL")
     }
@@ -75,11 +129,12 @@ private enum ValidateTransportLifecycle {
     private static func validateTerminateFallback() throws {
         let process = FakeManagedProcess(.exitsOnTerminate)
         let session = makeSession(process)
-        try session.stop(
+        let recovered = try session.stop(
             unmount: { _ in },
             isMounted: { _ in false },
             gracefulExitSeconds: 0
         )
+        try require(!recovered, "SIGTERM exit incorrectly reported host recovery")
         try require(process.terminateCount == 1, "SIGTERM fallback was not used exactly once")
         try require(process.forceTerminateCount == 0, "SIGKILL was used after successful SIGTERM")
     }
@@ -87,11 +142,18 @@ private enum ValidateTransportLifecycle {
     private static func validateForceTerminateFallback() throws {
         let process = FakeManagedProcess(.exitsOnForce)
         let session = makeSession(process)
-        try session.stop(
+        var recoveryAttempted = false
+        let recovered = try session.stop(
             unmount: { _ in },
             isMounted: { _ in false },
-            gracefulExitSeconds: 0
+            gracefulExitSeconds: 0,
+            recoverStuckProcess: {
+                recoveryAttempted = true
+                return true
+            }
         )
+        try require(!recovered, "SIGKILL exit incorrectly reported host recovery")
+        try require(!recoveryAttempted, "host recovery ran after successful SIGKILL")
         try require(process.terminateCount == 1, "stuck process did not receive SIGTERM first")
         try require(process.forceTerminateCount == 1, "stuck process did not receive one SIGKILL fallback")
     }
@@ -100,7 +162,7 @@ private enum ValidateTransportLifecycle {
         let process = FakeManagedProcess(.neverExits)
         let session = makeSession(process)
         var recoveryCount = 0
-        try session.stop(
+        let recovered = try session.stop(
             unmount: { _ in },
             isMounted: { _ in false },
             gracefulExitSeconds: 0,
@@ -110,6 +172,7 @@ private enum ValidateTransportLifecycle {
                 return true
             }
         )
+        try require(recovered, "successful host reset was not reported to the caller")
         try require(process.terminateCount == 1, "host recovery did not follow SIGTERM")
         try require(process.forceTerminateCount == 1, "host recovery did not follow SIGKILL")
         try require(recoveryCount == 1, "stuck transport host recovery was not invoked exactly once")
@@ -137,6 +200,47 @@ private enum ValidateTransportLifecycle {
         try require(rejected, "failed host recovery incorrectly reported teardown success")
         try require(recoveryCount == 1, "failed host recovery was not invoked exactly once")
         try require(process.isRunning, "failed host recovery unexpectedly changed fake process state")
+    }
+
+    private static func validateRecoverySuccessClaimWithoutExitStillFailsClosed() throws {
+        let process = FakeManagedProcess(.neverExits)
+        let session = makeSession(process)
+        var recoveryCount = 0
+        var rejected = false
+        do {
+            _ = try session.stop(
+                unmount: { _ in },
+                isMounted: { _ in false },
+                gracefulExitSeconds: 0,
+                recoverStuckProcess: {
+                    recoveryCount += 1
+                    return true
+                }
+            )
+        } catch {
+            rejected = true
+        }
+        try require(rejected, "host recovery success claim hid a still-running transport")
+        try require(recoveryCount == 1, "host recovery success claim was not bounded to one attempt")
+        try require(process.isRunning, "fake transport unexpectedly exited")
+    }
+
+    private static func validateNoRecoveryCallbackStillFailsClosed() throws {
+        let process = FakeManagedProcess(.neverExits)
+        let session = makeSession(process)
+        var rejected = false
+        do {
+            _ = try session.stop(
+                unmount: { _ in },
+                isMounted: { _ in false },
+                gracefulExitSeconds: 0
+            )
+        } catch {
+            rejected = true
+        }
+        try require(rejected, "stuck transport without recovery callback incorrectly succeeded")
+        try require(process.terminateCount == 1, "stuck transport without recovery skipped SIGTERM")
+        try require(process.forceTerminateCount == 1, "stuck transport without recovery skipped SIGKILL")
     }
 
     private static func validateMountedTransportIsNeverKilled() throws {

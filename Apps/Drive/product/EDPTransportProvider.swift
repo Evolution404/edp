@@ -23,6 +23,30 @@ struct EDPTransportSessionError: Error, CustomStringConvertible {
     let description: String
 }
 
+private final class EDPTransportStopOperation: @unchecked Sendable {
+    let queue: DispatchQueue
+    let unmount: (String) throws -> Void
+    let isMounted: (String) -> Bool
+    let recoverStuckProcess: (() -> Bool)?
+    let completion: @Sendable (Bool, Bool, String?) -> Void
+    var recoveryAttempted = false
+    var finished = false
+
+    init(
+        queue: DispatchQueue,
+        unmount: @escaping (String) throws -> Void,
+        isMounted: @escaping (String) -> Bool,
+        recoverStuckProcess: (() -> Bool)?,
+        completion: @escaping @Sendable (Bool, Bool, String?) -> Void
+    ) {
+        self.queue = queue
+        self.unmount = unmount
+        self.isMounted = isMounted
+        self.recoverStuckProcess = recoverStuckProcess
+        self.completion = completion
+    }
+}
+
 protocol EDPManagedProcess: AnyObject {
     var isRunning: Bool { get }
     func terminate()
@@ -36,7 +60,7 @@ extension Process: EDPManagedProcess {
     }
 }
 
-final class EDPTransportSession {
+final class EDPTransportSession: @unchecked Sendable {
     let backend: EDPTransportBackend
     let mountpoint: String
     let capabilities: EDPTransportCapabilities
@@ -56,53 +80,157 @@ final class EDPTransportSession {
 
     var isRunning: Bool { process.isRunning }
 
-    func stop(
-        unmount: (String) throws -> Void,
-        isMounted: (String) -> Bool,
+    func stopAsync(
+        on queue: DispatchQueue,
+        unmount: @escaping (String) throws -> Void,
+        isMounted: @escaping (String) -> Bool,
         gracefulExitSeconds: TimeInterval = 5,
-        recoverStuckProcess: (() -> Bool)? = nil
-    ) throws {
-        if isMounted(mountpoint) {
-            try unmount(mountpoint)
+        recoverStuckProcess: (() -> Bool)? = nil,
+        completion: @escaping @Sendable (Bool, Bool, String?) -> Void
+    ) {
+        let operation = EDPTransportStopOperation(
+            queue: queue,
+            unmount: unmount,
+            isMounted: isMounted,
+            recoverStuckProcess: recoverStuckProcess,
+            completion: completion
+        )
+        queue.async { [weak self, operation] in
+            self?.beginStop(operation, gracefulExitSeconds: gracefulExitSeconds)
         }
-        guard !isMounted(mountpoint) else {
-            throw EDPTransportSessionError(
-                description: "transport mount remained active after VFS unmount: \(mountpoint)"
-            )
-        }
+    }
 
-        let gracefulDeadline = Date().addingTimeInterval(gracefulExitSeconds)
-        while process.isRunning && Date() < gracefulDeadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        guard process.isRunning else { return }
-
-        process.terminate()
-        let terminateDeadline = Date().addingTimeInterval(2)
-        while process.isRunning && Date() < terminateDeadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        guard process.isRunning else { return }
-
-        // The VFS mount is already confirmed gone above, so a transport that
-        // ignores SIGTERM can no longer own a mounted user filesystem. Do not
-        // let that failed startup/teardown child wedge the daemon controller.
-        process.forceTerminate()
-        let killDeadline = Date().addingTimeInterval(1)
-        while process.isRunning && Date() < killDeadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        if process.isRunning, recoverStuckProcess?() == true {
-            let recoveryDeadline = Date().addingTimeInterval(2)
-            while process.isRunning && Date() < recoveryDeadline {
-                Thread.sleep(forTimeInterval: 0.05)
+    private func beginStop(
+        _ operation: EDPTransportStopOperation,
+        gracefulExitSeconds: TimeInterval
+    ) {
+        do {
+            if operation.isMounted(mountpoint) {
+                try operation.unmount(mountpoint)
             }
+            guard !operation.isMounted(mountpoint) else {
+                finishStop(
+                    operation,
+                    recovered: false,
+                    error: "transport mount remained active after VFS unmount: \(mountpoint)"
+                )
+                return
+            }
+        } catch {
+            finishStop(operation, recovered: false, error: String(describing: error))
+            return
         }
-        if process.isRunning {
-            throw EDPTransportSessionError(
-                description: "transport process did not exit after SIGKILL: \(mountpoint)"
+        waitForGracefulExit(
+            operation,
+            deadline: Date().addingTimeInterval(gracefulExitSeconds)
+        )
+    }
+
+    private func waitForGracefulExit(
+        _ operation: EDPTransportStopOperation,
+        deadline: Date
+    ) {
+        guard process.isRunning else {
+            finishStop(operation, recovered: false, error: nil)
+            return
+        }
+        guard Date() >= deadline else {
+            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+                self?.waitForGracefulExit(operation, deadline: deadline)
+            }
+            return
+        }
+        process.terminate()
+        waitAfterTerminate(operation, deadline: Date().addingTimeInterval(2))
+    }
+
+    private func waitAfterTerminate(
+        _ operation: EDPTransportStopOperation,
+        deadline: Date
+    ) {
+        guard process.isRunning else {
+            finishStop(operation, recovered: false, error: nil)
+            return
+        }
+        guard Date() >= deadline else {
+            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+                self?.waitAfterTerminate(operation, deadline: deadline)
+            }
+            return
+        }
+
+        // The VFS mount was proven gone before escalation. A still-running
+        // transport can therefore receive SIGKILL without risking a live user
+        // filesystem.
+        process.forceTerminate()
+        waitAfterForceTerminate(operation, deadline: Date().addingTimeInterval(1))
+    }
+
+    private func waitAfterForceTerminate(
+        _ operation: EDPTransportStopOperation,
+        deadline: Date
+    ) {
+        guard process.isRunning else {
+            finishStop(operation, recovered: false, error: nil)
+            return
+        }
+        guard Date() >= deadline else {
+            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+                self?.waitAfterForceTerminate(operation, deadline: deadline)
+            }
+            return
+        }
+
+        guard !operation.recoveryAttempted,
+              let recover = operation.recoverStuckProcess else {
+            finishStop(
+                operation,
+                recovered: false,
+                error: "transport process did not exit after SIGKILL: \(mountpoint)"
             )
+            return
         }
+        operation.recoveryAttempted = true
+        guard recover() else {
+            finishStop(
+                operation,
+                recovered: false,
+                error: "transport process did not exit after SIGKILL and host recovery was refused: \(mountpoint)"
+            )
+            return
+        }
+        waitAfterHostRecovery(operation, deadline: Date().addingTimeInterval(2))
+    }
+
+    private func waitAfterHostRecovery(
+        _ operation: EDPTransportStopOperation,
+        deadline: Date
+    ) {
+        guard process.isRunning else {
+            finishStop(operation, recovered: true, error: nil)
+            return
+        }
+        guard Date() >= deadline else {
+            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+                self?.waitAfterHostRecovery(operation, deadline: deadline)
+            }
+            return
+        }
+        finishStop(
+            operation,
+            recovered: false,
+            error: "transport process remained after host recovery: \(mountpoint)"
+        )
+    }
+
+    private func finishStop(
+        _ operation: EDPTransportStopOperation,
+        recovered: Bool,
+        error: String?
+    ) {
+        guard !operation.finished else { return }
+        operation.finished = true
+        operation.completion(recovered, operation.recoveryAttempted, error)
     }
 }
 

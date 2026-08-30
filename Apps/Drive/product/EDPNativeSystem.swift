@@ -492,10 +492,93 @@ enum EDPNativeBoundedProcess {
     }
 }
 
+typealias EDPDiskArbitrationVoidCompletion = @Sendable (RuntimeNativeError?) -> Void
+typealias EDPDiskArbitrationMountCompletion = @Sendable (String?, RuntimeNativeError?) -> Void
+
+enum EDPDiskArbitrationTerminalEvent: Equatable, Sendable {
+    case callback
+    case timeout
+}
+
+struct EDPDiskArbitrationCompletionGate: Sendable {
+    private(set) var terminalEvent: EDPDiskArbitrationTerminalEvent?
+
+    mutating func accept(_ event: EDPDiskArbitrationTerminalEvent) -> Bool {
+        guard terminalEvent == nil else { return false }
+        terminalEvent = event
+        return true
+    }
+}
+
 private final class DAOperationBox: @unchecked Sendable {
-    let semaphore = DispatchSemaphore(value: 0)
-    var status: DAReturn = DAReturn(kDAReturnSuccess)
-    var statusDescription: String?
+    let id = UUID()
+    let bsdName: String
+    weak var controller: EDPDiskArbitrationController?
+
+    private let lock = NSLock()
+    private let completion: @Sendable (String?, RuntimeNativeError?) -> Void
+    private let successValue: @Sendable () -> Result<String?, RuntimeNativeError>
+    private var completionGate = EDPDiskArbitrationCompletionGate()
+
+    init(
+        bsdName: String,
+        controller: EDPDiskArbitrationController,
+        successValue: @escaping @Sendable () -> Result<String?, RuntimeNativeError>,
+        completion: @escaping @Sendable (String?, RuntimeNativeError?) -> Void
+    ) {
+        self.bsdName = bsdName
+        self.controller = controller
+        self.successValue = successValue
+        self.completion = completion
+    }
+
+    func handleCallback(_ dissenter: DADissenter?) {
+        let result: Result<String?, RuntimeNativeError>
+        if let dissenter {
+            let status = DADissenterGetStatus(dissenter)
+            let detail = DADissenterGetStatusString(dissenter)
+                .map { " (\($0 as String))" } ?? ""
+            result = .failure(RuntimeNativeError(
+                "Disk Arbitration refused \(bsdName): status=\(status)\(detail)"
+            ))
+        } else {
+            result = successValue()
+        }
+        finish(result, event: .callback)
+        controller?.releaseOperation(id)
+    }
+
+    func timeout(after seconds: TimeInterval) {
+        finish(
+            .failure(RuntimeNativeError(
+                "Disk Arbitration operation timed out for \(bsdName) after \(Int(seconds)) seconds"
+            )),
+            event: .timeout
+        )
+        // Keep this box retained by the controller until Disk Arbitration
+        // eventually delivers its callback. The callback context is an
+        // unretained pointer to this object; retaining it avoids a late-callback
+        // use-after-free without letting the late callback complete twice.
+    }
+
+    private func finish(
+        _ result: Result<String?, RuntimeNativeError>,
+        event: EDPDiskArbitrationTerminalEvent
+    ) {
+        lock.lock()
+        guard completionGate.accept(event) else {
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+
+        switch result {
+        case .success(let value):
+            completion(value, nil)
+        case .failure(let error):
+            completion(nil, error)
+        }
+    }
 }
 
 private func daMountApprovalCallback(
@@ -520,27 +603,24 @@ private func daOperationCallback(
 ) {
     guard let context else { return }
     let box = Unmanaged<DAOperationBox>.fromOpaque(context).takeUnretainedValue()
-    if let dissenter {
-        box.status = DADissenterGetStatus(dissenter)
-        if let description = DADissenterGetStatusString(dissenter) {
-            box.statusDescription = description as String
-        }
-    }
-    box.semaphore.signal()
+    box.handleCallback(dissenter)
 }
 
 protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
     func suppressAutomount(usbRegistryEntryID: UInt64)
     func allowAutomount(usbRegistryEntryID: UInt64)
-    func unmountWhole(_ bsdName: String) throws
-    func eject(_ bsdName: String) throws
+    func unmountWholeAsync(_ bsdName: String, completion: @escaping EDPDiskArbitrationVoidCompletion)
+    func ejectAsync(_ bsdName: String, completion: @escaping EDPDiskArbitrationVoidCompletion)
 }
 
 final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked Sendable {
     private let session: DASession
     private let queue = DispatchQueue(label: "com.edp.drive.disk-arbitration")
     private let stateLock = NSLock()
+    private let operationLock = NSLock()
+    private let completionQueue = DispatchQueue(label: "com.edp.drive.disk-arbitration-completion")
     private var suppressedUSBRegistryEntryIDs = Set<UInt64>()
+    private var pendingOperations = [UUID: DAOperationBox]()
 
     init() throws {
         guard let session = DASessionCreate(kCFAllocatorDefault) else {
@@ -590,78 +670,214 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         return disk
     }
 
-    private func perform(
+    fileprivate func releaseOperation(_ id: UUID) {
+        operationLock.lock()
+        pendingOperations.removeValue(forKey: id)
+        operationLock.unlock()
+    }
+
+    private func performAsync(
         timeout: TimeInterval = 20,
-        _ body: (DADisk, UnsafeMutableRawPointer) -> Void,
-        bsdName: String
-    ) throws {
-        let target = try disk(bsdName)
-        let box = DAOperationBox()
-        let context = Unmanaged.passUnretained(box).toOpaque()
-        body(target, context)
-        guard box.semaphore.wait(timeout: .now() + timeout) == .success else {
-            throw RuntimeNativeError("Disk Arbitration operation timed out for \(bsdName)")
+        bsdName: String,
+        successValue: @escaping @Sendable () -> Result<String?, RuntimeNativeError>,
+        request: (DADisk, UnsafeMutableRawPointer) -> Void,
+        completion: @escaping @Sendable (String?, RuntimeNativeError?) -> Void
+    ) {
+        let target: DADisk
+        do {
+            target = try disk(bsdName)
+        } catch {
+            let runtimeError = error as? RuntimeNativeError
+                ?? RuntimeNativeError(String(describing: error))
+            completionQueue.async { completion(nil, runtimeError) }
+            return
         }
-        guard box.status == kDAReturnSuccess else {
-            let detail = box.statusDescription.map { " (\($0))" } ?? ""
-            throw RuntimeNativeError(
-                "Disk Arbitration refused \(bsdName): status=\(box.status)\(detail)"
-            )
+
+        let delivered: @Sendable (String?, RuntimeNativeError?) -> Void = { [completionQueue] value, error in
+            completionQueue.async { completion(value, error) }
+        }
+        let box = DAOperationBox(
+            bsdName: bsdName,
+            controller: self,
+            successValue: successValue,
+            completion: delivered
+        )
+        operationLock.lock()
+        pendingOperations[box.id] = box
+        operationLock.unlock()
+
+        request(target, Unmanaged.passUnretained(box).toOpaque())
+        queue.asyncAfter(deadline: .now() + timeout) { [weak box] in
+            box?.timeout(after: timeout)
         }
     }
 
-    func unmountWhole(_ bsdName: String) throws {
-        try perform({ disk, context in
-            DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionWhole), daOperationCallback, context)
-        }, bsdName: bsdName)
+    func unmountWholeAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
+        performAsync(
+            bsdName: bsdName,
+            successValue: { .success(nil) },
+            request: { disk, context in
+                DADiskUnmount(
+                    disk,
+                    DADiskUnmountOptions(kDADiskUnmountOptionWhole),
+                    daOperationCallback,
+                    context
+                )
+            },
+            completion: { _, error in completion(error) }
+        )
     }
 
-    func unmount(_ bsdName: String) throws {
-        try perform({ disk, context in
-            DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), daOperationCallback, context)
-        }, bsdName: bsdName)
+    func unmountAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
+        performAsync(
+            bsdName: bsdName,
+            successValue: { .success(nil) },
+            request: { disk, context in
+                DADiskUnmount(
+                    disk,
+                    DADiskUnmountOptions(kDADiskUnmountOptionDefault),
+                    daOperationCallback,
+                    context
+                )
+            },
+            completion: { _, error in completion(error) }
+        )
     }
 
-    func mount(_ bsdName: String) throws -> String {
-        try perform({ disk, context in
-            DADiskMount(disk, nil, DADiskMountOptions(kDADiskMountOptionDefault), daOperationCallback, context)
-        }, bsdName: bsdName)
-        if let mountpoint = EDPNativeMountTable.mountPoint(forBSD: bsdName) { return mountpoint }
-        throw RuntimeNativeError("Disk Arbitration mounted \(bsdName) but no mount point appeared")
+    func mountAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationMountCompletion
+    ) {
+        performAsync(
+            bsdName: bsdName,
+            successValue: {
+                if let mountpoint = EDPNativeMountTable.mountPoint(forBSD: bsdName) {
+                    return .success(mountpoint)
+                }
+                return .failure(RuntimeNativeError(
+                    "Disk Arbitration mounted \(bsdName) but no mount point appeared"
+                ))
+            },
+            request: { disk, context in
+                DADiskMount(
+                    disk,
+                    nil,
+                    DADiskMountOptions(kDADiskMountOptionDefault),
+                    daOperationCallback,
+                    context
+                )
+            },
+            completion: { value, error in completion(value, error) }
+        )
     }
 
-    func mountNobrowse(_ bsdName: String, at mountPoint: String) throws -> String {
+    func mountNobrowseAsync(
+        _ bsdName: String,
+        at mountPoint: String,
+        completion: @escaping EDPDiskArbitrationMountCompletion
+    ) {
         let mountURL = URL(fileURLWithPath: mountPoint, isDirectory: true) as CFURL
         let nobrowse = "nobrowse" as CFString
         var arguments: [Unmanaged<CFString>?] = [Unmanaged.passUnretained(nobrowse), nil]
-        try arguments.withUnsafeMutableBufferPointer { buffer in
-            try perform({ disk, context in
-                DADiskMountWithArguments(
-                    disk,
-                    mountURL,
-                    DADiskMountOptions(kDADiskMountOptionDefault),
-                    daOperationCallback,
-                    context,
-                    buffer.baseAddress
-                )
-            }, bsdName: bsdName)
-        }
-        guard let actual = EDPNativeMountTable.mountPoint(forBSD: bsdName) else {
-            throw RuntimeNativeError("Disk Arbitration mounted \(bsdName) but no mount point appeared")
-        }
-        guard actual == mountPoint else {
-            throw RuntimeNativeError(
-                "Disk Arbitration mounted \(bsdName) at unexpected path \(actual), expected \(mountPoint)"
+        arguments.withUnsafeMutableBufferPointer { buffer in
+            performAsync(
+                bsdName: bsdName,
+                successValue: {
+                    guard let actual = EDPNativeMountTable.mountPoint(forBSD: bsdName) else {
+                        return .failure(RuntimeNativeError(
+                            "Disk Arbitration mounted \(bsdName) but no mount point appeared"
+                        ))
+                    }
+                    guard actual == mountPoint else {
+                        return .failure(RuntimeNativeError(
+                            "Disk Arbitration mounted \(bsdName) at unexpected path \(actual), expected \(mountPoint)"
+                        ))
+                    }
+                    return .success(actual)
+                },
+                request: { disk, context in
+                    DADiskMountWithArguments(
+                        disk,
+                        mountURL,
+                        DADiskMountOptions(kDADiskMountOptionDefault),
+                        daOperationCallback,
+                        context,
+                        buffer.baseAddress
+                    )
+                },
+                completion: { value, error in completion(value, error) }
             )
         }
-        return actual
+    }
+
+    func ejectAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
+        performAsync(
+            bsdName: bsdName,
+            successValue: { .success(nil) },
+            request: { disk, context in
+                DADiskEject(
+                    disk,
+                    DADiskEjectOptions(kDADiskEjectOptionDefault),
+                    daOperationCallback,
+                    context
+                )
+            },
+            completion: { _, error in completion(error) }
+        )
+    }
+
+#if EDP_REGRESSION_TESTS
+    private final class RegressionErrorBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: RuntimeNativeError?
+
+        func set(_ error: RuntimeNativeError?) {
+            lock.lock(); value = error; lock.unlock()
+        }
+
+        func get() -> RuntimeNativeError? {
+            lock.lock(); defer { lock.unlock() }
+            return value
+        }
+    }
+
+    private func waitVoid(
+        timeout: TimeInterval = 25,
+        _ start: (@escaping EDPDiskArbitrationVoidCompletion) -> Void
+    ) throws {
+        let semaphore = DispatchSemaphore(value: 0)
+        let result = RegressionErrorBox()
+        start { error in
+            result.set(error)
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + timeout) == .success else {
+            throw RuntimeNativeError("regression Disk Arbitration adapter timed out")
+        }
+        if let error = result.get() { throw error }
+    }
+
+    func unmountWhole(_ bsdName: String) throws {
+        try waitVoid { unmountWholeAsync(bsdName, completion: $0) }
+    }
+
+    func unmount(_ bsdName: String) throws {
+        try waitVoid { unmountAsync(bsdName, completion: $0) }
     }
 
     func eject(_ bsdName: String) throws {
-        try perform({ disk, context in
-            DADiskEject(disk, DADiskEjectOptions(kDADiskEjectOptionDefault), daOperationCallback, context)
-        }, bsdName: bsdName)
+        try waitVoid { ejectAsync(bsdName, completion: $0) }
     }
+#endif
 }
 
 private func statfsString<T>(_ field: inout T) -> String {
@@ -719,25 +935,16 @@ enum EDPNativeMountTable {
 
     static func unmountPath(_ path: String, force: Bool = false) throws {
         guard isMountpoint(path) else { return }
-        let arguments = force ? ["-f", path] : [path]
-        do {
-            let status = try EDPNativeBoundedProcess.run(
-                executable: "/sbin/umount",
-                arguments: arguments,
-                timeout: force ? 8 : 15,
-                label: force ? "forced VFS unmount \(path)" : "VFS unmount \(path)"
-            )
-            if status != 0 && isMountpoint(path) {
-                throw RuntimeNativeError(
-                    "umount helper failed for \(path): status=\(status)"
-                )
-            }
-        } catch {
+        let flags = force ? Int32(MNT_FORCE) : 0
+        if Darwin.unmount(path, flags) != 0 {
+            let failure = errno
             if !isMountpoint(path) { return }
-            throw error
+            throw RuntimeNativeError(
+                "unmount(2) failed for \(path): errno=\(failure) \(String(cString: strerror(failure)))"
+            )
         }
         guard !isMountpoint(path) else {
-            throw RuntimeNativeError("mount remained active after unmount helper: \(path)")
+            throw RuntimeNativeError("mount remained active after unmount(2): \(path)")
         }
     }
 }

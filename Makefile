@@ -13,7 +13,7 @@ STUDIO_PROJECT := $(ROOT)/Apps/Studio/native/EDPStudioNative/EDPStudioNative.xco
 
 .PHONY: help status check build core-test drive-check drive-build drive-ui-status drive-stop drive-restart \
 	drive-ui-package drive-ui-install drive-ui-deploy drive-installer drive-env-status drive-clean-environment \
-	drive-test-fast drive-test-identity drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system drive-test-all \
+	drive-test-fast drive-test-identity drive-test-virtual-usb drive-test-storage-smoke drive-test-storage drive-test-ui drive-test-system drive-test-all \
 	studio-generate studio-build
 
 help:
@@ -30,7 +30,8 @@ help:
 	@echo "  make drive-env-status   Read-only EDP Drive/macFUSE environment audit"
 	@echo "  make drive-clean-environment  Remove EDP Drive + old Vault + macFUSE test environment"
 	@echo "  make drive-test-fast    Hardware-free core/classifier regression"
-	@echo "  make drive-test-storage Sparse-image M01-M14 storage E2E (50 loops)"
+	@echo "  make drive-test-storage-smoke  Sparse-image M01-M14 functional smoke (5 loops)"
+	@echo "  make drive-test-storage Sparse-image M01-M14 release stress (50 loops)"
 	@echo "  make drive-test-all     All hardware-free Drive regression gates"
 	@echo "  make studio-generate    Regenerate the Studio Xcode project"
 	@echo "  make studio-build       Build Studio Release without signing"
@@ -64,8 +65,11 @@ drive-test-identity: drive-test-fast
 drive-test-virtual-usb:
 	@"$(ROOT)/Apps/Drive/Tests/run-virtual-usb.sh"
 
+drive-test-storage-smoke:
+	@EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5 "$(ROOT)/Apps/Drive/Tests/run-storage.sh"
+
 drive-test-storage:
-	@"$(ROOT)/Apps/Drive/Tests/run-storage.sh"
+	@EDP_STORAGE_PROFILE=release "$(ROOT)/Apps/Drive/Tests/run-storage.sh"
 
 drive-test-ui:
 	@"$(ROOT)/Apps/Drive/Tests/run-ui.sh"

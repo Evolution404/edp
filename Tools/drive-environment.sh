@@ -38,6 +38,8 @@ show_status() {
         '/Applications/EDP USB Vault.app' \
         '/Library/Application Support/EDP Drive' \
         '/Library/Application Support/EDP USB Vault' \
+        '/var/db/com.edp.drive' \
+        '/var/db/com.edp.usbvault' \
         '/Library/LaunchDaemons/com.edp.drive.service.plist' \
         '/Library/LaunchDaemons/com.edp.usbvault.mountd.plist' \
         '/Library/LaunchDaemons/com.edp.usbvault.mountd.v2.plist' \
@@ -123,6 +125,20 @@ show_status() {
     else
         say 'RESULT=DRIVE_ENVIRONMENT_DIRTY'
     fi
+}
+
+stop_drive_user_processes() {
+    /usr/bin/pkill -x 'EDP Drive' >/dev/null 2>&1 || true
+    /usr/bin/pkill -x 'EDP USB Vault' >/dev/null 2>&1 || true
+    /bin/sleep 0.5
+}
+
+remove_drive_user_preferences() {
+    /usr/bin/defaults delete com.edp.drive >/dev/null 2>&1 || true
+    /usr/bin/defaults delete com.edp.usbvault.app >/dev/null 2>&1 || true
+    /bin/rm -f \
+        "$HOME/Library/Preferences/com.edp.drive.plist" \
+        "$HOME/Library/Preferences/com.edp.usbvault.app.plist"
 }
 
 cleanup_edp_test_images() {
@@ -304,6 +320,8 @@ root_cleanup() {
         '/Applications/EDP USB Vault.app' \
         '/Library/Application Support/EDP Drive' \
         '/Library/Application Support/EDP USB Vault' \
+        '/var/db/com.edp.drive' \
+        '/var/db/com.edp.usbvault' \
         '/Library/Filesystems/macfuse.fs' \
         '/Library/Frameworks/macFUSE.framework' \
         '/Library/PreferencePanes/macFUSE.prefPane'
@@ -341,6 +359,8 @@ root_cleanup_needed() {
         '/Applications/EDP USB Vault.app' \
         '/Library/Application Support/EDP Drive' \
         '/Library/Application Support/EDP USB Vault' \
+        '/var/db/com.edp.drive' \
+        '/var/db/com.edp.usbvault' \
         '/Library/Filesystems/macfuse.fs' \
         '/Library/Frameworks/macFUSE.framework' \
         '/Library/PreferencePanes/macFUSE.prefPane' \
@@ -371,7 +391,9 @@ case "$MODE" in
             exit 0
         fi
         validate_no_external_edp_mounts
+        stop_drive_user_processes
         cleanup_edp_test_images
+        remove_drive_user_preferences
         remove_macfuse_from_user_settings
         restart_console_fskit_agent_if_safe
         if root_cleanup_needed; then

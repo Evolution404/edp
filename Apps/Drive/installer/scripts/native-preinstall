@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SERVICE_LABEL="com.edp.drive.service"
+DRIVE_UI_EXECUTABLE="/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"
 # macOS keeps `ucomm` even when an exiting process has lost its original argv.
 # These are the kernel-truncated names for the product service/transport.
 SERVICE_UCOMM="edp-drive-servic"
@@ -11,6 +12,42 @@ pids_for_ucomm() {
   local process_name="$1"
   /bin/ps -axo pid=,ucomm= \
     | /usr/bin/awk -v process_name="${process_name}" '$2 == process_name { print $1 }'
+}
+
+drive_ui_pids() {
+  /bin/ps -axo pid=,command= \
+    | /usr/bin/awk -v expected="${DRIVE_UI_EXECUTABLE}" '
+        {
+          pid=$1
+          sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
+          if ($0 == expected) print pid
+        }
+      '
+}
+
+stop_running_drive_ui() {
+  local pids
+  pids="$(drive_ui_pids)"
+  [[ -n "${pids}" ]] || return 0
+
+  echo "EDP Drive upgrade stopping the currently running foreground UI before bundle replacement."
+  /bin/kill -TERM ${pids} >/dev/null 2>&1 || true
+  local i
+  for ((i = 0; i < 50; i++)); do
+    [[ -z "$(drive_ui_pids)" ]] && return 0
+    /bin/sleep 0.1
+  done
+
+  pids="$(drive_ui_pids)"
+  [[ -n "${pids}" ]] || return 0
+  /bin/kill -KILL ${pids} >/dev/null 2>&1 || true
+  for ((i = 0; i < 20; i++)); do
+    [[ -z "$(drive_ui_pids)" ]] && return 0
+    /bin/sleep 0.1
+  done
+
+  echo "EDP Drive upgrade cannot stop the existing foreground UI; refusing in-place bundle replacement." >&2
+  exit 1
 }
 
 wait_for_ucomm_to_exit() {
@@ -321,6 +358,12 @@ recover_legacy_root_diskimages2_orphans() {
   /bin/rm -f "${info}"
   trap - EXIT
 }
+
+# Never replace the App bundle while an older foreground process is still
+# executing from it. macOS code-signing validation correctly rejects that stale
+# process after an in-place upgrade, which would otherwise leave menu-bar XPC
+# controls unable to stop or manage the new privileged service.
+stop_running_drive_ui
 
 # Preserve filesystem durability: an upgrade may recover the known legacy
 # root/no-IOMedia publication bug only after every user-visible filesystem has

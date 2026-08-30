@@ -681,6 +681,57 @@ service_restart() {
   echo "RESULT=SERVICE_GRACEFUL_RESTART_OK"
 }
 
+service_cycle() {
+  [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
+  if /usr/sbin/diskutil list external physical | /usr/bin/grep -q '^/dev/disk'; then
+    fail "service-cycle is a hardware-free lifecycle gate; unplug external physical USB first"
+  fi
+  [[ -x /usr/bin/python3 ]] || fail "service-cycle requires /usr/bin/python3 for monotonic timing"
+
+  local cycles="${EDP_SERVICE_CYCLE_COUNT:-8}"
+  local max_start_ms="${EDP_SERVICE_START_MAX_MS:-3000}"
+  [[ "${cycles}" =~ ^[0-9]+$ && "${cycles}" -ge 3 && "${cycles}" -le 20 ]] \
+    || fail "EDP_SERVICE_CYCLE_COUNT must be an integer in 3...20"
+  [[ "${max_start_ms}" =~ ^[0-9]+$ && "${max_start_ms}" -ge 500 ]] \
+    || fail "EDP_SERVICE_START_MAX_MS must be an integer >= 500"
+
+  local i start_ns end_ns elapsed_ms pid process_count
+  for ((i = 1; i <= cycles; i++)); do
+    "${APP_BIN}" --xpc-graceful-stop >/dev/null
+    for _ in $(/usr/bin/seq 1 40); do
+      if ! /bin/launchctl print system/com.edp.drive.service 2>/dev/null \
+          | /usr/bin/grep -Eq 'state = running|[[:space:]]pid = '; then
+        break
+      fi
+      /bin/sleep 0.05
+    done
+    if /bin/launchctl print system/com.edp.drive.service 2>/dev/null \
+        | /usr/bin/grep -Eq 'state = running|[[:space:]]pid = '; then
+      fail "service-cycle ${i}: daemon remained running after graceful stop"
+    fi
+
+    start_ns="$(/usr/bin/python3 -c 'import time; print(time.monotonic_ns())')"
+    "${APP_BIN}" --xpc-health >/dev/null
+    end_ns="$(/usr/bin/python3 -c 'import time; print(time.monotonic_ns())')"
+    elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
+    (( elapsed_ms <= max_start_ms )) \
+      || fail "service-cycle ${i}: startup ${elapsed_ms}ms exceeded ${max_start_ms}ms"
+
+    pid="$(/bin/launchctl print system/com.edp.drive.service 2>/dev/null \
+      | /usr/bin/awk '/pid = /{print $3; exit}')"
+    [[ "${pid}" =~ ^[0-9]+$ ]] || fail "service-cycle ${i}: launchd did not expose a live PID"
+    process_count="$(/bin/ps -axo command= \
+      | /usr/bin/grep -F '/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service daemon' \
+      | /usr/bin/grep -v grep | /usr/bin/wc -l | /usr/bin/xargs)"
+    [[ "${process_count}" == "1" ]] \
+      || fail "service-cycle ${i}: expected exactly one daemon process, found ${process_count}"
+    echo "SERVICE_CYCLE=${i}/${cycles} START_MS=${elapsed_ms} PID=${pid}"
+  done
+
+  record "SERVICE_CYCLE PASS cycles=${cycles} max_start_ms=${max_start_ms}"
+  echo "RESULT=SERVICE_RESTART_CYCLE_OK"
+}
+
 restart_daemon() {
   # Compatibility alias for older acceptance notes. The implementation now
   # exercises the product XPC lifecycle instead of launchctl kickstart -k.
@@ -752,6 +803,7 @@ Stages:
   service-stop
   service-start
   service-restart
+  service-cycle
   final-check
 
 Canonical first-install order:
@@ -775,8 +827,9 @@ Canonical first-install order:
  18. service-stop -> confirm service remains stopped
  19. service-start -> verify-fda-device
  20. service-restart -> verify-fda-device
- 21. reboot Mac -> verify-fda-device -> credential-checkpoint -> policy-smoke -> functional-all
- 22. final-check
+ 21. service-cycle -> require repeated stop/start startup <= 3s with exactly one daemon
+ 22. reboot Mac -> verify-fda-device -> credential-checkpoint -> policy-smoke -> functional-all
+ 23. final-check
 EOF
 }
 
@@ -802,6 +855,7 @@ case "${command}" in
   service-stop) service_stop ;;
   service-start) service_start ;;
   service-restart) service_restart ;;
+  service-cycle) service_cycle ;;
   restart-daemon) restart_daemon ;;
   final-check) final_check ;;
   -h|--help|help|'') usage ;;

@@ -64,7 +64,7 @@ done
 for scenario in D01 D02 D03 D04 D05 D06 D07 D08 D09 D10 D11 D12 D13; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
-for scenario in S01 S02 S03 S04 S05 S06 S07 S08 S09 S10; do
+for scenario in S01 S02 S03 S04 S05 S06 S07 S08 S09 S10 S11 S12 S13 S14 S15 S16 S17 S18 S19; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
 grep -Fq 'SCENARIO=M11_OK' <<<"$OUTPUT"

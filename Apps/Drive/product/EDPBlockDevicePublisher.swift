@@ -11,20 +11,14 @@ struct EDPPublishedBlockDevice: Sendable {
     }
 }
 
-/// Explicitly writable publication boundary used by the existing read/write
-/// product path. Read-only callers must not conform to or receive this type.
-protocol EDPBlockDevicePublisher: AnyObject {
-    func publishWritableImage(at path: String) throws -> EDPPublishedBlockDevice
-    func unpublish(_ device: EDPPublishedBlockDevice) throws
-}
+typealias EDPBlockDeviceCompletion = @Sendable (String?) -> Void
 
-/// Separate read-only publication boundary for read-only product flows.
-///
-/// Keeping this protocol distinct makes it impossible for the read-only path
-/// to accidentally call the existing writable DiskImages2 helper.
-protocol EDPReadOnlyBlockDevicePublisher: AnyObject {
-    func publishReadOnlyImage(at path: String) throws -> EDPPublishedBlockDevice
-    func unpublish(_ device: EDPPublishedBlockDevice) throws
+/// Explicitly writable publication boundary used by the existing read/write
+/// product path. Publication is migrated in Phase C; teardown is already
+/// callback-based here so Disk Arbitration never has to be synchronized again.
+protocol EDPBlockDevicePublisher: AnyObject, Sendable {
+    func publishWritableImage(at path: String) throws -> EDPPublishedBlockDevice
+    func unpublishAsync(_ device: EDPPublishedBlockDevice, completion: @escaping EDPBlockDeviceCompletion)
 }
 
 struct EDPBlockDevicePublisherError: Error, CustomStringConvertible, Sendable {
@@ -385,10 +379,11 @@ enum EDPMacFUSEScratchImageCleanup {
     }
 }
 
-final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
+final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendable {
     private let helperPath: String
     private let consoleLauncherPath: String
     private let diskArbitration: any EDPDaemonDiskArbitrating
+    private let operationQueue = DispatchQueue(label: "com.edp.drive.block-publication")
 
     init(binaryRoot: String, diskArbitration: any EDPDaemonDiskArbitrating) {
         helperPath = binaryRoot + "/diskimages2-attach"
@@ -443,47 +438,68 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
         )
     }
 
-    func unpublish(_ device: EDPPublishedBlockDevice) throws {
-        guard let backingPath = device.backingPath,
-              isEDPTransportBackingPath(backingPath) else {
-            throw EDPBlockDevicePublisherError("DiskImages2 publication is missing its EDP backing identity")
-        }
-
-        // Never trust a persisted diskN by itself. macOS can reuse that BSD name
-        // for an unrelated device (including the physical EDP USB) after the
-        // synthetic publication disappears. The authoritative identity is the
-        // exact volume.raw backing path plus its DiskImages2 owner process.
-        guard let candidate = publication(backingPath: backingPath) else {
-            NSLog(
-                "EDP DiskImages2 publication already absent for %@; ignoring stale BSD name %@",
-                backingPath,
-                device.bsdName
-            )
-            return
-        }
-
-        if candidate.devicePaths.isEmpty {
-            guard recoverPublication(candidate, backingPath: backingPath) else {
-                throw EDPBlockDevicePublisherError(
-                    "DiskImages2 publication owner did not exit for \(backingPath)"
-                )
+    func unpublishAsync(
+        _ device: EDPPublishedBlockDevice,
+        completion: @escaping EDPBlockDeviceCompletion
+    ) {
+        operationQueue.async { [weak self] in
+            guard let self else {
+                completion("block publisher was released")
+                return
             }
-            NSLog("EDP released owner-only DiskImages2 publication for %@", backingPath)
-            return
-        }
+            guard let backingPath = device.backingPath,
+                  self.isEDPTransportBackingPath(backingPath) else {
+                completion("DiskImages2 publication is missing its EDP backing identity")
+                return
+            }
 
-        let expectedDevicePath = "/dev/\(device.bsdName)"
-        guard candidate.devicePaths.contains(expectedDevicePath) else {
-            throw EDPBlockDevicePublisherError(
-                "DiskImages2 BSD identity changed for \(backingPath); refusing to touch \(device.bsdName)"
-            )
-        }
+            // Never trust a persisted diskN by itself. macOS can reuse that BSD
+            // name for an unrelated device after the synthetic publication
+            // disappears. Exact volume.raw backing identity remains authoritative.
+            guard let candidate = self.publication(backingPath: backingPath) else {
+                NSLog(
+                    "EDP DiskImages2 publication already absent for %@; ignoring stale BSD name %@",
+                    backingPath,
+                    device.bsdName
+                )
+                completion(nil)
+                return
+            }
 
-        do {
-            try diskArbitration.eject(device.bsdName)
-        } catch {
-            guard recoverPublication(candidate, backingPath: backingPath) else { throw error }
-            NSLog("EDP recovered DiskImages2 publication %@", device.bsdName)
+            if candidate.devicePaths.isEmpty {
+                guard self.recoverPublication(candidate, backingPath: backingPath) else {
+                    completion("DiskImages2 publication owner did not exit for \(backingPath)")
+                    return
+                }
+                NSLog("EDP released owner-only DiskImages2 publication for %@", backingPath)
+                completion(nil)
+                return
+            }
+
+            let expectedDevicePath = "/dev/\(device.bsdName)"
+            guard candidate.devicePaths.contains(expectedDevicePath) else {
+                completion(
+                    "DiskImages2 BSD identity changed for \(backingPath); refusing to touch \(device.bsdName)"
+                )
+                return
+            }
+
+            self.diskArbitration.ejectAsync(device.bsdName) { [weak self] error in
+                guard let self else {
+                    completion("block publisher was released")
+                    return
+                }
+                self.operationQueue.async {
+                    if let error {
+                        guard self.recoverPublication(candidate, backingPath: backingPath) else {
+                            completion(String(describing: error))
+                            return
+                        }
+                        NSLog("EDP recovered DiskImages2 publication %@", device.bsdName)
+                    }
+                    completion(nil)
+                }
+            }
         }
     }
 
@@ -596,64 +612,5 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher {
             Thread.sleep(forTimeInterval: 0.05)
         }
         return publication(backingPath: backingPath) == nil
-    }
-}
-
-/// Public, read-only Apple DiskImages publication used by the thin bridge.
-/// No filesystem type is supplied here; Disk Arbitration remains responsible
-/// for recognizing and mounting the decrypted filesystem.
-final class EDPHdiutilReadOnlyPublisher: EDPReadOnlyBlockDevicePublisher {
-    private let diskArbitration: EDPDiskArbitrationController
-
-    init(diskArbitration: EDPDiskArbitrationController) {
-        self.diskArbitration = diskArbitration
-    }
-
-    func publishReadOnlyImage(at path: String) throws -> EDPPublishedBlockDevice {
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw EDPBlockDevicePublisherError("read-only block image does not exist: \(path)")
-        }
-
-        let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        process.arguments = [
-            "attach", "-readonly", "-nomount",
-            "-imagekey", "diskimage-class=CRawDiskImage",
-            path,
-        ]
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let stdout = output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw EDPBlockDevicePublisherError(
-                "hdiutil read-only attach failed (\(process.terminationStatus)): "
-                    + String(decoding: stderr, as: UTF8.self)
-            )
-        }
-
-        let text = String(decoding: stdout, as: UTF8.self)
-        let candidates = text.split(whereSeparator: \Character.isWhitespace)
-            .map(String.init)
-            .filter { $0.hasPrefix("/dev/disk") }
-        guard let devicePath = candidates.first,
-              devicePath.dropFirst("/dev/disk".count).allSatisfy({ $0.isNumber }) else {
-            throw EDPBlockDevicePublisherError(
-                "hdiutil did not return a whole BSD disk: \(text.trimmingCharacters(in: .whitespacesAndNewlines))"
-            )
-        }
-        let bsdName = String(devicePath.dropFirst("/dev/".count))
-        guard FileManager.default.fileExists(atPath: devicePath) else {
-            throw EDPBlockDevicePublisherError("published BSD device is missing: \(devicePath)")
-        }
-        return EDPPublishedBlockDevice(bsdName: bsdName)
-    }
-
-    func unpublish(_ device: EDPPublishedBlockDevice) throws {
-        try diskArbitration.eject(device.bsdName)
     }
 }

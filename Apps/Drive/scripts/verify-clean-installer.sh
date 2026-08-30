@@ -88,6 +88,7 @@ if /usr/libexec/PlistBuddy -c 'Print :KeepAlive' "${DAEMON_PLIST}" >/dev/null 2>
   echo "embedded service plist must be on-demand and user-stoppable" >&2
   exit 5
 fi
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :ThrottleInterval' "${DAEMON_PLIST}")" == "1" ]]
 case "${SERVICE_MODE}" in
   smappservice)
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :Label' "${DAEMON_PLIST}")" == "com.edp.drive.service" ]]
@@ -110,6 +111,7 @@ case "${SERVICE_MODE}" in
       echo "installer-managed service plist must be on-demand and user-stoppable" >&2
       exit 5
     fi
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :ThrottleInterval' "${LEGACY_DAEMON_PLIST}")" == "1" ]]
     echo "RESULT=LEGACY_FDA_DAEMON_PACKAGED"
     echo "RESULT=LEGACY_XPC_DAEMON_PACKAGED"
     ;;
@@ -119,6 +121,7 @@ case "${SERVICE_MODE}" in
     ;;
 esac
 echo "RESULT=USER_STOPPABLE_ON_DEMAND_SERVICE_PLIST"
+echo "RESULT=SERVICE_RESTART_THROTTLE_1S"
 echo "SERVICE_MODE=${SERVICE_MODE}"
 echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
 echo "RESULT=DRIVE_APP_ICON_PACKAGED"

@@ -164,8 +164,11 @@ struct EDPUIAutomationMain {
         try require(sidebar.maximumThickness == 220, "sidebar maximum thickness changed")
         try require(sidebar.canCollapse, "sidebar canCollapse disabled")
         try require(!sidebar.canCollapseFromWindowResize, "sidebar auto-collapse on resize re-enabled")
-        try require(window.contentLayoutRect.width >= 899 && window.contentLayoutRect.width <= 901, "900px content geometry drifted")
-        try require(window.contentLayoutRect.height >= 679 && window.contentLayoutRect.height <= 681, "680px content geometry drifted")
+        guard let contentView = window.contentView else {
+            throw EDPUIAutomationFailure(description: "900×680 content view missing")
+        }
+        try require(contentView.bounds.width >= 899 && contentView.bounds.width <= 901, "900px content geometry drifted")
+        try require(contentView.bounds.height >= 679 && contentView.bounds.height <= 681, "680px content geometry drifted")
         var expandedSidebarWidths = [CGFloat]()
         var collapsedDetailWidths = [CGFloat]()
         for index in 0..<toggleCount {
