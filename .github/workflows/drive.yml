@@ -2,6 +2,8 @@ name: EDP Drive
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "20 18 * * *"
   push:
     branches: [main]
     paths:
@@ -27,6 +29,7 @@ permissions:
 
 jobs:
   native:
+    if: github.event_name != 'schedule'
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -259,3 +262,96 @@ jobs:
           grep -Fq 'RESULT=KEYCHAIN_NAMESPACE_MIGRATION_ATOMIC_OK' \
             "${RUNNER_TEMP}/credential-store.txt"
           echo 'RESULT=EDP_DRIVE_NATIVE_BUILD_OK'
+
+  regression-fast:
+    if: github.event_name != 'schedule'
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fast and identity regression
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/drive-tests
+          make drive-test-fast | tee artifacts/drive-tests/fast.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drive-fast-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/fast.log
+
+  regression-virtual-usb:
+    if: github.event_name != 'schedule'
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Virtual physical USB and service lifecycle
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/drive-tests
+          make drive-test-virtual-usb | tee artifacts/drive-tests/virtual-usb.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drive-virtual-usb-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/virtual-usb.log
+
+  regression-storage:
+    if: github.event_name != 'schedule'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare official macFUSE Local FSKit runtime
+        run: Apps/Drive/Tests/CI/install-macfuse-fskit.sh
+      - name: Sparse-image storage M01-M14
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/drive-tests
+          make drive-test-storage | tee artifacts/drive-tests/storage.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drive-storage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/storage.log
+
+  regression-ui-system:
+    if: github.event_name != 'schedule'
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: UI automation and release safety ratchets
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/drive-tests
+          make drive-test-ui | tee artifacts/drive-tests/ui.log
+          make drive-test-system | tee artifacts/drive-tests/system.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drive-ui-system-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/*.log
+
+  nightly-storage-stress:
+    if: github.event_name == 'schedule'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare official macFUSE Local FSKit runtime
+        run: Apps/Drive/Tests/CI/install-macfuse-fskit.sh
+      - name: Run 100-cycle storage stress
+        env:
+          EDP_STORAGE_LOOP_COUNT: '100'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/drive-tests
+          make drive-test-storage | tee artifacts/drive-tests/nightly-storage.log
+          make drive-test-system | tee artifacts/drive-tests/nightly-system.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drive-nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/*.log

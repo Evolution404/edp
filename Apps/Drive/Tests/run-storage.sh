@@ -196,6 +196,22 @@ attach_image() {
   attached_bsd="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "$attach_log" | /usr/bin/tail -1)"
   [[ -n "$attached_bsd" && -b "/dev/$attached_bsd" ]]
   assert_synthetic_device "$attached_bsd" "$backing"
+  # DiskImages2 can return the BSD name a few milliseconds before Disk
+  # Arbitration/diskutil can open the media. Wait for the synthetic device to
+  # become fully queryable before any destructive fixture formatting step.
+  local ready=0
+  for _ in $(/usr/bin/seq 1 100); do
+    if /usr/sbin/diskutil info "$attached_bsd" 2>/dev/null \
+      | /usr/bin/grep -Fq 'Virtual:                   Yes'; then
+      ready=1
+      break
+    fi
+    /bin/sleep 0.05
+  done
+  [[ "$ready" -eq 1 ]] || {
+    echo "synthetic device did not become diskutil-ready: $attached_bsd" >&2
+    return 1
+  }
   printf '%s|%s\n' "$attached_bsd" "$backing" >>"$ACTIVE_DEVICES"
   printf -v "$output_variable" '%s' "$attached_bsd"
 }

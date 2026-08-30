@@ -59,18 +59,19 @@ drive-test-fast: core-test drive-check
 # their dedicated harnesses while preserving a stable developer-facing API.
 drive-test-identity: drive-test-fast
 
-drive-test-virtual-usb: drive-test-identity
+drive-test-virtual-usb:
 	@"$(ROOT)/Apps/Drive/Tests/run-virtual-usb.sh"
 
-drive-test-storage: drive-test-virtual-usb
+drive-test-storage:
 	@"$(ROOT)/Apps/Drive/Tests/run-storage.sh"
 
-drive-test-ui: drive-test-storage
+drive-test-ui:
 	@"$(ROOT)/Apps/Drive/Tests/run-ui.sh"
 
-drive-test-system: drive-test-ui
+drive-test-system:
+	@"$(ROOT)/Apps/Drive/Tests/run-system.sh"
 
-drive-test-all: drive-test-system
+drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system
 
 drive-build:
 	@mkdir -p "$(ARTIFACTS)"
