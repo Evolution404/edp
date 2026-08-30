@@ -69,7 +69,11 @@ jobs:
           grep -Fq 'EDPMenuNavigationRow' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq 'HSplitView {' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'Picker("切换设备", selection: deviceSelection)' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq '.navigationSplitViewStyle(.prominentDetail)' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'sidebarItem.canCollapseFromWindowResize = false' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq 'NavigationSplitView {' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq '.navigationSplitViewStyle(.prominentDetail)' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq '.frame(width: 180)' Apps/Drive/product/App/EDPUSBVaultApp.swift
           test -x Tools/build-drive-ui-update.sh
           test -x Tools/install-drive-ui-update.sh
