@@ -737,6 +737,39 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
+    func unmountAllMountedPartitions(_ device: EDPXPCDevice) {
+        let partitionTypes = device.partitions.compactMap { partition in
+            partition.mountState == .mounted ? partition.partitionType : nil
+        }
+        guard !partitionTypes.isEmpty else { return }
+        isBusy = true
+        unmountNextPartition(deviceID: device.deviceID, remaining: partitionTypes)
+    }
+
+    private func unmountNextPartition(deviceID: String, remaining: [UInt32]) {
+        guard let partitionType = remaining.first else {
+            isBusy = false
+            refresh()
+            return
+        }
+        guard let proxy = proxy() else {
+            isBusy = false
+            return
+        }
+        proxy.unmountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                if let errorMessage {
+                    self.isBusy = false
+                    self.lastError = errorMessage
+                    self.refresh()
+                    return
+                }
+                self.unmountNextPartition(deviceID: deviceID, remaining: Array(remaining.dropFirst()))
+            }
+        }
+    }
+
     func unmountPartition(deviceID: String, partitionType: UInt32) {
         guard let proxy = proxy() else { return }
         isBusy = true
@@ -1427,18 +1460,60 @@ struct EDPDeviceDetailView: View {
                         .fixedSize()
                     }
                 }
+
+                EDPContentCard(padding: 16) {
+                    VStack(spacing: 10) {
+                        LabeledContent("Media Name", value: device.mediaName)
+                        Divider()
+                        LabeledContent("VID / PID", value: device.vidPID)
+                        LabeledContent("LBA4 onlyId", value: device.labelOnlyID.map(String.init) ?? "不可用")
+                        LabeledContent("LBA11 deviceId", value: device.metadataDeviceID ?? "不可用")
+                        Divider()
+                        LabeledContent(
+                            "整盘容量",
+                            value: ByteCountFormatter.string(fromByteCount: Int64(device.sizeBytes), countStyle: .file)
+                        )
+                        LabeledContent("当前 BSD 名", value: device.bsdName.isEmpty ? "未连接" : device.bsdName)
+                        LabeledContent("分区数", value: "\(device.partitions.count)")
+                        LabeledContent("Raw Access", value: device.privilegedAccessReady ? "已就绪" : "未就绪")
+                        Divider()
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Drive 内部稳定设备 ID")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(device.deviceID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            Text("设备身份由 VID、PID、LBA4 onlyId、整盘容量和 LBA11 deviceId 共同确定；diskN 仅是当前动态名称。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 }
 
                 if deviceSection == .partitions {
                 EDPSectionHeader(
                     "分区",
-                    subtitle: "管理自动挂载、凭据和 Finder 访问",
+                    subtitle: "\(device.partitions.filter { $0.mountState == .mounted }.count) / \(device.partitions.count) 已挂载",
                     systemImage: "rectangle.split.3x1"
                 ) {
-                    Text("\(device.partitions.count)")
-                        .font(.system(.callout, design: .rounded).weight(.semibold))
-                        .contentTransition(.numericText())
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button("挂载全部") { model.mountAllAvailablePartitions(device) }
+                            .buttonStyle(.glass)
+                            .disabled(
+                                model.isBusy || !device.connected
+                                    || !device.partitions.contains {
+                                        $0.mountState != .mounted
+                                            && (!$0.encrypted || $0.credentialStatus == .saved)
+                                    }
+                            )
+                        Button("卸载全部") { model.unmountAllMountedPartitions(device) }
+                            .buttonStyle(.glass)
+                            .disabled(model.isBusy || !device.partitions.contains { $0.mountState == .mounted })
+                    }
                 }
 
                 ForEach(device.partitions) { partition in
@@ -1497,6 +1572,31 @@ struct EDPDeviceDetailView: View {
                             }
                         }
                     }
+
+                    EDPSectionHeader(
+                        "系统集成",
+                        subtitle: "全局权限与文件系统运行组件",
+                        systemImage: "gearshape.2"
+                    )
+                    EDPContentCard(padding: 14) {
+                        VStack(spacing: 10) {
+                            LabeledContent("完全磁盘访问", value: model.rawAccessStatusText)
+                            LabeledContent("Raw Access", value: device.privilegedAccessReady ? "已就绪" : "未就绪")
+                            LabeledContent(
+                                "macFUSE Local",
+                                value: model.transportRuntimeReady == true ? "已就绪" : "需要重新安装"
+                            )
+                            Divider()
+                            HStack {
+                                Button("打开系统设置") { model.openFullDiskAccessSettings() }
+                                    .buttonStyle(.glass)
+                                Button("重新检测权限") { model.refreshRawAccess() }
+                                    .buttonStyle(.glass)
+                                    .disabled(model.isBusy)
+                                Spacer()
+                            }
+                        }
+                    }
                 }
 
                 if deviceSection == .overview {
@@ -1545,99 +1645,103 @@ struct EDPPartitionCard: View {
     private var mounted: Bool { partition.mountState == .mounted }
 
     var body: some View {
-        EDPContentCard(padding: 16) {
-          VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .frame(width: 30)
-                    .foregroundStyle(mounted ? Color.accentColor : .secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(partition.displayName).font(.headline)
-                    Text(description).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                statusBadge
-            }
+        EDPContentCard(padding: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Image(systemName: icon)
+                        .font(.title3)
+                        .frame(width: 30)
+                        .foregroundStyle(mounted ? Color.accentColor : .secondary)
 
-            Divider()
-
-            HStack {
-                Toggle("插入后自动挂载", isOn: Binding(
-                    get: { partition.autoMount },
-                    set: {
-                        model.setAutoMount(
-                            deviceID: device.deviceID,
-                            partitionType: partition.partitionType,
-                            enabled: $0
-                        )
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(partition.displayName)
+                                .font(.headline)
+                            statusBadge
+                        }
+                        Text(partitionSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                ))
-                .toggleStyle(.switch)
-                .disabled(!device.connected && partition.partitionType == EDPPartitionKind.boot.rawValue)
-                Spacer()
-                if let filesystem = partition.filesystem {
-                    Text(filesystem).font(.caption).foregroundStyle(.secondary)
-                }
-            }
 
-            if let error = partition.lastError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-            }
+                    Spacer(minLength: 12)
 
-            HStack {
-                if partition.encrypted {
-                    Button(partition.credentialStatus == .saved ? "更新密码" : "设置密码") {
-                        onSetPassword()
+                    Toggle("自动挂载", isOn: Binding(
+                        get: { partition.autoMount },
+                        set: {
+                            model.setAutoMount(
+                                deviceID: device.deviceID,
+                                partitionType: partition.partitionType,
+                                enabled: $0
+                            )
+                        }
+                    ))
+                    .toggleStyle(.switch)
+                    .fixedSize()
+                    .disabled(!device.connected && partition.partitionType == EDPPartitionKind.boot.rawValue)
+
+                    if mounted, partition.mountPoint != nil {
+                        Button("Finder") { model.openInFinder(partition) }
+                            .buttonStyle(.glass)
                     }
-                    .buttonStyle(.glass)
-                    if partition.credentialStatus == .saved {
-                        Button("删除密码", role: .destructive) {
-                            model.deleteCredential(
+
+                    if mounted {
+                        Button("卸载") {
+                            model.unmountPartition(
                                 deviceID: device.deviceID,
                                 partitionType: partition.partitionType
                             )
                         }
                         .buttonStyle(.glass)
-                    }
-                }
-                Spacer()
-                if mounted {
-                    if partition.mountPoint != nil {
-                        Button("在 Finder 中显示") { model.openInFinder(partition) }
-                            .buttonStyle(.glass)
-                    }
-                    Button("卸载") {
-                        model.unmountPartition(
-                            deviceID: device.deviceID,
-                            partitionType: partition.partitionType
+                        .disabled(model.isBusy)
+                    } else {
+                        Button("挂载") {
+                            model.mountPartition(
+                                deviceID: device.deviceID,
+                                partitionType: partition.partitionType
+                            )
+                        }
+                        .buttonStyle(.glassProminent)
+                        .disabled(
+                            !device.connected || model.isBusy
+                                || (partition.encrypted && partition.credentialStatus != .saved)
                         )
                     }
-                    .buttonStyle(.glass)
-                } else {
-                    Button("挂载") {
-                        model.mountPartition(
-                            deviceID: device.deviceID,
-                            partitionType: partition.partitionType
-                        )
-                    }
-                    .buttonStyle(.glassProminent)
-                    .disabled(
-                        !device.connected || model.isBusy
-                            || (partition.encrypted && partition.credentialStatus != .saved)
-                    )
-                }
-            }
 
-            if partition.encrypted && mounted {
-                Text("该分区以可写磁盘介质发布，可使用 Finder 自带的“抹掉”功能格式化为 ExFAT。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    if partition.encrypted {
+                        Menu {
+                            Button(partition.credentialStatus == .saved ? "更新密码" : "设置密码") {
+                                onSetPassword()
+                            }
+                            if partition.credentialStatus == .saved {
+                                Button("删除密码", role: .destructive) {
+                                    model.deleteCredential(
+                                        deviceID: device.deviceID,
+                                        partitionType: partition.partitionType
+                                    )
+                                }
+                            }
+                            if mounted {
+                                Divider()
+                                Text("可在 Finder 中抹掉并格式化为 ExFAT")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help("更多分区操作")
+                        .accessibilityLabel("\(partition.displayName)更多操作")
+                    }
+                }
+
+                if let error = partition.lastError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
             }
-          }
         }
     }
 
@@ -1653,10 +1757,24 @@ struct EDPPartitionCard: View {
     private var description: String {
         switch EDPPartitionKind(rawValue: partition.partitionType) {
         case .boot: return "普通启动分区，无需密码"
-        case .exchange: return "用于受控交换的加密分区"
-        case .secure: return "用于保密资料的加密分区"
+        case .exchange: return "受控交换分区"
+        case .secure: return "保密资料分区"
         case nil: return "EDP 分区"
         }
+    }
+
+    private var partitionSummary: String {
+        var parts = [description]
+        if let filesystem = partition.filesystem, !filesystem.isEmpty {
+            parts.append(filesystem)
+        }
+        if mounted, partition.readOnly == true {
+            parts.append("只读")
+        }
+        if partition.encrypted {
+            parts.append(partition.credentialStatus == .saved ? "密码已保存" : "缺少密码")
+        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var statusBadge: some View {

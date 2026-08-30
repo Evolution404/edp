@@ -101,39 +101,50 @@ RESULT=DRIVE_UI_PREVIEW_COMPILE_OK
 
 `mountAllAvailablePartitions` sequences the existing per-partition XPC operation and stops on the first surfaced failure; no mount-service protocol or raw-device semantics changed.
 
-Commit: `pending commit`
+Commit: `3973068 feat(drive): build liquid glass overview workspace`
 
 ## UI-C — Device workspace
 
-Status: `TODO`
+Status: `DONE`
 
 ### Overview
 
-- [ ] VID/PID.
-- [ ] LBA4 onlyId.
-- [ ] LBA11 metadataDeviceID.
-- [ ] Capacity.
-- [ ] BSD name.
-- [ ] Stable internal deviceID.
-- [ ] Eject/delete record.
+- [x] VID/PID.
+- [x] LBA4 onlyId.
+- [x] LBA11 metadataDeviceID.
+- [x] Capacity.
+- [x] BSD name with explicit dynamic-name wording.
+- [x] Stable internal deviceID and five-factor identity explanation.
+- [x] Eject/delete record.
 
 ### Partitions
 
-- [ ] Compact type 1/2/4 rows.
-- [ ] Auto mount.
-- [ ] Mount/unmount.
-- [ ] Finder.
-- [ ] filesystem/readOnly/error.
-- [ ] credential actions preserved.
+- [x] Compact type 1/2/4 rows.
+- [x] Auto mount.
+- [x] Mount/unmount plus serial mount-all/unmount-all.
+- [x] Finder.
+- [x] filesystem/readOnly/error.
+- [x] credential actions preserved in the secondary action menu.
 
 ### Security
 
-- [ ] Exchange credential.
-- [ ] Secure credential.
-- [ ] Update/delete.
-- [ ] Integration status links.
+- [x] Exchange credential.
+- [x] Secure credential.
+- [x] Update/delete.
+- [x] Integration status and settings/recheck actions.
 
-Commit: `TBD`
+Validation at implementation HEAD:
+
+```text
+git diff --check = PASS
+make drive-check = PASS
+EDP_UI_PREVIEW Swift 6 warnings-as-errors typecheck = PASS
+RESULT=DRIVE_UI_C_FINAL_OK
+```
+
+The device overview now exposes the five-factor identity evidence without treating `diskN` as stable identity. Partition bulk operations sequence the existing per-partition XPC APIs and surface the first failure; no XPC protocol, raw-device, credential, or mount-service semantics changed.
+
+Commit: `pending commit`
 
 ## UI-D — Activity + Settings
 
