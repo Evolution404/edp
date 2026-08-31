@@ -48,8 +48,13 @@ make drive-test-fast
 `drive-test-virtual-usb` extends that baseline through TEST-C/TEST-D/TEST-E. It drives production discovery and daemon state through injected virtual whole-USB media, virtual metadata/raw devices, temporary Keychain/policy stores, and fake mount/Disk Arbitration dependencies. It covers P01–P30, C01–C08, D01–D13, and S01–S22 without opening a physical raw disk. D01–D13 cover safe new-device defaults, independent auto-mount/password-probe policy, built-in/custom default passwords, once-per-insertion wrong-password suppression, reconnect retry, XPC round-trips, Keychain-only default-password storage, manual-mount persistence, and stale synthetic `diskN` reuse protection. S13–S22 lock the asynchronous lifecycle itself: bounded one-shot FSKit host recovery/retry, cancellation priority, terminal-state idempotence, duplicate-mount single-flight fanout, mount→unmount cancellation, mount→eject serialization, coalesced shutdown while a mount is in flight, once-only Disk Arbitration completion when timeout/late/duplicate callbacks race, bounded asynchronous publisher process completion under normal/timeout/cancellation paths, preservation of typed raw-access/bridge/publication/filesystem/teardown failure categories, and deterministic virtual-clock same-tick ordering/cancellation terminality. `Tests/run-service-lifecycle.sh` is the focused credential/default-policy/service runner used by that target.
 
 `drive-test-virtual-usb` includes the production discovery dependency seam plus
-the complete P16–P30 lifecycle/fault matrix. It reads only immutable fixture
-files and never opens `/dev/rdisk*`.
+the complete P16–P30 lifecycle/fault matrix. Its focused service runner also
+executes a fixed-seed lifecycle model/property gate with 10,000 generated
+sequences (320,000 events at the default 32 steps each), checking terminal
+stickiness, once-only Disk Arbitration completion, one-shot recovery/retry,
+cancellation priority, and publication ownership. Any failure reports the fixed
+seed, per-sequence seed, sequence index, and event trace for exact replay. It
+reads only immutable fixture files and never opens `/dev/rdisk*`.
 
 `drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. The smoke profile runs 5 complete cycles for rapid functional regression; the release profile remains the authoritative stress gate at 50 full mount/attach/filesystem/unmount/eject/transport-remount cycles and rejects a loop count outside the accepted 50–100 range. It verifies boot FAT16 at both
 the native read-only mount and transport `EROFS` layers, encrypted persistence,

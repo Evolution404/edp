@@ -676,6 +676,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
         try validateCredentialAndPolicyScenarios(fixtureDirectory: fixtureDirectory)
         try validateDefaultPolicyScenarios(fixtureDirectory: fixtureDirectory)
         try validateServiceScenarios(fixtureDirectory: fixtureDirectory)
+        try EDPLifecycleModelProperties.run()
         print("RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK")
     }
 

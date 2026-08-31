@@ -40,6 +40,7 @@ VIRTUAL_USB_SOURCES=(
   Tests/VirtualUSB/EDPVirtualMediaProvider.swift
   Tests/VirtualUSB/EDPVirtualRawDevice.swift
   Tests/VirtualUSB/EDPVirtualDiskFactory.swift
+  Tests/VirtualUSB/ValidateLifecycleModelProperties.swift
 )
 
 BUILD_DIR="${TMPDIR:-/tmp}/edp-drive-tests-${USER:-user}"
@@ -69,5 +70,7 @@ for scenario in S01 S02 S03 S04 S05 S06 S07 S08 S09 S10 S11 S12 S13 S14 S15 S16 
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
 grep -Fq 'SCENARIO=M11_OK' <<<"$OUTPUT"
+grep -Fq 'MODEL_SEQUENCES=10000' <<<"$OUTPUT"
+grep -Fq 'RESULT=DRIVE_LIFECYCLE_MODEL_PROPERTIES_OK' <<<"$OUTPUT"
 grep -Fq 'RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK' <<<"$OUTPUT"
 printf '%s\n' 'RESULT=DRIVE_SERVICE_LIFECYCLE_OK'

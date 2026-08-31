@@ -16,7 +16,7 @@
 | C | BlockPublisher / DiskImages2 async | DONE* |
 | D | Typed lifecycle errors | DONE |
 | E | Virtual clock / scheduler | DONE |
-| F | Deterministic model/property tests | TODO |
+| F | Deterministic model/property tests | DONE |
 | G | Structured lifecycle journal | TODO |
 | H | 全量/安装态/真盘验收 | TODO |
 
@@ -132,18 +132,21 @@
 - [x] transport validator 输出 `RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK`
 - [x] system ratchet 输出 `RESULT=DRIVE_SYSTEM_VIRTUAL_CLOCK_LIFECYCLE_OK`
 - [x] `make drive-test-fast` / service lifecycle / system PASS；native installer 实际构建 PASS
-- [ ] commit/push
+- [x] commit/push：`b49e1f9 refactor(drive): inject monotonic lifecycle scheduler`
 
 ## Phase F — Deterministic model/property tests
 
-状态：TODO
+状态：DONE
 
 验收项：
 
-- [ ] 固定 seed event generator
-- [ ] >=10,000 sequence
-- [ ] terminal/completion/recovery/retry/resource invariants
-- [ ] failure trace 可复现
+- [x] 固定 seed event generator：`0xed505a1720260831`，每个 sequence 派生独立可重放 seed
+- [x] 10,000 sequences × 32 steps = 320,000 lifecycle events
+- [x] terminal sticky / DA completion exactly-once / recovery budget <=1 / retry <=1 / cancel 后不 launch/publish/recover / publication ownership invariants
+- [x] failure trace 可复现：输出 fixed seed、sequence index、sequenceSeed、逐步 event/action/state/budget/resource trace
+- [x] 模型首次运行实际发现并修复：late `stageFailed` 可覆盖 failed/mounted terminal；terminal failure 时 in-flight publication token 未显式 cancel
+- [x] 最终覆盖：mounted=952、failed=9048、retry=1013、recovery=1013、cancel=5765、publish=3270、filesystem=1740
+- [x] `RESULT=DRIVE_LIFECYCLE_MODEL_PROPERTIES_OK`
 - [ ] commit/push
 
 ## Phase G — Structured lifecycle journal

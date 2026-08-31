@@ -12,6 +12,7 @@ MACFUSE_POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPMacFUSERuntimePolicy.swift"
 PUBLISHER_SOURCE="${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
 POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPDevicePolicyStore.swift"
 CREDENTIAL_SOURCE="${ROOT}/Apps/Drive/product/EDPCredentialStore.swift"
+MODEL_PROPERTY_SOURCE="${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateLifecycleModelProperties.swift"
 EMBEDDED_SERVICE_PLIST="${ROOT}/Apps/Drive/product/App/com.edp.drive.service.plist"
 LEGACY_SERVICE_PLIST="${ROOT}/Apps/Drive/installer/com.edp.drive.service.plist"
 
@@ -162,6 +163,17 @@ echo 'RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK'
 ! /usr/bin/grep -Eq 'Date\(\)\.addingTimeInterval\((8|15)\)' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Eq 'Date\(\) [<>]=? deadline' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_VIRTUAL_CLOCK_LIFECYCLE_OK'
+
+# Model/property regression is deterministic, reproducible, and must retain at
+# least 10,000 generated lifecycle sequences plus a failure trace.
+/usr/bin/grep -Fq 'static let fixedSeed: UInt64' "${MODEL_PROPERTY_SOURCE}"
+/usr/bin/grep -Fq 'sequenceCount: Int = 10_000' "${MODEL_PROPERTY_SOURCE}"
+/usr/bin/grep -Fq 'MODEL_PROPERTY_FAILURE invariant=' "${MODEL_PROPERTY_SOURCE}"
+/usr/bin/grep -Fq 'TRACE:' "${MODEL_PROPERTY_SOURCE}"
+/usr/bin/grep -Fq 'EDPDiskArbitrationCompletionGate()' "${MODEL_PROPERTY_SOURCE}"
+/usr/bin/grep -Fq 'cancelled mount launched a new attempt' "${MODEL_PROPERTY_SOURCE}"
+/usr/bin/grep -Fq 'failed terminal state retained publication ownership' "${MODEL_PROPERTY_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_MODEL_PROPERTIES_OK'
 
 # Normal product lifecycle must not fall back to shell-side process inspection
 # or codesign/umount helpers. Runtime signature validation is Security.framework,

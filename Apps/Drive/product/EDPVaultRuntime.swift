@@ -665,6 +665,10 @@ struct EDPFSKitMountLifecycleMachine: Sendable {
         case .publishing(let attempt), .mountingFilesystem(let attempt):
             state = .cleaningUp(attempt: attempt, recoverable: false, failure: failure)
             return .cleanup(attempt: attempt, allowHostRecoveryDuringStop: false)
+        case .failed(let existing):
+            return .fail(existing)
+        case .mounted:
+            return .complete
         default:
             state = .failed(failure)
             return .fail(failure)
@@ -2149,6 +2153,9 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         operation.finished = true
         activeMountOperations.remove(operation.sessionKey)
         activeMountOperationBoxes.removeValue(forKey: operation.sessionKey)
+        if error != nil {
+            operation.publicationOperation?.cancel()
+        }
         operation.publicationOperation = nil
         cancelledMountOperations.remove(operation.sessionKey)
         let waiters = mountWaiters.removeValue(forKey: operation.sessionKey) ?? []
