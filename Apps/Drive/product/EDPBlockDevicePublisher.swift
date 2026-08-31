@@ -912,8 +912,6 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         }
 
         let expected = URL(fileURLWithPath: backingPath).standardizedFileURL.path
-        var backingStatus = stat()
-        guard stat(expected, &backingStatus) == 0 else { return nil }
         var consoleStatus = stat()
         let consoleUID: uid_t? = stat("/dev/console", &consoleStatus) == 0
             ? consoleStatus.st_uid
@@ -926,7 +924,6 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
                   ownerValue.intValue >= 0,
                   let ownerUID = uid_t(exactly: ownerValue.uint64Value),
                   ownerUID == 0 || ownerUID == consoleUID,
-                  backingStatus.st_uid == ownerUID,
                   (item["diskimages2"] as? NSNumber)?.boolValue == true,
                   (item["autodiskmount"] as? NSNumber)?.boolValue == false,
                   (item["image-encrypted"] as? NSNumber)?.boolValue == false,
@@ -936,13 +933,16 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
                   pidValue.intValue > 1 else {
                 continue
             }
+            // Teardown must never synchronously stat the macFUSE backing path or
+            // the synthetic BSD nodes. Either can be in a transient FSKit/LIFS
+            // generation while DiskImages2 is exiting and can place the root
+            // service itself into an uninterruptible wait. The exact hdiutil
+            // owner snapshot is authoritative here: image-path + owner/mode +
+            // DiskImages2/autodiskmount/encryption flags + hdid PID + exact
+            // system-entity strings. Process identity is revalidated separately
+            // before any owner recovery signal is sent.
             let devicePaths = entities.compactMap { $0["dev-entry"] as? String }
-            guard devicePaths.allSatisfy({ path in
-                var status = stat()
-                return stat(path, &status) == 0
-                    && (status.st_mode & S_IFMT) == S_IFBLK
-                    && status.st_uid == ownerUID
-            }) else {
+            guard devicePaths.allSatisfy(Self.isSyntheticBSDDevicePath) else {
                 continue
             }
             return DiskImagesPublication(
@@ -953,6 +953,16 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
             )
         }
         return nil
+    }
+
+    private static func isSyntheticBSDDevicePath(_ path: String) -> Bool {
+        let prefix = "/dev/disk"
+        guard path.hasPrefix(prefix) else { return false }
+        let suffix = path.dropFirst(prefix.count)
+        guard !suffix.isEmpty else { return false }
+        return suffix.split(separator: "s", omittingEmptySubsequences: false).allSatisfy { component in
+            !component.isEmpty && component.allSatisfy { $0.isNumber }
+        }
     }
 
     private func isEDPTransportBackingPath(_ path: String) -> Bool {

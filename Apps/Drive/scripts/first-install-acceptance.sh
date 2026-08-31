@@ -497,31 +497,46 @@ verify_fda_device() {
   echo "RESULT=FDA_RETAINED_RAW_ACCESS_READY"
 }
 
-mountpoint_for_type() {
-  case "${1}" in
-    1) printf '%s\n' '/Volumes/启动区' ;;
-    2) printf '%s\n' '/Volumes/交换区' ;;
-    4) printf '%s\n' '/Volumes/保密区' ;;
-    *) fail "partition type must be 1, 2, or 4" ;;
-  esac
+partition_snapshot_line() {
+  local device_id="${1}" type="${2}" snapshot="${3:-}" line
+  [[ -n "${snapshot}" ]] || snapshot="$(snapshot_text)"
+  line="$(/usr/bin/printf '%s\n' "${snapshot}" \
+    | /usr/bin/grep -F "SNAPSHOT_PARTITION=${device_id}|type=${type}|" \
+    | /usr/bin/head -1 || true)"
+  [[ -n "${line}" ]] || fail "snapshot does not contain partition ${type} for ${device_id}"
+  /usr/bin/printf '%s\n' "${line}"
 }
 
-wait_for_path_state() {
-  local path="${1}" wanted="${2}" i
-  for i in $(/usr/bin/seq 1 30); do
-    if [[ "${wanted}" == "present" && -d "${path}" ]]; then return 0; fi
-    if [[ "${wanted}" == "absent" && ! -d "${path}" ]]; then return 0; fi
-    /bin/sleep 1
+partition_field() {
+  local line="${1}" key="${2}"
+  /usr/bin/printf '%s\n' "${line}" | /usr/bin/awk -F'|' -v prefix="${key}=" '
+    { for (i = 1; i <= NF; i++) if (index($i, prefix) == 1) { print substr($i, length(prefix) + 1); exit } }
+  '
+}
+
+wait_for_partition_state() {
+  local device_id="${1}" type="${2}" wanted="${3}" i line
+  for i in $(/usr/bin/seq 1 60); do
+    line="$(partition_snapshot_line "${device_id}" "${type}")"
+    if /usr/bin/printf '%s\n' "${line}" | /usr/bin/grep -Fq "|mount=${wanted}|"; then
+      /usr/bin/printf '%s\n' "${line}"
+      return 0
+    fi
+    /bin/sleep 0.5
   done
-  fail "timed out waiting for ${path} to become ${wanted}"
+  fail "timed out waiting for partition ${type} on ${device_id} to become ${wanted}"
 }
 
 mount_partition() {
-  local type="${1:-}" device_id="${2:-}"
+  local type="${1:-}" device_id="${2:-}" line mountpoint
   [[ "${type}" =~ ^(1|2|4)$ && -n "${device_id}" ]] \
     || fail "usage: $0 mount {1|2|4} DEVICE_ID"
   "${APP_BIN}" --xpc-mount-smoke "${type}" "${device_id}"
-  wait_for_path_state "$(mountpoint_for_type "${type}")" present
+  line="$(wait_for_partition_state "${device_id}" "${type}" mounted)"
+  mountpoint="$(partition_field "${line}" mountPoint)"
+  [[ -n "${mountpoint}" && "${mountpoint}" != "-" ]] \
+    || fail "partition ${type} mounted without an exact snapshot mountpoint"
+  echo "PARTITION_${type}_MOUNTPOINT=${mountpoint}"
   echo "RESULT=PARTITION_${type}_MOUNTED"
 }
 
@@ -530,17 +545,52 @@ unmount_partition() {
   [[ "${type}" =~ ^(1|2|4)$ && -n "${device_id}" ]] \
     || fail "usage: $0 unmount {1|2|4} DEVICE_ID"
   "${APP_BIN}" --xpc-unmount-smoke "${type}" "${device_id}"
-  wait_for_path_state "$(mountpoint_for_type "${type}")" absent
+  wait_for_partition_state "${device_id}" "${type}" unmounted >/dev/null
   echo "RESULT=PARTITION_${type}_UNMOUNTED"
 }
 
 functional_partition() {
-  local type="${1}" device_id="${2}" mountpoint marker content before after
-  mountpoint="$(mountpoint_for_type "${type}")"
-  marker="${mountpoint}/.edp-acceptance-$(/bin/cat "${SESSION_POINTER}" 2>/dev/null || echo session)-p${type}.txt"
-  content="EDP-FIRST-INSTALL-ACCEPTANCE:$type:$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ'):$(/usr/bin/uuidgen)"
+  local type="${1}" device_id="${2}" initial line remounted
+  local mountpoint remountpoint filesystem remount_filesystem read_only remount_read_only
+  local marker_name marker content before after
+
+  initial="$(partition_snapshot_line "${device_id}" "${type}")"
+  if /usr/bin/printf '%s\n' "${initial}" | /usr/bin/grep -Fq '|mount=mounted|'; then
+    unmount_partition "${type}" "${device_id}"
+  fi
 
   mount_partition "${type}" "${device_id}"
+  line="$(partition_snapshot_line "${device_id}" "${type}")"
+  mountpoint="$(partition_field "${line}" mountPoint)"
+  filesystem="$(partition_field "${line}" filesystem)"
+  read_only="$(partition_field "${line}" readOnly)"
+  [[ -n "${mountpoint}" && "${mountpoint}" != "-" ]] || fail "partition ${type} has no mountpoint"
+  [[ -n "${filesystem}" && "${filesystem}" != "-" ]] || fail "partition ${type} has no filesystem classification"
+  [[ "${read_only}" == "true" || "${read_only}" == "false" ]] \
+    || fail "partition ${type} has unknown read-only state: ${read_only}"
+
+  if [[ "${type}" == "1" && "${read_only}" != "true" ]]; then
+    fail "boot partition must remain read-only"
+  fi
+
+  if [[ "${read_only}" == "true" ]]; then
+    unmount_partition "${type}" "${device_id}"
+    mount_partition "${type}" "${device_id}"
+    remounted="$(partition_snapshot_line "${device_id}" "${type}")"
+    remount_filesystem="$(partition_field "${remounted}" filesystem)"
+    remount_read_only="$(partition_field "${remounted}" readOnly)"
+    [[ "${remount_read_only}" == "true" ]] || fail "partition ${type} lost read-only protection after remount"
+    [[ "${remount_filesystem}" == "${filesystem}" ]] \
+      || fail "partition ${type} filesystem classification changed across remount"
+    unmount_partition "${type}" "${device_id}"
+    record "PARTITION_${type}_READONLY_REMOUNT PASS filesystem=${filesystem}"
+    echo "RESULT=PARTITION_${type}_READONLY_REMOUNT_OK"
+    return 0
+  fi
+
+  marker_name=".edp-acceptance-$(/bin/cat "${SESSION_POINTER}" 2>/dev/null || echo session)-p${type}.txt"
+  marker="${mountpoint}/${marker_name}"
+  content="EDP-FIRST-INSTALL-ACCEPTANCE:$type:$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ'):$(/usr/bin/uuidgen)"
   [[ ! -e "${marker}" ]] || fail "acceptance marker unexpectedly already exists: ${marker}"
   /usr/bin/printf '%s\n' "${content}" > "${marker}"
   /bin/sync
@@ -549,6 +599,11 @@ functional_partition() {
 
   unmount_partition "${type}" "${device_id}"
   mount_partition "${type}" "${device_id}"
+  remounted="$(partition_snapshot_line "${device_id}" "${type}")"
+  remountpoint="$(partition_field "${remounted}" mountPoint)"
+  remount_read_only="$(partition_field "${remounted}" readOnly)"
+  [[ "${remount_read_only}" == "false" ]] || fail "partition ${type} became read-only after writable remount"
+  marker="${remountpoint}/${marker_name}"
   [[ -f "${marker}" ]] || fail "partition ${type} marker did not persist across remount"
   after="$(/usr/bin/shasum -a 256 "${marker}" | /usr/bin/awk '{print $1}')"
   [[ "${before}" == "${after}" ]] || fail "partition ${type} marker hash changed across remount"
@@ -556,7 +611,7 @@ functional_partition() {
   /bin/sync
   unmount_partition "${type}" "${device_id}"
 
-  record "PARTITION_${type}_RW_PERSISTENCE PASS sha256=${before}"
+  record "PARTITION_${type}_RW_PERSISTENCE PASS sha256=${before} filesystem=${filesystem}"
   echo "RESULT=PARTITION_${type}_RW_PERSISTENCE_OK"
 }
 
@@ -600,8 +655,8 @@ functional_all() {
   functional_partition 1 "${device_id}"
   functional_partition 2 "${device_id}"
   functional_partition 4 "${device_id}"
-  record "ALL_THREE_PARTITIONS PASS device=${device_id}"
-  echo "RESULT=ALL_THREE_PARTITIONS_RW_PERSISTENCE_OK"
+  record "ALL_THREE_PARTITIONS_CAPABILITY_PERSISTENCE PASS device=${device_id}"
+  echo "RESULT=ALL_THREE_PARTITIONS_CAPABILITY_PERSISTENCE_OK"
 }
 
 safe_eject() {
@@ -616,9 +671,16 @@ safe_eject() {
     /usr/bin/printf '%s\n' "${snapshot}" >&2
     fail "raw access was reacquired after safe eject"
   fi
-  for path in '/Volumes/启动区' '/Volumes/交换区' '/Volumes/保密区'; do
-    [[ ! -d "${path}" ]] || fail "volume remained mounted after safe eject: ${path}"
-  done
+  local type line
+  if /usr/bin/printf '%s\n' "${snapshot}" | /usr/bin/grep -Fq "SNAPSHOT_DEVICE=${device_id}|"; then
+    for type in 1 2 4; do
+      line="$(partition_snapshot_line "${device_id}" "${type}" "${snapshot}")"
+      if /usr/bin/printf '%s\n' "${line}" | /usr/bin/grep -Fq '|mount=mounted|'; then
+        /usr/bin/printf '%s\n' "${snapshot}" >&2
+        fail "partition ${type} remained mounted after safe eject"
+      fi
+    done
+  fi
   record "SAFE_EJECT PASS device=${device_id}"
   echo "RESULT=SAFE_EJECT_SUPPRESSION_OK"
   echo "NEXT=PHYSICALLY_UNPLUG_USB_THEN_REINSERT_AND_RUN verify-fda-device"
@@ -850,8 +912,9 @@ Stages:
   unmount {1|2|4} DEVICE_ID
 
   functional-all [DEVICE_ID]
-      Normal filesystem read/write/remount persistence test for boot/exchange/secret.
-      Runs credential-checkpoint before any write test.
+      Capability-aware filesystem/remount persistence test for boot/exchange/secret.
+      Read-only filesystems are never written; writable filesystems get a temporary marker test.
+      Runs credential-checkpoint before any filesystem test.
 
   safe-eject [DEVICE_ID]
       XPC safe eject; verify volumes and retained raw access stay suppressed.

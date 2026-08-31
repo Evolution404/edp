@@ -210,6 +210,16 @@
 
 ## 变更日志
 
+### 2026-08-31 23:31 — Real-device NTFS teardown exposed backing-path stat U-state; metadata-only teardown implemented
+
+- 插入唯一真实标准加密 SanDisk EDP U 盘后，XPC snapshot 五因素与 retained FDA 实证通过：physical=`disk26`（仅作为当次枚举记录，不作为后续授权依据）、VID:PID=`0781:5591`、LBA4 onlyID=`2387350191`、capacity=`123010547712`、LBA11 metadata deviceID=`disk&ven_sandisk&prod_ultra_usb_3.0&rev_1.00`，`privilegedAccessReady=true`。type1 FAT16 read-only 挂载/卸载已完整 PASS，无 Finder U-state。
+- 用户在 UI 中保存 type2/type4 真实密码后 `credential-checkpoint` PASS，policy round-trip PASS。真实 type2/type4 均由 Apple native NTFS 以 `NTFS (read-only; Finder erasable)` / `readOnly=true` 挂载，因此旧 acceptance 的“三分区一律写 marker”假设与当前 production policy 冲突。
+- `first-install-acceptance.sh` 改为 capability-aware：mount/unmount terminal state 与 exact mountPoint 均由 production XPC snapshot 判定，不再硬编码 `/Volumes/启动区|交换区|保密区`；type1 强制 read-only；任意 `readOnly=true` 分区只做 mount -> unmount -> remount -> filesystem/readOnly 一致性验证，只有 `readOnly=false` 才执行临时 marker/hash persistence 写测试。`safe-eject` 同样改为 snapshot-based mount residue 验证。文档与 system ratchet 同步更新。
+- 新 acceptance 实测：type1 两次 read-only mount/unmount PASS；type2 NTFS 两次 read-only mount/unmount PASS；type4 第二次 mount 成功，但最后一次 unmount CLI 90s timeout。系统日志证明 native NTFS `disk28` 已完成 unmount/eject，随后 DiskImages2 owner 退出阶段延迟；Finder 始终正常，但 root `edp-drive-service` 进入 `U`，snapshot 随后 timeout，type4 transport 仍存活。
+- 根因直接落到 `EDPBlockDevicePublisher.parsePublication()`：bounded `hdiutil info -plist` 返回 exact publication 后，代码仍同步 `stat("/Volumes/.edp-block-.../volume.raw")` 并 `stat(/dev/diskN)`。真实 NTFS teardown 正处于 macFUSE/FSKit generation 退出窗口，这个 backing-path `stat()` 会把 privileged service 自身拖入不可中断等待，复现了此前 synthetic harness 已发现的同类危险 syscall。
+- 修复：DiskImages2 teardown identity 完全改为 metadata-only。`parsePublication()` 仅使用 exact standardized `image-path`、owner UID/mode、`diskimages2=true`、`autodiskmount=false`、unencrypted、hdid PID 与严格 `/dev/disk...` system-entity string；在任何 recovery signal 前继续通过 `processExecutablePath(pid)==/usr/libexec/diskimagesiod` 与第二次 exact metadata snapshot 复核。不再 stat macFUSE backing path 或 synthetic BSD node。
+- 新 system marker `RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK` 禁止该同步 stat 回归；同时新增 `RESULT=DRIVE_SYSTEM_REAL_DEVICE_CAPABILITY_ACCEPTANCE_OK`。`make drive-test-fast`、`make drive-test-system`、`make drive-test-virtual-usb`、`git diff --check` 全绿。当前已安装旧 service 仍处 U-state，必须重启后以新二进制重新执行 storage 5-loop 与真实 type4 teardown。
+
 ### 2026-08-31 23:10 — FDA granted; service acceptance foreground isolation fixed
 
 - 用户已在系统设置中完成 EDP Drive Full Disk Access 授权；当前仍无 external physical USB，因此只记录“FDA 已授权”，raw access 是否真正 retained 必须等真实标准加密 EDP U 盘插入后由 `verify-fda-device` 的 `privilegedAccessReady=true` 实证。

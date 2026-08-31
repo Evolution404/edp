@@ -166,6 +166,31 @@ ACCEPTANCE_SOURCE="${ROOT}/Apps/Drive/scripts/first-install-acceptance.sh"
 ! /usr/bin/grep -Fq "start_ns=\"\$(/usr/bin/python3 -c 'import time; print(time.monotonic_ns())')\"" "${ACCEPTANCE_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_SERVICE_CYCLE_TIMING_OK'
 
+# Real-device acceptance must follow the installed product's filesystem
+# capabilities. Boot and Apple-native read-only NTFS volumes must never receive
+# a marker write merely to satisfy an obsolete all-RW acceptance assumption.
+/usr/bin/grep -Fq 'partition_snapshot_line()' "${ACCEPTANCE_SOURCE}"
+/usr/bin/grep -Fq 'if [[ "${type}" == "1" && "${read_only}" != "true" ]]' "${ACCEPTANCE_SOURCE}"
+/usr/bin/grep -Fq 'RESULT=PARTITION_${type}_READONLY_REMOUNT_OK' "${ACCEPTANCE_SOURCE}"
+/usr/bin/grep -Fq 'RESULT=ALL_THREE_PARTITIONS_CAPABILITY_PERSISTENCE_OK' "${ACCEPTANCE_SOURCE}"
+! /usr/bin/grep -Fq 'mountpoint_for_type()' "${ACCEPTANCE_SOURCE}"
+! /usr/bin/grep -Fq 'RESULT=ALL_THREE_PARTITIONS_RW_PERSISTENCE_OK' "${ACCEPTANCE_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_REAL_DEVICE_CAPABILITY_ACCEPTANCE_OK'
+
+# DiskImages2 teardown identity must be proven from the bounded hdiutil owner
+# snapshot only. Never stat the macFUSE backing path or synthetic /dev/diskN
+# from parsePublication(): either can be in a transient FSKit/LIFS generation
+# and turn the privileged service itself into an uninterruptible waiter.
+PUBLISH_PARSE_SECTION="$(/usr/bin/awk '
+  /private func parsePublication\(/ { capture=1 }
+  /private func isEDPTransportBackingPath\(/ { capture=0 }
+  capture { print }
+' "${PUBLISHER_SOURCE}")"
+/usr/bin/printf '%s\n' "${PUBLISH_PARSE_SECTION}" | /usr/bin/grep -Fq 'Self.isSyntheticBSDDevicePath'
+! /usr/bin/printf '%s\n' "${PUBLISH_PARSE_SECTION}" | /usr/bin/grep -Fq 'stat(expected'
+! /usr/bin/printf '%s\n' "${PUBLISH_PARSE_SECTION}" | /usr/bin/grep -Fq 'return stat(path'
+echo 'RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK'
+
 # Mount/unmount/eject/shutdown lifecycle is intentionally single-path and
 # asynchronous. Never reintroduce polling sleeps or synchronous manager
 # fallbacks into the production daemon; regression-only wait adapters stay

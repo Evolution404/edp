@@ -148,23 +148,25 @@ The harness disables global auto-mount while toggling per-partition values so th
 
 ### `functional-all`
 
-For type 1, 2, and 4, in order:
+For type 1, 2, and 4, the harness first reads the exact partition state from the production XPC snapshot after mounting. Validation follows the filesystem capability reported by the installed product rather than assuming every partition is writable.
 
 ```text
 mount
-  -> create one unique ordinary test file
-  -> sync
-  -> SHA-256
-  -> production XPC unmount
-  -> production XPC remount
-  -> verify file exists
-  -> verify SHA-256 unchanged
-  -> remove test file
-  -> sync
-  -> production XPC unmount
+  -> read exact filesystem / readOnly / mountPoint from XPC snapshot
+  -> if readOnly=true:
+       production XPC unmount
+       -> production XPC remount
+       -> require the same filesystem classification and readOnly=true
+       -> production XPC unmount
+  -> if readOnly=false:
+       create one unique ordinary test file
+       -> sync -> SHA-256
+       -> production XPC unmount/remount
+       -> verify file and SHA-256 persistence
+       -> remove test file -> sync -> production XPC unmount
 ```
 
-This validates startup plaintext slicing and encrypted read/write paths through the same retained-fd/macFUSE Local publication architecture.
+Type 1 is required to remain read-only. NTFS volumes mounted read-only by the current Apple-native policy are never written by acceptance. Writable ExFAT/FAT data volumes still receive the temporary marker persistence test. Mount/unmount completion and the exact mount point come from the XPC snapshot, not hard-coded `/Volumes/...` path polling.
 
 ### `safe-eject`
 
@@ -204,7 +206,7 @@ A candidate is not considered first-install accepted until all of the following 
 - clean package verification and installation pass;
 - only one explicit FDA grant is required;
 - no per-device admin/fingerprint authorization occurs;
-- startup/exchange/secret all pass write/remount/hash persistence;
+- startup/exchange/secret all pass capability-aware remount persistence; read-only volumes remain read-only and only writable volumes receive the temporary write/hash test;
 - device/policy/credential state behaves correctly;
 - safe eject remains suppressed until physical removal;
 - physical reinsertion reacquires retained raw access without authorization;
