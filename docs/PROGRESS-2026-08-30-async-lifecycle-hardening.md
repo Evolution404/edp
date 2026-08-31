@@ -210,6 +210,17 @@
 
 ## 变更日志
 
+### 2026-08-31 22:22 — Boot FAT16 moved from legacy mount_msdos to Disk Arbitration / FSKit
+
+- `80d1dd7` 重启后 canonical release storage 在 M01 暴露独立问题：hidden bridge 正常 `local,nobrowse`、`readonly=1`、source=`/dev/disk22`，DiskImages2 成功发布 `disk23`，且 `disk23` 的 `msdos_fskit` probe/stage 均成功；随后测试直接调用 `/sbin/mount_msdos`，触发 `kmutil load ... msdosfs.kext` 的 legacy kext 路径并立即失败，cleanup 后对应 `diskimagesiod` 进入不可中断 `U` state。
+- 正式产品原 `mountFATReadOnly()` 也仍使用同一 `/sbin/mount_msdos -o rdonly` 路径，因此该问题不是测试专属。macOS 26 已由 Disk Arbitration staged `com.apple.fskit.msdos` 后，不应再绕过 DA 强制进入 legacy msdosfs.kext。
+- `EDPDiskArbitrationController` 新增 `mountReadOnlyAsync(_:at:)`：通过 `DADiskMountWithArguments` 传 `rdonly`，回调后用 NOWAIT mount table 校验 exact mountpoint 与 read-only flag；全程 callback-driven，不引入同步 wait/sleep。
+- boot mountpoint 预先以 0755 创建并 `chown` 给 console user；`mount_msdos(8)` 文档说明默认 owner/group/mask 取自 mountpoint，因此改用 DA 后仍保留原 Finder 权限语义。
+- `MountManager.mountResolvedFilesystemAsync()` 的 FAT16 boot 分支改为异步 DA/FSKit，删除正式执行路径中的 `EDPNativeBoundedProcess.run(/sbin/mount_msdos)`。
+- storage M01 同步改为 `diskutil mount readOnly -mountPoint ...`；`diskutil(8)` 明确说明该形式等价于通过 Disk Arbitration 将 `rdonly` 作为 `mount -o` 参数传给 filesystem implementation，不再直接调用 `/sbin/mount_msdos`。
+- system ratchet 新增 `RESULT=DRIVE_SYSTEM_FAT16_FSKIT_READONLY_OK`，要求 product `mountReadOnlyAsync` / `rdonly` 存在并禁止 product/storage 重新执行 legacy `mount_msdos`。
+- hardware-free 复验：`make drive-test-fast`、`make drive-test-system`、`make drive-test-virtual-usb`、`git diff --check` 全绿；generation/quiescence 与 local bridge ratchet 同时保持 PASS。当前 M01 失败现场遗留一个 `diskimagesiod` U-state，需重启后再跑 canonical 5-loop。
+
 ### 2026-08-31 21:38 — Nested FSKit remount deadlock: exact teardown + generation quiescence
 
 - 删除 `diskutil info` 后长循环仍在后续轮次复现系统级 `U`：父 `run-storage.sh` 的采样最终停在普通 `stat()`，同一时刻 ExFAT `UVFSService` 与 Finder 也进入 `U`。因此前一版只消除了一个 `statfs()` 触发器，没有解决嵌套 FSKit 生命周期根因。

@@ -194,6 +194,13 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_LIFECYCLE_RATCHET_OK'
 /usr/bin/grep -Fq 'func unmountAsync(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'func mountAsync(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'func mountNobrowseAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'func mountReadOnlyAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'let readOnly = "rdonly" as CFString' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'diskArbitration.mountReadOnlyAsync(bsd, at: mountpoint)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'diskutil mount readOnly -mountPoint "$mountpoint" "$bsd"' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'executable: "/sbin/mount_msdos"' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Eq '^[[:space:]]*bounded .* /sbin/mount_msdos' "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_FAT16_FSKIT_READONLY_OK'
 /usr/bin/grep -Fq 'func ejectAsync(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'EDPDiskArbitrationCompletionGate' "${NATIVE_SYSTEM_SOURCE}"
 ! /usr/bin/grep -Fq 'box.semaphore.wait' "${NATIVE_SYSTEM_SOURCE}"

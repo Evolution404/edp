@@ -882,10 +882,13 @@ mount_boot_read_only() {
   local bsd="$1"
   local mountpoint="$2"
   mkdir -p "$mountpoint"
+  /usr/sbin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$mountpoint"
+  /bin/chmod 755 "$mountpoint"
   printf '%s\n' "$mountpoint" >>"$ACTIVE_MOUNTS"
-  bounded 20 /sbin/mount_msdos \
-    -o rdonly -u "$(/usr/bin/id -u)" -g "$(/usr/bin/id -g)" -m 755 \
-    "/dev/$bsd" "$mountpoint"
+  # Route FAT16 through Disk Arbitration so macOS 26 uses its staged msdos_fskit
+  # implementation. Direct /sbin/mount_msdos attempts to load the legacy
+  # msdosfs.kext and can strand the nested DiskImages2 owner in U-state.
+  bounded 20 /usr/sbin/diskutil mount readOnly -mountPoint "$mountpoint" "$bsd" >/dev/null
   is_mounted "$mountpoint"
   "$FSKIT_GUARD_BIN" --assert-readonly "$mountpoint"
 }

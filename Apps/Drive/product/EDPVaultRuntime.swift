@@ -2168,17 +2168,12 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         completion: @escaping @Sendable (String?, String?, String?) -> Void
     ) {
         if isBoot, magic == "FAT" {
-            filesystemOperationQueue.async { [weak self] in
-                guard let self else {
-                    completion(nil, nil, "mount manager was released")
+            mountFATReadOnlyAsync(bsd, owner: owner) { mountpoint, errorMessage in
+                if let errorMessage {
+                    completion(nil, nil, errorMessage)
                     return
                 }
-                do {
-                    let mountpoint = try self.mountFATReadOnly(bsd, owner: owner)
-                    completion("FAT16 (read-only)", mountpoint, nil)
-                } catch {
-                    completion(nil, nil, String(describing: error))
-                }
+                completion("FAT16 (read-only)", mountpoint, nil)
             }
             return
         }
@@ -2641,37 +2636,46 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         }
     }
 
-    private func mountFATReadOnly(_ bsd: String, owner: (uid_t, gid_t)) throws -> String {
+    private func mountFATReadOnlyAsync(
+        _ bsd: String,
+        owner: (uid_t, gid_t),
+        completion: @escaping @Sendable (String?, String?) -> Void
+    ) {
         let mountpoint = uniqueMountpoint("EDP Boot")
-        try FileManager.default.createDirectory(
-            atPath: mountpoint,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: NSNumber(value: mode_t(0o755))]
-        )
         do {
-            let status = try EDPNativeBoundedProcess.run(
-                executable: "/sbin/mount_msdos",
-                arguments: [
-                    "-o", "rdonly",
-                    "-u", String(owner.0),
-                    "-g", String(owner.1),
-                    "-m", "755",
-                    "/dev/\(bsd)",
-                    mountpoint,
-                ],
-                timeout: 20,
-                label: "mount FAT16 read-only"
+            try FileManager.default.createDirectory(
+                atPath: mountpoint,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: NSNumber(value: mode_t(0o755))]
             )
-            guard status == 0,
-                  EDPNativeMountTable.isMountpoint(mountpoint),
-                  EDPNativeMountTable.isReadOnly(mountpoint) == true else {
-                throw fail("native FAT16 read-only mount failed for \(bsd): status=\(status)")
+            guard chown(mountpoint, owner.0, owner.1) == 0 else {
+                throw fail("cannot assign FAT16 mountpoint to console user: errno=\(errno)")
             }
-            return mountpoint
         } catch {
-            try? EDPNativeMountTable.unmountPath(mountpoint, force: true)
             try? FileManager.default.removeItem(atPath: mountpoint)
-            throw error
+            completion(nil, String(describing: error))
+            return
+        }
+
+        diskArbitration.mountReadOnlyAsync(bsd, at: mountpoint) { [weak self] actual, error in
+            guard let self else {
+                completion(nil, "mount manager was released")
+                return
+            }
+            self.lifecycleQueue.async {
+                guard error == nil,
+                      actual == mountpoint,
+                      EDPNativeMountTable.isMountpoint(mountpoint),
+                      EDPNativeMountTable.isReadOnly(mountpoint) == true else {
+                    try? EDPNativeMountTable.unmountPath(mountpoint, force: true)
+                    try? FileManager.default.removeItem(atPath: mountpoint)
+                    let detail = error.map(String.init(describing:))
+                        ?? "Disk Arbitration did not produce the required read-only FAT16 mount"
+                    completion(nil, detail)
+                    return
+                }
+                completion(mountpoint, nil)
+            }
         }
     }
 

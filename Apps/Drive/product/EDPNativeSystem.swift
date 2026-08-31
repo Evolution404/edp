@@ -777,6 +777,50 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         )
     }
 
+    func mountReadOnlyAsync(
+        _ bsdName: String,
+        at mountPoint: String,
+        completion: @escaping EDPDiskArbitrationMountCompletion
+    ) {
+        let mountURL = URL(fileURLWithPath: mountPoint, isDirectory: true) as CFURL
+        let readOnly = "rdonly" as CFString
+        var arguments: [Unmanaged<CFString>?] = [Unmanaged.passUnretained(readOnly), nil]
+        arguments.withUnsafeMutableBufferPointer { buffer in
+            performAsync(
+                bsdName: bsdName,
+                successValue: {
+                    guard let actual = EDPNativeMountTable.mountPoint(forBSD: bsdName) else {
+                        return .failure(RuntimeNativeError(
+                            "Disk Arbitration mounted \(bsdName) read-only but no mount point appeared"
+                        ))
+                    }
+                    guard actual == mountPoint else {
+                        return .failure(RuntimeNativeError(
+                            "Disk Arbitration mounted \(bsdName) at unexpected path \(actual), expected \(mountPoint)"
+                        ))
+                    }
+                    guard EDPNativeMountTable.isReadOnly(actual) == true else {
+                        return .failure(RuntimeNativeError(
+                            "Disk Arbitration mounted \(bsdName) without the required read-only flag"
+                        ))
+                    }
+                    return .success(actual)
+                },
+                request: { disk, context in
+                    DADiskMountWithArguments(
+                        disk,
+                        mountURL,
+                        DADiskMountOptions(kDADiskMountOptionDefault),
+                        daOperationCallback,
+                        context,
+                        buffer.baseAddress
+                    )
+                },
+                completion: { value, error in completion(value, error) }
+            )
+        }
+    }
+
     func mountNobrowseAsync(
         _ bsdName: String,
         at mountPoint: String,
