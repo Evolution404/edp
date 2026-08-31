@@ -75,6 +75,7 @@ ATTACH_BIN="$BUILD_DIR/diskimages2-attach"
 PREPARE_BIN="$BUILD_DIR/prepare-edp-filesystem-fixture"
 ADAPTER_BIN="$BUILD_DIR/edp-mfmount-fixture"
 FSKIT_GUARD_BIN="$BUILD_DIR/edp-assert-no-fskit-mounts"
+DA_MOUNT_BIN="$BUILD_DIR/edp-da-mount"
 FAILURE_BIN="$BUILD_DIR/validate-storage-failures"
 BOUNDED="$DRIVE_ROOT/Tests/Storage/RunBounded.py"
 FIXTURE_DIR="$DRIVE_ROOT/fixtures/real_disks/disk4"
@@ -198,14 +199,19 @@ capture_hdiutil_info() {
   local output="$1"
   local attempts="${2:-20}"
   local error_log="${output}.stderr"
-  local attempt
+  local attempt candidate
   for attempt in $(/usr/bin/seq 1 "$attempts"); do
-    : >"$output"
+    candidate="$(/usr/bin/mktemp "${output}.tmp.XXXXXX")"
     : >"$error_log"
-    if bounded 3 /usr/bin/hdiutil info -plist >"$output" 2>"$error_log" \
-      && /usr/bin/plutil -lint "$output" >/dev/null 2>&1; then
+    if bounded 3 /usr/bin/hdiutil info -plist >"$candidate" 2>"$error_log" \
+      && /usr/bin/plutil -lint "$candidate" >/dev/null 2>&1; then
+      # Publish only a fully parsed snapshot. Several exact-identity helpers can
+      # sample hdiutil in adjacent lifecycle callbacks; truncating the shared
+      # destination before capture allowed another reader to observe partial XML.
+      /bin/mv -f "$candidate" "$output"
       return 0
     fi
+    /bin/rm -f "$candidate"
     /bin/sleep 0.1
   done
   echo "hdiutil info snapshot did not stabilize after $attempts attempts" >&2
@@ -865,15 +871,11 @@ stop_adapter() {
 mount_native() {
   local bsd="$1"
   local output_variable="$2"
-  bounded 20 /usr/sbin/diskutil mount "$bsd" >/dev/null
-  local source="/dev/$bsd"
-  local resolved_mountpoint=""
-  for _ in $(/usr/bin/seq 1 100); do
-    resolved_mountpoint="$("$FSKIT_GUARD_BIN" --mountpoint-for-source "$source" 2>/dev/null || true)"
-    [[ -n "$resolved_mountpoint" && -d "$resolved_mountpoint" ]] && break
-    /bin/sleep 0.1
-  done
-  [[ -n "$resolved_mountpoint" && -d "$resolved_mountpoint" ]]
+  local output resolved_mountpoint
+  output="$(bounded 25 "$DA_MOUNT_BIN" --mount "$bsd")"
+  resolved_mountpoint="$(printf '%s\n' "$output" | /usr/bin/awk -F= '/^DA_MOUNTPOINT=/{print $2; exit}')"
+  [[ -n "$resolved_mountpoint" ]]
+  "$FSKIT_GUARD_BIN" --is-mounted "$resolved_mountpoint" >/dev/null
   printf '%s\n' "$resolved_mountpoint" >>"$ACTIVE_MOUNTS"
   printf -v "$output_variable" '%s' "$resolved_mountpoint"
 }
@@ -885,10 +887,11 @@ mount_boot_read_only() {
   /usr/sbin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$mountpoint"
   /bin/chmod 755 "$mountpoint"
   printf '%s\n' "$mountpoint" >>"$ACTIVE_MOUNTS"
-  # Route FAT16 through Disk Arbitration so macOS 26 uses its staged msdos_fskit
-  # implementation. Direct /sbin/mount_msdos attempts to load the legacy
-  # msdosfs.kext and can strand the nested DiskImages2 owner in U-state.
-  bounded 20 /usr/sbin/diskutil mount readOnly -mountPoint "$mountpoint" "$bsd" >/dev/null
+  # Route FAT16 through the same Disk Arbitration semantics as production so
+  # macOS 26 uses its staged msdos_fskit implementation. Avoid diskutil's
+  # synchronous frontend: it can block in its final reply path even after DA
+  # has successfully mounted an otherwise healthy nested FSKit volume.
+  bounded 25 "$DA_MOUNT_BIN" --mount-readonly-at "$bsd" "$mountpoint" >/dev/null
   is_mounted "$mountpoint"
   "$FSKIT_GUARD_BIN" --assert-readonly "$mountpoint"
 }
@@ -896,7 +899,14 @@ mount_boot_read_only() {
 unmount_path() {
   local mountpoint="$1"
   if is_mounted "$mountpoint"; then
-    bounded 15 /sbin/umount "$mountpoint"
+    local source bsd
+    source="$("$FSKIT_GUARD_BIN" --mount-source "$mountpoint")"
+    [[ "$source" =~ ^/dev/(disk[0-9]+)$ ]] || {
+      echo "refusing DA unmount for unexpected source: $mountpoint source=$source" >&2
+      return 1
+    }
+    bsd="${BASH_REMATCH[1]}"
+    bounded 25 "$DA_MOUNT_BIN" --unmount "$bsd" >/dev/null
   fi
   ! is_mounted "$mountpoint"
 }
@@ -979,7 +989,7 @@ require_prepared_fixture() {
 }
 
 ensure_tools() {
-  if [[ -x "$ATTACH_BIN" && -x "$PREPARE_BIN" && -x "$ADAPTER_BIN" && -x "$FSKIT_GUARD_BIN" && -x "$FAILURE_BIN" ]]; then
+  if [[ -x "$ATTACH_BIN" && -x "$PREPARE_BIN" && -x "$ADAPTER_BIN" && -x "$FSKIT_GUARD_BIN" && -x "$DA_MOUNT_BIN" && -x "$FAILURE_BIN" ]]; then
     return 0
   fi
   build_tools
@@ -993,6 +1003,10 @@ build_tools() {
   xcrun clang -std=c17 -Wall -Wextra -Werror \
     native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c \
     -o "$FSKIT_GUARD_BIN"
+  xcrun clang -std=c17 -Wall -Wextra -Werror \
+    Tests/Storage/DiskArbitrationMountHelper.c \
+    -framework CoreFoundation -framework DiskArbitration \
+    -o "$DA_MOUNT_BIN"
 
   local core_sources=(
     native/EDPFSKitPoC/Extension/EDPRawIO.swift

@@ -210,6 +210,15 @@
 
 ## 变更日志
 
+### 2026-09-01 05:19 — Storage harness aligned to direct Disk Arbitration; canonical 5-loop release PASS
+
+- 重启后的干净无盘基线以 HEAD `65fbd4e63fb3d42fdfc4f7e462abdcb1b96f692c` 复跑 synthetic release。最初 M10 暴露测试 harness 仍使用 `/usr/sbin/diskutil mount`：DiskImages2/bridge 已正常 publication，但 `diskutil` 同步前端在 final reply 阶段 20s bounded timeout；正式产品并不走这条同步 CLI。
+- 新增 `Tests/Storage/DiskArbitrationMountHelper.c`，C17 `-Wall -Wextra -Werror`：直接使用 Disk Arbitration callback 做普通 mount、`rdonly` custom mountpoint、unmount，并仅通过 `getmntinfo(MNT_NOWAIT)` 验证 exact `/dev/diskN` mount table 状态。storage `mount_native`、boot FAT16 read-only mount、`unmount_path` 全部迁移到该 helper；M10 不再执行 `diskutil mount` 或 `/sbin/umount`。
+- 随后 M10 又暴露 hdiutil snapshot 文件 TOCTOU：`capture_hdiutil_info()` 对固定目标先 truncate，再由相邻 exact-identity reader 解析，可能在一个 reader 已 lint PASS 后被另一个 capture 截断，形成 partial XML。现改为每次 capture 写独立 `mktemp` candidate，`plutil -lint` 通过后才原子 `mv` 发布完整 snapshot；system ratchet 锁定 atomic snapshot contract。
+- 在同一 prepared synthetic workdir 重新执行：core PASS；M10 canonical 5/5 PASS，`M10_FD_BASELINE=9`、`M10_FD_MAX=9`；M12 crash recovery、M14 concurrent type1/2/4、M13 durability failure propagation、production Swift6/C17 strict build 全 PASS；final 返回 `RESULT=DRIVE_STORAGE_E2E_OK` 并删除 workdir。
+- system gate新增 `RESULT=DRIVE_SYSTEM_STORAGE_DIRECT_DA_MOUNT_OK` 与 `RESULT=DRIVE_SYSTEM_STORAGE_ATOMIC_HDIUTIL_SNAPSHOT_OK`，同时保持 metadata-only publication teardown / remount quiescence / FAT16 FSKit read-only ratchet。
+- 收尾时发现另一个由 DevSpace 父进程单独启动的 `edp-storage-e2e.release-65fbd4e-fresh.*` 并发 run；它不是本次 phased workdir，且已出现独立 `diskimagesiod` U-state。未对该并发 run 做 kill/detach/清理，避免破坏其他会话；安装/真实盘复测必须等该现场退出并重启后进行。
+
 ### 2026-08-31 23:31 — Real-device NTFS teardown exposed backing-path stat U-state; metadata-only teardown implemented
 
 - 插入唯一真实标准加密 SanDisk EDP U 盘后，XPC snapshot 五因素与 retained FDA 实证通过：physical=`disk26`（仅作为当次枚举记录，不作为后续授权依据）、VID:PID=`0781:5591`、LBA4 onlyID=`2387350191`、capacity=`123010547712`、LBA11 metadata deviceID=`disk&ven_sandisk&prod_ultra_usb_3.0&rev_1.00`，`privilegedAccessReady=true`。type1 FAT16 read-only 挂载/卸载已完整 PASS，无 Finder U-state。

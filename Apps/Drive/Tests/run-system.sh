@@ -79,7 +79,11 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 ! /usr/bin/grep -Fq '/usr/sbin/diskutil info' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Eq '/sbin/mount([[:space:]]|$)' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'while adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'candidate="$(/usr/bin/mktemp "${output}.tmp.XXXXXX")"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '/bin/mv -f "$candidate" "$output"' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq ': >"$output"' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_FSKIT_BOUNDED_RECOVERY_OK'
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_ATOMIC_HDIUTIL_SNAPSHOT_OK'
 
 # The macFUSE Local FSKit block bridge keeps its established local,nobrowse VFS
 # semantics. Repeated-remount safety is enforced by exact publication teardown,
@@ -222,10 +226,16 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_LIFECYCLE_RATCHET_OK'
 /usr/bin/grep -Fq 'func mountReadOnlyAsync(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'let readOnly = "rdonly" as CFString' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'diskArbitration.mountReadOnlyAsync(bsd, at: mountpoint)' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'diskutil mount readOnly -mountPoint "$mountpoint" "$bsd"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'DA_MOUNT_BIN="$BUILD_DIR/edp-da-mount"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '"$DA_MOUNT_BIN" --mount-readonly-at "$bsd" "$mountpoint"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '"$DA_MOUNT_BIN" --mount "$bsd"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '"$DA_MOUNT_BIN" --unmount "$bsd"' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Eq '/usr/sbin/diskutil[[:space:]]+mount([[:space:]]|$)' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Eq '^[[:space:]]*bounded .* /sbin/umount' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'executable: "/sbin/mount_msdos"' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Eq '^[[:space:]]*bounded .* /sbin/mount_msdos' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_FAT16_FSKIT_READONLY_OK'
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_DIRECT_DA_MOUNT_OK'
 /usr/bin/grep -Fq 'func ejectAsync(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'EDPDiskArbitrationCompletionGate' "${NATIVE_SYSTEM_SOURCE}"
 ! /usr/bin/grep -Fq 'box.semaphore.wait' "${NATIVE_SYSTEM_SOURCE}"
