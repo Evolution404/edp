@@ -191,7 +191,7 @@ storage harness 已加固：
 - attach bounded retry；
 - erase timeout 后按 filesystem result-state 复核；
 - owner-only publication 检测；
-- hidden macFUSE block bridge 必须 `nobrowse` 且不得携带 `MNT_LOCAL`；
+- hidden macFUSE block bridge 保持既有 `local,nobrowse` VFS 语义；重复 remount 安全性由 exact publication teardown + unique generation + quiescence barrier 保证，不通过改变 bridge VFS 属性规避；
 - exact DiskImages2 publication disappearance + transport exit 后执行 3 秒 generation quiescence，才允许同一逻辑分区 remount；
 - phased mode/profile marker/leak gate。
 

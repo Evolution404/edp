@@ -277,9 +277,7 @@ enum EDPTransportProvider {
                 finderHidden: true,
                 writable: true,
                 diskImagesCompatible: true,
-                // This is an internal block-transport bridge, not the user
-                // filesystem. The outer DiskImages2/native filesystem is local.
-                localVolume: false
+                localVolume: true
             )
         }
     }
@@ -326,7 +324,7 @@ enum EDPTransportProvider {
             return EDPTransportLaunchSpec(
                 executable: executable,
                 arguments: commonArguments,
-                environment: [:],
+                environment: ["EDP_MFMOUNT_OPTIONS": "local,nobrowse"],
                 capabilities: capabilities
             )
         }

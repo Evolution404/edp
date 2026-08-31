@@ -81,20 +81,18 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 ! /usr/bin/grep -Fq 'while adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_FSKIT_BOUNDED_RECOVERY_OK'
 
-# The macFUSE Local FSKit module is only an internal block-transport bridge.
-# It must stay nobrowse-only, not MNT_LOCAL: the user-visible outer filesystem
-# is the native DiskImages2 volume. Marking the hidden bridge local makes
-# Finder/CacheDelete/StorageKit enumerate it and can deadlock nested LIFS.
+# The macFUSE Local FSKit block bridge keeps its established local,nobrowse VFS
+# semantics. Repeated-remount safety is enforced by exact publication teardown,
+# unique generations, and quiescence; do not change the bridge's read/write VFS
+# behavior as a substitute for lifecycle isolation.
 TRANSPORT_BUILD="${ROOT}/Apps/Drive/installer/build-transport-backends.sh"
 TRANSPORT_PROVIDER="${ROOT}/Apps/Drive/product/EDPTransportProvider.swift"
 RAW_TRANSPORT="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
 /usr/bin/grep -Fq '"nobrowse,volname=%s"' "${RAW_TRANSPORT}"
-/usr/bin/grep -Fq 'localVolume: false' "${TRANSPORT_PROVIDER}"
-/usr/bin/grep -Fq 'environment: [:]' "${TRANSPORT_PROVIDER}"
-/usr/bin/grep -Fq 'must NOT carry MNT_LOCAL' "${TRANSPORT_BUILD}"
-/usr/bin/grep -Fq 'nobrowse-only' "${STORAGE_RUNNER}"
-! /usr/bin/grep -Fq 'local,nobrowse' "${TRANSPORT_BUILD}" "${TRANSPORT_PROVIDER}" "${STORAGE_RUNNER}"
-echo 'RESULT=DRIVE_SYSTEM_TRANSPORT_BRIDGE_NONLOCAL_OK'
+/usr/bin/grep -Fq 'localVolume: true' "${TRANSPORT_PROVIDER}"
+/usr/bin/grep -Fq 'EDP_MFMOUNT_OPTIONS": "local,nobrowse"' "${TRANSPORT_PROVIDER}"
+/usr/bin/grep -Fq 'local,nobrowse,volname=%s' "${TRANSPORT_BUILD}" "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_TRANSPORT_BRIDGE_LOCAL_OK'
 
 # The console launcher must allow both transport modes.  A missing read-only
 # target breaks the boot FAT16 path while leaving encrypted partitions healthy,

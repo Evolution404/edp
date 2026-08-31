@@ -1018,9 +1018,15 @@ build_tools() {
     "$source_dir/DirectMFMountRawTransport.c"
   /bin/cp native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPFixtureAdapter.c \
     "$source_dir/DirectMFMountEDPFixtureAdapter.c"
-  # Keep the intermediate macFUSE Local FSKit bridge nobrowse-only. MNT_LOCAL
-  # makes Finder/CacheDelete enumerate the hidden bridge as a user volume while
-  # DiskImages2 is consuming volume.raw from it, which can deadlock nested LIFS.
+  /usr/bin/python3 - "$source_dir/DirectMFMountRawTransport.c" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+needle = '"nobrowse,volname=%s"'
+if needle not in text:
+    raise SystemExit("Direct MFMount option template is missing")
+path.write_text(text.replace(needle, '"local,nobrowse,volname=%s"', 1))
+PY
   xcrun clang -std=c17 -Wall -Wextra -Werror \
     -I"$include_dir" -I"$source_dir" -F"$frameworks" -DMFMount=EDPAsyncMFMount \
     -c "$source_dir/DirectMFMountEDPFixtureAdapter.c" -o "$BUILD_DIR/fixture-adapter.o"

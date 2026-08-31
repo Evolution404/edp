@@ -36,15 +36,21 @@ CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
 )
 
-# Build the Direct MFMount macFUSE Local FSKit product adapter. The intermediate
-# transport bridge must stay Finder-hidden but must NOT carry MNT_LOCAL. Marking
-# this internal bridge local makes Finder/CacheDelete/StorageKit treat it as a
-# user volume while DiskImages2 is simultaneously reading volume.raw from it,
-# which can deadlock the nested FSKit/LIFS lifecycle under repeated remounts.
+# Build the Direct MFMount Local product adapter. Patch only the copied generic
+# transport source so the shared source remains usable for Generic A/B tests.
 cp "${REPO_ROOT}/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c" \
   "${SRC}/DirectMFMountRawTransport.c"
 cp "${REPO_ROOT}/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPAdapter.c" \
   "${SRC}/DirectMFMountEDPAdapter.c"
+python3 - "${SRC}/DirectMFMountRawTransport.c" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = '"nobrowse,volname=%s"'
+if old not in s:
+    raise SystemExit("expected Direct MFMount option template not found")
+p.write_text(s.replace(old, '"local,nobrowse,volname=%s"', 1))
+PY
 
 xcrun clang -std=c17 -Wall -Wextra -Werror \
   -I"${INC}" -I"${SRC}" -F"${FRAMEWORKS}" -DMFMount=EDPAsyncMFMount \

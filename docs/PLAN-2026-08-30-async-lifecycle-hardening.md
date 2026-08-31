@@ -215,7 +215,7 @@
 - `EDPBlockDevicePublisher.swift` 正式路径无 `Thread.sleep`；
 - publisher completion once；
 - Disk Arbitration eject success 之后仍必须确认 exact DiskImages2 backing publication 真正消失；
-- hidden macFUSE bridge 仅 `nobrowse`，不得携带 `MNT_LOCAL`；
+- hidden macFUSE bridge 保持 `local,nobrowse`；deadlock 修复依赖 exact publication teardown、unique generation 与 quiescence barrier，不通过改变既有 VFS 语义规避；
 - 同一 sessionKey 的 teardown→remount 必须经过 monotonic generation quiescence，旧 generation callback 不能释放新 generation；
 - storage smoke 连续 2 次 PASS；
 - canonical release storage 5-loop 获得最终 marker；更长 soak 仅在专项生命周期改动时按需显式提高循环数。

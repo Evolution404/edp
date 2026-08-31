@@ -210,17 +210,17 @@
 
 ## 变更日志
 
-### 2026-08-31 21:38 — Nested FSKit remount deadlock: nonlocal bridge + generation quiescence
+### 2026-08-31 21:38 — Nested FSKit remount deadlock: exact teardown + generation quiescence
 
 - 删除 `diskutil info` 后长循环仍在后续轮次复现系统级 `U`：父 `run-storage.sh` 的采样最终停在普通 `stat()`，同一时刻 ExFAT `UVFSService` 与 Finder 也进入 `U`。因此前一版只消除了一个 `statfs()` 触发器，没有解决嵌套 FSKit 生命周期根因。
-- 现场日志显示 native ExFAT teardown 后 StorageKit/CacheDelete 仍枚举隐藏 `.edp-block-*` bridge，并出现 `CACHE_DELETE_ERROR=Bad volume`；旧 product build 把内部 macFUSE block bridge 标为 `local,nobrowse`，导致 Finder/StorageKit 把中间层误当成本地用户卷。product/storage adapter 现改为 `nobrowse` 且明确不带 `MNT_LOCAL`；外层 DiskImages2/native filesystem 仍保持正常本地卷语义。
 - `EDPBlockDevicePublisher.unpublishAsync()` 不再把 Disk Arbitration eject callback 当成 teardown terminal；eject 后必须按 exact `volume.raw` backing 重新确认 DiskImages2 publication 真正消失，必要时只对重新验证的 exact owner 做 bounded recovery。
 - `MountManager` 新增 per-session generation quiescence gate：native filesystem、DiskImages2 publication、transport teardown 都完成后进入 3 秒 monotonic stabilization window；同一 `deviceID + partitionType` 的立即 remount 保持 single-flight 排队，旧 generation timer 无权释放新 generation barrier。
 - 每个 mount operation / retry 的隐藏 bridge 路径加入 operation UUID generation + attempt，不再快速复用同一 `.edp-block-*` backing identity。
 - mount failure cleanup/retry 同样经过 quiescence barrier，避免 recovery retry 绕过正常 unmount 的代际隔离。
 - storage harness 保留真实文件 `stat`/读写验证，但在 exact teardown 后按产品语义等待 3 秒再 remount；canonical release 仍只跑 5 cycle。
-- 新增 virtual-clock generation regression `RESULT=REMOUNT_QUIESCENCE_GENERATION_OK` 和 system `RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK` / `RESULT=DRIVE_SYSTEM_TRANSPORT_BRIDGE_NONLOCAL_OK` ratchet。
-- 当前 hardware-free 验证：`make drive-test-fast` PASS、`make drive-test-system` PASS、`make drive-test-virtual-usb` PASS、transport backend C17/Swift build PASS、`bash -n` / `git diff --check` PASS。当前旧 50-loop 已把本机 Finder/UVFS 留在历史 `U` state，因此不在该现场叠加 storage；代码提交后重启并只跑新的 canonical 5-loop。
+- 初版同时尝试将隐藏 macFUSE bridge 从 `local,nobrowse` 改为仅 `nobrowse`。重启后的 M01 立即暴露只读 raw-file VFS 回归：`pwrite()` 先被接受、错误延迟到 close，证明改变 `MNT_LOCAL` 会改变既有 bridge 语义且不是安全的 deadlock 修复。该部分已撤回；bridge 保持 `local,nobrowse`，生命周期隔离独立承担 remount 安全性。
+- 新增 virtual-clock generation regression `RESULT=REMOUNT_QUIESCENCE_GENERATION_OK` 和 system `RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK`；system 同时锁定既有 `local,nobrowse` transport contract。
+- hardware-free 验证：`make drive-test-fast` PASS、`make drive-test-system` PASS、`make drive-test-virtual-usb` PASS、transport backend C17/Swift build PASS、`bash -n` / `git diff --check` PASS。storage 需在撤回 nonlocal bridge 后重新从干净重启基线验证 canonical 5-loop。
 
 ### 2026-08-31 21:11 — Canonical storage release reduced to 5 lifecycle cycles
 
