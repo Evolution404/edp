@@ -65,17 +65,20 @@ final class EDPTransportSession: @unchecked Sendable {
     let mountpoint: String
     let capabilities: EDPTransportCapabilities
     private let process: any EDPManagedProcess
+    private let scheduler: any EDPLifecycleScheduling
 
     init(
         backend: EDPTransportBackend,
         mountpoint: String,
         capabilities: EDPTransportCapabilities,
-        process: any EDPManagedProcess
+        process: any EDPManagedProcess,
+        scheduler: any EDPLifecycleScheduling = EDPDispatchLifecycleScheduler.shared
     ) {
         self.backend = backend
         self.mountpoint = mountpoint
         self.capabilities = capabilities
         self.process = process
+        self.scheduler = scheduler
     }
 
     var isRunning: Bool { process.isRunning }
@@ -122,38 +125,38 @@ final class EDPTransportSession: @unchecked Sendable {
         }
         waitForGracefulExit(
             operation,
-            deadline: Date().addingTimeInterval(gracefulExitSeconds)
+            deadline: scheduler.deadline(after: gracefulExitSeconds)
         )
     }
 
     private func waitForGracefulExit(
         _ operation: EDPTransportStopOperation,
-        deadline: Date
+        deadline: UInt64
     ) {
         guard process.isRunning else {
             finishStop(operation, recovered: false, error: nil)
             return
         }
-        guard Date() >= deadline else {
-            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+        guard scheduler.hasReached(deadline) else {
+            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
                 self?.waitForGracefulExit(operation, deadline: deadline)
             }
             return
         }
         process.terminate()
-        waitAfterTerminate(operation, deadline: Date().addingTimeInterval(2))
+        waitAfterTerminate(operation, deadline: scheduler.deadline(after: 2))
     }
 
     private func waitAfterTerminate(
         _ operation: EDPTransportStopOperation,
-        deadline: Date
+        deadline: UInt64
     ) {
         guard process.isRunning else {
             finishStop(operation, recovered: false, error: nil)
             return
         }
-        guard Date() >= deadline else {
-            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+        guard scheduler.hasReached(deadline) else {
+            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
                 self?.waitAfterTerminate(operation, deadline: deadline)
             }
             return
@@ -163,19 +166,19 @@ final class EDPTransportSession: @unchecked Sendable {
         // transport can therefore receive SIGKILL without risking a live user
         // filesystem.
         process.forceTerminate()
-        waitAfterForceTerminate(operation, deadline: Date().addingTimeInterval(1))
+        waitAfterForceTerminate(operation, deadline: scheduler.deadline(after: 1))
     }
 
     private func waitAfterForceTerminate(
         _ operation: EDPTransportStopOperation,
-        deadline: Date
+        deadline: UInt64
     ) {
         guard process.isRunning else {
             finishStop(operation, recovered: false, error: nil)
             return
         }
-        guard Date() >= deadline else {
-            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+        guard scheduler.hasReached(deadline) else {
+            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
                 self?.waitAfterForceTerminate(operation, deadline: deadline)
             }
             return
@@ -199,19 +202,19 @@ final class EDPTransportSession: @unchecked Sendable {
             )
             return
         }
-        waitAfterHostRecovery(operation, deadline: Date().addingTimeInterval(2))
+        waitAfterHostRecovery(operation, deadline: scheduler.deadline(after: 2))
     }
 
     private func waitAfterHostRecovery(
         _ operation: EDPTransportStopOperation,
-        deadline: Date
+        deadline: UInt64
     ) {
         guard process.isRunning else {
             finishStop(operation, recovered: true, error: nil)
             return
         }
-        guard Date() >= deadline else {
-            operation.queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self, operation] in
+        guard scheduler.hasReached(deadline) else {
+            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
                 self?.waitAfterHostRecovery(operation, deadline: deadline)
             }
             return

@@ -67,6 +67,7 @@ for scenario in P01 P02 P03 P04 P05 P06 P07 P08 P09; do
 done
 
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  product/EDPLifecycleScheduler.swift \
   product/EDPTransportProvider.swift \
   native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift \
   -o "$BUILD_ROOT/validate-transport-lifecycle"
@@ -74,6 +75,7 @@ run_and_require \
   'RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK' \
   "$BUILD_ROOT/transport-lifecycle.txt" \
   "$BUILD_ROOT/validate-transport-lifecycle"
+grep -Fq 'RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK' "$BUILD_ROOT/transport-lifecycle.txt"
 
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   product/EDPXPCProtocol.swift \

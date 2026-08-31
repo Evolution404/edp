@@ -7,6 +7,81 @@ private struct LifecycleValidationError: Error, CustomStringConvertible, Sendabl
     init(_ description: String) { self.description = description }
 }
 
+private final class ManualLifecycleScheduler: EDPLifecycleScheduling, @unchecked Sendable {
+    private struct Scheduled {
+        let deadline: UInt64
+        let order: UInt64
+        let queue: DispatchQueue
+        let operation: @Sendable () -> Void
+    }
+
+    private let lock = NSLock()
+    private var now: UInt64 = 0
+    private var nextOrder: UInt64 = 0
+    private var scheduled = [Scheduled]()
+
+    var nowNanoseconds: UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return now
+    }
+
+    func schedule(
+        on queue: DispatchQueue,
+        after delay: TimeInterval,
+        _ operation: @escaping @Sendable () -> Void
+    ) {
+        lock.lock()
+        nextOrder &+= 1
+        scheduled.append(Scheduled(
+            deadline: now &+ UInt64(max(0, delay) * 1_000_000_000),
+            order: nextOrder,
+            queue: queue,
+            operation: operation
+        ))
+        lock.unlock()
+    }
+
+    func advance(by seconds: TimeInterval) {
+        lock.lock()
+        now &+= UInt64(max(0, seconds) * 1_000_000_000)
+        lock.unlock()
+        while true {
+            let next: Scheduled?
+            lock.lock()
+            if let index = scheduled.indices.min(by: {
+                let lhs = scheduled[$0]
+                let rhs = scheduled[$1]
+                return lhs.deadline == rhs.deadline ? lhs.order < rhs.order : lhs.deadline < rhs.deadline
+            }), scheduled[index].deadline <= now {
+                next = scheduled.remove(at: index)
+            } else {
+                next = nil
+            }
+            lock.unlock()
+            guard let next else { return }
+            next.queue.sync(execute: next.operation)
+        }
+    }
+}
+
+private final class SendableEventBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values = [String]()
+
+    func append(_ value: String) {
+        lock.lock()
+        values.append(value)
+        lock.unlock()
+    }
+
+    func snapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values
+    }
+}
+
 private final class TemporaryKeychainContext {
     let root: URL
     let keychainURL: URL
@@ -1808,6 +1883,35 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 throw LifecycleValidationError("S21 teardown failure code was not preserved")
             }
             print("SCENARIO=S21_OK typed_lifecycle_error_taxonomy")
+        }
+
+        do {
+            let scheduler = ManualLifecycleScheduler()
+            let queue = DispatchQueue(label: "com.edp.drive.tests.virtual-clock")
+            let events = SendableEventBox()
+            scheduler.schedule(on: queue, after: 1) { events.append("cancel") }
+            scheduler.schedule(on: queue, after: 1) { events.append("timeout") }
+            scheduler.advance(by: 0.999)
+            guard events.snapshot().isEmpty else {
+                throw LifecycleValidationError("S22 virtual scheduler fired before its deadline")
+            }
+            scheduler.advance(by: 0.001)
+            guard events.snapshot() == ["cancel", "timeout"],
+                  scheduler.hasReached(scheduler.nowNanoseconds) else {
+                throw LifecycleValidationError("S22 same-tick virtual events were not deterministic")
+            }
+
+            var machine = EDPFSKitMountLifecycleMachine()
+            _ = machine.start()
+            _ = machine.attemptLaunched(0)
+            guard machine.cancel() == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
+                  machine.cleanupFinished(0, hostAlreadyRecovered: false) == .fail(.cancelled),
+                  machine.hostRecoveryFinished(true) == .fail(.cancelled),
+                  machine.state == .failed(.cancelled),
+                  machine.recoveryBudget == 1 else {
+                throw LifecycleValidationError("S22 cancellation did not remain terminal across same-tick late work")
+            }
+            print("SCENARIO=S22_OK virtual_clock_same_tick_cancellation_terminal")
         }
 
         do {

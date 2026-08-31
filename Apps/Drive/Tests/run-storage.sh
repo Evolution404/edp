@@ -1118,6 +1118,7 @@ validate_failure_and_build_contracts() {
     product/EDPCredentialStore.swift
     product/EDPDevicePolicyStore.swift
     product/EDPMacFUSERuntimePolicy.swift
+    product/EDPLifecycleScheduler.swift
     product/EDPTransportProvider.swift
     product/EDPTransportRuntimePolicy.swift
     product/EDPFinderVolumeDefaults.swift

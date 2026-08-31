@@ -1004,6 +1004,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private let binaryRoot: String
     private let diskArbitration: EDPDiskArbitrationController
     private let blockPublisher: any EDPBlockDevicePublisher
+    private let scheduler: any EDPLifecycleScheduling
     private let lifecycleQueue = DispatchQueue(label: "com.edp.drive.mount-lifecycle", qos: .userInitiated)
     private let filesystemOperationQueue = DispatchQueue(
         label: "com.edp.drive.filesystem-operation",
@@ -1018,7 +1019,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private var unmountWaiters = [String: [EDPDaemonMountCompletion]]()
     private var ejectWaiters = [String: [EDPDaemonMountCompletion]]()
 
-    init() throws {
+    init(
+        scheduler: any EDPLifecycleScheduling = EDPDispatchLifecycleScheduler.shared
+    ) throws {
+        self.scheduler = scheduler
         if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
             binaryRoot = configuredRoot
         } else {
@@ -1499,7 +1503,8 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 backend: runtimeStatus.backend,
                 mountpoint: bridgeMount,
                 capabilities: launchSpec.capabilities,
-                process: transportProcess
+                process: transportProcess,
+                scheduler: scheduler
             )
             _ = operation.machine.attemptLaunched(attempt)
             pollBridgeActivation(
@@ -1513,7 +1518,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 logPath: logPath,
                 scratchBaseline: scratchBaseline,
                 transportSession: transportSession,
-                deadline: Date().addingTimeInterval(8)
+                deadline: scheduler.deadline(after: 8)
             )
         } catch {
             executeMountAction(
@@ -1537,7 +1542,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         logPath: String,
         scratchBaseline: Set<String>?,
         transportSession: EDPTransportSession,
-        deadline: Date
+        deadline: UInt64
     ) {
         if cancelledMountOperations.contains(operation.sessionKey) {
             let action = operation.machine.cancel()
@@ -1609,7 +1614,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             return
         }
 
-        if Date() >= deadline {
+        if scheduler.hasReached(deadline) {
             let failure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: true,
                 logDetail: nil
@@ -1634,7 +1639,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             return
         }
 
-        lifecycleQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self, operation] in
+        scheduler.schedule(on: lifecycleQueue, after: 0.1) { [weak self, operation] in
             self?.pollBridgeActivation(
                 operation,
                 attempt: attempt,
@@ -2320,7 +2325,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             }
             self.requestUnmount(
                 sessionKey,
-                deadline: Date().addingTimeInterval(15),
+                deadline: scheduler.deadline(after: 15),
                 completion: completion
             )
         }
@@ -2328,16 +2333,16 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
 
     private func requestUnmount(
         _ sessionKey: String,
-        deadline: Date,
+        deadline: UInt64,
         completion: @escaping EDPDaemonMountCompletion
     ) {
         if activeMountOperations.contains(sessionKey) {
             cancelMountOperation(sessionKey)
-            guard Date() < deadline else {
+            guard !scheduler.hasReached(deadline) else {
                 completion("mount cancellation did not drain before unmount deadline")
                 return
             }
-            lifecycleQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+            scheduler.schedule(on: lifecycleQueue, after: 0.1) { [weak self] in
                 self?.requestUnmount(sessionKey, deadline: deadline, completion: completion)
             }
             return
@@ -2439,18 +2444,18 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             for sessionKey in active { self.cancelMountOperation(sessionKey) }
             self.waitForDeviceMountsToDrain(
                 deviceID: deviceID,
-                deadline: Date().addingTimeInterval(15)
+                deadline: scheduler.deadline(after: 15)
             )
         }
     }
 
-    private func waitForDeviceMountsToDrain(deviceID: String, deadline: Date) {
+    private func waitForDeviceMountsToDrain(deviceID: String, deadline: UInt64) {
         if activeMountOperations.contains(where: { $0.hasPrefix("\(deviceID):") }) {
-            guard Date() < deadline else {
+            guard !scheduler.hasReached(deadline) else {
                 finishEject(deviceID, error: "mount operations did not drain before eject deadline")
                 return
             }
-            lifecycleQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+            scheduler.schedule(on: lifecycleQueue, after: 0.1) { [weak self] in
                 self?.waitForDeviceMountsToDrain(deviceID: deviceID, deadline: deadline)
             }
             return
@@ -2493,22 +2498,22 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             }
             for sessionKey in self.activeMountOperations { self.cancelMountOperation(sessionKey) }
             self.waitForAllMountsToDrain(
-                deadline: Date().addingTimeInterval(15),
+                deadline: scheduler.deadline(after: 15),
                 completion: completion
             )
         }
     }
 
     private func waitForAllMountsToDrain(
-        deadline: Date,
+        deadline: UInt64,
         completion: @escaping EDPDaemonMountCompletion
     ) {
         if !activeMountOperations.isEmpty {
-            guard Date() < deadline else {
+            guard !scheduler.hasReached(deadline) else {
                 completion("mount operations did not drain before shutdown deadline")
                 return
             }
-            lifecycleQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+            scheduler.schedule(on: lifecycleQueue, after: 0.1) { [weak self] in
                 self?.waitForAllMountsToDrain(deadline: deadline, completion: completion)
             }
             return

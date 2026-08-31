@@ -6,6 +6,7 @@ TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
+SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
 NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
 MACFUSE_POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPMacFUSERuntimePolicy.swift"
 PUBLISHER_SOURCE="${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
@@ -150,6 +151,17 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
 ! /usr/bin/grep -Fq 'failure.contains("File system extension' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'errorMessage.contains("EDP_RAW_' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK'
+
+# Lifecycle deadlines are monotonic and scheduler-driven. Bridge activation and
+# mount drain timeouts must not regress to wall-clock Date()/asyncAfter logic.
+/usr/bin/grep -Fq 'protocol EDPLifecycleScheduling' "${SCHEDULER_SOURCE}"
+/usr/bin/grep -Fq 'DispatchTime.now().uptimeNanoseconds' "${SCHEDULER_SOURCE}"
+/usr/bin/grep -Fq 'scheduler.deadline(after: 8)' "${RUNTIME_SOURCE}"
+[[ "$(/usr/bin/grep -Fc 'scheduler.deadline(after: 15)' "${RUNTIME_SOURCE}")" -ge 3 ]]
+/usr/bin/grep -Fq 'scheduler.deadline(after: gracefulExitSeconds)' "${TRANSPORT_SOURCE}"
+! /usr/bin/grep -Eq 'Date\(\)\.addingTimeInterval\((8|15)\)' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Eq 'Date\(\) [<>]=? deadline' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_VIRTUAL_CLOCK_LIFECYCLE_OK'
 
 # Normal product lifecycle must not fall back to shell-side process inspection
 # or codesign/umount helpers. Runtime signature validation is Security.framework,

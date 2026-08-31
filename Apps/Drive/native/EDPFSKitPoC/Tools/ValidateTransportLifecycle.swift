@@ -11,22 +11,90 @@ private enum ValidationFailure: Error, CustomStringConvertible {
 
 private final class TransportStopResultBox: @unchecked Sendable {
     private let lock = NSLock()
+    private var completed = false
     private var recovered = false
     private var error: String?
 
     func set(recovered: Bool, error: String?) {
         lock.lock()
+        completed = true
         self.recovered = recovered
         self.error = error
         lock.unlock()
     }
 
-    func snapshot() -> (Bool, String?) {
+    func snapshot() -> (completed: Bool, recovered: Bool, error: String?) {
         lock.lock()
         defer { lock.unlock() }
-        return (recovered, error)
+        return (completed, recovered, error)
     }
 }
+
+private final class ManualLifecycleScheduler: EDPLifecycleScheduling, @unchecked Sendable {
+    private struct Scheduled {
+        let deadline: UInt64
+        let order: UInt64
+        let queue: DispatchQueue
+        let operation: @Sendable () -> Void
+    }
+
+    private let lock = NSLock()
+    private var now: UInt64 = 0
+    private var nextOrder: UInt64 = 0
+    private var scheduled = [Scheduled]()
+
+    var nowNanoseconds: UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return now
+    }
+
+    func schedule(
+        on queue: DispatchQueue,
+        after delay: TimeInterval,
+        _ operation: @escaping @Sendable () -> Void
+    ) {
+        lock.lock()
+        nextOrder &+= 1
+        let nanos = UInt64(max(0, delay) * 1_000_000_000)
+        scheduled.append(Scheduled(
+            deadline: now &+ nanos,
+            order: nextOrder,
+            queue: queue,
+            operation: operation
+        ))
+        lock.unlock()
+    }
+
+    func advance(by seconds: TimeInterval) {
+        let nanos = UInt64(max(0, seconds) * 1_000_000_000)
+        lock.lock()
+        now &+= nanos
+        lock.unlock()
+        runDue()
+    }
+
+    private func runDue() {
+        while true {
+            let next: Scheduled?
+            lock.lock()
+            if let index = scheduled.indices.min(by: {
+                let lhs = scheduled[$0]
+                let rhs = scheduled[$1]
+                return lhs.deadline == rhs.deadline ? lhs.order < rhs.order : lhs.deadline < rhs.deadline
+            }), scheduled[index].deadline <= now {
+                next = scheduled.remove(at: index)
+            } else {
+                next = nil
+            }
+            lock.unlock()
+            guard let next else { return }
+            next.queue.sync(execute: next.operation)
+        }
+    }
+}
+
+private let transportLifecycleScheduler = ManualLifecycleScheduler()
 
 private extension EDPTransportSession {
     @discardableResult
@@ -37,7 +105,6 @@ private extension EDPTransportSession {
         recoverStuckProcess: (() -> Bool)? = nil
     ) throws -> Bool {
         let queue = DispatchQueue(label: "com.edp.drive.tests.transport-stop")
-        let semaphore = DispatchSemaphore(value: 0)
         let result = TransportStopResultBox()
         stopAsync(
             on: queue,
@@ -47,16 +114,20 @@ private extension EDPTransportSession {
             recoverStuckProcess: recoverStuckProcess
         ) { recovered, _, error in
             result.set(recovered: recovered, error: error)
-            semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now() + 15) == .success else {
-            throw ValidationFailure.message("async transport stop timed out")
+        queue.sync {}
+        for _ in 0..<240 where !result.snapshot().completed {
+            transportLifecycleScheduler.advance(by: 0.05)
+            queue.sync {}
         }
         let snapshot = result.snapshot()
-        if let error = snapshot.1 {
+        guard snapshot.completed else {
+            throw ValidationFailure.message("virtual-time transport stop timed out")
+        }
+        if let error = snapshot.error {
             throw ValidationFailure.message(error)
         }
-        return snapshot.0
+        return snapshot.recovered
     }
 }
 
@@ -110,6 +181,7 @@ private enum ValidateTransportLifecycle {
         try validateRecoverySuccessClaimWithoutExitStillFailsClosed()
         try validateNoRecoveryCallbackStillFailsClosed()
         try validateMountedTransportIsNeverKilled()
+        print("RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK")
         print("RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK")
     }
 
@@ -279,7 +351,8 @@ private enum ValidateTransportLifecycle {
                 diskImagesCompatible: true,
                 localVolume: true
             ),
-            process: process
+            process: process,
+            scheduler: transportLifecycleScheduler
         )
     }
 

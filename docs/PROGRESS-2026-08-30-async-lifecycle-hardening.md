@@ -15,7 +15,7 @@
 | B | Disk Arbitration async | DONE |
 | C | BlockPublisher / DiskImages2 async | DONE* |
 | D | Typed lifecycle errors | DONE |
-| E | Virtual clock / scheduler | TODO |
+| E | Virtual clock / scheduler | DONE |
 | F | Deterministic model/property tests | TODO |
 | G | Structured lifecycle journal | TODO |
 | H | 全量/安装态/真盘验收 | TODO |
@@ -117,18 +117,21 @@
 - [x] `make drive-test-fast` PASS
 - [x] `make drive-test-system` PASS，含 `RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK`
 - [x] `make drive-test-virtual-usb` PASS
-- [ ] commit/push
+- [x] commit/push：`393e0f4 refactor(drive): type lifecycle failure decisions`
 
 ## Phase E — Virtual clock / scheduler
 
-状态：TODO
+状态：DONE
 
 验收项：
 
-- [ ] production scheduler
-- [ ] deterministic test scheduler
-- [ ] bridge/transport/drain timeout 注入
-- [ ] timeout/cancel same-tick tests
+- [x] production monotonic scheduler：`EDPLifecycleScheduling` + `EDPDispatchLifecycleScheduler`，基于 `DispatchTime.uptimeNanoseconds`
+- [x] deterministic test scheduler：transport fast validator 与 service lifecycle S22 使用 manual scheduler/`advance()`
+- [x] bridge 8s、transport stop 各阶段、unmount/eject/shutdown drain 15s timeout 全部注入 scheduler；不再使用 `Date()` 决策 lifecycle deadline
+- [x] timeout/cancel same-tick：S22 验证同 deadline 确定顺序、cancel terminal sticky、late recovery 不可复活
+- [x] transport validator 输出 `RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK`
+- [x] system ratchet 输出 `RESULT=DRIVE_SYSTEM_VIRTUAL_CLOCK_LIFECYCLE_OK`
+- [x] `make drive-test-fast` / service lifecycle / system PASS；native installer 实际构建 PASS
 - [ ] commit/push
 
 ## Phase F — Deterministic model/property tests
