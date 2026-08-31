@@ -210,6 +210,13 @@
 
 ## 变更日志
 
+### 2026-08-31 13:00 — Clean installer owner-only orphan recovery hardening
+
+- 当前系统重新枚举发现 hardware-free storage smoke 中断遗留的 owner-only DiskImages2 publication：exact backing 位于 `edp-storage-e2e.phasec-smoke3/.../volume.raw`，`system-entities=[]`，owner-uid 为 console user，实际 owner process 为 `_diskimagesiod`；同时存在 root-owned 4KiB macFUSE scratch images。
+- `native-preinstall` 新增 storage-test owner-only recovery：只接受 `/var/folders/.../T/edp-storage-e2e.*/mounts/*/volume.raw`，要求 DiskImages2=true、autodiskmount=false、unencrypted、owner-mode=0600、无 system entity、console-user owner、无 active bridge mount、无正在运行的 storage regression。
+- TERM/KILL 前强制重新读取 `hdiutil info -plist` 并再次核对 exact backing + owner PID/executable，PID/backing 变化即 fail closed；不使用历史 diskN/PID，不触碰任何 removable physical media。
+- system 新增 `RESULT=DRIVE_SYSTEM_INSTALLER_TEST_ORPHAN_REVALIDATION_OK`；`bash -n`、system、`git diff --check` PASS。
+
 ### 2026-08-31 12:40 — Installed-app discovery lifecycle blocker
 
 - 实机只读诊断确认当前旧安装态 `com.edp.drive.service` 不在运行，且用户偏好 `com.edp.drive.service.desired-running=0`；因此 App 外观看似已打开时没有 discovery daemon 监听 Disk Arbitration/IOKit，真实盘不会进入五因素识别。

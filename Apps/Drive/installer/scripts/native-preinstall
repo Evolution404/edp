@@ -225,6 +225,108 @@ validate_diskimagesiod_pid() {
   [[ "${owner}" == "_diskimagesiod" && "${command}" == "/usr/libexec/diskimagesiod" ]]
 }
 
+is_edp_storage_test_backing_path() {
+  local path="$1"
+  [[ "${path}" != *'/../'* && "${path}" != *'/..' ]] || return 1
+  [[ "${path}" == /var/folders/*/*/T/edp-storage-e2e.*/mounts/*/volume.raw \
+    || "${path}" == /private/var/folders/*/*/T/edp-storage-e2e.*/mounts/*/volume.raw ]]
+}
+
+test_orphan_pid_for_backing() {
+  local plist="$1"
+  local backing="$2"
+  local console_uid="$3"
+  local image_index=0
+  local image_path owner_uid diskimages2 autodiskmount encrypted owner_mode entities pid bridge
+
+  is_edp_storage_test_backing_path "${backing}" || return 0
+  bridge="${backing%/volume.raw}"
+  if /sbin/mount | /usr/bin/grep -Fq " on ${bridge} ("; then
+    return 0
+  fi
+
+  while /usr/bin/plutil -type "images.${image_index}" "${plist}" >/dev/null 2>&1; do
+    image_path="$(hdi_value "${plist}" "${image_index}" image-path)"
+    if [[ "${image_path}" == "${backing}" ]]; then
+      owner_uid="$(hdi_value "${plist}" "${image_index}" owner-uid)"
+      diskimages2="$(hdi_value "${plist}" "${image_index}" diskimages2)"
+      autodiskmount="$(hdi_value "${plist}" "${image_index}" autodiskmount)"
+      encrypted="$(hdi_value "${plist}" "${image_index}" image-encrypted)"
+      owner_mode="$(hdi_value "${plist}" "${image_index}" owner-mode)"
+      entities="$(/usr/bin/plutil -extract "images.${image_index}.system-entities" json -o - "${plist}" 2>/dev/null | /usr/bin/tr -d '[:space:]' || true)"
+      pid="$(hdi_value "${plist}" "${image_index}" hdid-pid)"
+      if [[ "${owner_uid}" == "${console_uid}" \
+        && "${diskimages2}" == "true" \
+        && "${autodiskmount}" == "false" \
+        && "${encrypted}" == "false" \
+        && "${owner_mode}" == "384" \
+        && "${entities}" == "[]" \
+        && "${pid}" =~ ^[0-9]+$ \
+        && "${pid}" -gt 1 ]]; then
+        printf '%s\n' "${pid}"
+      fi
+      return 0
+    fi
+    ((image_index += 1))
+  done
+  return 0
+}
+
+recover_edp_storage_test_diskimages2_orphans() {
+  local console_uid info image_index image_path pid refreshed_pid bridge
+  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
+  [[ "${console_uid}" =~ ^[0-9]+$ && "${console_uid}" -gt 0 ]] || return 0
+  if /bin/ps -axo command= | /usr/bin/grep -F 'Apps/Drive/Tests/run-storage.sh' | /usr/bin/grep -v grep >/dev/null 2>&1; then
+    echo "EDP Drive upgrade refused because a storage regression is still running." >&2
+    exit 1
+  fi
+
+  info="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/edp-preinstall-test-hdi.XXXXXX")"
+  trap '/bin/rm -f "'"${info}"'"' EXIT
+  /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
+
+  image_index=0
+  while /usr/bin/plutil -type "images.${image_index}" "${info}" >/dev/null 2>&1; do
+    image_path="$(hdi_value "${info}" "${image_index}" image-path)"
+    if is_edp_storage_test_backing_path "${image_path}"; then
+      bridge="${image_path%/volume.raw}"
+      if /sbin/mount | /usr/bin/grep -Fq " on ${bridge} ("; then
+        echo "EDP Drive upgrade refused because storage-test backing is still actively mounted: ${bridge}" >&2
+        exit 1
+      fi
+      pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
+      if [[ -n "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
+        # Refresh immediately before signalling so a recycled PID/backing tuple
+        # can never inherit authority from the earlier enumeration.
+        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
+        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
+          echo "EDP Drive upgrade recovering storage-test DiskImages2 orphan (${pid})."
+          /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
+          /bin/sleep 0.5
+        fi
+
+        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
+        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
+          /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
+          /bin/sleep 0.5
+        fi
+
+        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
+        if [[ -n "${refreshed_pid}" ]]; then
+          echo "EDP Drive upgrade could not recover storage-test DiskImages2 orphan; restart macOS and retry." >&2
+          exit 1
+        fi
+      fi
+    fi
+    ((image_index += 1))
+  done
+  /bin/rm -f "${info}"
+  trap - EXIT
+}
+
 wait_for_device_to_disappear() {
   local bsd="$1"
   local attempts="$2"
@@ -386,8 +488,11 @@ fi
 
 # The old root daemon can leave DiskImages2 publications without an IOMedia
 # identity. Recover only those exact persisted orphans before stopping their
-# now-unpublished macFUSE transports.
+# now-unpublished macFUSE transports. Storage regression interruptions can leave
+# the same owner-only shape under the hardware-free edp-storage-e2e namespace;
+# revalidate its exact temp backing and console-user owner before signalling.
 recover_legacy_root_diskimages2_orphans
+recover_edp_storage_test_diskimages2_orphans
 
 stop_unmounted_processes "${TRANSPORT_UCOMM}" "transport process"
 stop_unmounted_processes "${SERVICE_UCOMM}" "service process"

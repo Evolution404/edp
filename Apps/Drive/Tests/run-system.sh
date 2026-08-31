@@ -79,7 +79,11 @@ PREINSTALL_SOURCE="${ROOT}/Apps/Drive/installer/scripts/native-preinstall"
 /usr/bin/grep -Fq 'stop_running_drive_ui' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'DRIVE_UI_EXECUTABLE="/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'EDP Drive upgrade stopping the currently running foreground UI before bundle replacement.' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'recover_edp_storage_test_diskimages2_orphans' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'is_edp_storage_test_backing_path' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'Refresh immediately before signalling so a recycled PID/backing tuple' "${PREINSTALL_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UPGRADE_UI_HANDOFF_OK'
+echo 'RESULT=DRIVE_SYSTEM_INSTALLER_TEST_ORPHAN_REVALIDATION_OK'
 
 # launchd defaults to a 10-second minimum runtime. The Drive daemon is explicitly
 # user-stoppable and restartable, so both packaging modes must override that
