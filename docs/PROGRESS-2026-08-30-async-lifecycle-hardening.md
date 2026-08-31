@@ -210,6 +210,14 @@
 
 ## 变更日志
 
+### 2026-09-01 07:56 — Native-FS pre-unpublish quiescence synthetic release PASS
+
+- 重启后以 exact code HEAD `fec8de129db337695b8084ab1c9443053bcd87b9`、无 external physical USB、无历史 U-state 的干净基线，使用全新 synthetic workdir 执行 canonical release storage 5-loop。
+- `prepare` PASS；`core` 全部通过：M01 FAT16 read-only、M02/M04-M09 Exchange I/O/持久化、M03 Secure stage1 -> native unmount -> upper-FS quiescence -> DiskImages2 detach -> remount/hash 均 PASS。core 后 Finder 为正常 `S`，无 UVFSService 残留。
+- `stress` M10 5/5 PASS，`M10_FD_BASELINE=9`、`M10_FD_MAX=9`，无 mount/device/process/FD leak；M10 后 Finder 仍为正常 `S`，无 UVFSService U-state 或 test mount residue。
+- `recovery` M12/M14 PASS；`contracts` M13 durability failure propagation + production Swift 6/C17 strict build PASS；`final` 返回 `RESULT=DRIVE_STORAGE_E2E_OK`。
+- 该结果实证前一轮根因修复有效：native filesystem unmount 后必须先保留 DiskImages2 IOMedia 进入 3 秒 upper-FS/UVFS/LIFS deactivate quiescence，之后才允许 publication detach；publication + transport 全部退出后再执行现有 generation quiescence。
+
 ### 2026-09-01 05:26 — Exact-head installer ready; unrelated concurrent storage run polluted current kernel state
 
 - 提交 `fbab2ea9eb96f880aea12a0ada24eb77b864a625` 后重新构建 exact-head Clean.pkg，`verify-clean-installer.sh` 全部 PASS；SHA-256=`ca5f34c1c82ed19decacddf619aa50b048769edc923fd0989862831dff04525f`。
