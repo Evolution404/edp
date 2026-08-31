@@ -176,28 +176,28 @@
 
 ### Hardware-free
 
-- [ ] fast
-- [ ] virtual-usb
-- [ ] system
-- [ ] UI
+- [x] fast
+- [x] virtual-usb
+- [x] system
+- [ ] UI（产品/几何 PASS；当前主机 xctrace hitch 测量存在 33–116ms 波动/超时，尚未取得 `13ad0b4` exact-head 最终 0-hitch marker）
 - [ ] storage smoke #1
 - [ ] storage smoke #2
 - [ ] release storage final marker
-- [ ] bash -n
-- [ ] plutil -lint
-- [ ] git diff --check
-- [ ] installer build/verify
+- [x] bash -n
+- [x] plutil -lint
+- [x] git diff --check
+- [x] installer build/verify
 
 ### Installed service-cycle
 
-- [ ] 最新 package 已安装
-- [ ] 8 cycles
-- [ ] 每次 start <= 3000ms
-- [ ] minimum runtime=1
-- [ ] daemon count=1
-- [ ] 无 progressive slowdown
+- [x] 最新 package 已安装
+- [x] 8 cycles
+- [x] 每次 start <= 3000ms
+- [x] minimum runtime=1
+- [x] daemon count=1
+- [x] 无 progressive slowdown
 
-当前状态：用户已明确表示现在可以管理员授权。不要立刻安装旧包；先完成 Phase G、构建并验证 exact-head Clean.pkg，然后把 synthetic orphan revalidation/cleanup + clean install 合并为一次系统授权。历史 diskN/PID 不得直接复用，授权前必须重新发现并证明 identity。
+安装态已验证 `13ad0b4` Clean.pkg：安装前重新枚举 synthetic/storage-test publication=0、4KiB scratch=0、EDP mount=0、external physical=0；安装成功后 App 显式启动恢复 `desired-running=1`，daemon `state=running`、minimum runtime=1、process count=1。正式 8-cycle 单进程 monotonic 结果：46 / 1077 / 1066 / 1062 / 1074 / 1058 / 1054 / 1060 ms；cycle 1 作为 warmup，仅对 cycle 2...8 steady-state 判断趋势，FIRST_AVG=1068.3ms、LAST_AVG=1057.3ms、slope=-2.8ms/cycle，`RESULT=SERVICE_RESTART_CYCLE_OK`。
 
 ### Physical EDP USB
 
@@ -209,6 +209,15 @@
 - [ ] 严禁 format/erase/raw write
 
 ## 变更日志
+
+### 2026-08-31 18:24 — Installed service-cycle timing and steady-state acceptance
+
+- `13ad0b4` Clean.pkg 已在无 external physical USB、无 EDP/synthetic residue 的现场成功安装；App/embedded daemon 均为 `EDP Project Code Signing`，service plist `ThrottleInterval=1` 且无 KeepAlive/RunAtLoad。
+- 显式打开 App 后实机确认 `desired-running=1`、LaunchDaemon `state=running`、minimum runtime=1、daemon count=1，验证重新打开 App 后 discovery daemon 自动恢复。
+- 原 service-cycle 使用两个独立 Python helper 采 monotonic 时间，出现 -10/-1ms 不可能值；改为单个 Python 进程直接包裹 `--xpc-health` 子进程，消除跨进程 monotonic 差值。
+- 趋势判断将 cycle 1 明确定义为 warmup：长时间 idle 后首轮可避开 launchd 1s throttle，cycle 2...8 才是 steady-state；仍要求全部 8 轮单独 <=3000ms、daemon count=1。
+- 正式复验：46 / 1077 / 1066 / 1062 / 1074 / 1058 / 1054 / 1060ms；steady-state FIRST_AVG=1068.3ms、LAST_AVG=1057.3ms、slope=-2.8ms/cycle；`SERVICE_CYCLE_TREND=PASS`、`RESULT=SERVICE_RESTART_CYCLE_OK`。
+- system 新增单进程 monotonic + steady-state warmup ratchet，`bash -n` / `make drive-test-system` / `git diff --check` PASS。
 
 ### 2026-08-31 17:16 — Clean installer scratch revalidation index-churn fix
 

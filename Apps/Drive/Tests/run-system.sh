@@ -98,6 +98,18 @@ for plist in "${EMBEDDED_SERVICE_PLIST}" "${LEGACY_SERVICE_PLIST}"; do
 done
 echo 'RESULT=DRIVE_SYSTEM_SERVICE_RESTART_THROTTLE_OK'
 
+# Installed service-cycle timing must be measured inside one monotonic clock
+# process and must reject material progressive startup slowdown. Never regress
+# to subtracting samples from separate helper processes, which can yield
+# impossible negative durations on some hosts.
+ACCEPTANCE_SOURCE="${ROOT}/Apps/Drive/scripts/first-install-acceptance.sh"
+/usr/bin/grep -Fq 'completed = subprocess.run([sys.argv[1], "--xpc-health"]' "${ACCEPTANCE_SOURCE}"
+/usr/bin/grep -Fq 'SERVICE_CYCLE_TREND=PASS' "${ACCEPTANCE_SOURCE}"
+/usr/bin/grep -Fq 'steady = values[1:]' "${ACCEPTANCE_SOURCE}"
+/usr/bin/grep -Fq 'WARMUP_MS={values[0]}' "${ACCEPTANCE_SOURCE}"
+! /usr/bin/grep -Fq "start_ns=\"\$(/usr/bin/python3 -c 'import time; print(time.monotonic_ns())')\"" "${ACCEPTANCE_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_SERVICE_CYCLE_TIMING_OK'
+
 # Mount/unmount/eject/shutdown lifecycle is intentionally single-path and
 # asynchronous. Never reintroduce polling sleeps or synchronous manager
 # fallbacks into the production daemon; regression-only wait adapters stay

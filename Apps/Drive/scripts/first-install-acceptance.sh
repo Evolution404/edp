@@ -695,7 +695,8 @@ service_cycle() {
   [[ "${max_start_ms}" =~ ^[0-9]+$ && "${max_start_ms}" -ge 500 ]] \
     || fail "EDP_SERVICE_START_MAX_MS must be an integer >= 500"
 
-  local i start_ns end_ns elapsed_ms pid process_count
+  local i elapsed_ms pid process_count trend_summary
+  local start_latencies=()
   for ((i = 1; i <= cycles; i++)); do
     "${APP_BIN}" --xpc-graceful-stop >/dev/null
     for _ in $(/usr/bin/seq 1 40); do
@@ -710,12 +711,23 @@ service_cycle() {
       fail "service-cycle ${i}: daemon remained running after graceful stop"
     fi
 
-    start_ns="$(/usr/bin/python3 -c 'import time; print(time.monotonic_ns())')"
-    "${APP_BIN}" --xpc-health >/dev/null
-    end_ns="$(/usr/bin/python3 -c 'import time; print(time.monotonic_ns())')"
-    elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
+    # Measure the XPC startup in one Python process. Two independent Python
+    # processes can produce incomparable monotonic samples on some macOS hosts,
+    # which previously yielded impossible negative startup durations.
+    elapsed_ms="$(/usr/bin/python3 -c '
+import subprocess, sys, time
+start = time.monotonic_ns()
+completed = subprocess.run([sys.argv[1], "--xpc-health"], stdout=subprocess.DEVNULL)
+end = time.monotonic_ns()
+if completed.returncode != 0:
+    raise SystemExit(completed.returncode)
+print((end - start) // 1_000_000)
+' "${APP_BIN}")"
+    [[ "${elapsed_ms}" =~ ^[0-9]+$ ]] \
+      || fail "service-cycle ${i}: invalid startup timing ${elapsed_ms}"
     (( elapsed_ms <= max_start_ms )) \
       || fail "service-cycle ${i}: startup ${elapsed_ms}ms exceeded ${max_start_ms}ms"
+    start_latencies+=("${elapsed_ms}")
 
     pid="$(/bin/launchctl print system/com.edp.drive.service 2>/dev/null \
       | /usr/bin/awk '/pid = /{print $3; exit}')"
@@ -728,7 +740,34 @@ service_cycle() {
     echo "SERVICE_CYCLE=${i}/${cycles} START_MS=${elapsed_ms} PID=${pid}"
   done
 
-  record "SERVICE_CYCLE PASS cycles=${cycles} max_start_ms=${max_start_ms}"
+  trend_summary="$(/usr/bin/python3 - "${start_latencies[@]}" <<'PY'
+import sys
+values = [int(value) for value in sys.argv[1:]]
+if len(values) < 4:
+    raise SystemExit("service-cycle trend requires one warmup plus at least three steady-state samples")
+# Cycle 1 is an intentional warmup. If the daemon has been idle longer than
+# the launchd ThrottleInterval it can start immediately, while subsequent cycles
+# settle onto the expected ~1 s throttle plateau. Progressive slowdown is a
+# property of that steady-state sequence, not the warmup transition.
+steady = values[1:]
+window = min(3, len(steady))
+first = sum(steady[:window]) / window
+last = sum(steady[-window:]) / window
+xs = list(range(len(steady)))
+mean_x = sum(xs) / len(xs)
+mean_y = sum(steady) / len(steady)
+denominator = sum((x - mean_x) ** 2 for x in xs)
+slope = 0.0 if denominator == 0 else sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, steady)) / denominator
+# Treat only a material, sustained increase as progressive slowdown. Small
+# scheduler noise is tolerated; a >250 ms end-window regression accompanied by
+# a positive >50 ms/cycle slope is not.
+if last > first + 250 and slope > 50:
+    raise SystemExit(f"progressive slowdown first_avg={first:.1f} last_avg={last:.1f} slope={slope:.1f}")
+print(f"SERVICE_CYCLE_TREND=PASS WARMUP_MS={values[0]} FIRST_AVG_MS={first:.1f} LAST_AVG_MS={last:.1f} SLOPE_MS_PER_CYCLE={slope:.1f}")
+PY
+)" || fail "service-cycle progressive slowdown detected"
+  echo "${trend_summary}"
+  record "SERVICE_CYCLE PASS cycles=${cycles} max_start_ms=${max_start_ms} ${trend_summary}"
   echo "RESULT=SERVICE_RESTART_CYCLE_OK"
 }
 
