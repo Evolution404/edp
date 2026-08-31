@@ -42,7 +42,7 @@ fi
 /usr/bin/grep -Fq 'synthetic backing escaped test root' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'image.get("diskimages2") is False' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'image.get("owner-uid") == os.getuid()' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'A vanished BSD node is not sufficient teardown proof.' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'Teardown is metadata-only.' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_fixture_publication_gone "$path" 100' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'successful detach call is not enough' "${STORAGE_RUNNER}"
@@ -57,6 +57,8 @@ fi
   | /usr/bin/grep -Fq 'diskutil unmountDisk'
 /usr/bin/grep -Fq 'pre-detach diskutil unmountDisk' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS=3' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'Keep the DiskImages2 IOMedia' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_remount_quiescence' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'if (( iteration < LOOP_COUNT )); then' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
@@ -195,6 +197,14 @@ PUBLISH_PARSE_SECTION="$(/usr/bin/awk '
 ! /usr/bin/printf '%s\n' "${PUBLISH_PARSE_SECTION}" | /usr/bin/grep -Fq 'return stat(path'
 echo 'RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK'
 
+# The storage regression harness must obey the same teardown rule as product
+# code. Comparing DiskImages2 image-path values is lexical/metadata-only; never
+# resolve the macFUSE volume.raw path or stat a transient synthetic /dev/diskN.
+/usr/bin/grep -Fq 'Teardown is metadata-only.' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'os.path.realpath(' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Eq '\[\[[^]]*(-e|! -e)[[:space:]]+"/dev/\$bsd"' "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_METADATA_ONLY_TEARDOWN_OK'
+
 # Mount/unmount/eject/shutdown lifecycle is intentionally single-path and
 # asynchronous. Never reintroduce polling sleeps or synchronous manager
 # fallbacks into the production daemon; regression-only wait adapters stay
@@ -270,6 +280,11 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
 /usr/bin/grep -Fq 'guard active[token.sessionKey] == token else { return false }' "${SCHEDULER_SOURCE}"
 /usr/bin/grep -Fq 'remountQuiescenceSeconds: TimeInterval = 3.0' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'event: "remountQuiescenceWait"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "nativeFilesystemQuiescenceStarted"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "nativeFilesystemQuiescenceComplete"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'continueUnmountAfterNativeFilesystemQuiescence' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'Keep the DiskImages2 IOMedia' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'event: "remountQuiescenceStarted"' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'event: "remountQuiescenceComplete"' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'operation.journalContext.id.uuidString.lowercased().prefix(8)' "${RUNTIME_SOURCE}"

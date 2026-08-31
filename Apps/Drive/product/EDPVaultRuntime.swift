@@ -1187,8 +1187,33 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 return
             }
             try? FileManager.default.removeItem(atPath: mountpoint)
+            if remountQuiescenceSeconds > 0 {
+                scheduler.schedule(
+                    on: lifecycleQueue,
+                    after: remountQuiescenceSeconds
+                ) { [weak self] in
+                    self?.continueRecoverPersistedSessionItem(
+                        item,
+                        advance: advance,
+                        completion: completion
+                    )
+                }
+                return
+            }
         }
 
+        continueRecoverPersistedSessionItem(
+            item,
+            advance: advance,
+            completion: completion
+        )
+    }
+
+    private func continueRecoverPersistedSessionItem(
+        _ item: [String: String],
+        advance: @escaping @Sendable () -> Void,
+        completion: @escaping EDPDaemonMountCompletion
+    ) {
         if let exposed = item["exposedBSD"], !exposed.isEmpty {
             let backingPath = item["bridgeMount"].map { $0 + "/volume.raw" }
             blockPublisher.unpublishAsync(
@@ -2826,12 +2851,60 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             }
             recordLifecycle(
                 journalContext,
-                state: "tearingDownPublication",
+                state: "quiescingFilesystem",
                 event: "userFilesystemTeardownComplete",
+                ownedResources: ["publication", "transport"]
+            )
+            recordLifecycle(
+                journalContext,
+                state: "quiescingFilesystem",
+                event: "nativeFilesystemQuiescenceStarted",
+                ownedResources: ["publication", "transport"]
+            )
+            if remountQuiescenceSeconds > 0 {
+                scheduler.schedule(
+                    on: lifecycleQueue,
+                    after: remountQuiescenceSeconds
+                ) { [weak self] in
+                    guard let self,
+                          self.unmountWaiters[sessionKey] != nil,
+                          self.sessions[sessionKey] === session else {
+                        return
+                    }
+                    self.recordLifecycle(
+                        journalContext,
+                        state: "tearingDownPublication",
+                        event: "nativeFilesystemQuiescenceComplete",
+                        ownedResources: ["publication", "transport"]
+                    )
+                    self.continueUnmountAfterNativeFilesystemQuiescence(
+                        sessionKey,
+                        session: session,
+                        journalContext: journalContext
+                    )
+                }
+                return
+            }
+            recordLifecycle(
+                journalContext,
+                state: "tearingDownPublication",
+                event: "nativeFilesystemQuiescenceComplete",
                 ownedResources: ["publication", "transport"]
             )
         }
 
+        continueUnmountAfterNativeFilesystemQuiescence(
+            sessionKey,
+            session: session,
+            journalContext: journalContext
+        )
+    }
+
+    private func continueUnmountAfterNativeFilesystemQuiescence(
+        _ sessionKey: String,
+        session: MountSession,
+        journalContext: EDPLifecycleOperationContext
+    ) {
         session.filesystemProcess?.terminate()
         if !session.exposedBSD.isEmpty {
             recordLifecycle(

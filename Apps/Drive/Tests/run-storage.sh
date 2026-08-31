@@ -97,6 +97,10 @@ log() { printf '%s\n' "$*"; }
 
 REMOUNT_QUIESCENCE_SECONDS=3
 
+wait_for_native_filesystem_quiescence() {
+  /bin/sleep "$REMOUNT_QUIESCENCE_SECONDS"
+}
+
 wait_for_remount_quiescence() {
   /bin/sleep "$REMOUNT_QUIESCENCE_SECONDS"
 }
@@ -240,12 +244,12 @@ import sys
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
 expected_device = "/dev/" + sys.argv[2]
-expected_path = os.path.realpath(sys.argv[3])
+expected_path = os.path.abspath(os.path.normpath(sys.argv[3]))
 for image in root.get("images", []):
     devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
     if expected_device not in devices:
         continue
-    actual_path = os.path.realpath(image.get("image-path", ""))
+    actual_path = os.path.abspath(os.path.normpath(image.get("image-path", "")))
     valid = (
         actual_path == expected_path
         and image.get("diskimages2") is True
@@ -269,9 +273,9 @@ import sys
 
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
-expected = os.path.realpath(sys.argv[2])
+expected = os.path.abspath(os.path.normpath(sys.argv[2]))
 for image in root.get("images", []):
-    if os.path.realpath(image.get("image-path", "")) != expected:
+    if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected:
         continue
     if image.get("diskimages2") is True:
         raise SystemExit(0)
@@ -301,9 +305,9 @@ import sys
 
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
-expected = os.path.realpath(sys.argv[2])
+expected = os.path.abspath(os.path.normpath(sys.argv[2]))
 for image in root.get("images", []):
-    if os.path.realpath(image.get("image-path", "")) != expected:
+    if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected:
         continue
     valid = (
         image.get("diskimages2") is False
@@ -348,12 +352,12 @@ import sys
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
 expected_device = "/dev/" + sys.argv[2]
-expected_path = os.path.realpath(sys.argv[3])
+expected_path = os.path.abspath(os.path.normpath(sys.argv[3]))
 for image in root.get("images", []):
     devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
     if expected_device not in devices:
         continue
-    actual_path = os.path.realpath(image.get("image-path", ""))
+    actual_path = os.path.abspath(os.path.normpath(image.get("image-path", "")))
     valid = (
         actual_path == expected_path
         and image.get("diskimages2") is False
@@ -387,9 +391,9 @@ import sys
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
 expected_device = "/dev/" + sys.argv[2]
-expected_path = os.path.realpath(sys.argv[3])
+expected_path = os.path.abspath(os.path.normpath(sys.argv[3]))
 for image in root.get("images", []):
-    if os.path.realpath(image.get("image-path", "")) != expected_path:
+    if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected_path:
         continue
     devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
     pid = image.get("hdid-pid")
@@ -425,8 +429,8 @@ import plistlib
 import sys
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
-expected = os.path.realpath(sys.argv[2])
-raise SystemExit(0 if any(os.path.realpath(item.get("image-path", "")) == expected for item in root.get("images", [])) else 1)
+expected = os.path.abspath(os.path.normpath(sys.argv[2]))
+raise SystemExit(0 if any(os.path.abspath(os.path.normpath(item.get("image-path", ""))) == expected for item in root.get("images", [])) else 1)
 PY
     then
       return 0
@@ -444,8 +448,8 @@ import plistlib
 import sys
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
-expected = os.path.realpath(sys.argv[2])
-raise SystemExit(0 if any(os.path.realpath(item.get("image-path", "")) == expected for item in root.get("images", [])) else 1)
+expected = os.path.abspath(os.path.normpath(sys.argv[2]))
+raise SystemExit(0 if any(os.path.abspath(os.path.normpath(item.get("image-path", ""))) == expected for item in root.get("images", [])) else 1)
 PY
     then
       return 0
@@ -467,7 +471,7 @@ cleanup() {
   if [[ -f "$ACTIVE_FIXTURE_DEVICES" ]]; then
     while IFS='|' read -r bsd backing; do
       [[ -n "$bsd" && -n "$backing" ]] || continue
-      if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$backing" >/dev/null 2>&1; then
+      if assert_fixture_device "$bsd" "$backing" >/dev/null 2>&1; then
         bounded 12 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
         if ! bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1; then
           recover_fixture_image "$bsd" "$backing" >/dev/null 2>&1 || true
@@ -566,55 +570,35 @@ eject_image() {
     return 1
   }
 
-  # A vanished BSD node is not sufficient teardown proof. DiskImages2 can leave
-  # an owner-only publication with system-entities=[] after the IOMedia identity
-  # disappears, so always key completion to the exact backing publication too.
-  if [[ ! -e "/dev/$bsd" ]]; then
-    if wait_for_synthetic_publication_gone "$backing" 100; then
-      return 0
-    fi
-    echo "DiskImages2 owner remained after BSD device disappeared: $backing" >&2
-    return 1
+  # Teardown is metadata-only. Never stat the bridge backing or /dev/diskN
+  # while nested FSKit/LIFS generations are deactivating: either lookup can
+  # enter an uninterruptible filesystem wait. Exact DiskImages2 image-path +
+  # system-entity identity is authoritative before any detach/eject action.
+  if ! synthetic_publication_exists "$backing"; then
+    return 0
   fi
-
   assert_synthetic_device "$bsd" "$backing"
 
-  # The native filesystem has already been unmounted by the caller. Do not run
-  # diskutil unmountDisk here: under repeated FSKit-over-DiskImages2 cycles it
-  # can retire the IOMedia identity before DiskImages2 retires its owner, leaving
-  # system-entities=[] and no safe BSD handle for hdiutil. Detach the exact,
-  # still-proven synthetic publication first.
-  if [[ -e "/dev/$bsd" ]]; then
-    assert_synthetic_device "$bsd" "$backing"
-    bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
+  # The native filesystem has already been unmounted by the caller. Detach the
+  # exact, freshly-proven publication first, then judge completion solely by
+  # disappearance from the DiskImages2 metadata snapshot.
+  bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
+  if wait_for_synthetic_publication_gone "$backing" 120; then
+    return 0
   fi
 
-  for _ in $(/usr/bin/seq 1 120); do
-    if [[ ! -e "/dev/$bsd" ]] && ! synthetic_publication_exists "$backing"; then
-      return 0
-    fi
-    /bin/sleep 0.05
-  done
-
-  if [[ -e "/dev/$bsd" ]]; then
-    # hdiutil did not complete; re-prove the exact synthetic identity before a
-    # final Disk Arbitration eject fallback. No stale diskN is ever trusted.
-    assert_synthetic_device "$bsd" "$backing"
+  # A failed detach can leave the same synthetic BSD entity live. Re-prove the
+  # exact backing+BSD association immediately before the fallback; if the media
+  # identity has already disappeared, assert_synthetic_device fails closed and
+  # we never act on a stale/reused diskN.
+  if assert_synthetic_device "$bsd" "$backing" >/dev/null 2>&1; then
     bounded 15 /usr/sbin/diskutil eject "$bsd" >/dev/null 2>&1 || true
   fi
-
-  for _ in $(/usr/bin/seq 1 100); do
-    if [[ ! -e "/dev/$bsd" ]] && ! synthetic_publication_exists "$backing"; then
-      return 0
-    fi
-    /bin/sleep 0.05
-  done
-
-  if [[ ! -e "/dev/$bsd" ]] && synthetic_publication_exists "$backing"; then
-    echo "DiskImages2 owner remained after BSD device disappeared: $backing" >&2
-  else
-    echo "synthetic publication remained after exact detach/eject: $bsd backing=$backing" >&2
+  if wait_for_synthetic_publication_gone "$backing" 100; then
+    return 0
   fi
+
+  echo "synthetic DiskImages2 publication remained after exact detach/eject: $bsd backing=$backing" >&2
   return 1
 }
 
@@ -696,7 +680,7 @@ format_raw_filesystem() {
       /bin/sleep 0.05
     done
     if (( ready != 1 )); then
-      if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
+      if assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
         bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
       else
         recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
@@ -736,7 +720,7 @@ format_raw_filesystem() {
     # fsck; ExFAT verifies its complete main boot region checksum. Later native
     # mount/remount tests still provide the end-to-end filesystem proof.
     if filesystem_format_completed "$path" "$filesystem"; then
-      if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
+      if assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
         bounded 15 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
         if ! bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1; then
           recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
@@ -764,7 +748,7 @@ format_raw_filesystem() {
     # may already be gone; never carry its BSD name into the next attempt. A
     # successful detach call is not enough: wait until the exact CRawDiskImage
     # backing publication is gone before allowing diskN to be reused.
-    if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
+    if assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
       bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
     else
       recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
@@ -908,7 +892,12 @@ unmount_path() {
     bsd="${BASH_REMATCH[1]}"
     bounded 25 "$DA_MOUNT_BIN" --unmount "$bsd" >/dev/null
   fi
-  ! is_mounted "$mountpoint"
+  ! is_mounted "$mountpoint" || return 1
+  # Disk Arbitration reports the native mount gone before FSKit/UVFS has
+  # necessarily finished deactivate/forgetVolume. Keep the DiskImages2 IOMedia
+  # alive through that upper-filesystem quiescence window; only the caller may
+  # detach the publication after this returns.
+  wait_for_native_filesystem_quiescence
 }
 
 assert_no_test_artifacts() {
@@ -922,10 +911,10 @@ assert_no_test_artifacts() {
 import os, plistlib, sys
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
-prefix = os.path.realpath(sys.argv[2]) + os.sep
+prefix = os.path.abspath(os.path.normpath(sys.argv[2])) + os.sep
 leaks = []
 for image in root.get("images", []):
-    path = os.path.realpath(image.get("image-path", ""))
+    path = os.path.abspath(os.path.normpath(image.get("image-path", "")))
     if path.startswith(prefix):
         leaks.append(path)
 if leaks:
