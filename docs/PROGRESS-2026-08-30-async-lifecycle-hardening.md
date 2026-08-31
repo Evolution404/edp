@@ -210,6 +210,13 @@
 
 ## 变更日志
 
+### 2026-08-31 13:45 — Native sidebar cold-hitch sizing feedback fix
+
+- exact-head UI gate 在当前高图形负载下暴露首次 native sidebar collapse 冷启动帧 33–75ms；保留 xctrace 后确认超标集中在首两帧，Instruments 指向 expensive render / app update，而后续动画帧稳定在 8.33–16.67ms。
+- 根因收口到 `NSSplitViewController` live resize 与两个 SwiftUI `NSHostingController` 默认 sizing feedback 叠加；split controller 已拥有几何约束，因此关闭 sidebar/detail host 的 intrinsic/preferred-size 自动回传，不关闭原生动画、不放宽 33ms 门槛。
+- `run-ui.sh` 新增 `sidebarHost.sizingOptions = []` / `detailHost.sizingOptions = []` ratchet。
+- 修复后同一 `Animation Hitches` gate：max 25.000ms、0 个 >33ms，`RESULT=DRIVE_UI_OK` PASS。
+
 ### 2026-08-31 13:00 — Clean installer owner-only orphan recovery hardening
 
 - 当前系统重新枚举发现 hardware-free storage smoke 中断遗留的 owner-only DiskImages2 publication：exact backing 位于 `edp-storage-e2e.phasec-smoke3/.../volume.raw`，`system-entities=[]`，owner-uid 为 console user，实际 owner process 为 `_diskimagesiod`；同时存在 root-owned 4KiB macFUSE scratch images。

@@ -1082,6 +1082,12 @@ private final class EDPNativeSplitViewController: NSSplitViewController {
         currentSection = section.wrappedValue
         super.init(nibName: nil, bundle: nil)
 
+        // NSSplitViewController owns the live-resize geometry. Prevent the SwiftUI
+        // hosting controllers from feeding intrinsic/preferred-size updates back
+        // into each animation frame, which otherwise amplifies cold sidebar hitches.
+        sidebarHost.sizingOptions = []
+        detailHost.sizingOptions = []
+
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         minimumThicknessForInlineSidebars = 0
