@@ -210,6 +210,12 @@
 
 ## 变更日志
 
+### 2026-09-01 05:26 — Exact-head installer ready; unrelated concurrent storage run polluted current kernel state
+
+- 提交 `fbab2ea9eb96f880aea12a0ada24eb77b864a625` 后重新构建 exact-head Clean.pkg，`verify-clean-installer.sh` 全部 PASS；SHA-256=`ca5f34c1c82ed19decacddf619aa50b048769edc923fd0989862831dff04525f`。
+- 另一个由 DevSpace 父进程独立启动的 `edp-storage-e2e.release-65fbd4e-fresh.*` run 最终父 bash 自行退出，但遗留一个 orphan fixture adapter 与 `diskimagesiod` U-state；未主动 kill/detach 该并发会话。随后连只读 `diskutil list external physical` 都无法在 30s 内返回，证明当前内核现场已污染，不能继续安装态/真实盘验收。
+- 下一步：重启后不再重建 package，先确认无 external physical / U-state，再直接安装上述 exact-head package；随后重新插入标准加密 SanDisk，复测 type1/type2/type4 capability-aware mount/remount/unmount、safe eject、拔插 FDA retention。
+
 ### 2026-09-01 05:19 — Storage harness aligned to direct Disk Arbitration; canonical 5-loop release PASS
 
 - 重启后的干净无盘基线以 HEAD `65fbd4e63fb3d42fdfc4f7e462abdcb1b96f692c` 复跑 synthetic release。最初 M10 暴露测试 harness 仍使用 `/usr/sbin/diskutil mount`：DiskImages2/bridge 已正常 publication，但 `diskutil` 同步前端在 final reply 阶段 20s bounded timeout；正式产品并不走这条同步 CLI。
