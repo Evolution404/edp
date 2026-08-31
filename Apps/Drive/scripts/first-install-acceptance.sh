@@ -636,6 +636,23 @@ restart_app() {
   echo "RESULT=APP_RESTART_OK"
 }
 
+stop_foreground_ui_for_service_gate() {
+  # Service lifecycle gates exercise the on-demand daemon in isolation. A live
+  # foreground UI intentionally polls XPC every two seconds while its in-memory
+  # desired-running state is true, which can legitimately reactivate launchd
+  # after an out-of-process CLI graceful-stop. Stop only the exact EDP Drive UI
+  # executable before asserting that the daemon remains stopped.
+  /usr/bin/pkill -f '^/Applications/EDP Drive\.app/Contents/MacOS/EDP Drive$' >/dev/null 2>&1 || true
+  for _ in $(/usr/bin/seq 1 40); do
+    if ! /bin/ps -axo command= | /usr/bin/grep -Fxq "${APP_BIN}"; then
+      echo "RESULT=FOREGROUND_UI_ISOLATED_FOR_SERVICE_GATE"
+      return 0
+    fi
+    /bin/sleep 0.05
+  done
+  fail "foreground EDP Drive UI did not exit before service lifecycle gate"
+}
+
 service_health() {
   [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
   "${APP_BIN}" --xpc-health
@@ -650,6 +667,7 @@ service_health() {
 
 service_stop() {
   [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
+  stop_foreground_ui_for_service_gate
   "${APP_BIN}" --xpc-graceful-stop
   /bin/sleep 2
   if /bin/launchctl print system/com.edp.drive.service 2>/dev/null \
@@ -683,6 +701,7 @@ service_restart() {
 
 service_cycle() {
   [[ -x "${APP_BIN}" ]] || fail "EDP app is not installed"
+  stop_foreground_ui_for_service_gate
   if /usr/sbin/diskutil list external physical | /usr/bin/grep -q '^/dev/disk'; then
     fail "service-cycle is a hardware-free lifecycle gate; unplug external physical USB first"
   fi

@@ -210,6 +210,21 @@
 
 ## 变更日志
 
+### 2026-08-31 23:10 — FDA granted; service acceptance foreground isolation fixed
+
+- 用户已在系统设置中完成 EDP Drive Full Disk Access 授权；当前仍无 external physical USB，因此只记录“FDA 已授权”，raw access 是否真正 retained 必须等真实标准加密 EDP U 盘插入后由 `verify-fda-device` 的 `privilegedAccessReady=true` 实证。
+- FDA 后执行 acceptance `service-restart` 时首次出现假 FAIL：daemon 已正常 graceful exit，但正在运行的 EDP Drive UI 每 2 秒 refresh，且其内存 `serviceDesiredRunning=true`，随后重新建立 privileged XPC，使 launchd 按需再次拉起 daemon；这不是 `KeepAlive`，也不是产品 UI 的 Stop 状态机失效，而是 out-of-process acceptance CLI 与 live UI desired state 不同步。
+- `first-install-acceptance.sh` 新增 `stop_foreground_ui_for_service_gate()`：service-stop/service-cycle 在断言 daemon 稳定停止前，仅终止 exact `/Applications/EDP Drive.app/Contents/MacOS/EDP Drive` 前台进程，避免 UI polling 干扰硬件无关 service lifecycle gate；不使用宽泛 kill，也不改产品 stop/restart 状态机。
+- 修正后 `bash -n`、`Tests/run-system.sh` PASS；installed `service-restart` 完整通过 `FOREGROUND_UI_ISOLATED_FOR_SERVICE_GATE -> SERVICE_GRACEFUL_STOP_OK -> SERVICE_ON_DEMAND_START_OK -> SERVICE_GRACEFUL_RESTART_OK`，随后 `restart-app` / `service-health` 继续 PASS。
+
+### 2026-08-31 23:06 — Exact-head Clean.pkg installed and installed-runtime acceptance PASS
+
+- 从 clean baseline 重启后再次确认 `FACTORY_CLEAN_BASELINE_VERIFIED`，exact package `artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg` SHA-256 仍为 `e6e223f5124d8cf8f85b86e9bbc81929856c350634dad6af6c723861d68f5386`，未发生构建产物漂移。
+- 使用 acceptance installer 安装该 exact package；安装完成后 `verify-installed` PASS：App/embedded service/macFUSE Local runtime 存在且 strict codesign 验证通过，LaunchDaemon 已加载，XPC roundtrip/snapshot 正常，service version=0.6.0，当前无 external physical USB。
+- 首次启动 `EDP Drive` 后 console-user FSKit enablement 稳定收敛：`enabledModules.plist` 同时包含 `io.macfuse.app.fsmodule.macfuse` 与 `io.macfuse.app.fsmodule.macfuse-local`，PluginKit 两者均为 `+`；service `state=running`、`minimum runtime=1`。
+- installed `service-cycle` 8/8 PASS：启动延迟 `10 / 1070 / 1092 / 1060 / 1053 / 1052 / 1053 / 1050 ms`；warmup 后 FIRST_AVG=1074.0ms、LAST_AVG=1051.7ms、slope=-5.2ms/cycle，无启动时间递增趋势且每轮仅一个 daemon，最终 `RESULT=SERVICE_RESTART_CYCLE_OK`。
+- canonical FDA 页面已通过 `open-fda` 打开并定位 EDP Drive；当前无真实 USB，FDA retained raw access 必须等标准加密 EDP U 盘插入后通过 `verify-fda-device` 的 `privilegedAccessReady=true` 实证，不能仅凭 TCC UI 推断。
+
 ### 2026-08-31 22:58 — Exact-head Clean.pkg built, verified, and clean baseline ready
 
 - 当前 HEAD `b4724f4cc82a4c2bfff47b1e3b992dce6b760b49` 仅比 storage code HEAD `b8ddfd3` 多最终验收记录；补跑 `make drive-test-ui` PASS，`UI_HITCH_MAX_MS=16.667`、`UI_HITCH_COUNT_GT33MS=0`，并完成全部 Drive shell `bash -n`、两个 service plist `plutil -lint`、`git diff --check`。
