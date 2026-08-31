@@ -210,6 +210,17 @@
 
 ## 变更日志
 
+### 2026-08-31 22:44 — Exact-head canonical 5-loop storage release PASS
+
+- 重启后以 exact HEAD `b8ddfd3d024ac54afbb0d6bbc045da2149342d63`、无 external physical USB、无历史 U-state / storage process 的干净基线执行 canonical release storage；为规避外层 300s 工具生命周期限制，使用 runner 原生 `prepare -> core -> stress -> recovery -> contracts -> final` phased mode，共用同一 synthetic workdir，验收语义与 `all` 完全一致。
+- `prepare` PASS：C17/Swift 6 strict tools 构建完成，boot FAT16 + Exchange ExFAT + Secure ExFAT sparse combined fixture 准备完成。
+- `core` PASS：M01 新 DA/FSKit FAT16 read-only 路径完整通过，transport 层 EROFS 正确；M02/M03 持久化、M04 Finder atomic save、M05 multi-delete、M06 rename overwrite、M07 Unicode、M08 128MiB sequential、M09 2500 fixed-seed random I/O 全部 PASS。
+- `stress` PASS：M10 canonical 5/5 完整 mount/attach/filesystem/unmount/eject/transport teardown，`M10_FD_BASELINE=9`、`M10_FD_MAX=9`，无 mount/device/process/FD leak；这是此前重复触发 nested FSKit U-state 的核心回归门槛。
+- M10 后只读 `ps` 验证 Finder 为正常 `S`，所有 `diskimagesiod` 为 `S/Ss`，无 `UVFSService`/storage process U-state。
+- `recovery` PASS：M12 transport crash bounded cleanup/remount、M14 type1/2/4 concurrent sessions independent。
+- `contracts` PASS：M13 fsync/final durability EIO 正确传播、production Swift6/C17 strict build PASS。
+- `final` 返回 `RESULT=DRIVE_STORAGE_E2E_OK`；final residue gate 通过并删除 synthetic workdir。收尾再次确认 Finder 正常、无 UVFS/adapter/storage process U-state，Git 工作区无测试残留。
+
 ### 2026-08-31 22:22 — Boot FAT16 moved from legacy mount_msdos to Disk Arbitration / FSKit
 
 - `80d1dd7` 重启后 canonical release storage 在 M01 暴露独立问题：hidden bridge 正常 `local,nobrowse`、`readonly=1`、source=`/dev/disk22`，DiskImages2 成功发布 `disk23`，且 `disk23` 的 `msdos_fskit` probe/stage 均成功；随后测试直接调用 `/sbin/mount_msdos`，触发 `kmutil load ... msdosfs.kext` 的 legacy kext 路径并立即失败，cleanup 后对应 `diskimagesiod` 进入不可中断 `U` state。
