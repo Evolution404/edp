@@ -235,9 +235,12 @@ final class EDPVaultViewModel: ObservableObject {
         daemonService = serviceMode == "smappservice"
             ? SMAppService.daemon(plistName: daemonPlistName)
             : nil
-        if UserDefaults.standard.object(forKey: servicePreferenceKey) != nil {
-            serviceDesiredRunning = UserDefaults.standard.bool(forKey: servicePreferenceKey)
-        }
+        // Explicitly opening EDP Drive always restores the discovery daemon.
+        // A prior in-app Stop/Complete Quit applies to that running UI session;
+        // it must not leave the next app launch looking healthy while the
+        // Disk Arbitration/IOKit discovery service remains intentionally off.
+        serviceDesiredRunning = true
+        persistServicePreference()
         ensureServiceRegistration()
         refreshTransportRuntimeState()
         refresh()

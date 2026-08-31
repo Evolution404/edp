@@ -166,7 +166,7 @@
 - [x] S23 bounded/redaction/sequence/elapsed/operationID/JSON diagnostics contract tests
 - [x] system journal ratchet，禁止无界 journal 与 password/credential/plaintext/stderr/rawPath 等敏感 schema 字段
 - [x] `make drive-test-fast` / service lifecycle / `make drive-test-system` / `make drive-test-virtual-usb` + `git diff --check` PASS
-- [ ] commit/push
+- [x] commit/push：`d3e4845 feat(drive): add bounded lifecycle diagnostics journal`
 
 完整后续执行说明：`docs/HANDOFF-2026-08-31-async-lifecycle-finalization.md`
 
@@ -209,6 +209,12 @@
 - [ ] 严禁 format/erase/raw write
 
 ## 变更日志
+
+### 2026-08-31 12:40 — Installed-app discovery lifecycle blocker
+
+- 实机只读诊断确认当前旧安装态 `com.edp.drive.service` 不在运行，且用户偏好 `com.edp.drive.service.desired-running=0`；因此 App 外观看似已打开时没有 discovery daemon 监听 Disk Arbitration/IOKit，真实盘不会进入五因素识别。
+- 修复 App 显式启动语义：每次用户重新打开 EDP Drive 都恢复 `serviceDesiredRunning=true` 并重新建立按需 XPC/daemon；本次 UI 会话内“停止”仍可停服务，“完全退出”仍会关闭 daemon，但不会让下一次显式启动永久失去插盘识别能力。
+- system 新增 `RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK` ratchet；最终行为将在 exact-head Clean.pkg 安装后的 installed service-cycle/真实盘只读识别中复核。
 
 ### 2026-08-31 12:38 — Phase G structured lifecycle journal
 
