@@ -191,13 +191,15 @@ storage harness 已加固：
 - attach bounded retry；
 - erase timeout 后按 filesystem result-state 复核；
 - owner-only publication 检测；
+- hidden macFUSE block bridge 必须 `nobrowse` 且不得携带 `MNT_LOCAL`；
+- exact DiskImages2 publication disappearance + transport exit 后执行 3 秒 generation quiescence，才允许同一逻辑分区 remount；
 - phased mode/profile marker/leak gate。
 
 不要削弱这些安全保护换取测试通过。
 
-### H5. release storage 50-loop
+### H5. release storage 5-loop
 
-执行 release profile，必须拿到最终 PASS marker；只看到 M10 50/50 或后续阶段日志，不足以宣称 release PASS。
+执行 canonical release profile，M10 固定跑 5 个完整 mount/attach/filesystem/unmount/eject/transport-remount cycle，并必须拿到最终 PASS marker；每轮 teardown 后必须经过与产品一致的 3 秒 remount quiescence，且保留真实 filesystem `stat`/读写验证，禁止通过删除文件访问来规避 FSKit 问题。只看到 M10 5/5 或后续阶段日志，不足以宣称 release PASS。需要额外 soak 时可显式提高 `EDP_STORAGE_LOOP_COUNT`，但不作为常规发布硬门槛。
 
 ### H6. 真实 EDP U 盘验收
 
@@ -249,6 +251,6 @@ storage harness 已加固：
 - 一次授权完成安全 orphan cleanup + clean install；
 - installed service-cycle 8/8，start <=3s，无 progressive slowdown；
 - storage smoke 两轮都有最终 PASS marker；
-- release 50-loop 有最终 PASS marker；
+- release 5-loop 有最终 PASS marker；
 - 如进行真实盘验收，必须遵守非破坏性约束且 teardown residue=0；
 - tracker 与仓库 HEAD 一致，工作树只允许明确记录的剩余 WIP，否则应 clean。

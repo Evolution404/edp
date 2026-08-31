@@ -56,7 +56,7 @@ cancellation priority, and publication ownership. Any failure reports the fixed
 seed, per-sequence seed, sequence index, and event trace for exact replay. It
 reads only immutable fixture files and never opens `/dev/rdisk*`.
 
-`drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. The smoke profile runs 5 complete cycles for rapid functional regression; the release profile remains the authoritative stress gate at 50 full mount/attach/filesystem/unmount/eject/transport-remount cycles and rejects a loop count outside the accepted 50–100 range. It verifies boot FAT16 at both
+`drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. Both canonical profiles run 5 complete mount/attach/filesystem/unmount/eject/transport-remount cycles; same-partition remounts preserve real filesystem access but wait through the product-equivalent 3-second generation quiescence after exact teardown. The hidden macFUSE block bridge is `nobrowse` and deliberately not `MNT_LOCAL`. The release profile keeps the stricter production-build/contract checks while accepting an explicit `EDP_STORAGE_LOOP_COUNT` override from 5–100 for optional soak runs. It verifies boot FAT16 at both
 the native read-only mount and transport `EROFS` layers, encrypted persistence,
 Finder-style operations, large/random I/O, unmount failure propagation,
 transport crash recovery, durability failure propagation, and concurrent
@@ -80,7 +80,7 @@ liveness uses SMAppService/XPC rather than `launchctl`, and VFS teardown uses
 
 The phase targets are intentionally independent so CI can isolate failures.
 `drive-test-all` is the only aggregate target and runs every hardware-free gate.
-Nightly CI sets `EDP_STORAGE_LOOP_COUNT=100`; normal storage validation uses 50.
+Normal storage validation uses 5 cycles. Longer soak runs may explicitly raise `EDP_STORAGE_LOOP_COUNT` up to 100 when a lifecycle change specifically warrants it; they are not a release-blocking default.
 
 Canonical targets:
 

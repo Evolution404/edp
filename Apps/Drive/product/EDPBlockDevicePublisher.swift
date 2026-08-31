@@ -746,23 +746,35 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
                     return
                 }
 
-                self.diskArbitration.ejectAsync(device.bsdName) { [weak self] error in
+                self.diskArbitration.ejectAsync(device.bsdName) { [weak self] ejectError in
                     guard let self else {
                         completion("block publisher was released")
                         return
                     }
                     self.operationQueue.async {
-                        guard let error else {
-                            completion(nil)
-                            return
-                        }
-                        self.recoverPublicationAsync(candidate, backingPath: backingPath) { recovered in
-                            if recovered {
-                                NSLog("EDP recovered DiskImages2 publication %@", device.bsdName)
+                        // A successful Disk Arbitration eject only means the BSD
+                        // media was accepted for teardown. DiskImages2 may still
+                        // own the exact volume.raw publication for a short period,
+                        // and reusing the next diskN before that owner disappears
+                        // can overlap two FSKit/LIFS generations. Never report
+                        // unpublish success until the exact backing publication is
+                        // absent from hdiutil's owner snapshot.
+                        self.ensurePublicationGoneAsync(
+                            backingPath: backingPath,
+                            timeout: 2.5
+                        ) { goneError in
+                            if goneError == nil {
                                 completion(nil)
-                            } else {
-                                completion(String(describing: error))
+                                return
                             }
+                            if let ejectError {
+                                NSLog(
+                                    "EDP DiskImages2 eject for %@ also reported %@",
+                                    backingPath,
+                                    String(describing: ejectError)
+                                )
+                            }
+                            completion(goneError)
                         }
                     }
                 }
@@ -775,6 +787,46 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         let imagePath: String
         let ownerUID: uid_t
         let devicePaths: [String]
+    }
+
+    private func ensurePublicationGoneAsync(
+        backingPath: String,
+        timeout: TimeInterval,
+        completion: @escaping EDPBlockDeviceCompletion
+    ) {
+        waitForPublicationToDisappearAsync(backingPath, timeout: timeout) { [weak self] disappeared in
+            guard let self else {
+                completion("block publisher was released")
+                return
+            }
+            if disappeared {
+                completion(nil)
+                return
+            }
+            self.publicationAsync(backingPath: backingPath) { [weak self] revalidated, errorMessage in
+                guard let self else {
+                    completion("block publisher was released")
+                    return
+                }
+                if let errorMessage {
+                    completion(errorMessage)
+                    return
+                }
+                guard let revalidated else {
+                    // The final poll and this revalidation can race with normal
+                    // DiskImages2 owner exit. Exact absence is success.
+                    completion(nil)
+                    return
+                }
+                self.recoverPublicationAsync(revalidated, backingPath: backingPath) { recovered in
+                    completion(
+                        recovered
+                            ? nil
+                            : "DiskImages2 publication remained after bounded eject for \(backingPath)"
+                    )
+                }
+            }
+        }
     }
 
     private func recoverPublicationAsync(

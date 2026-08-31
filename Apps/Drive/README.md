@@ -49,7 +49,7 @@ physical EDP USB
   -> FDA daemon retains one validated O_RDWR whole-disk fd
   -> type 1: plaintext writable MBR/FAT slice
   -> type 2/4: shared EDPCore SM4 block adapter
-  -> macFUSE 5.3.3 Local FSKit transport (local,nobrowse)
+  -> macFUSE 5.3.3 Local FSKit transport (nobrowse intermediate bridge; not MNT_LOCAL)
   -> hidden writable volume.raw
   -> DiskImages2 writable virtual media
   -> Apple native filesystem stack

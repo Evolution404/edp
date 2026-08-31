@@ -181,6 +181,8 @@ private enum ValidateTransportLifecycle {
         try validateRecoverySuccessClaimWithoutExitStillFailsClosed()
         try validateNoRecoveryCallbackStillFailsClosed()
         try validateMountedTransportIsNeverKilled()
+        try validateRemountQuiescenceGenerationGate()
+        print("RESULT=REMOUNT_QUIESCENCE_GENERATION_OK")
         print("RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK")
         print("RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK")
     }
@@ -339,6 +341,44 @@ private enum ValidateTransportLifecycle {
         try require(process.terminateCount == 0, "mounted transport incorrectly received SIGTERM")
         try require(process.forceTerminateCount == 0, "mounted transport incorrectly received SIGKILL")
         try require(!recoveryAttempted, "mounted transport incorrectly attempted FSKit host recovery")
+    }
+
+    private static func validateRemountQuiescenceGenerationGate() throws {
+        var gate = EDPRemountQuiescenceGate()
+        let first = gate.begin(
+            sessionKey: "device-a:2",
+            nowNanoseconds: 1_000_000_000,
+            stabilizationSeconds: 3
+        )
+        try require(first.generation == 1, "first quiescence generation was not 1")
+        try require(
+            gate.remainingDelay(for: "device-a:2", nowNanoseconds: 2_000_000_000) == 2,
+            "quiescence remaining delay was incorrect"
+        )
+
+        let second = gate.begin(
+            sessionKey: "device-a:2",
+            nowNanoseconds: 2_000_000_000,
+            stabilizationSeconds: 3
+        )
+        try require(second.generation == 2, "second quiescence generation did not advance")
+        try require(
+            !gate.complete(first),
+            "stale generation incorrectly completed the current quiescence barrier"
+        )
+        try require(
+            gate.activeToken(for: "device-a:2") == second,
+            "stale completion replaced the current quiescence generation"
+        )
+        try require(
+            gate.remainingDelay(for: "device-a:2", nowNanoseconds: 5_000_000_000) == 0,
+            "elapsed quiescence did not become eligible"
+        )
+        try require(gate.complete(second), "current quiescence generation did not complete")
+        try require(
+            gate.activeToken(for: "device-a:2") == nil,
+            "completed quiescence generation remained active"
+        )
     }
 
     private static func makeSession(_ process: FakeManagedProcess) -> EDPTransportSession {

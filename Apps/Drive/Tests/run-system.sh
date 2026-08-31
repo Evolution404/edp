@@ -47,7 +47,21 @@ fi
 /usr/bin/grep -Fq 'wait_for_fixture_publication_gone "$path" 100' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'successful detach call is not enough' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq '[[ -e "/dev/$bsd" ]] || return 0' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'capture_hdiutil_info() {' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'bounded 3 /usr/bin/hdiutil info -plist' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'hdiutil info snapshot did not stabilize' "${STORAGE_RUNNER}"
+[[ "$(/usr/bin/grep -Fc '/usr/bin/hdiutil info -plist' "${STORAGE_RUNNER}")" -eq 1 ]]
+/usr/bin/grep -Fq 'capture_hdiutil_info "$WORK_DIR/hdiutil-artifact-check.plist" 20' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'The native filesystem has already been unmounted by the caller.' "${STORAGE_RUNNER}"
+! /usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_completed\(\)/' "${STORAGE_RUNNER}" \
+  | /usr/bin/grep -Fq 'diskutil unmountDisk'
+/usr/bin/grep -Fq 'pre-detach diskutil unmountDisk' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS=3' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'wait_for_remount_quiescence' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'if (( iteration < LOOP_COUNT )); then' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_DETACH_ORDER_OK'
 
 # Storage-only FSKit host recovery mirrors the production one-shot policy. It
 # must use real MNT_EXT_FSKIT mount detection, never restart the user agent while
@@ -66,6 +80,21 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 ! /usr/bin/grep -Eq '/sbin/mount([[:space:]]|$)' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'while adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_FSKIT_BOUNDED_RECOVERY_OK'
+
+# The macFUSE Local FSKit module is only an internal block-transport bridge.
+# It must stay nobrowse-only, not MNT_LOCAL: the user-visible outer filesystem
+# is the native DiskImages2 volume. Marking the hidden bridge local makes
+# Finder/CacheDelete/StorageKit enumerate it and can deadlock nested LIFS.
+TRANSPORT_BUILD="${ROOT}/Apps/Drive/installer/build-transport-backends.sh"
+TRANSPORT_PROVIDER="${ROOT}/Apps/Drive/product/EDPTransportProvider.swift"
+RAW_TRANSPORT="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
+/usr/bin/grep -Fq '"nobrowse,volname=%s"' "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'localVolume: false' "${TRANSPORT_PROVIDER}"
+/usr/bin/grep -Fq 'environment: [:]' "${TRANSPORT_PROVIDER}"
+/usr/bin/grep -Fq 'must NOT carry MNT_LOCAL' "${TRANSPORT_BUILD}"
+/usr/bin/grep -Fq 'nobrowse-only' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'local,nobrowse' "${TRANSPORT_BUILD}" "${TRANSPORT_PROVIDER}" "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_TRANSPORT_BRIDGE_NONLOCAL_OK'
 
 # The console launcher must allow both transport modes.  A missing read-only
 # target breaks the boot FAT16 path while leaving encrypted partitions healthy,
@@ -189,7 +218,24 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_DISK_ARBITRATION_OK'
 /usr/bin/grep -Fq 'func cleanupNewOrphansAsync(' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'func cleanupOrphanAsync(' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'runBoundedProcessAsync(' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'ensurePublicationGoneAsync(' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'A successful Disk Arbitration eject only means the BSD' "${PUBLISHER_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
+
+# Repeated FSKit-over-DiskImages2 mounts must not reuse the previous generation
+# as soon as Disk Arbitration reports eject success. Exact publication absence,
+# transport exit, a monotonic quiescence barrier, and a unique per-attempt bridge
+# path are all required before the same logical partition can mount again.
+/usr/bin/grep -Fq 'struct EDPRemountQuiescenceGate' "${SCHEDULER_SOURCE}"
+/usr/bin/grep -Fq 'guard active[token.sessionKey] == token else { return false }' "${SCHEDULER_SOURCE}"
+/usr/bin/grep -Fq 'remountQuiescenceSeconds: TimeInterval = 3.0' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "remountQuiescenceWait"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "remountQuiescenceStarted"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "remountQuiescenceComplete"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'operation.journalContext.id.uuidString.lowercased().prefix(8)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'RESULT=REMOUNT_QUIESCENCE_GENERATION_OK' \
+  "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift"
+echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
 
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery
@@ -266,6 +312,9 @@ echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 # Canonical top-level gates must remain wired and hardware-free by construction.
 /usr/bin/grep -Fq 'drive-test-storage-smoke:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5' "${ROOT}/Makefile"
+/usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=release EDP_STORAGE_LOOP_COUNT=5' "${ROOT}/Makefile"
+/usr/bin/grep -Fq 'LOOP_COUNT="${EDP_STORAGE_LOOP_COUNT:-5}"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'MIN_LOOPS=5' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'drive-test-system:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system' "${ROOT}/Makefile"
 

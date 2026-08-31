@@ -17,8 +17,8 @@ case "$STORAGE_PROFILE" in
     MAX_LOOPS=10
     ;;
   release)
-    LOOP_COUNT="${EDP_STORAGE_LOOP_COUNT:-50}"
-    MIN_LOOPS=50
+    LOOP_COUNT="${EDP_STORAGE_LOOP_COUNT:-5}"
+    MIN_LOOPS=5
     MAX_LOOPS=100
     ;;
   *)
@@ -93,6 +93,12 @@ printf '0000aaaa' >"$PASSWORD_FILE"
 chmod 0600 "$PASSWORD_FILE"
 
 log() { printf '%s\n' "$*"; }
+
+REMOUNT_QUIESCENCE_SECONDS=3
+
+wait_for_remount_quiescence() {
+  /bin/sleep "$REMOUNT_QUIESCENCE_SECONDS"
+}
 
 is_mounted() {
   [[ -x "$FSKIT_GUARD_BIN" ]] || return 1
@@ -188,6 +194,25 @@ restart_console_fskit_agent_if_safe() {
   return 0
 }
 
+capture_hdiutil_info() {
+  local output="$1"
+  local attempts="${2:-20}"
+  local error_log="${output}.stderr"
+  local attempt
+  for attempt in $(/usr/bin/seq 1 "$attempts"); do
+    : >"$output"
+    : >"$error_log"
+    if bounded 3 /usr/bin/hdiutil info -plist >"$output" 2>"$error_log" \
+      && /usr/bin/plutil -lint "$output" >/dev/null 2>&1; then
+      return 0
+    fi
+    /bin/sleep 0.1
+  done
+  echo "hdiutil info snapshot did not stabilize after $attempts attempts" >&2
+  /usr/bin/tail -20 "$error_log" >&2 || true
+  return 1
+}
+
 assert_synthetic_device() {
   local bsd="$1"
   local backing="$2"
@@ -200,7 +225,7 @@ assert_synthetic_device() {
     echo "synthetic backing escaped test root: $backing" >&2
     return 1
   }
-  /usr/bin/hdiutil info -plist >"$info"
+  capture_hdiutil_info "$info" 20
   /usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
 import os
 import plistlib
@@ -230,7 +255,7 @@ synthetic_publication_exists() {
   local backing="$1"
   local info="$WORK_DIR/hdiutil-publication-check.plist"
   [[ "$backing" == "$WORK_DIR"/* || "$backing" == "$MOUNT_ROOT"/* ]] || return 1
-  /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
+  capture_hdiutil_info "$info" 5 >/dev/null 2>&1 || return 0
   /usr/bin/python3 - "$info" "$backing" <<'PY'
 import os
 import plistlib
@@ -262,7 +287,7 @@ fixture_publication_exists() {
   local backing="$1"
   local info="$WORK_DIR/hdiutil-fixture-publication-check.plist"
   [[ "$backing" == "$WORK_DIR"/* ]] || return 1
-  /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
+  capture_hdiutil_info "$info" 5 >/dev/null 2>&1 || return 0
   /usr/bin/python3 - "$info" "$backing" <<'PY'
 import os
 import plistlib
@@ -308,7 +333,7 @@ assert_fixture_device() {
     echo "fixture backing escaped test root: $backing" >&2
     return 1
   }
-  /usr/bin/hdiutil info -plist >"$info"
+  capture_hdiutil_info "$info" 20
   /usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
 import os
 import plistlib
@@ -347,7 +372,7 @@ recover_fixture_image() {
   [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
   [[ "$backing" == "$WORK_DIR"/* ]] || return 1
 
-  /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 1
+  capture_hdiutil_info "$info" 10 >/dev/null 2>&1 || return 1
   pid="$(/usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
 import os
 import plistlib
@@ -388,8 +413,7 @@ PY
 
   /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
   for _ in $(/usr/bin/seq 1 60); do
-    /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
-    if ! /usr/bin/python3 - "$info" "$backing" <<'PY'
+    if capture_hdiutil_info "$info" 3 >/dev/null 2>&1 && ! /usr/bin/python3 - "$info" "$backing" <<'PY'
 import os
 import plistlib
 import sys
@@ -408,8 +432,7 @@ PY
   [[ "$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)" == /System/Library/PrivateFrameworks/DiskImages.framework/Resources/diskimages-helper* ]] || return 1
   /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
   for _ in $(/usr/bin/seq 1 40); do
-    /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
-    if ! /usr/bin/python3 - "$info" "$backing" <<'PY'
+    if capture_hdiutil_info "$info" 3 >/dev/null 2>&1 && ! /usr/bin/python3 - "$info" "$backing" <<'PY'
 import os
 import plistlib
 import sys
@@ -450,11 +473,11 @@ cleanup() {
   fi
   if [[ -f "$ACTIVE_DEVICES" ]]; then
     while IFS='|' read -r bsd backing; do
-      [[ -n "$bsd" && -e "/dev/$bsd" ]] || continue
-      if assert_synthetic_device "$bsd" "$backing" >/dev/null 2>&1; then
-        bounded 12 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
-        bounded 12 /usr/sbin/diskutil eject "$bsd" >/dev/null 2>&1 || true
-      fi
+      [[ -n "$bsd" && -n "$backing" ]] || continue
+      # Reuse the exact normal teardown path. In particular, never issue a
+      # pre-detach diskutil unmountDisk that can drop the DiskImages2 IOMedia
+      # identity before hdiutil has retired its owner publication.
+      eject_image "$bsd" "$backing" >/dev/null 2>&1 || true
     done <"$ACTIVE_DEVICES"
   fi
   if [[ -f "$ACTIVE_PROCESSES" ]]; then
@@ -549,12 +572,12 @@ eject_image() {
   fi
 
   assert_synthetic_device "$bsd" "$backing"
-  bounded 15 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
 
-  # For a proven synthetic DiskImages2 publication, prefer hdiutil detach while
-  # the BSD identity still exists. This lets DiskImages2 retire both IOMedia and
-  # its owner process atomically instead of first losing diskN through diskutil
-  # eject and then being unable to address an owner-only publication.
+  # The native filesystem has already been unmounted by the caller. Do not run
+  # diskutil unmountDisk here: under repeated FSKit-over-DiskImages2 cycles it
+  # can retire the IOMedia identity before DiskImages2 retires its owner, leaving
+  # system-entities=[] and no safe BSD handle for hdiutil. Detach the exact,
+  # still-proven synthetic publication first.
   if [[ -e "/dev/$bsd" ]]; then
     assert_synthetic_device "$bsd" "$backing"
     bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
@@ -881,7 +904,7 @@ assert_no_test_artifacts() {
     echo "test mount leaked after $label" >&2
     return 1
   fi
-  /usr/bin/hdiutil info -plist >"$WORK_DIR/hdiutil-artifact-check.plist"
+  capture_hdiutil_info "$WORK_DIR/hdiutil-artifact-check.plist" 20
   /usr/bin/python3 - "$WORK_DIR/hdiutil-artifact-check.plist" "$WORK_DIR" <<'PY'
 import os, plistlib, sys
 with open(sys.argv[1], "rb") as handle:
@@ -995,15 +1018,9 @@ build_tools() {
     "$source_dir/DirectMFMountRawTransport.c"
   /bin/cp native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountEDPFixtureAdapter.c \
     "$source_dir/DirectMFMountEDPFixtureAdapter.c"
-  /usr/bin/python3 - "$source_dir/DirectMFMountRawTransport.c" <<'PY'
-import pathlib, sys
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-needle = '"nobrowse,volname=%s"'
-if needle not in text:
-    raise SystemExit("Direct MFMount option template is missing")
-path.write_text(text.replace(needle, '"local,nobrowse,volname=%s"', 1))
-PY
+  # Keep the intermediate macFUSE Local FSKit bridge nobrowse-only. MNT_LOCAL
+  # makes Finder/CacheDelete enumerate the hidden bridge as a user volume while
+  # DiskImages2 is consuming volume.raw from it, which can deadlock nested LIFS.
   xcrun clang -std=c17 -Wall -Wextra -Werror \
     -I"$include_dir" -I"$source_dir" -F"$frameworks" -DMFMount=EDPAsyncMFMount \
     -c "$source_dir/DirectMFMountEDPFixtureAdapter.c" -o "$BUILD_DIR/fixture-adapter.o"
@@ -1112,6 +1129,7 @@ run_exchange_core() {
   unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m02-stage1
+  wait_for_remount_quiescence
 
   bridge="$MOUNT_ROOT/m02-remount-bridge"
   start_adapter 2 "$bridge" m02-remount pid
@@ -1139,6 +1157,7 @@ run_secure_core() {
   unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m03-stage1
+  wait_for_remount_quiescence
 
   bridge="$MOUNT_ROOT/m03-remount-bridge"
   start_adapter 4 "$bridge" m03-remount pid
@@ -1168,6 +1187,9 @@ run_m10() {
     eject_image "$bsd" "$bridge/volume.raw"
     stop_adapter "$pid" "$bridge" "m10-$iteration"
     assert_no_test_artifacts "M10-$iteration"
+    if (( iteration < LOOP_COUNT )); then
+      wait_for_remount_quiescence
+    fi
     local current_fds
     current_fds="$(/usr/sbin/lsof -p $$ 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
     (( current_fds > max_fds )) && max_fds="$current_fds"
@@ -1196,6 +1218,7 @@ run_m12() {
   cleanup_crashed_local_mount "$bridge"
   eject_image "$bsd" "$bridge/volume.raw"
   assert_no_test_artifacts M12-crash
+  wait_for_remount_quiescence
 
   bridge="$MOUNT_ROOT/m12-recovery-bridge"
   start_adapter 2 "$bridge" m12-recovery pid

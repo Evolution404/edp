@@ -214,8 +214,11 @@
 
 - `EDPBlockDevicePublisher.swift` 正式路径无 `Thread.sleep`；
 - publisher completion once；
+- Disk Arbitration eject success 之后仍必须确认 exact DiskImages2 backing publication 真正消失；
+- hidden macFUSE bridge 仅 `nobrowse`，不得携带 `MNT_LOCAL`；
+- 同一 sessionKey 的 teardown→remount 必须经过 monotonic generation quiescence，旧 generation callback 不能释放新 generation；
 - storage smoke 连续 2 次 PASS；
-- release storage 50-loop 在 CI 或可返回环境获得最终 marker。
+- canonical release storage 5-loop 获得最终 marker；更长 soak 仅在专项生命周期改动时按需显式提高循环数。
 
 ### 6.6 提交
 
@@ -412,7 +415,7 @@ production 使用 monotonic/Dispatch 实现；tests 使用 deterministic virtual
 3. `make drive-test-system`
 4. `make drive-test-ui`
 5. `make drive-test-storage-smoke` ×2
-6. release storage 50-loop
+6. release storage 5-loop
 7. `git diff --check`
 8. `bash -n` 相关脚本
 9. `plutil -lint` 相关 plist

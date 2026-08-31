@@ -921,6 +921,7 @@ private final class EDPFSKitMountOperationBox: @unchecked Sendable {
     let journalContext: EDPLifecycleOperationContext
     let completion: EDPDaemonMountCompletion
     var publicationOperation: (any EDPCancellableOperation)?
+    var quiescenceWaitRecorded = false
     var finished = false
 
     init(
@@ -1031,6 +1032,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private let blockPublisher: any EDPBlockDevicePublisher
     private let scheduler: any EDPLifecycleScheduling
     private let journal: EDPLifecycleJournal
+    private let remountQuiescenceSeconds: TimeInterval
     private let lifecycleQueue = DispatchQueue(label: "com.edp.drive.mount-lifecycle", qos: .userInitiated)
     private let filesystemOperationQueue = DispatchQueue(
         label: "com.edp.drive.filesystem-operation",
@@ -1048,13 +1050,16 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private var ejectJournalContexts = [String: EDPLifecycleOperationContext]()
     private var shutdownWaiters = [EDPDaemonMountCompletion]()
     private var shutdownJournalContext: EDPLifecycleOperationContext?
+    private var remountQuiescence = EDPRemountQuiescenceGate()
 
     init(
         scheduler: any EDPLifecycleScheduling = EDPDispatchLifecycleScheduler.shared,
-        journal: EDPLifecycleJournal = EDPLifecycleJournal()
+        journal: EDPLifecycleJournal = EDPLifecycleJournal(),
+        remountQuiescenceSeconds: TimeInterval = 3.0
     ) throws {
         self.scheduler = scheduler
         self.journal = journal
+        self.remountQuiescenceSeconds = max(0, remountQuiescenceSeconds)
         if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
             binaryRoot = configuredRoot
         } else {
@@ -1375,10 +1380,42 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             self.activeMountOperations.insert(sessionKey)
             self.activeMountOperationBoxes[sessionKey] = operation
             self.cancelledMountOperations.remove(sessionKey)
-            let action = operation.machine.start()
-            self.recordMountJournal(operation, event: "started")
-            self.executeMountAction(action, operation: operation)
+            self.startMountOperationWhenQuiescent(operation)
         }
+    }
+
+    private func startMountOperationWhenQuiescent(_ operation: EDPFSKitMountOperationBox) {
+        guard !operation.finished,
+              activeMountOperationBoxes[operation.sessionKey] === operation else {
+            return
+        }
+        if cancelledMountOperations.contains(operation.sessionKey) {
+            executeMountAction(operation.machine.cancel(), operation: operation)
+            return
+        }
+        if remountQuiescence.activeToken(for: operation.sessionKey) != nil {
+            let remaining = remountQuiescence.remainingDelay(
+                for: operation.sessionKey,
+                nowNanoseconds: scheduler.nowNanoseconds
+            ) ?? 0
+            if !operation.quiescenceWaitRecorded {
+                operation.quiescenceWaitRecorded = true
+                recordMountJournal(
+                    operation,
+                    event: "remountQuiescenceWait"
+                )
+            }
+            scheduler.schedule(
+                on: lifecycleQueue,
+                after: max(remaining, 0.05)
+            ) { [weak self, operation] in
+                self?.startMountOperationWhenQuiescent(operation)
+            }
+            return
+        }
+        let action = operation.machine.start()
+        recordMountJournal(operation, event: "started")
+        executeMountAction(action, operation: operation)
     }
 
     private func recordMountJournal(
@@ -1481,7 +1518,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             )
             let disk = operation.disk
             let partitionType = operation.partitionType
-            let suffix = safeName(disk.deviceID) + "-\(partitionType)"
+            let generation = String(
+                operation.journalContext.id.uuidString.lowercased().prefix(8)
+            )
+            let suffix = safeName(disk.deviceID) + "-\(partitionType)-\(generation)-\(attempt)"
             let bridgeMount = "/Volumes/.edp-block-\(suffix)"
             let identity = try consoleIdentity()
 
@@ -2398,6 +2438,49 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             diagnosticCode: failure.code
         )
 
+        guard stopError == nil, !transportSession.isRunning else {
+            continueStoppedTransportCleanup(
+                operation,
+                attempt: attempt,
+                transportSession: transportSession,
+                stopRecoveredHost: stopRecoveredHost,
+                hostRecoveryAttempted: hostRecoveryAttempted
+            )
+            return
+        }
+
+        let token = remountQuiescence.begin(
+            sessionKey: operation.sessionKey,
+            nowNanoseconds: scheduler.nowNanoseconds,
+            stabilizationSeconds: remountQuiescenceSeconds
+        )
+        recordMountJournal(operation, event: "remountQuiescenceStarted")
+        scheduler.schedule(
+            on: lifecycleQueue,
+            after: remountQuiescenceSeconds
+        ) { [weak self, operation] in
+            guard let self,
+                  self.remountQuiescence.complete(token) else {
+                return
+            }
+            self.recordMountJournal(operation, event: "remountQuiescenceComplete")
+            self.continueStoppedTransportCleanup(
+                operation,
+                attempt: attempt,
+                transportSession: transportSession,
+                stopRecoveredHost: stopRecoveredHost,
+                hostRecoveryAttempted: hostRecoveryAttempted
+            )
+        }
+    }
+
+    private func continueStoppedTransportCleanup(
+        _ operation: EDPFSKitMountOperationBox,
+        attempt: Int,
+        transportSession: EDPTransportSession,
+        stopRecoveredHost: Bool,
+        hostRecoveryAttempted: Bool
+    ) {
         if cancelledMountOperations.contains(operation.sessionKey) {
             executeMountAction(operation.machine.cancel(), operation: operation)
             return
@@ -2826,6 +2909,38 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             self.sessions.removeValue(forKey: sessionKey)
             try? FileManager.default.removeItem(atPath: session.bridgeMount)
             self.persistSessions()
+            self.beginUnmountQuiescence(sessionKey)
+        }
+    }
+
+    private func beginUnmountQuiescence(_ sessionKey: String) {
+        let token = remountQuiescence.begin(
+            sessionKey: sessionKey,
+            nowNanoseconds: scheduler.nowNanoseconds,
+            stabilizationSeconds: remountQuiescenceSeconds
+        )
+        if let context = unmountJournalContexts[sessionKey] {
+            recordLifecycle(
+                context,
+                state: "quiescing",
+                event: "remountQuiescenceStarted"
+            )
+        }
+        scheduler.schedule(
+            on: lifecycleQueue,
+            after: remountQuiescenceSeconds
+        ) { [weak self] in
+            guard let self,
+                  self.remountQuiescence.complete(token) else {
+                return
+            }
+            if let context = self.unmountJournalContexts[sessionKey] {
+                self.recordLifecycle(
+                    context,
+                    state: "finalizing",
+                    event: "remountQuiescenceComplete"
+                )
+            }
             self.finishUnmount(sessionKey, error: nil)
         }
     }
