@@ -210,6 +210,15 @@
 
 ## 变更日志
 
+### 2026-08-31 22:58 — Exact-head Clean.pkg built, verified, and clean baseline ready
+
+- 当前 HEAD `b4724f4cc82a4c2bfff47b1e3b992dce6b760b49` 仅比 storage code HEAD `b8ddfd3` 多最终验收记录；补跑 `make drive-test-ui` PASS，`UI_HITCH_MAX_MS=16.667`、`UI_HITCH_COUNT_GT33MS=0`，并完成全部 Drive shell `bash -n`、两个 service plist `plutil -lint`、`git diff --check`。
+- 使用项目固定 self-signed wrapper `installer/build-self-signed-installer.sh artifacts` 构建 `Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`；内部 App/service/runtime 均使用固定 `EDP Project Code Signing`，组合包包含官方 macFUSE 5.3.3 组件。
+- `scripts/verify-clean-installer.sh` 全部 contract PASS，包括 single Drive App + embedded service、legacy on-demand LaunchDaemon、ThrottleInterval=1、macFUSE-only transport、无 ntfs-3g/authopen runtime、FDA raw-fd3 path。
+- exact package SHA-256：`e6e223f5124d8cf8f85b86e9bbc81929856c350634dad6af6c723861d68f5386`；生成的 `.sha256` 文件与现场重新计算一致。
+- first-install acceptance `preflight` / `user-cleanup` PASS；管理员 clean stage 仅在重新验证 external physical=0、macFUSE/EDP mount=0、用户 keychain safe 后执行，旧 `/Applications/EDP Drive.app`、旧 product runtime、macFUSE 与 service 已清理。
+- `first-install-acceptance.sh verify-clean` 返回 `RESULT=FACTORY_CLEAN_BASELINE_VERIFIED`，并明确 `NEXT=REBOOT_MAC_BEFORE_INSTALL`。临时 GUI authorization launchd job 已立即移除，避免重复授权/重复清理。
+
 ### 2026-08-31 22:44 — Exact-head canonical 5-loop storage release PASS
 
 - 重启后以 exact HEAD `b8ddfd3d024ac54afbb0d6bbc045da2149342d63`、无 external physical USB、无历史 U-state / storage process 的干净基线执行 canonical release storage；为规避外层 300s 工具生命周期限制，使用 runner 原生 `prepare -> core -> stress -> recovery -> contracts -> final` phased mode，共用同一 synthetic workdir，验收语义与 `all` 完全一致。
