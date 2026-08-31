@@ -226,6 +226,12 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 ! /usr/bin/grep -Fq '/sbin/umount' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'Darwin.unmount(path, flags)' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'Task.detached(priority: .utility)' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'edpMacFUSEEnablementMaxAttempts = 5' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'for attempt in 1...edpMacFUSEEnablementMaxAttempts' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'Require the user FSKit state to remain stable for one' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'while !macFUSELocalEnablementReady()' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_BOUNDED_RETRY_OK'
 echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 
 # Canonical top-level gates must remain wired and hardware-free by construction.

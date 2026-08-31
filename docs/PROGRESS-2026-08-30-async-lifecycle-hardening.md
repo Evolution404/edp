@@ -179,7 +179,7 @@
 - [x] fast
 - [x] virtual-usb
 - [x] system
-- [ ] UI（产品/几何 PASS；当前主机 xctrace hitch 测量存在 33–116ms 波动/超时，尚未取得 `13ad0b4` exact-head 最终 0-hitch marker）
+- [x] UI（当前 WIP exact-source：max 25.000ms，0 个 >33ms，`RESULT=DRIVE_UI_OK`）
 - [ ] storage smoke #1
 - [ ] storage smoke #2
 - [ ] release storage final marker
@@ -209,6 +209,15 @@
 - [ ] 严禁 format/erase/raw write
 
 ## 变更日志
+
+### 2026-08-31 18:55 — Clean-install FSKit enablement bounded stability retry
+
+- storage smoke 首轮在 M01 fail-closed：PluginKit 中 generic/local 两个 macFUSE module 均为 `+`，但当前用户 `enabledModules.plist` 只剩 Apple modules；没有进入 synthetic 写入阶段。
+- 关闭并重新显式打开已安装 EDP Drive 后，现有一次性 enablement 立即恢复两个 macFUSE module 到 `enabledModules.plist`，证明 transport/macFUSE 文件本身健康，缺口是首次 clean-install foreground launch 的注册收敛窗口。
+- 产品启动 enablement 改为 bounded async stability retry：最多 5 次、每次最多等待 1s；每次写入/注册后同时核对 macFUSE host/appex、PluginKit election、用户 enabledModules，并要求间隔 1s 的第二次检查仍 ready 才接受成功。无 `while true`、无 MainActor blocking sleep。
+- 原有 transient automatic-mount retry 边界保持不变：只有 enablement/runtime ready 后才触发，不扩大到 password/raw/其他 mount error。
+- 上一轮 storage 工具 300s timeout 后重新只读审计：storage process=0、EDP hidden mount=0、EDP DiskImages publication=0、external physical=0，未把 timeout 误记为 PASS。
+- 验证：`make drive-test-system`、`make drive-test-fast`、`make drive-test-virtual-usb`、`make drive-test-ui`、`bash -n`、`git diff --check` 全绿；UI hitch max 25.000ms、0 个 >33ms。
 
 ### 2026-08-31 18:24 — Installed service-cycle timing and steady-state acceptance
 

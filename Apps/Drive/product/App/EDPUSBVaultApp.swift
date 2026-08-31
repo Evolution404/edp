@@ -14,6 +14,7 @@ private let edpMacFUSEModuleIDs = [
 ]
 
 private let edpMacFUSEHostPath = "/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app"
+private let edpMacFUSEEnablementMaxAttempts = 5
 
 private var edpFSKitEnabledModulesURL: URL {
     FileManager.default.homeDirectoryForCurrentUser
@@ -50,10 +51,39 @@ private func macFUSEModulesEnabledInSettings() -> Bool {
     return Set(edpMacFUSEModuleIDs).isSubset(of: Set(modules))
 }
 
+private func macFUSEPluginsEnabled(_ listing: String) -> Bool {
+    edpMacFUSEModuleIDs.allSatisfy { moduleID in
+        listing.split(separator: "\n").contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed.hasPrefix("+ \(moduleID)")
+                || (trimmed.hasPrefix("+") && line.contains(moduleID))
+        }
+    }
+}
+
+private func macFUSELocalEnablementReady() -> Bool {
+    let genericModule = edpMacFUSEHostPath
+        + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
+    let localModule = edpMacFUSEHostPath
+        + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
+    guard FileManager.default.fileExists(atPath: edpMacFUSEHostPath),
+          FileManager.default.fileExists(atPath: genericModule),
+          FileManager.default.fileExists(atPath: localModule),
+          macFUSEModulesEnabledInSettings() else {
+        return false
+    }
+    guard let listing = try? runUserTool("/usr/bin/pluginkit", ["-m", "-A", "-D"]) else {
+        return false
+    }
+    return macFUSEPluginsEnabled(listing)
+}
+
 /// macFUSE's signed installer deploys the FSKit host and modules system-wide,
 /// while FSKit keeps module enablement in the console user's settings. Perform
-/// this user-context step once from the signed App so a clean install does not
-/// require a terminal workaround before the first Direct MFMount.
+/// this user-context step from the signed App so a clean install does not
+/// require a terminal workaround before the first Direct MFMount. The caller
+/// performs a bounded stability retry because installer/FSKit registration can
+/// still be converging during the first foreground launch.
 private func ensureMacFUSELocalEnablement() throws -> Bool {
     let genericModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
@@ -67,13 +97,7 @@ private func ensureMacFUSELocalEnablement() throws -> Bool {
 
     let pluginKit = "/usr/bin/pluginkit"
     let before = (try? runUserTool(pluginKit, ["-m", "-A", "-D"])) ?? ""
-    let pluginsWereEnabled = edpMacFUSEModuleIDs.allSatisfy { moduleID in
-        before.split(separator: "\n").contains { line in
-            line.trimmingCharacters(in: .whitespaces).hasPrefix("+ \(moduleID)")
-                || (line.trimmingCharacters(in: .whitespaces).hasPrefix("+")
-                    && line.contains(moduleID))
-        }
-    }
+    let pluginsWereEnabled = macFUSEPluginsEnabled(before)
     let settingsWereEnabled = macFUSEModulesEnabledInSettings()
     if pluginsWereEnabled && settingsWereEnabled {
         return false
@@ -128,7 +152,7 @@ private func ensureMacFUSELocalEnablement() throws -> Bool {
     }
 
     let after = try runUserTool(pluginKit, ["-m", "-A", "-D"])
-    guard edpMacFUSEModuleIDs.allSatisfy({ after.contains("+    \($0)") || after.contains("+\t\($0)") }) else {
+    guard macFUSEPluginsEnabled(after) else {
         throw NSError(
             domain: "com.edp.drive.fskit",
             code: 2,
@@ -245,12 +269,34 @@ final class EDPVaultViewModel: ObservableObject {
         refreshTransportRuntimeState()
         refresh()
         Task { [weak self] in
-            let enablement = await Task.detached(priority: .utility) { () -> (restartedAgents: Bool, error: String?) in
-                do {
-                    return (try ensureMacFUSELocalEnablement(), nil)
-                } catch {
-                    return (false, error.localizedDescription)
+            let enablement = await Task.detached(priority: .utility) { () async -> (restartedAgents: Bool, error: String?) in
+                var restartedAgents = false
+                var lastError: String?
+
+                for attempt in 1...edpMacFUSEEnablementMaxAttempts {
+                    do {
+                        restartedAgents = try ensureMacFUSELocalEnablement() || restartedAgents
+                        if macFUSELocalEnablementReady() {
+                            // Require the user FSKit state to remain stable for one
+                            // observation interval. A clean macFUSE install can
+                            // rewrite enabledModules shortly after the App starts.
+                            try? await Task.sleep(for: .seconds(1))
+                            if macFUSELocalEnablementReady() {
+                                return (restartedAgents, nil)
+                            }
+                            lastError = "macFUSE FSKit 启用状态未保持稳定（\(attempt)/\(edpMacFUSEEnablementMaxAttempts)）"
+                        } else {
+                            lastError = "macFUSE FSKit 启用状态尚未就绪（\(attempt)/\(edpMacFUSEEnablementMaxAttempts)）"
+                        }
+                    } catch {
+                        lastError = error.localizedDescription
+                    }
+
+                    if attempt < edpMacFUSEEnablementMaxAttempts {
+                        try? await Task.sleep(for: .seconds(1))
+                    }
                 }
+                return (restartedAgents, lastError ?? "macFUSE FSKit 启用状态未就绪")
             }.value
             guard let self else { return }
             if let error = enablement.error {
