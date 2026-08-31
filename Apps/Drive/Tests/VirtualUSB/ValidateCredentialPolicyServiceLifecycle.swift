@@ -103,7 +103,8 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
     private(set) var mountAttempts = [String: Int]()
     private(set) var recoverCount = 0
     private(set) var unmountAllCount = 0
-    private var failures = [String: (remaining: Int, message: String)]()
+    private var failures = [String: (remaining: Int, message: String, code: EDPLifecycleFailureCode)]()
+    private var lastFailureCodes = [String: EDPLifecycleFailureCode]()
     private var unmountFailures = [String: (remaining: Int, message: String)]()
     private var ejectFailures = [String: (remaining: Int, message: String)]()
     var staleSessionCount = 0
@@ -112,8 +113,14 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
         "\(deviceID):\(partitionType)"
     }
 
-    func failNextMounts(deviceID: String, partitionType: UInt32, count: Int, message: String) {
-        failures[key(deviceID, partitionType)] = (count, message)
+    func failNextMounts(
+        deviceID: String,
+        partitionType: UInt32,
+        count: Int,
+        message: String,
+        code: EDPLifecycleFailureCode = .unknown
+    ) {
+        failures[key(deviceID, partitionType)] = (count, message, code)
     }
 
     func holdNextMount(deviceID: String, partitionType: UInt32) {
@@ -242,6 +249,12 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
         ]
     }
 
+    func lastFailureCode(deviceID: String, partitionType: UInt32) -> EDPLifecycleFailureCode? {
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        return lastFailureCodes[key(deviceID, partitionType)]
+    }
+
     func ejectAsync(deviceID: String, completion: @escaping EDPDaemonMountCompletion) {
         asyncLock.lock()
         if var failure = ejectFailures[deviceID], failure.remaining > 0 {
@@ -311,10 +324,12 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
         if var failure = failures[sessionKey], failure.remaining > 0 {
             failure.remaining -= 1
             failures[sessionKey] = failure
+            lastFailureCodes[sessionKey] = failure.code
             asyncLock.unlock()
             completion(failure.message)
             return
         }
+        lastFailureCodes.removeValue(forKey: sessionKey)
         let mountedValue = Mounted(
             physicalBSD: disk.bsdName,
             deviceID: disk.deviceID,
@@ -1136,7 +1151,8 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 deviceID: disk.deviceID,
                 partitionType: 2,
                 count: 1,
-                message: "File system extension not found"
+                message: "File system extension not found",
+                code: .bridgeExtensionUnavailable
             )
             let controller = try makeController(
                 state: state,
@@ -1230,55 +1246,77 @@ struct ValidateCredentialPolicyServiceLifecycle {
         }
 
         do {
-            guard EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+            let timeoutFailure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: true,
-                transportStillRunning: true,
-                bridgeMounted: false,
                 logDetail: nil
-            ) else {
+            )
+            guard timeoutFailure.code == .bridgeTimeout,
+                  EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                    failure: timeoutFailure,
+                    transportStillRunning: true,
+                    bridgeMounted: false
+                  ) else {
                 throw LifecycleValidationError("S11 timed-out live transport was not classified recoverable")
             }
-            guard EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+
+            let mount69Failure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: false,
-                transportStillRunning: false,
-                bridgeMounted: false,
                 logDetail: "MFMount: Failed to mount volume: mount(8) returned 69"
-            ) else {
+            )
+            guard mount69Failure.code == .bridgeExtensionUnavailable,
+                  EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                    failure: mount69Failure,
+                    transportStillRunning: false,
+                    bridgeMounted: false
+                  ) else {
                 throw LifecycleValidationError("S11 mount(8)=69 was not classified recoverable")
             }
-            guard EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+
+            let missingExtensionFailure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: false,
-                transportStillRunning: false,
-                bridgeMounted: false,
                 logDetail: "File system extension not found"
-            ) else {
+            )
+            guard missingExtensionFailure.code == .bridgeExtensionUnavailable,
+                  EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                    failure: missingExtensionFailure,
+                    transportStillRunning: false,
+                    bridgeMounted: false
+                  ) else {
                 throw LifecycleValidationError("S11 missing FSKit extension was not classified recoverable")
             }
-            guard !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+
+            let passwordFailure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: false,
-                transportStillRunning: false,
-                bridgeMounted: false,
                 logDetail: "password validation failed"
-            ) else {
+            )
+            guard passwordFailure.code == .bridgeProcessExited,
+                  !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                    failure: passwordFailure,
+                    transportStillRunning: false,
+                    bridgeMounted: false
+                  ) else {
                 throw LifecycleValidationError("S11 password failure incorrectly triggered FSKit recovery")
             }
+
+            let publicationFailure = EDPLifecycleFailure(
+                code: .publicationFailed,
+                detail: "DiskImages2 attach failed"
+            )
             guard !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
-                timedOut: false,
+                failure: publicationFailure,
                 transportStillRunning: false,
-                bridgeMounted: false,
-                logDetail: "DiskImages2 attach failed"
+                bridgeMounted: false
             ) else {
                 throw LifecycleValidationError("S11 DiskImages2 failure incorrectly triggered FSKit recovery")
             }
             guard !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
-                timedOut: true,
+                failure: mount69Failure,
                 transportStillRunning: true,
-                bridgeMounted: true,
-                logDetail: "mount(8) returned 69"
+                bridgeMounted: true
             ) else {
                 throw LifecycleValidationError("S11 active bridge incorrectly triggered FSKit recovery")
             }
-            print("SCENARIO=S11_OK fskit_bridge_recovery_classifier_is_narrow")
+            print("SCENARIO=S11_OK typed_fskit_recovery_classifier_is_narrow")
         }
 
         do {
@@ -1372,9 +1410,10 @@ struct ValidateCredentialPolicyServiceLifecycle {
             }
 
             var invalid = EDPFSKitMountLifecycleMachine()
-            guard invalid.bridgeActivated(0) == .fail(
-                "invalid FSKit mount lifecycle transition: bridgeActivated from idle"
-            ),
+            guard invalid.bridgeActivated(0) == .fail(EDPLifecycleFailure(
+                code: .invalidTransition,
+                detail: "invalid FSKit mount lifecycle transition: bridgeActivated from idle"
+            )),
             case .failed = invalid.state else {
                 throw LifecycleValidationError("S13 out-of-order lifecycle event did not fail closed")
             }
@@ -1388,8 +1427,8 @@ struct ValidateCredentialPolicyServiceLifecycle {
             guard waiting.cancel() == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
                   waiting.recoveryBudget == 1,
                   waiting.cleanupFinished(0, hostAlreadyRecovered: false)
-                    == .fail("mount operation cancelled"),
-                  waiting.state == .failed("mount operation cancelled") else {
+                    == .fail(.cancelled),
+                  waiting.state == .failed(.cancelled) else {
                 throw LifecycleValidationError("S14 waiting-bridge cancellation did not bypass recovery")
             }
 
@@ -1397,10 +1436,10 @@ struct ValidateCredentialPolicyServiceLifecycle {
             _ = cleanupRace.start()
             _ = cleanupRace.attemptLaunched(0)
             _ = cleanupRace.bridgeFailed(0, recoverable: true, failure: "timeout")
-            guard cleanupRace.cancel() == .fail("mount operation cancelled"),
+            guard cleanupRace.cancel() == .fail(.cancelled),
                   cleanupRace.recoveryBudget == 1,
-                  cleanupRace.hostRecoveryFinished(true) == .fail("mount operation cancelled"),
-                  cleanupRace.state == .failed("mount operation cancelled") else {
+                  cleanupRace.hostRecoveryFinished(true) == .fail(.cancelled),
+                  cleanupRace.state == .failed(.cancelled) else {
                 throw LifecycleValidationError("S14 cancellation during recoverable cleanup allowed late recovery")
             }
 
@@ -1410,7 +1449,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
             _ = publishing.bridgeActivated(0)
             guard publishing.cancel() == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
                   publishing.cleanupFinished(0, hostAlreadyRecovered: false)
-                    == .fail("mount operation cancelled") else {
+                    == .fail(.cancelled) else {
                 throw LifecycleValidationError("S14 publication cancellation did not require cleanup")
             }
 
@@ -1421,7 +1460,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
             _ = filesystem.publicationFinished(0)
             guard filesystem.cancel() == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
                   filesystem.cleanupFinished(0, hostAlreadyRecovered: false)
-                    == .fail("mount operation cancelled") else {
+                    == .fail(.cancelled) else {
                 throw LifecycleValidationError("S14 filesystem-mount cancellation did not require cleanup")
             }
 
@@ -1706,6 +1745,69 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 throw LifecycleValidationError("S20 publisher cancellation completed more than once or lost cancellation")
             }
             print("SCENARIO=S20_OK async_publisher_process_timeout_cancel_once")
+        }
+
+        do {
+            let permission = EDPLifecycleFailure.recognizedRawAccessFailure(
+                NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
+            )
+            guard permission?.code == .rawAccessPermission else {
+                throw LifecycleValidationError("S21 POSIX permission error lost raw-access classification")
+            }
+            let unavailable = EDPLifecycleFailure.classifyRawAccess(
+                NSError(
+                    domain: "com.edp.tests.raw",
+                    code: 99,
+                    userInfo: [NSLocalizedDescriptionKey: "raw device unavailable"]
+                )
+            )
+            guard unavailable.code == .rawAccessUnavailable else {
+                throw LifecycleValidationError("S21 generic raw-open error lost unavailable classification")
+            }
+
+            let publicationFailure = EDPLifecycleFailure(
+                code: .publicationFailed,
+                detail: "synthetic publication failed"
+            )
+            var publicationMachine = EDPFSKitMountLifecycleMachine()
+            _ = publicationMachine.start()
+            _ = publicationMachine.attemptLaunched(0)
+            _ = publicationMachine.bridgeActivated(0)
+            guard publicationMachine.stageFailed(publicationFailure)
+                    == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
+                  publicationMachine.cleanupFinished(0, hostAlreadyRecovered: false)
+                    == .fail(publicationFailure),
+                  publicationMachine.state == .failed(publicationFailure) else {
+                throw LifecycleValidationError("S21 publication failure code was not preserved")
+            }
+
+            let filesystemFailure = EDPLifecycleFailure(
+                code: .filesystemMountFailed,
+                detail: "native filesystem mount failed"
+            )
+            var filesystemMachine = EDPFSKitMountLifecycleMachine()
+            _ = filesystemMachine.start()
+            _ = filesystemMachine.attemptLaunched(0)
+            _ = filesystemMachine.bridgeActivated(0)
+            _ = filesystemMachine.publicationFinished(0)
+            guard filesystemMachine.stageFailed(filesystemFailure)
+                    == .cleanup(attempt: 0, allowHostRecoveryDuringStop: false),
+                  filesystemMachine.cleanupFinished(0, hostAlreadyRecovered: false)
+                    == .fail(filesystemFailure) else {
+                throw LifecycleValidationError("S21 filesystem failure code was not preserved")
+            }
+
+            let teardownFailure = EDPLifecycleFailure(
+                code: .teardownFailed,
+                detail: "pre-mount whole-disk unmount failed"
+            )
+            var teardownMachine = EDPFSKitMountLifecycleMachine()
+            _ = teardownMachine.start()
+            guard teardownMachine.stageFailed(teardownFailure) == .fail(teardownFailure),
+                  teardownMachine.state == .failed(teardownFailure) else {
+                throw LifecycleValidationError("S21 teardown failure code was not preserved")
+            }
+            print("SCENARIO=S21_OK typed_lifecycle_error_taxonomy")
         }
 
         do {

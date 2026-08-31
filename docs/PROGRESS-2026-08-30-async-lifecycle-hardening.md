@@ -14,7 +14,7 @@
 | A | 基线、计划、架构 ratchet | DONE |
 | B | Disk Arbitration async | DONE |
 | C | BlockPublisher / DiskImages2 async | DONE* |
-| D | Typed lifecycle errors | TODO |
+| D | Typed lifecycle errors | DONE |
 | E | Virtual clock / scheduler | TODO |
 | F | Deterministic model/property tests | TODO |
 | G | Structured lifecycle journal | TODO |
@@ -101,18 +101,22 @@
 - [x] storage harness 加固：phased mode、profile marker、phase-start leak gate、synthetic BSD settle/revalidation、bounded hdiutil attach、erase timeout result-state recovery、owner-only publication detection
 - [ ] storage smoke ×2 PASS：本机存在 root-owned 4KiB macFUSE scratch orphan 与 owner-only DiskImages2 publication，普通用户不可安全回收；待一次管理员清理后补验
 - [ ] installed service-cycle：同上，待管理员安装 clean combined installer 后执行
-- [ ] commit/push
+- [x] commit/push：`130b385 refactor(drive): make block publication lifecycle asynchronous`
 
 ## Phase D — Typed lifecycle errors
 
-状态：TODO
+状态：DONE
 
 验收项：
 
-- [ ] typed lifecycle error enum
-- [ ] recovery policy 不依赖上层字符串匹配
-- [ ] raw/bridge/publication/filesystem/teardown error 分类
-- [ ] S11-S18 迁移后 PASS
+- [x] typed lifecycle error enum：`EDPLifecycleFailureCode` + `EDPLifecycleFailure`
+- [x] recovery policy 不依赖上层字符串匹配；bridge/raw helper 文本只允许在最底层 adapter 解析一次
+- [x] raw/bridge/publication/filesystem/teardown/cancel/invalid-transition error 分类
+- [x] MountManager 暴露 typed `lastFailureCode`，controller transient retry 直接按 `.bridgeExtensionUnavailable` 决策
+- [x] S11-S21 PASS；S21 专门锁定 typed error taxonomy
+- [x] `make drive-test-fast` PASS
+- [x] `make drive-test-system` PASS，含 `RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK`
+- [x] `make drive-test-virtual-usb` PASS
 - [ ] commit/push
 
 ## Phase E — Virtual clock / scheduler
@@ -196,6 +200,17 @@
 - 创建本轮完整实施计划与实时 tracker。
 - 明确本轮不再继续增加同步 fallback；后续以 async callback/state-event 为唯一产品路径。
 - Phase A 基线验证完成：`git diff --check`、`make drive-test-fast`、`make drive-test-system` 全部 PASS。
+
+### 2026-08-31 09:57 — Phase D
+
+- 新增 `EDPLifecycleFailureCode` / `EDPLifecycleFailure`，状态机内部不再用裸 `String` 表示失败类别。
+- FSKit bridge adapter 将 timeout、mount(8)=69/extension unavailable、普通 bridge exit 分类成稳定 code；recovery policy 只 switch typed code。
+- raw helper 的历史 `EDP_RAW_*` machine-readable tag 只在 raw adapter boundary 解析一次；controller 不再依赖错误文本判断 raw/FDA 状态。
+- publication、filesystem mount、teardown、cancel、invalid transition 均进入 typed taxonomy；MountManager 保留最近一次 typed mount failure code。
+- controller 的 transient automatic retry 改为读取 `.bridgeExtensionUnavailable`，删除 `File system extension not found/enabled` 字符串决策；encrypted mount 回调删除 `EDP_RAW_*` 字符串判断。
+- S11 更新为 typed bridge classifier/recovery contract；S13/S14 更新 typed terminal/cancel assertions；新增 S21 `typed_lifecycle_error_taxonomy`。
+- system 新增 `RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK` ratchet，阻止上层重新引入错误字符串决策。
+- 验证：service lifecycle C01-C08、D01-D13、S01-S21、M11 PASS；fast/system/virtual-usb 与 `git diff --check` PASS。
 
 ### 2026-08-31 09:35 — Phase C
 

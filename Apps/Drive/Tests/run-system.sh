@@ -140,6 +140,17 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_DISK_ARBITRATION_OK'
 /usr/bin/grep -Fq 'runBoundedProcessAsync(' "${PUBLISHER_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
 
+# Lifecycle recovery decisions use typed failure categories. Stable helper/log
+# strings may be parsed once at their adapter boundary, but controller/recovery
+# policy code must never branch on user-facing error text.
+/usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'recognizedRawAccessFailure' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func lastFailureCode(deviceID:' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'failedMountCodes[partitionKey] == .bridgeExtensionUnavailable' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'failure.contains("File system extension' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'errorMessage.contains("EDP_RAW_' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK'
+
 # Normal product lifecycle must not fall back to shell-side process inspection
 # or codesign/umount helpers. Runtime signature validation is Security.framework,
 # service liveness is SMAppService + XPC, and VFS teardown is unmount(2).

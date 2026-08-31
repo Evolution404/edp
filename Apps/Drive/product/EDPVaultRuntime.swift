@@ -347,18 +347,12 @@ private func installedProductVersion() -> String {
     return "development"
 }
 
-private func isRawAccessPermissionFailure(_ error: Error) -> Bool {
-    let detail = String(describing: error)
-    return detail.contains("EDP_RAW_BROKER_OPEN_FAILED:1")
-        || detail.contains("EDP_RAW_LEASE_OPEN_FAILED:1")
-        || detail.contains("Operation not permitted")
-        || detail.contains("操作不被允许")
-}
-
-private func userFacingRawAccessError(_ error: Error) -> Error {
-    guard isRawAccessPermissionFailure(error) else { return error }
-    return fail(
-        "需要为“EDP Drive 磁盘访问”开启完全磁盘访问："
+private func userFacingRawAccessFailure(_ error: Error) -> EDPLifecycleFailure {
+    let failure = EDPLifecycleFailure.classifyRawAccess(error)
+    guard failure.code == .rawAccessPermission else { return failure }
+    return EDPLifecycleFailure(
+        code: .rawAccessPermission,
+        detail: "需要为“EDP Drive 磁盘访问”开启完全磁盘访问："
             + "系统设置 → 隐私与安全性 → 完全磁盘访问"
     )
 }
@@ -444,19 +438,111 @@ private func consoleIdentity() throws -> (uid_t, gid_t) {
     return (status.st_uid, status.st_gid)
 }
 
+enum EDPLifecycleFailureCode: String, Equatable, Sendable {
+    case rawAccessPermission
+    case rawAccessUnavailable
+    case deviceChanged
+    case bridgeLaunchFailed
+    case bridgeExtensionUnavailable
+    case bridgeTimeout
+    case bridgeProcessExited
+    case publicationFailed
+    case filesystemMountFailed
+    case teardownFailed
+    case cancelled
+    case invalidTransition
+    case unknown
+}
+
+struct EDPLifecycleFailure: Error, Equatable, Sendable, CustomStringConvertible, ExpressibleByStringLiteral {
+    let code: EDPLifecycleFailureCode
+    let detail: String
+
+    init(code: EDPLifecycleFailureCode, detail: String) {
+        self.code = code
+        self.detail = detail
+    }
+
+    init(stringLiteral value: String) {
+        self.init(code: .unknown, detail: value)
+    }
+
+    var description: String { detail }
+
+    static let cancelled = EDPLifecycleFailure(
+        code: .cancelled,
+        detail: "mount operation cancelled"
+    )
+
+    static func classifyBridgeActivation(
+        timedOut: Bool,
+        logDetail: String?
+    ) -> EDPLifecycleFailure {
+        if timedOut {
+            return EDPLifecycleFailure(
+                code: .bridgeTimeout,
+                detail: "operation timed out after 8 seconds"
+            )
+        }
+        let normalized = (logDetail ?? "").lowercased()
+        if normalized.contains("mount(8) returned 69")
+            || normalized.contains("file system extension not found")
+            || normalized.contains("file system extension not enabled") {
+            return EDPLifecycleFailure(
+                code: .bridgeExtensionUnavailable,
+                detail: "encrypted block bridge failed"
+                    + ((logDetail?.isEmpty == false) ? ": \(logDetail!)" : "")
+            )
+        }
+        return EDPLifecycleFailure(
+            code: .bridgeProcessExited,
+            detail: "encrypted block bridge failed"
+                + ((logDetail?.isEmpty == false) ? ": \(logDetail!)" : "")
+        )
+    }
+
+    static func recognizedRawAccessFailure(_ error: Error) -> EDPLifecycleFailure? {
+        let nsError = error as NSError
+        let detail = String(describing: error)
+        if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EPERM) {
+            return EDPLifecycleFailure(code: .rawAccessPermission, detail: detail)
+        }
+        // The privileged helper protocol predates typed errors. Parse its
+        // stable machine-readable tags once at this adapter boundary; callers
+        // receive only a typed failure code from this point onward.
+        if detail.contains("EDP_RAW_BROKER_OPEN_FAILED:1")
+            || detail.contains("EDP_RAW_LEASE_OPEN_FAILED:1")
+            || detail.contains("Operation not permitted")
+            || detail.contains("操作不被允许") {
+            return EDPLifecycleFailure(code: .rawAccessPermission, detail: detail)
+        }
+        if detail.contains("EDP_RAW_BROKER_") || detail.contains("EDP_RAW_LEASE_") {
+            return EDPLifecycleFailure(code: .rawAccessUnavailable, detail: detail)
+        }
+        return nil
+    }
+
+    static func classifyRawAccess(_ error: Error) -> EDPLifecycleFailure {
+        recognizedRawAccessFailure(error)
+            ?? EDPLifecycleFailure(code: .rawAccessUnavailable, detail: String(describing: error))
+    }
+}
+
 enum EDPFSKitMountRecoveryPolicy {
     static func shouldRecoverBridgeActivation(
-        timedOut: Bool,
+        failure: EDPLifecycleFailure,
         transportStillRunning: Bool,
-        bridgeMounted: Bool,
-        logDetail: String?
+        bridgeMounted: Bool
     ) -> Bool {
         guard !bridgeMounted else { return false }
-        if timedOut && transportStillRunning { return true }
-
-        let normalized = (logDetail ?? "").lowercased()
-        return normalized.contains("mount(8) returned 69")
-            || normalized.contains("file system extension not found")
+        switch failure.code {
+        case .bridgeExtensionUnavailable:
+            return true
+        case .bridgeTimeout:
+            return transportStillRunning
+        default:
+            return false
+        }
     }
 }
 
@@ -464,12 +550,12 @@ enum EDPFSKitMountLifecycleState: Equatable, Sendable {
     case idle
     case preparing(attempt: Int)
     case waitingForBridge(attempt: Int)
-    case cleaningUp(attempt: Int, recoverable: Bool, failure: String)
-    case recoveringHost(attempt: Int, failure: String)
+    case cleaningUp(attempt: Int, recoverable: Bool, failure: EDPLifecycleFailure)
+    case recoveringHost(attempt: Int, failure: EDPLifecycleFailure)
     case publishing(attempt: Int)
     case mountingFilesystem(attempt: Int)
     case mounted
-    case failed(String)
+    case failed(EDPLifecycleFailure)
 }
 
 enum EDPFSKitMountLifecycleAction: Equatable, Sendable {
@@ -480,7 +566,7 @@ enum EDPFSKitMountLifecycleAction: Equatable, Sendable {
     case publish(attempt: Int)
     case mountFilesystem(attempt: Int)
     case complete
-    case fail(String)
+    case fail(EDPLifecycleFailure)
 }
 
 struct EDPFSKitMountLifecycleMachine: Sendable {
@@ -512,7 +598,7 @@ struct EDPFSKitMountLifecycleMachine: Sendable {
     mutating func bridgeFailed(
         _ attempt: Int,
         recoverable: Bool,
-        failure: String
+        failure: EDPLifecycleFailure
     ) -> EDPFSKitMountLifecycleAction {
         guard state == .waitingForBridge(attempt: attempt) else {
             return invalidTransition("bridgeFailed")
@@ -574,7 +660,7 @@ struct EDPFSKitMountLifecycleMachine: Sendable {
         return .complete
     }
 
-    mutating func stageFailed(_ failure: String) -> EDPFSKitMountLifecycleAction {
+    mutating func stageFailed(_ failure: EDPLifecycleFailure) -> EDPFSKitMountLifecycleAction {
         switch state {
         case .publishing(let attempt), .mountingFilesystem(let attempt):
             state = .cleaningUp(attempt: attempt, recoverable: false, failure: failure)
@@ -586,7 +672,7 @@ struct EDPFSKitMountLifecycleMachine: Sendable {
     }
 
     mutating func cancel() -> EDPFSKitMountLifecycleAction {
-        let failure = "mount operation cancelled"
+        let failure = EDPLifecycleFailure.cancelled
         switch state {
         case .idle, .preparing:
             state = .failed(failure)
@@ -603,7 +689,10 @@ struct EDPFSKitMountLifecycleMachine: Sendable {
             state = .failed(failure)
             return .fail(failure)
         case .mounted:
-            return .fail("mount operation already completed")
+            return .fail(EDPLifecycleFailure(
+                code: .invalidTransition,
+                detail: "mount operation already completed"
+            ))
         case .failed(let existing):
             return .fail(existing)
         }
@@ -618,9 +707,12 @@ struct EDPFSKitMountLifecycleMachine: Sendable {
         case .mounted:
             return .complete
         default:
-            let message = "invalid FSKit mount lifecycle transition: \(event) from \(state)"
-            state = .failed(message)
-            return .fail(message)
+            let failure = EDPLifecycleFailure(
+                code: .invalidTransition,
+                detail: "invalid FSKit mount lifecycle transition: \(event) from \(state)"
+            )
+            state = .failed(failure)
+            return .fail(failure)
         }
     }
 }
@@ -879,6 +971,7 @@ protocol EDPDaemonMountManaging: AnyObject {
     func isMounted(deviceID: String) -> Bool
     func mountedSummaries() -> [[String: String]]
     func summary(deviceID: String, partitionType: UInt32) -> [String: String]?
+    func lastFailureCode(deviceID: String, partitionType: UInt32) -> EDPLifecycleFailureCode?
     func mountAsync(
         disk: PhysicalDisk,
         partitionType: UInt32,
@@ -897,6 +990,14 @@ protocol EDPDaemonMountManaging: AnyObject {
     func unmountAllAsync(completion: @escaping EDPDaemonMountCompletion)
 }
 
+extension EDPDaemonMountManaging {
+    func lastFailureCode(deviceID: String, partitionType: UInt32) -> EDPLifecycleFailureCode? {
+        _ = deviceID
+        _ = partitionType
+        return nil
+    }
+}
+
 private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private var sessions = [String: MountSession]()
     private var missingSince = [String: Date]()
@@ -913,6 +1014,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private var activeMountOperationBoxes = [String: EDPFSKitMountOperationBox]()
     private var cancelledMountOperations = Set<String>()
     private var mountWaiters = [String: [EDPDaemonMountCompletion]]()
+    private var lastMountFailureCodes = [String: EDPLifecycleFailureCode]()
     private var unmountWaiters = [String: [EDPDaemonMountCompletion]]()
     private var ejectWaiters = [String: [EDPDaemonMountCompletion]]()
 
@@ -1077,6 +1179,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
 
     func contains(_ disk: PhysicalDisk, _ type: UInt32) -> Bool {
         lifecycleSync { sessions[key(disk, type)] != nil || activeMountOperations.contains(key(disk, type)) }
+    }
+
+    func lastFailureCode(deviceID: String, partitionType: UInt32) -> EDPLifecycleFailureCode? {
+        lifecycleSync { lastMountFailureCodes["\(deviceID):\(partitionType)"] }
     }
 
     func mountedPhysicalDisks() -> Set<String> {
@@ -1255,7 +1361,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                     }
                     if let error {
                         self.executeMountAction(
-                            operation.machine.stageFailed(String(describing: error)),
+                            operation.machine.stageFailed(EDPLifecycleFailure(
+                                code: .teardownFailed,
+                                detail: String(describing: error)
+                            )),
                             operation: operation
                         )
                         return
@@ -1264,7 +1373,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 }
             }
         } catch {
-            let failure = String(describing: error)
+            let failure = EDPLifecycleFailure(
+                code: .bridgeLaunchFailed,
+                detail: String(describing: error)
+            )
             executeMountAction(operation.machine.stageFailed(failure), operation: operation)
         }
     }
@@ -1337,7 +1449,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             )
         } catch {
             executeMountAction(
-                operation.machine.stageFailed(String(describing: error)),
+                operation.machine.stageFailed(EDPLifecycleFailure(
+                    code: .bridgeLaunchFailed,
+                    detail: String(describing: error)
+                )),
                 operation: operation
             )
         }
@@ -1402,7 +1517,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             )
         } catch {
             executeMountAction(
-                operation.machine.stageFailed(String(describing: error)),
+                operation.machine.stageFailed(EDPLifecycleFailure(
+                    code: .bridgeLaunchFailed,
+                    detail: String(describing: error)
+                )),
                 operation: operation
             )
         }
@@ -1433,7 +1551,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                     transportSession: transportSession,
                     publishedDevice: nil,
                     allowHostRecoveryDuringStop: allowHostRecoveryDuringStop,
-                    failure: "mount operation cancelled"
+                    failure: .cancelled
                 )
             } else {
                 executeMountAction(action, operation: operation)
@@ -1461,14 +1579,21 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         if !transportSession.isRunning {
             try? log.synchronize()
             let detail = bridgeLogTail(logPath)
-            let recoverable = EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+            var failure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: false,
-                transportStillRunning: false,
-                bridgeMounted: bridgeMounted,
                 logDetail: detail
             )
-            let failure = "encrypted block bridge failed"
-                + (detail?.isEmpty == false ? ": \(detail!)" : "; see \(logPath)")
+            if detail?.isEmpty != false {
+                failure = EDPLifecycleFailure(
+                    code: failure.code,
+                    detail: failure.detail + "; see \(logPath)"
+                )
+            }
+            let recoverable = EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                failure: failure,
+                transportStillRunning: false,
+                bridgeMounted: bridgeMounted
+            )
             failBridgeAttempt(
                 operation,
                 attempt: attempt,
@@ -1485,11 +1610,14 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         }
 
         if Date() >= deadline {
-            let recoverable = EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+            let failure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: true,
-                transportStillRunning: transportSession.isRunning,
-                bridgeMounted: bridgeMounted,
                 logDetail: nil
+            )
+            let recoverable = EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                failure: failure,
+                transportStillRunning: transportSession.isRunning,
+                bridgeMounted: bridgeMounted
             )
             failBridgeAttempt(
                 operation,
@@ -1501,7 +1629,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 transportSession: transportSession,
                 publishedDevice: nil,
                 recoverable: recoverable,
-                failure: "operation timed out after 8 seconds"
+                failure: failure
             )
             return
         }
@@ -1546,7 +1674,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                     transportSession: transportSession,
                     publishedDevice: nil,
                     allowHostRecoveryDuringStop: allowHostRecoveryDuringStop,
-                    failure: "mount operation cancelled"
+                    failure: .cancelled
                 )
             } else {
                 executeMountAction(action, operation: operation)
@@ -1572,8 +1700,11 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                         transportSession: transportSession,
                         publishedDevice: nil,
                         failure: cancelled
-                            ? "mount operation cancelled"
-                            : (errorMessage ?? "block publication returned no device"),
+                            ? .cancelled
+                            : EDPLifecycleFailure(
+                                code: .publicationFailed,
+                                detail: errorMessage ?? "block publication returned no device"
+                            ),
                         cancelled: cancelled
                     )
                     return
@@ -1596,7 +1727,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                                 scratchBaseline: scratchBaseline,
                                 transportSession: transportSession,
                                 publishedDevice: unpublishError == nil ? nil : published,
-                                failure: "mount operation cancelled",
+                                failure: .cancelled,
                                 cancelled: true
                             )
                         }
@@ -1620,9 +1751,13 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                             if cancelled, let mountpoint {
                                 try? EDPNativeMountTable.unmountPath(mountpoint, force: true)
                             }
-                            if let filesystemError = cancelled
-                                ? "mount operation cancelled"
-                                : filesystemError {
+                            if cancelled || filesystemError != nil {
+                                let failure = cancelled
+                                    ? EDPLifecycleFailure.cancelled
+                                    : EDPLifecycleFailure(
+                                        code: .filesystemMountFailed,
+                                        detail: filesystemError ?? "filesystem mount failed"
+                                    )
                                 self.cleanupPublishedMount(
                                     operation,
                                     attempt: attempt,
@@ -1631,7 +1766,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                                     scratchBaseline: scratchBaseline,
                                     transportSession: transportSession,
                                     publishedDevice: published,
-                                    failure: filesystemError,
+                                    failure: failure,
                                     cancelled: cancelled
                                 )
                                 return
@@ -1645,7 +1780,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                                     scratchBaseline: scratchBaseline,
                                     transportSession: transportSession,
                                     publishedDevice: published,
-                                    failure: "filesystem mount returned no result",
+                                    failure: EDPLifecycleFailure(
+                                        code: .filesystemMountFailed,
+                                        detail: "filesystem mount returned no result"
+                                    ),
                                     cancelled: false
                                 )
                                 return
@@ -1682,7 +1820,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                         scratchBaseline: scratchBaseline,
                         transportSession: transportSession,
                         publishedDevice: published,
-                        failure: String(describing: error),
+                        failure: EDPLifecycleFailure(
+                            code: .filesystemMountFailed,
+                            detail: String(describing: error)
+                        ),
                         cancelled: false
                     )
                 }
@@ -1698,7 +1839,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         scratchBaseline: Set<String>?,
         transportSession: EDPTransportSession,
         publishedDevice: EDPPublishedBlockDevice?,
-        failure: String,
+        failure: EDPLifecycleFailure,
         cancelled: Bool
     ) {
         let action = cancelled ? operation.machine.cancel() : operation.machine.stageFailed(failure)
@@ -1712,7 +1853,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 transportSession: transportSession,
                 publishedDevice: publishedDevice,
                 allowHostRecoveryDuringStop: allowHostRecoveryDuringStop,
-                failure: cancelled ? "mount operation cancelled" : failure
+                failure: cancelled ? .cancelled : failure
             )
         } else {
             executeMountAction(action, operation: operation)
@@ -1812,7 +1953,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         transportSession: EDPTransportSession,
         publishedDevice: EDPPublishedBlockDevice?,
         recoverable: Bool,
-        failure: String
+        failure: EDPLifecycleFailure
     ) {
         let action = operation.machine.bridgeFailed(
             attempt,
@@ -1845,7 +1986,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         transportSession: EDPTransportSession,
         publishedDevice: EDPPublishedBlockDevice?,
         allowHostRecoveryDuringStop: Bool,
-        failure: String
+        failure: EDPLifecycleFailure
     ) {
         guard let publishedDevice else {
             stopTransportAfterMountCleanup(
@@ -1864,7 +2005,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             guard let self else { return }
             self.lifecycleQueue.async {
                 if let unpublishError {
-                    NSLog("EDP async publication cleanup after %@: %@", failure, unpublishError)
+                    NSLog("EDP async publication cleanup after %@: %@", failure.description, unpublishError)
                 }
                 self.stopTransportAfterMountCleanup(
                     operation,
@@ -1888,7 +2029,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         scratchBaseline: Set<String>?,
         transportSession: EDPTransportSession,
         allowHostRecoveryDuringStop: Bool,
-        failure: String
+        failure: EDPLifecycleFailure
     ) {
         let recoverStuckProcess: (() -> Bool)? = allowHostRecoveryDuringStop
             ? { [weak self, operation] in
@@ -1941,11 +2082,11 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         stopRecoveredHost: Bool,
         hostRecoveryAttempted: Bool,
         stopError: String?,
-        failure: String
+        failure: EDPLifecycleFailure
     ) {
         try? FileManager.default.removeItem(atPath: bridgeMount)
         if let stopError {
-            NSLog("EDP async transport cleanup after %@: %@", failure, stopError)
+            NSLog("EDP async transport cleanup after %@: %@", failure.description, stopError)
         }
 
         if cancelledMountOperations.contains(operation.sessionKey) {
@@ -1997,7 +2138,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
 
     private func finishMountOperation(
         _ operation: EDPFSKitMountOperationBox,
-        error: String?
+        error: EDPLifecycleFailure?
     ) {
         guard !operation.finished else { return }
         operation.finished = true
@@ -2006,8 +2147,14 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         operation.publicationOperation = nil
         cancelledMountOperations.remove(operation.sessionKey)
         let waiters = mountWaiters.removeValue(forKey: operation.sessionKey) ?? []
-        operation.completion(error)
-        for callback in waiters { callback(error) }
+        if let error {
+            lastMountFailureCodes[operation.sessionKey] = error.code
+        } else {
+            lastMountFailureCodes.removeValue(forKey: operation.sessionKey)
+        }
+        let message = error?.description
+        operation.completion(message)
+        for callback in waiters { callback(message) }
     }
 
     private func prepareFinderDefaultsAsync(
@@ -2525,7 +2672,7 @@ private func authorize(_ diskArgument: String?) throws {
 
 typealias EDPRawAccessLeaseOpening = @Sendable (PhysicalDisk) throws -> EDPRawAccessLease
 typealias EDPCredentialVerifying = @Sendable (PhysicalDisk, UInt32, [UInt8], Int32) throws -> Void
-typealias EDPRawAccessLeaseCompletion = @Sendable (EDPRawAccessLease?, String?) -> Void
+typealias EDPRawAccessLeaseCompletion = @Sendable (EDPRawAccessLease?, EDPLifecycleFailure?) -> Void
 
 private final class EDPSensitiveBytesBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -2561,6 +2708,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private let queueKey = DispatchSpecificKey<UInt8>()
     private var failedMounts = [String: String]()
+    private var failedMountCodes = [String: EDPLifecycleFailureCode]()
     private var manualUnmountSuppressions = Set<String>()
     private var defaultProbeSuppressions = Set<String>()
     private var activities = [EDPXPCActivity]()
@@ -2709,18 +2857,16 @@ final class EDPDaemonController: @unchecked Sendable {
                     )
                     records = try store.load().records
                     failedMounts.removeValue(forKey: partitionKey)
+                    failedMountCodes.removeValue(forKey: partitionKey)
                     addActivity(
                         "默认密码探测成功并已保存",
                         deviceID: disk.deviceID,
                         partitionType: partitionType
                     )
                 } catch {
-                    let detail = String(describing: error)
-                    if detail.contains("EDP_RAW_BROKER_")
-                        || detail.contains("EDP_RAW_LEASE_")
-                        || isRawAccessPermissionFailure(error) {
+                    if let rawFailure = EDPLifecycleFailure.recognizedRawAccessFailure(error) {
                         rawAccessReadyByDeviceID[disk.deviceID] = false
-                        rawAccessErrorsByDeviceID[disk.deviceID] = detail
+                        rawAccessErrorsByDeviceID[disk.deviceID] = rawFailure.description
                         continue
                     }
                     defaultProbeSuppressions.insert(partitionKey)
@@ -2770,19 +2916,21 @@ final class EDPDaemonController: @unchecked Sendable {
                     self.finishRawAccessProbeLocked(
                         disk: disk,
                         lease: nil,
-                        errorMessage: "EDP device changed while raw access was being prepared"
+                        failure: EDPLifecycleFailure(
+                            code: .deviceChanged,
+                            detail: "EDP device changed while raw access was being prepared"
+                        )
                     )
                     return
                 }
                 do {
                     let lease = try self.rawAccessLeaseOpener(disk)
-                    self.finishRawAccessProbeLocked(disk: disk, lease: lease, errorMessage: nil)
+                    self.finishRawAccessProbeLocked(disk: disk, lease: lease, failure: nil)
                 } catch {
-                    let userError = userFacingRawAccessError(error)
                     self.finishRawAccessProbeLocked(
                         disk: disk,
                         lease: nil,
-                        errorMessage: String(describing: userError)
+                        failure: userFacingRawAccessFailure(error)
                     )
                 }
             }
@@ -2800,7 +2948,10 @@ final class EDPDaemonController: @unchecked Sendable {
                     self.finishRawAccessProbeLocked(
                         disk: disk,
                         lease: nil,
-                        errorMessage: String(describing: error)
+                        failure: EDPLifecycleFailure(
+                            code: .teardownFailed,
+                            detail: String(describing: error)
+                        )
                     )
                     return
                 }
@@ -2812,7 +2963,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private func finishRawAccessProbeLocked(
         disk: PhysicalDisk,
         lease: EDPRawAccessLease?,
-        errorMessage: String?
+        failure: EDPLifecycleFailure?
     ) {
         if let lease {
             rawAccessLeases[disk.deviceID] = lease
@@ -2821,10 +2972,10 @@ final class EDPDaemonController: @unchecked Sendable {
         } else {
             rawAccessLeases.removeValue(forKey: disk.deviceID)
             rawAccessReadyByDeviceID[disk.deviceID] = false
-            rawAccessErrorsByDeviceID[disk.deviceID] = errorMessage ?? "raw access probe failed"
+            rawAccessErrorsByDeviceID[disk.deviceID] = failure?.description ?? "raw access probe failed"
         }
         let callbacks = rawAccessProbeWaiters.removeValue(forKey: disk.deviceID) ?? []
-        for callback in callbacks { callback(lease, errorMessage) }
+        for callback in callbacks { callback(lease, failure) }
     }
 
     private func requireRawAccessLeaseAsyncLocked(
@@ -2832,7 +2983,10 @@ final class EDPDaemonController: @unchecked Sendable {
         completion: @escaping EDPRawAccessLeaseCompletion
     ) {
         guard ejectingUSBRegistryIDs[disk.deviceID] == nil else {
-            completion(nil, "EDP device was safely ejected; physically reinsert it before mounting")
+            completion(nil, EDPLifecycleFailure(
+                code: .deviceChanged,
+                detail: "EDP device was safely ejected; physically reinsert it before mounting"
+            ))
             return
         }
         if let lease = rawAccessLeaseLocked(for: disk) {
@@ -2847,11 +3001,11 @@ final class EDPDaemonController: @unchecked Sendable {
         completion: @escaping EDPDaemonMountCompletion
     ) {
         let partitionType = EDPPartitionKind.boot.rawValue
-        requireRawAccessLeaseAsyncLocked(for: disk) { [weak self] rawLease, errorMessage in
+        requireRawAccessLeaseAsyncLocked(for: disk) { [weak self] rawLease, failure in
             guard let self else { return }
             self.onControllerQueue {
-                if let errorMessage {
-                    completion(errorMessage)
+                if let failure {
+                    completion(failure.description)
                     return
                 }
                 guard let rawLease else {
@@ -2882,7 +3036,15 @@ final class EDPDaemonController: @unchecked Sendable {
               !manager.contains(disk, EDPPartitionKind.boot.rawValue) else { return }
         mountBootAsyncLocked(disk: disk) { [weak self] errorMessage in
             guard let self, let errorMessage else { return }
-            self.failedMounts[self.key(disk.deviceID, EDPPartitionKind.boot.rawValue)] = errorMessage
+            let partitionType = EDPPartitionKind.boot.rawValue
+            let partitionKey = self.key(disk.deviceID, partitionType)
+            self.failedMounts[partitionKey] = errorMessage
+            if let code = self.manager.lastFailureCode(
+                deviceID: disk.deviceID,
+                partitionType: partitionType
+            ) {
+                self.failedMountCodes[partitionKey] = code
+            }
         }
     }
 
@@ -2930,14 +3092,14 @@ final class EDPDaemonController: @unchecked Sendable {
                 for disk in disks where ejectingUSBRegistryIDs[disk.deviceID] == nil
                     && (rawAccessReadyByDeviceID[disk.deviceID] == nil
                         || rawAccessLeaseLocked(for: disk) == nil) {
-                    rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, errorMessage in
+                    rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, failure in
                         guard let self else { return }
                         self.onControllerQueue {
-                            if let errorMessage {
+                            if let failure {
                                 NSLog(
                                     "EDP Full Disk Access probe unavailable for %@: %@",
                                     disk.deviceID,
-                                    errorMessage
+                                    failure.description
                                 )
                             } else {
                                 // Re-run policy/probe/mount decisions now that the
@@ -2968,6 +3130,10 @@ final class EDPDaemonController: @unchecked Sendable {
                     connectedDeviceIDs.contains($0.key)
                 }
                 failedMounts = failedMounts.filter { item in
+                    guard let separator = item.key.lastIndex(of: ":") else { return false }
+                    return connectedDeviceIDs.contains(String(item.key[..<separator]))
+                }
+                failedMountCodes = failedMountCodes.filter { item in
                     guard let separator = item.key.lastIndex(of: ":") else { return false }
                     return connectedDeviceIDs.contains(String(item.key[..<separator]))
                 }
@@ -3013,6 +3179,12 @@ final class EDPDaemonController: @unchecked Sendable {
                             guard let self else { return }
                             if let errorMessage {
                                 self.failedMounts[bootKey] = errorMessage
+                                if let code = self.manager.lastFailureCode(
+                                    deviceID: disk.deviceID,
+                                    partitionType: EDPPartitionKind.boot.rawValue
+                                ) {
+                                    self.failedMountCodes[bootKey] = code
+                                }
                                 self.addActivity(
                                     "启动区自动挂载失败：\(errorMessage)",
                                     level: "error",
@@ -3021,6 +3193,7 @@ final class EDPDaemonController: @unchecked Sendable {
                                 )
                             } else {
                                 self.failedMounts.removeValue(forKey: bootKey)
+                                self.failedMountCodes.removeValue(forKey: bootKey)
                             }
                         }
                     }
@@ -3032,7 +3205,7 @@ final class EDPDaemonController: @unchecked Sendable {
                           let record = records.first(where: { $0.deviceID == disk.deviceID }) else {
                         continue
                     }
-                    for type in [UInt32(2), 4]
+                    for type in [UInt32(2), UInt32(4)]
                     where devicePolicy.policy(for: type).autoMount
                         && record.partitionTypes.contains(type)
                         && !manager.contains(disk, type)
@@ -3190,7 +3363,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 guard let self else { return }
                 self.onControllerQueue {
                     if let rawError {
-                        completion(rawError)
+                        completion(rawError.description)
                         return
                     }
                     guard let rawLease else {
@@ -3211,7 +3384,9 @@ final class EDPDaemonController: @unchecked Sendable {
                             partitionType: partitionType,
                             password: password
                         )
-                        self.failedMounts.removeValue(forKey: self.key(deviceID, partitionType))
+                        let partitionKey = self.key(deviceID, partitionType)
+                        self.failedMounts.removeValue(forKey: partitionKey)
+                        self.failedMountCodes.removeValue(forKey: partitionKey)
                         self.addActivity(
                             "密码验证并保存成功",
                             deviceID: deviceID,
@@ -3220,7 +3395,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         completion(nil)
                         self.reconcileLocked()
                     } catch {
-                        completion(String(describing: userFacingRawAccessError(error)))
+                        completion(userFacingRawAccessFailure(error).description)
                     }
                 }
             }
@@ -3243,6 +3418,7 @@ final class EDPDaemonController: @unchecked Sendable {
             }
             let partitionKey = self.key(deviceID, partitionType)
             self.failedMounts.removeValue(forKey: partitionKey)
+            self.failedMountCodes.removeValue(forKey: partitionKey)
             self.manualUnmountSuppressions.remove(partitionKey)
             guard let disk = self.connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 completion("EDP device is no longer connected")
@@ -3254,6 +3430,12 @@ final class EDPDaemonController: @unchecked Sendable {
                     guard let self else { return }
                     if let errorMessage {
                         self.failedMounts[partitionKey] = errorMessage
+                        if let code = self.manager.lastFailureCode(
+                            deviceID: disk.deviceID,
+                            partitionType: partitionType
+                        ) {
+                            self.failedMountCodes[partitionKey] = code
+                        }
                         self.addActivity(
                             "手动挂载失败：\(errorMessage)",
                             level: "error",
@@ -3262,6 +3444,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         )
                     } else {
                         self.failedMounts.removeValue(forKey: partitionKey)
+                        self.failedMountCodes.removeValue(forKey: partitionKey)
                         self.addActivity("手动挂载成功", deviceID: deviceID, partitionType: partitionType)
                     }
                     completion(errorMessage)
@@ -3317,13 +3500,15 @@ final class EDPDaemonController: @unchecked Sendable {
             self.onControllerQueue {
                 let partitionKey = self.key(disk.deviceID, partitionType)
                 if let rawError {
-                    self.failedMounts[partitionKey] = rawError
-                    completion(rawError)
+                    self.failedMounts[partitionKey] = rawError.description
+                    self.failedMountCodes[partitionKey] = rawError.code
+                    completion(rawError.description)
                     return
                 }
                 guard let rawLease else {
                     let detail = "EDP raw access lease was not retained"
                     self.failedMounts[partitionKey] = detail
+                    self.failedMountCodes[partitionKey] = .rawAccessUnavailable
                     completion(detail)
                     return
                 }
@@ -3338,16 +3523,21 @@ final class EDPDaemonController: @unchecked Sendable {
                     guard let self else { return }
                     self.onControllerQueue {
                         if let errorMessage {
-                            if errorMessage.contains("EDP_RAW_BROKER_")
-                                || errorMessage.contains("EDP_RAW_LEASE_") {
+                            let code = self.manager.lastFailureCode(
+                                deviceID: disk.deviceID,
+                                partitionType: partitionType
+                            ) ?? .unknown
+                            if code == .rawAccessPermission || code == .rawAccessUnavailable {
                                 self.rawAccessReadyByDeviceID[disk.deviceID] = false
                                 self.rawAccessErrorsByDeviceID[disk.deviceID] = errorMessage
                             }
                             self.failedMounts[partitionKey] = errorMessage
+                            self.failedMountCodes[partitionKey] = code
                         } else {
                             self.rawAccessReadyByDeviceID[disk.deviceID] = true
                             self.rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
                             self.failedMounts.removeValue(forKey: partitionKey)
+                            self.failedMountCodes.removeValue(forKey: partitionKey)
                         }
                         completion(errorMessage)
                     }
@@ -3375,6 +3565,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 self.onControllerQueue {
                     if let errorMessage {
                         self.failedMounts[partitionKey] = errorMessage
+                        self.failedMountCodes[partitionKey] = .teardownFailed
                         self.addActivity(
                             "分区卸载失败：\(errorMessage)",
                             level: "error",
@@ -3384,6 +3575,7 @@ final class EDPDaemonController: @unchecked Sendable {
                     } else {
                         self.manualUnmountSuppressions.insert(partitionKey)
                         self.failedMounts.removeValue(forKey: partitionKey)
+                        self.failedMountCodes.removeValue(forKey: partitionKey)
                         self.addActivity("分区已卸载", deviceID: deviceID, partitionType: partitionType)
                     }
                     completion(errorMessage)
@@ -3416,6 +3608,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         try self.store.remove(deviceID: deviceID, partitionType: partitionType)
                         let partitionKey = self.key(deviceID, partitionType)
                         self.failedMounts.removeValue(forKey: partitionKey)
+                        self.failedMountCodes.removeValue(forKey: partitionKey)
                         self.manualUnmountSuppressions.remove(partitionKey)
                         self.defaultProbeSuppressions.insert(partitionKey)
                         self.addActivity(
@@ -3443,6 +3636,7 @@ final class EDPDaemonController: @unchecked Sendable {
             try store.remove(deviceID: deviceID)
             try policies.remove(deviceID: deviceID)
             failedMounts = failedMounts.filter { !$0.key.hasPrefix("\(deviceID):") }
+            failedMountCodes = failedMountCodes.filter { !$0.key.hasPrefix("\(deviceID):") }
             manualUnmountSuppressions = manualUnmountSuppressions.filter {
                 !$0.hasPrefix("\(deviceID):")
             }
@@ -3561,13 +3755,13 @@ final class EDPDaemonController: @unchecked Sendable {
             return
         }
         let disk = disks[index]
-        rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, errorMessage in
+        rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, failure in
             guard let self else { return }
             self.onControllerQueue {
-                let nextError = firstError ?? errorMessage
-                if let errorMessage {
+                let nextError = firstError ?? failure?.description
+                if let failure {
                     self.addActivity(
-                        "完全磁盘访问不可用：\(errorMessage)",
+                        "完全磁盘访问不可用：\(failure.description)",
                         level: "error",
                         deviceID: disk.deviceID
                     )
@@ -3595,16 +3789,16 @@ final class EDPDaemonController: @unchecked Sendable {
                     where: { $0.deviceID == disk.deviceID }
                 ) else { continue }
 
-                for type in [UInt32(2), 4]
+                for type in [UInt32(2), UInt32(4)]
                 where devicePolicy.policy(for: type).autoMount {
                     let partitionKey = key(disk.deviceID, type)
                     guard !manualUnmountSuppressions.contains(partitionKey),
-                          let failure = failedMounts[partitionKey],
-                          failure.contains("File system extension not found")
-                            || failure.contains("File system extension not enabled") else {
+                          failedMounts[partitionKey] != nil,
+                          failedMountCodes[partitionKey] == .bridgeExtensionUnavailable else {
                         continue
                     }
                     failedMounts.removeValue(forKey: partitionKey)
+                    failedMountCodes.removeValue(forKey: partitionKey)
                     clearedAny = true
                     addActivity(
                         "macFUSE FSKit 已恢复，重试自动挂载",
