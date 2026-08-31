@@ -356,69 +356,114 @@ is_uuid_dmg_path() {
   [[ "${base}" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
 }
 
+macfuse_scratch_pid_for_identity() {
+  local plist="$1"
+  local backing="$2"
+  local expected_device="$3"
+  local image_index=0 image_path owner_uid diskimages2 autodiskmount writable removable
+  local blockcount blocksize entities_count device pid
+
+  is_uuid_dmg_path "${backing}" || return 0
+  [[ "${expected_device}" =~ ^/dev/disk[0-9]+$ ]] || return 0
+
+  while /usr/bin/plutil -type "images.${image_index}" "${plist}" >/dev/null 2>&1; do
+    image_path="$(hdi_value "${plist}" "${image_index}" image-path)"
+    if [[ "${image_path}" == "${backing}" ]]; then
+      owner_uid="$(hdi_value "${plist}" "${image_index}" owner-uid)"
+      diskimages2="$(hdi_value "${plist}" "${image_index}" diskimages2)"
+      autodiskmount="$(hdi_value "${plist}" "${image_index}" autodiskmount)"
+      writable="$(hdi_value "${plist}" "${image_index}" writeable)"
+      removable="$(hdi_value "${plist}" "${image_index}" removable)"
+      blockcount="$(hdi_value "${plist}" "${image_index}" blockcount)"
+      blocksize="$(hdi_value "${plist}" "${image_index}" blocksize)"
+      pid="$(hdi_value "${plist}" "${image_index}" hdid-pid)"
+      if /usr/bin/plutil -type "images.${image_index}.system-entities.0" "${plist}" >/dev/null 2>&1 \
+        && ! /usr/bin/plutil -type "images.${image_index}.system-entities.1" "${plist}" >/dev/null 2>&1; then
+        entities_count="1"
+      else
+        entities_count="0"
+      fi
+      device="$(/usr/bin/plutil -extract "images.${image_index}.system-entities.0.dev-entry" raw -o - "${plist}" 2>/dev/null || true)"
+      if [[ "${owner_uid}" == "0" \
+        && "${diskimages2}" == "false" \
+        && "${autodiskmount}" == "false" \
+        && "${writable}" == "true" \
+        && "${removable}" == "true" \
+        && "${blockcount}" == "8" \
+        && "${blocksize}" == "512" \
+        && "${entities_count}" == "1" \
+        && "${device}" == "${expected_device}" \
+        && "${pid}" =~ ^[0-9]+$ \
+        && "${pid}" -gt 1 ]]; then
+        printf '%s\n' "${pid}"
+      fi
+      return 0
+    fi
+    ((image_index += 1))
+  done
+  return 0
+}
+
 recover_macfuse_scratch_orphans() {
   local info
   info="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/edp-preinstall-scratch.XXXXXX")"
   trap '/bin/rm -f "'"${info}"'"' EXIT
-  /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
 
-  local image_index=0 image_path owner_uid diskimages2 autodiskmount writable removable
-  local blockcount blocksize entities_count device pid refreshed_pid
-  while /usr/bin/plutil -type "images.${image_index}" "${info}" >/dev/null 2>&1; do
-    image_path="$(hdi_value "${info}" "${image_index}" image-path)"
-    owner_uid="$(hdi_value "${info}" "${image_index}" owner-uid)"
-    diskimages2="$(hdi_value "${info}" "${image_index}" diskimages2)"
-    autodiskmount="$(hdi_value "${info}" "${image_index}" autodiskmount)"
-    writable="$(hdi_value "${info}" "${image_index}" writeable)"
-    removable="$(hdi_value "${info}" "${image_index}" removable)"
-    blockcount="$(hdi_value "${info}" "${image_index}" blockcount)"
-    blocksize="$(hdi_value "${info}" "${image_index}" blocksize)"
-    pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"
-    if /usr/bin/plutil -type "images.${image_index}.system-entities.0" "${info}" >/dev/null 2>&1 \
-      && ! /usr/bin/plutil -type "images.${image_index}.system-entities.1" "${info}" >/dev/null 2>&1; then
-      entities_count="1"
-    else
-      entities_count="0"
-    fi
-    device="$(/usr/bin/plutil -extract "images.${image_index}.system-entities.0.dev-entry" raw -o - "${info}" 2>/dev/null || true)"
+  local image_index image_path device pid refreshed_pid
+  while true; do
+    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
+    image_index=0
+    image_path=""
+    device=""
+    pid=""
 
-    if [[ "${owner_uid}" == "0" \
-      && "${diskimages2}" == "false" \
-      && "${autodiskmount}" == "false" \
-      && "${writable}" == "true" \
-      && "${removable}" == "true" \
-      && "${blockcount}" == "8" \
-      && "${blocksize}" == "512" \
-      && "${entities_count}" == "1" \
-      && "${device}" =~ ^/dev/disk[0-9]+$ \
-      && "${pid}" =~ ^[0-9]+$ \
-      && "${pid}" -gt 1 ]] \
-      && is_uuid_dmg_path "${image_path}" \
-      && validate_diskimages_helper_pid "${pid}"; then
-      echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
-      /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
-      if [[ -e "${device}" ]]; then
-        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-        refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"
-        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
-          /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
-          wait_for_device_to_disappear "${device#/dev/}" 20 || true
-        fi
+    while /usr/bin/plutil -type "images.${image_index}" "${info}" >/dev/null 2>&1; do
+      image_path="$(hdi_value "${info}" "${image_index}" image-path)"
+      device="$(/usr/bin/plutil -extract "images.${image_index}.system-entities.0.dev-entry" raw -o - "${info}" 2>/dev/null || true)"
+      pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+      if [[ -n "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+        break
       fi
-      if [[ -e "${device}" ]]; then
-        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-        refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"
-        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
-          /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
-          wait_for_device_to_disappear "${device#/dev/}" 20 || true
-        fi
-      fi
-      if [[ -e "${device}" ]]; then
-        echo "EDP Drive upgrade could not recover macFUSE scratch orphan ${device}; restart macOS and retry." >&2
-        exit 1
-      fi
+      image_path=""
+      device=""
+      pid=""
+      ((image_index += 1))
+    done
+
+    [[ -n "${pid}" ]] || break
+
+    # Re-enumerate immediately before every destructive action. The hdiutil
+    # images array is mutable after a detach, so exact backing + device identity
+    # is the only stable authority; array indices and historical diskN are not.
+    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+    if [[ "${refreshed_pid}" != "${pid}" ]] || ! validate_diskimages_helper_pid "${pid}"; then
+      continue
     fi
-    ((image_index += 1))
+
+    echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
+    /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
+
+    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+    if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+      /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
+      /bin/sleep 0.2
+    fi
+
+    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+    if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+      /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
+      /bin/sleep 0.2
+    fi
+
+    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+    if [[ -n "${refreshed_pid}" ]]; then
+      echo "EDP Drive upgrade could not recover macFUSE scratch orphan ${device}; restart macOS and retry." >&2
+      exit 1
+    fi
   done
   /bin/rm -f "${info}"
   trap - EXIT

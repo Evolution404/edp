@@ -210,6 +210,15 @@
 
 ## 变更日志
 
+### 2026-08-31 17:16 — Clean installer scratch revalidation index-churn fix
+
+- exact-head `fff906c` Clean.pkg 首次管理员安装按预期进入 fail-closed preinstall；成功开始回收当前重新证明的 4KiB scratch，但清理第一个 publication 后，`hdiutil info` 的 `images[]` 发生重排，旧实现继续使用原 `image_index` 复核下一项，导致对 `disk26` 的复核误判并拒绝安装。
+- 根因是把可变 `images[]` 数组下标当成 revalidation identity；不是 pkg verifier、签名、真实 USB 或 filesystem 问题。
+- `recover_macfuse_scratch_orphans()` 改为每处理一项后重新枚举，并以 exact UUID backing path + exact `/dev/diskN` + root/4KiB shape + PID/executable 重新查找；detach/TERM/KILL 前均重新验证，不再使用历史下标授权。
+- 最终 residue 判定也改为 exact publication identity，不再仅以 `/dev/diskN` 是否仍存在判断，避免 diskN 被系统复用时误伤或误报。
+- 现场只读 contract probe：当前 backing A + disk26 精确返回 PID 49668，backing B + disk27 返回 PID 54319；故意将 backing A 与 disk27 交叉组合返回空。
+- 验证：`bash -n native-preinstall`、`make drive-test-system`、`git diff --check` PASS；system ratchet 明确禁止恢复旧 `image_index -> hdid-pid` revalidation。
+
 ### 2026-08-31 13:45 — Native sidebar cold-hitch sizing feedback fix
 
 - exact-head UI gate 在当前高图形负载下暴露首次 native sidebar collapse 冷启动帧 33–75ms；保留 xctrace 后确认超标集中在首两帧，Instruments 指向 expensive render / app update，而后续动画帧稳定在 8.33–16.67ms。
