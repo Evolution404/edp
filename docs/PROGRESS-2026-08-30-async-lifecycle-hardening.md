@@ -147,19 +147,28 @@
 - [x] 模型首次运行实际发现并修复：late `stageFailed` 可覆盖 failed/mounted terminal；terminal failure 时 in-flight publication token 未显式 cancel
 - [x] 最终覆盖：mounted=952、failed=9048、retry=1013、recovery=1013、cancel=5765、publish=3270、filesystem=1740
 - [x] `RESULT=DRIVE_LIFECYCLE_MODEL_PROPERTIES_OK`
-- [ ] commit/push
+- [x] commit/push：`eefd240 test(drive): model lifecycle state invariants`
 
 ## Phase G — Structured lifecycle journal
 
-状态：TODO
+状态：IN PROGRESS（未提交 WIP，下一位 AI 必须原地继续，不得 reset/stash/drop）
 
 验收项：
 
-- [ ] bounded ring buffer
-- [ ] operationID/device/partition/state/event/attempt/recoveryBudget/elapsed/error code
-- [ ] 不记录密码/密钥/plaintext
-- [ ] diagnostics export
+- [x] 新增 `EDPLifecycleJournal.swift`，默认 256 条 bounded ring buffer
+- [x] schema 已含 operationID/device/partition/state/event/attempt/recoveryBudget/elapsedMs/ownedResources/diagnosticCode
+- [x] journal API 不提供 password/key/raw plaintext/helper stderr 字段
+- [x] MountManager protocol 已增加 `lifecycleJournalSnapshot()`，mount request/single-flight/cancel/terminal 已开始接入
+- [x] journal 源文件已开始加入 service/installer/storage 构建清单
+- [ ] bridge/publication/filesystem/cleanup/recovery 全 transition 接全
+- [ ] unmount/eject/shutdown structured events 接入
+- [ ] `diagnosticsData()` export `lifecycleJournal`
+- [ ] bounded/redaction/sequence/elapsed contract tests
+- [ ] system journal ratchet
+- [ ] fast/service/system/virtual-usb + `git diff --check`
 - [ ] commit/push
+
+完整后续执行说明：`docs/HANDOFF-2026-08-31-async-lifecycle-finalization.md`
 
 ## Phase H — 最终验收
 
@@ -188,7 +197,7 @@
 - [ ] daemon count=1
 - [ ] 无 progressive slowdown
 
-当前 blocker：无非交互管理员授权，暂不能安装。
+当前状态：用户已明确表示现在可以管理员授权。不要立刻安装旧包；先完成 Phase G、构建并验证 exact-head Clean.pkg，然后把 synthetic orphan revalidation/cleanup + clean install 合并为一次系统授权。历史 diskN/PID 不得直接复用，授权前必须重新发现并证明 identity。
 
 ### Physical EDP USB
 
@@ -200,6 +209,14 @@
 - [ ] 严禁 format/erase/raw write
 
 ## 变更日志
+
+### 2026-08-31 12:02 — Finalization handoff
+
+- 用户已明确表示可以进行管理员授权。
+- 新增 `docs/HANDOFF-2026-08-31-async-lifecycle-finalization.md`，完整固化 Phase G 收尾、一次性管理员授权、安全 orphan revalidation、Clean.pkg 安装、8-cycle service restart、storage smoke ×2、release 50-loop 与真实盘非破坏性验收顺序。
+- 明确历史 `diskN` / PID 只作线索，不能作为 root cleanup 目标；每次授权前必须重新验证 exact backing / virtual identity / owner / active-mount 状态。
+- Phase G 当前为未提交 WIP：journal ring buffer/schema/protocol/build wiring 已开始，尚未完成 diagnostics/export/tests，不得 reset/stash/drop。
+
 
 ### 2026-08-30 23:49
 
