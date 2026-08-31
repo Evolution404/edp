@@ -219,6 +219,7 @@
 - 根因直接落到 `EDPBlockDevicePublisher.parsePublication()`：bounded `hdiutil info -plist` 返回 exact publication 后，代码仍同步 `stat("/Volumes/.edp-block-.../volume.raw")` 并 `stat(/dev/diskN)`。真实 NTFS teardown 正处于 macFUSE/FSKit generation 退出窗口，这个 backing-path `stat()` 会把 privileged service 自身拖入不可中断等待，复现了此前 synthetic harness 已发现的同类危险 syscall。
 - 修复：DiskImages2 teardown identity 完全改为 metadata-only。`parsePublication()` 仅使用 exact standardized `image-path`、owner UID/mode、`diskimages2=true`、`autodiskmount=false`、unencrypted、hdid PID 与严格 `/dev/disk...` system-entity string；在任何 recovery signal 前继续通过 `processExecutablePath(pid)==/usr/libexec/diskimagesiod` 与第二次 exact metadata snapshot 复核。不再 stat macFUSE backing path 或 synthetic BSD node。
 - 新 system marker `RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK` 禁止该同步 stat 回归；同时新增 `RESULT=DRIVE_SYSTEM_REAL_DEVICE_CAPABILITY_ACCEPTANCE_OK`。`make drive-test-fast`、`make drive-test-system`、`make drive-test-virtual-usb`、`git diff --check` 全绿。当前已安装旧 service 仍处 U-state，必须重启后以新二进制重新执行 storage 5-loop 与真实 type4 teardown。
+- 修复提交 `419d83fe7250c461c4f8b0034ca9e4320ff24510` 后已构建并 verifier PASS 的 exact-head `Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`9b0c7ab91d4a95f5d44d302f80d221f8271fdc940870e31dee506dfa1848d1ab`。该包尚未覆盖安装到当前 U-state 旧 service；重启清场、synthetic 5-loop PASS 后再安装并进行真实盘复验。
 
 ### 2026-08-31 23:10 — FDA granted; service acceptance foreground isolation fixed
 
