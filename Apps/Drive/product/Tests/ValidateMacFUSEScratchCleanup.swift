@@ -2,15 +2,46 @@ import Foundation
 
 // The production publisher only needs this dependency for normal Disk
 // Arbitration publication. The scratch-cleanup contract test does not perform
-// any real mount/eject operation.
-final class EDPDiskArbitrationController {
-    func eject(_ bsdName: String) throws {
+// any real mount/eject operation, so provide the narrow protocol seam required
+// by EDPBlockDevicePublisher.swift without linking the full daemon runtime.
+typealias EDPDiskArbitrationVoidCompletion = @Sendable (Error?) -> Void
+
+protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
+    func ejectAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    )
+}
+
+final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked Sendable {
+    func ejectAsync(
+        _ bsdName: String,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
         _ = bsdName
+        completion(nil)
     }
 }
 
 private struct ValidationFailure: Error, CustomStringConvertible {
     let description: String
+}
+
+private final class BaselineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Set<String>?
+
+    func set(_ value: Set<String>?) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+
+    func snapshot() -> Set<String>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }
 
 private func require(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -83,8 +114,17 @@ private func candidate(
 @main
 private enum ValidateMacFUSEScratchCleanup {
     static func main() throws {
-        try require(EDPMacFUSEScratchImageCleanup.captureBaseline() != nil,
-                    "live hdiutil info plist must be parseable")
+        let baselineBox = BaselineBox()
+        let baselineDone = DispatchSemaphore(value: 0)
+        EDPMacFUSEScratchImageCleanup.captureBaselineAsync { baseline in
+            baselineBox.set(baseline)
+            baselineDone.signal()
+        }
+        try require(
+            baselineDone.wait(timeout: .now() + 12) == .success
+                && baselineBox.snapshot() != nil,
+            "live async hdiutil info plist must be parseable"
+        )
 
         let valid = try candidate()
         try require(valid.isOrphanCleanupCandidate, "known macFUSE scratch signature must match")

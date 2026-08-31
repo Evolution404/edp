@@ -182,7 +182,7 @@ private func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
         withIntermediateDirectories: true,
         attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
     )
-    let temporary = path + ".tmp.\(getpid())"
+    let temporary = path + ".tmp.\(getpid()).\(UUID().uuidString)"
     try data.write(to: URL(fileURLWithPath: temporary), options: .withoutOverwriting)
     guard chmod(temporary, mode) == 0 else {
         let saved = errno
@@ -823,6 +823,7 @@ private final class EDPFSKitMountOperationBox: @unchecked Sendable {
     var password: [UInt8]
     let rawFD: Int32
     let completion: EDPDaemonMountCompletion
+    var publicationOperation: (any EDPCancellableOperation)?
     var finished = false
 
     init(
@@ -909,6 +910,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     )
     private let lifecycleQueueKey = DispatchSpecificKey<UInt8>()
     private var activeMountOperations = Set<String>()
+    private var activeMountOperationBoxes = [String: EDPFSKitMountOperationBox]()
     private var cancelledMountOperations = Set<String>()
     private var mountWaiters = [String: [EDPDaemonMountCompletion]]()
     private var unmountWaiters = [String: [EDPDaemonMountCompletion]]()
@@ -1026,31 +1028,46 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         _ item: [String: String],
         advance: @escaping @Sendable () -> Void
     ) {
-        if let bridge = item["bridgeMount"], !bridge.isEmpty {
-            if EDPNativeMountTable.isMountpoint(bridge) {
-                _ = EDPMacFUSEScratchImageCleanup.cleanupOrphan(mountedAt: bridge)
-            }
-            do {
-                try EDPNativeMountTable.unmountPath(bridge)
-                if EDPNativeMountTable.isMountpoint(bridge) {
-                    try EDPNativeMountTable.unmountPath(bridge, force: true)
-                }
-            } catch {
-                NSLog(
-                    "EDP persisted-session recovery kept transport mount %@: %@",
-                    bridge,
-                    String(describing: error)
-                )
-                advance()
-                return
-            }
-            guard !EDPNativeMountTable.isMountpoint(bridge) else {
-                NSLog("EDP persisted-session recovery kept active transport mount %@", bridge)
-                advance()
-                return
-            }
-            try? FileManager.default.removeItem(atPath: bridge)
+        guard let bridge = item["bridgeMount"], !bridge.isEmpty else {
+            advance()
+            return
         }
+        guard EDPNativeMountTable.isMountpoint(bridge) else {
+            finishRecoverPersistedBridge(bridge, advance: advance)
+            return
+        }
+        EDPMacFUSEScratchImageCleanup.cleanupOrphanAsync(mountedAt: bridge) { [weak self] _ in
+            guard let self else { return }
+            self.lifecycleQueue.async {
+                self.finishRecoverPersistedBridge(bridge, advance: advance)
+            }
+        }
+    }
+
+    private func finishRecoverPersistedBridge(
+        _ bridge: String,
+        advance: @escaping @Sendable () -> Void
+    ) {
+        do {
+            try EDPNativeMountTable.unmountPath(bridge)
+            if EDPNativeMountTable.isMountpoint(bridge) {
+                try EDPNativeMountTable.unmountPath(bridge, force: true)
+            }
+        } catch {
+            NSLog(
+                "EDP persisted-session recovery kept transport mount %@: %@",
+                bridge,
+                String(describing: error)
+            )
+            advance()
+            return
+        }
+        guard !EDPNativeMountTable.isMountpoint(bridge) else {
+            NSLog("EDP persisted-session recovery kept active transport mount %@", bridge)
+            advance()
+            return
+        }
+        try? FileManager.default.removeItem(atPath: bridge)
         advance()
     }
 
@@ -1148,9 +1165,15 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 return
             }
             self.activeMountOperations.insert(sessionKey)
+            self.activeMountOperationBoxes[sessionKey] = operation
             self.cancelledMountOperations.remove(sessionKey)
             self.executeMountAction(operation.machine.start(), operation: operation)
         }
+    }
+
+    private func cancelMountOperation(_ sessionKey: String) {
+        cancelledMountOperations.insert(sessionKey)
+        activeMountOperationBoxes[sessionKey]?.publicationOperation?.cancel()
     }
 
     private func executeMountAction(
@@ -1280,9 +1303,61 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 request: transportRequest,
                 requireFinderHidden: true
             )
-            let macFUSEScratchBaseline = runtimeStatus.backend == .macFUSELocal
-                ? EDPMacFUSEScratchImageCleanup.captureBaseline()
-                : nil
+            if runtimeStatus.backend == .macFUSELocal {
+                EDPMacFUSEScratchImageCleanup.captureBaselineAsync { [weak self, operation] baseline in
+                    guard let self else { return }
+                    self.lifecycleQueue.async {
+                        guard !self.cancelledMountOperations.contains(operation.sessionKey) else {
+                            self.executeMountAction(operation.machine.cancel(), operation: operation)
+                            return
+                        }
+                        self.launchTransportProcess(
+                            operation,
+                            attempt: attempt,
+                            runtimeStatus: runtimeStatus,
+                            identity: identity,
+                            suffix: suffix,
+                            bridgeMount: bridgeMount,
+                            launchSpec: launchSpec,
+                            scratchBaseline: baseline
+                        )
+                    }
+                }
+                return
+            }
+            launchTransportProcess(
+                operation,
+                attempt: attempt,
+                runtimeStatus: runtimeStatus,
+                identity: identity,
+                suffix: suffix,
+                bridgeMount: bridgeMount,
+                launchSpec: launchSpec,
+                scratchBaseline: nil
+            )
+        } catch {
+            executeMountAction(
+                operation.machine.stageFailed(String(describing: error)),
+                operation: operation
+            )
+        }
+    }
+
+    private func launchTransportProcess(
+        _ operation: EDPFSKitMountOperationBox,
+        attempt: Int,
+        runtimeStatus: EDPTransportRuntimeStatus,
+        identity: (uid_t, gid_t),
+        suffix: String,
+        bridgeMount: String,
+        launchSpec: EDPTransportLaunchSpec,
+        scratchBaseline: Set<String>?
+    ) {
+        guard !cancelledMountOperations.contains(operation.sessionKey) else {
+            executeMountAction(operation.machine.cancel(), operation: operation)
+            return
+        }
+        do {
             let passwordPipe = Pipe()
             let logPath = sessionRoot + "/\(suffix).bridge.log"
             try FileManager.default.createDirectory(atPath: sessionRoot, withIntermediateDirectories: true)
@@ -1321,7 +1396,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 bridgeMount: bridgeMount,
                 log: log,
                 logPath: logPath,
-                scratchBaseline: macFUSEScratchBaseline,
+                scratchBaseline: scratchBaseline,
                 transportSession: transportSession,
                 deadline: Date().addingTimeInterval(8)
             )
@@ -1479,102 +1554,139 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             return
         }
 
-        do {
-            let decryptedVolume = bridgeMount + "/volume.raw"
-            let published = try blockPublisher.publishWritableImage(at: decryptedVolume)
-            _ = operation.machine.publicationFinished(attempt)
-            guard !cancelledMountOperations.contains(operation.sessionKey) else {
-                cleanupPublishedMount(
-                    operation,
-                    attempt: attempt,
-                    runtimeStatus: runtimeStatus,
-                    bridgeMount: bridgeMount,
-                    scratchBaseline: scratchBaseline,
-                    transportSession: transportSession,
-                    publishedDevice: published,
-                    failure: "mount operation cancelled",
-                    cancelled: true
-                )
-                return
-            }
-
-            let resolved = try resolveFilesystemDevice(published.bsdName)
-            mountResolvedFilesystemAsync(
-                bsd: resolved.bsdName,
-                magic: resolved.magic,
-                isBoot: operation.partitionType == EDPPartitionKind.boot.rawValue,
-                sessionSuffix: suffix,
-                owner: identity
-            ) { [weak self, operation] filesystem, mountpoint, errorMessage in
-                guard let self else { return }
-                self.lifecycleQueue.async {
-                    let cancelled = self.cancelledMountOperations.contains(operation.sessionKey)
-                    if cancelled, let mountpoint {
-                        try? EDPNativeMountTable.unmountPath(mountpoint, force: true)
-                    }
-                    if let errorMessage = cancelled ? "mount operation cancelled" : errorMessage {
-                        self.cleanupPublishedMount(
-                            operation,
-                            attempt: attempt,
-                            runtimeStatus: runtimeStatus,
-                            bridgeMount: bridgeMount,
-                            scratchBaseline: scratchBaseline,
-                            transportSession: transportSession,
-                            publishedDevice: published,
-                            failure: errorMessage,
-                            cancelled: cancelled
-                        )
-                        return
-                    }
-                    guard let filesystem else {
-                        self.cleanupPublishedMount(
-                            operation,
-                            attempt: attempt,
-                            runtimeStatus: runtimeStatus,
-                            bridgeMount: bridgeMount,
-                            scratchBaseline: scratchBaseline,
-                            transportSession: transportSession,
-                            publishedDevice: published,
-                            failure: "filesystem mount returned no result",
-                            cancelled: false
-                        )
-                        return
-                    }
-                    self.sessions[operation.sessionKey] = MountSession(
-                        physicalBSD: operation.disk.bsdName,
-                        deviceID: operation.disk.deviceID,
-                        partitionType: operation.partitionType,
+        let decryptedVolume = bridgeMount + "/volume.raw"
+        operation.publicationOperation = blockPublisher.publishWritableImageAsync(
+            at: decryptedVolume
+        ) { [weak self, operation] published, errorMessage in
+            guard let self else { return }
+            self.lifecycleQueue.async {
+                operation.publicationOperation = nil
+                let cancelled = self.cancelledMountOperations.contains(operation.sessionKey)
+                guard let published else {
+                    self.cleanupPublishedMount(
+                        operation,
+                        attempt: attempt,
+                        runtimeStatus: runtimeStatus,
                         bridgeMount: bridgeMount,
-                        exposedBSD: published.bsdName,
-                        filesystem: filesystem,
-                        userMount: mountpoint,
-                        transport: transportSession,
-                        filesystemProcess: nil
+                        scratchBaseline: scratchBaseline,
+                        transportSession: transportSession,
+                        publishedDevice: nil,
+                        failure: cancelled
+                            ? "mount operation cancelled"
+                            : (errorMessage ?? "block publication returned no device"),
+                        cancelled: cancelled
                     )
-                    self.persistSessions()
-                    _ = operation.machine.filesystemMounted(attempt)
-                    NSLog(
-                        "EDP mounted %@ partition %u as %@ at %@",
-                        operation.disk.deviceID,
-                        operation.partitionType,
-                        filesystem,
-                        mountpoint ?? "(unknown)"
+                    return
+                }
+
+                guard !cancelled else {
+                    // Publication won the cancellation race. Tear down that exact
+                    // backing/device tuple before transport cleanup continues.
+                    self.blockPublisher.unpublishAsync(published) { [weak self, operation] unpublishError in
+                        guard let self else { return }
+                        self.lifecycleQueue.async {
+                            if let unpublishError {
+                                NSLog("EDP cancelled publication teardown: %@", unpublishError)
+                            }
+                            self.cleanupPublishedMount(
+                                operation,
+                                attempt: attempt,
+                                runtimeStatus: runtimeStatus,
+                                bridgeMount: bridgeMount,
+                                scratchBaseline: scratchBaseline,
+                                transportSession: transportSession,
+                                publishedDevice: unpublishError == nil ? nil : published,
+                                failure: "mount operation cancelled",
+                                cancelled: true
+                            )
+                        }
+                    }
+                    return
+                }
+
+                _ = operation.machine.publicationFinished(attempt)
+                do {
+                    let resolved = try resolveFilesystemDevice(published.bsdName)
+                    self.mountResolvedFilesystemAsync(
+                        bsd: resolved.bsdName,
+                        magic: resolved.magic,
+                        isBoot: operation.partitionType == EDPPartitionKind.boot.rawValue,
+                        sessionSuffix: suffix,
+                        owner: identity
+                    ) { [weak self, operation] filesystem, mountpoint, filesystemError in
+                        guard let self else { return }
+                        self.lifecycleQueue.async {
+                            let cancelled = self.cancelledMountOperations.contains(operation.sessionKey)
+                            if cancelled, let mountpoint {
+                                try? EDPNativeMountTable.unmountPath(mountpoint, force: true)
+                            }
+                            if let filesystemError = cancelled
+                                ? "mount operation cancelled"
+                                : filesystemError {
+                                self.cleanupPublishedMount(
+                                    operation,
+                                    attempt: attempt,
+                                    runtimeStatus: runtimeStatus,
+                                    bridgeMount: bridgeMount,
+                                    scratchBaseline: scratchBaseline,
+                                    transportSession: transportSession,
+                                    publishedDevice: published,
+                                    failure: filesystemError,
+                                    cancelled: cancelled
+                                )
+                                return
+                            }
+                            guard let filesystem else {
+                                self.cleanupPublishedMount(
+                                    operation,
+                                    attempt: attempt,
+                                    runtimeStatus: runtimeStatus,
+                                    bridgeMount: bridgeMount,
+                                    scratchBaseline: scratchBaseline,
+                                    transportSession: transportSession,
+                                    publishedDevice: published,
+                                    failure: "filesystem mount returned no result",
+                                    cancelled: false
+                                )
+                                return
+                            }
+                            self.sessions[operation.sessionKey] = MountSession(
+                                physicalBSD: operation.disk.bsdName,
+                                deviceID: operation.disk.deviceID,
+                                partitionType: operation.partitionType,
+                                bridgeMount: bridgeMount,
+                                exposedBSD: published.bsdName,
+                                filesystem: filesystem,
+                                userMount: mountpoint,
+                                transport: transportSession,
+                                filesystemProcess: nil
+                            )
+                            self.persistSessions()
+                            _ = operation.machine.filesystemMounted(attempt)
+                            NSLog(
+                                "EDP mounted %@ partition %u as %@ at %@",
+                                operation.disk.deviceID,
+                                operation.partitionType,
+                                filesystem,
+                                mountpoint ?? "(unknown)"
+                            )
+                            self.executeMountAction(.complete, operation: operation)
+                        }
+                    }
+                } catch {
+                    self.cleanupPublishedMount(
+                        operation,
+                        attempt: attempt,
+                        runtimeStatus: runtimeStatus,
+                        bridgeMount: bridgeMount,
+                        scratchBaseline: scratchBaseline,
+                        transportSession: transportSession,
+                        publishedDevice: published,
+                        failure: String(describing: error),
+                        cancelled: false
                     )
-                    self.executeMountAction(.complete, operation: operation)
                 }
             }
-        } catch {
-            cleanupPublishedMount(
-                operation,
-                attempt: attempt,
-                runtimeStatus: runtimeStatus,
-                bridgeMount: bridgeMount,
-                scratchBaseline: scratchBaseline,
-                transportSession: transportSession,
-                publishedDevice: nil,
-                failure: String(describing: error),
-                cancelled: cancelledMountOperations.contains(operation.sessionKey)
-            )
         }
     }
 
@@ -1795,51 +1907,83 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             recoverStuckProcess: recoverStuckProcess
         ) { [weak self, operation] stopRecoveredHost, hostRecoveryAttempted, stopError in
             guard let self else { return }
-            if runtimeStatus.backend == .macFUSELocal {
-                EDPMacFUSEScratchImageCleanup.cleanupNewOrphans(since: scratchBaseline)
-            }
-            try? FileManager.default.removeItem(atPath: bridgeMount)
-            if let stopError {
-                NSLog("EDP async transport cleanup after %@: %@", failure, stopError)
-            }
-
-            if self.cancelledMountOperations.contains(operation.sessionKey) {
-                self.executeMountAction(operation.machine.cancel(), operation: operation)
-                return
-            }
-
-            if hostRecoveryAttempted {
-                let action = operation.machine.cleanupFinished(
-                    attempt,
-                    hostAlreadyRecovered: stopRecoveredHost && !transportSession.isRunning
-                )
-                if case .restartHost = action {
-                    // A recovery callback was already attempted by stopAsync.
-                    // Never consume a second global fskit_agent restart here.
-                    self.executeMountAction(
-                        operation.machine.hostRecoveryFinished(false),
-                        operation: operation
+            let finishCleanup: @Sendable () -> Void = { [weak self, operation] in
+                guard let self else { return }
+                self.lifecycleQueue.async {
+                    self.finalizeStoppedTransportCleanup(
+                        operation,
+                        attempt: attempt,
+                        bridgeMount: bridgeMount,
+                        transportSession: transportSession,
+                        stopRecoveredHost: stopRecoveredHost,
+                        hostRecoveryAttempted: hostRecoveryAttempted,
+                        stopError: stopError,
+                        failure: failure
                     )
-                } else {
-                    self.executeMountAction(action, operation: operation)
                 }
-                return
             }
+            if runtimeStatus.backend == .macFUSELocal {
+                EDPMacFUSEScratchImageCleanup.cleanupNewOrphansAsync(
+                    since: scratchBaseline,
+                    completion: finishCleanup
+                )
+            } else {
+                finishCleanup()
+            }
+        }
+    }
 
+    private func finalizeStoppedTransportCleanup(
+        _ operation: EDPFSKitMountOperationBox,
+        attempt: Int,
+        bridgeMount: String,
+        transportSession: EDPTransportSession,
+        stopRecoveredHost: Bool,
+        hostRecoveryAttempted: Bool,
+        stopError: String?,
+        failure: String
+    ) {
+        try? FileManager.default.removeItem(atPath: bridgeMount)
+        if let stopError {
+            NSLog("EDP async transport cleanup after %@: %@", failure, stopError)
+        }
+
+        if cancelledMountOperations.contains(operation.sessionKey) {
+            executeMountAction(operation.machine.cancel(), operation: operation)
+            return
+        }
+
+        if hostRecoveryAttempted {
             let action = operation.machine.cleanupFinished(
                 attempt,
-                hostAlreadyRecovered: false
+                hostAlreadyRecovered: stopRecoveredHost && !transportSession.isRunning
             )
             if case .restartHost = action {
-                let recovered = EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
-                    && !transportSession.isRunning
-                self.executeMountAction(
-                    operation.machine.hostRecoveryFinished(recovered),
+                // A recovery callback was already attempted by stopAsync. Never
+                // consume a second global fskit_agent restart here.
+                executeMountAction(
+                    operation.machine.hostRecoveryFinished(false),
                     operation: operation
                 )
             } else {
-                self.executeMountAction(action, operation: operation)
+                executeMountAction(action, operation: operation)
             }
+            return
+        }
+
+        let action = operation.machine.cleanupFinished(
+            attempt,
+            hostAlreadyRecovered: false
+        )
+        if case .restartHost = action {
+            let recovered = EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
+                && !transportSession.isRunning
+            executeMountAction(
+                operation.machine.hostRecoveryFinished(recovered),
+                operation: operation
+            )
+        } else {
+            executeMountAction(action, operation: operation)
         }
     }
 
@@ -1858,6 +2002,8 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         guard !operation.finished else { return }
         operation.finished = true
         activeMountOperations.remove(operation.sessionKey)
+        activeMountOperationBoxes.removeValue(forKey: operation.sessionKey)
+        operation.publicationOperation = nil
         cancelledMountOperations.remove(operation.sessionKey)
         let waiters = mountWaiters.removeValue(forKey: operation.sessionKey) ?? []
         operation.completion(error)
@@ -2006,7 +2152,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 guard let separator = operationKey.lastIndex(of: ":") else { continue }
                 let deviceID = String(operationKey[..<separator])
                 if availableDisks[deviceID] == nil {
-                    cancelledMountOperations.insert(operationKey)
+                    cancelMountOperation(operationKey)
                     pending = true
                 }
             }
@@ -2039,7 +2185,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         completion: @escaping EDPDaemonMountCompletion
     ) {
         if activeMountOperations.contains(sessionKey) {
-            cancelledMountOperations.insert(sessionKey)
+            cancelMountOperation(sessionKey)
             guard Date() < deadline else {
                 completion("mount cancellation did not drain before unmount deadline")
                 return
@@ -2143,7 +2289,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             }
             self.ejectWaiters[deviceID] = [completion]
             let active = self.activeMountOperations.filter { $0.hasPrefix("\(deviceID):") }
-            self.cancelledMountOperations.formUnion(active)
+            for sessionKey in active { self.cancelMountOperation(sessionKey) }
             self.waitForDeviceMountsToDrain(
                 deviceID: deviceID,
                 deadline: Date().addingTimeInterval(15)
@@ -2198,7 +2344,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 completion("mount manager was released")
                 return
             }
-            self.cancelledMountOperations.formUnion(self.activeMountOperations)
+            for sessionKey in self.activeMountOperations { self.cancelMountOperation(sessionKey) }
             self.waitForAllMountsToDrain(
                 deadline: Date().addingTimeInterval(15),
                 completion: completion

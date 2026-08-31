@@ -8,6 +8,7 @@ APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
 MACFUSE_POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPMacFUSERuntimePolicy.swift"
+PUBLISHER_SOURCE="${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
 POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPDevicePolicyStore.swift"
 CREDENTIAL_SOURCE="${ROOT}/Apps/Drive/product/EDPCredentialStore.swift"
 EMBEDDED_SERVICE_PLIST="${ROOT}/Apps/Drive/product/App/com.edp.drive.service.plist"
@@ -125,6 +126,19 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_LIFECYCLE_RATCHET_OK'
 ! /usr/bin/grep -Fq 'func unpublish(' "${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
 /usr/bin/grep -Fq 'func unpublishAsync(' "${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
 echo 'RESULT=DRIVE_SYSTEM_ASYNC_DISK_ARBITRATION_OK'
+
+# DiskImages2 publication and macFUSE scratch recovery are also asynchronous.
+# The publisher may still invoke hdiutil as a bounded adapter, but it must never
+# block a lifecycle queue with sleep/wait loops or expose a synchronous publish
+# fallback.
+! /usr/bin/grep -Fq 'Thread.sleep' "${PUBLISHER_SOURCE}"
+! /usr/bin/grep -Fq 'waitUntilExit()' "${PUBLISHER_SOURCE}"
+! /usr/bin/grep -Fq 'func publishWritableImage(' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'func publishWritableImageAsync(' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'func cleanupNewOrphansAsync(' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'func cleanupOrphanAsync(' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'runBoundedProcessAsync(' "${PUBLISHER_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
 
 # Normal product lifecycle must not fall back to shell-side process inspection
 # or codesign/umount helpers. Runtime signature validation is Security.framework,

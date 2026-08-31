@@ -436,6 +436,29 @@ private final class SendableOptionalStringBox: @unchecked Sendable {
     }
 }
 
+private final class PublisherProcessResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private var status: Int32?
+    private var stdout = ""
+    private var errorMessage: String?
+
+    func record(status: Int32?, stdout: String, errorMessage: String?) {
+        lock.lock()
+        count += 1
+        self.status = status
+        self.stdout = stdout
+        self.errorMessage = errorMessage
+        lock.unlock()
+    }
+
+    func snapshot() -> (count: Int, status: Int32?, stdout: String, errorMessage: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (count, status, stdout, errorMessage)
+    }
+}
+
 private struct ControllerEnvironment {
     let security: TemporaryKeychainContext
     let state: EDPVirtualUSBState
@@ -524,6 +547,18 @@ private struct ControllerEnvironment {
             controller: controller,
             fixture: fixture,
             correctPassword: correctPassword
+        )
+    }
+
+    func insertFixture(
+        registryEntryID: UInt64 = 0x9000,
+        usbRegistryEntryID: UInt64 = 0x9001
+    ) {
+        state.insert(
+            fixture,
+            as: "disk90",
+            registryEntryID: registryEntryID,
+            usbRegistryEntryID: usbRegistryEntryID
         )
     }
 
@@ -717,12 +752,13 @@ struct ValidateCredentialPolicyServiceLifecycle {
         do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
-                insertDevice: true
+                insertDevice: false
             )
             try env.policies.setDefaultAutoMount(partitionType: 1, enabled: true)
             try env.policies.setDefaultAutoMount(partitionType: 2, enabled: true)
             try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
             try env.policies.setDefaultAutoProbePassword(partitionType: 4, enabled: true)
+            env.insertFixture()
             env.controller.reconcileSynchronouslyForTesting()
             let device = try env.connectedDevice()
             let record = try env.credentials.load().records.first { $0.deviceID == device.deviceID }
@@ -742,9 +778,10 @@ struct ValidateCredentialPolicyServiceLifecycle {
         do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
-                insertDevice: true
+                insertDevice: false
             )
             try env.policies.setDefaultAutoMount(partitionType: 2, enabled: true)
+            env.insertFixture()
             env.controller.reconcileSynchronouslyForTesting()
             let device = try env.connectedDevice()
             guard !env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 2),
@@ -757,13 +794,14 @@ struct ValidateCredentialPolicyServiceLifecycle {
         do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
-                insertDevice: true
+                insertDevice: false
             )
             try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
             try env.credentials.setDefaultProbePassword(
                 partitionType: 2,
                 password: Array("wrong-default".utf8)
             )
+            env.insertFixture()
             env.controller.reconcileSynchronouslyForTesting()
             let deviceID = try env.connectedDevice().deviceID
             func mismatchCount() throws -> Int {
@@ -808,7 +846,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
         do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
-                insertDevice: true
+                insertDevice: false
             )
             try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
             try env.policies.setDefaultAutoProbePassword(partitionType: 4, enabled: true)
@@ -816,6 +854,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 partitionType: 2,
                 password: Array("wrong-exchange-only".utf8)
             )
+            env.insertFixture()
             env.controller.reconcileSynchronouslyForTesting()
             let deviceID = try env.connectedDevice().deviceID
             try expectThrows("D08 wrong exchange default unexpectedly saved") {
@@ -830,11 +869,12 @@ struct ValidateCredentialPolicyServiceLifecycle {
         do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
-                insertDevice: true
+                insertDevice: false
             )
             try env.policies.setDefaultAutoMount(partitionType: 2, enabled: true)
             try env.policies.setDefaultAutoProbePassword(partitionType: 2, enabled: true)
             try env.policies.setGlobalAutoMount(false)
+            env.insertFixture()
             env.controller.reconcileSynchronouslyForTesting()
             let deviceID = try env.connectedDevice().deviceID
             guard try env.credentials.password(deviceID: deviceID, partitionType: 2) == env.correctPassword,
@@ -952,7 +992,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 unpublishResult.set(errorMessage)
                 unpublishDone.signal()
             }
-            guard unpublishDone.wait(timeout: .now() + 5) == .success,
+            guard unpublishDone.wait(timeout: .now() + 12) == .success,
                   unpublishResult.snapshot().1 == nil else {
                 throw LifecycleValidationError("D13 stale publication async teardown did not complete")
             }
@@ -1602,6 +1642,70 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 )
             }
             print("SCENARIO=S19_OK disk_arbitration_completion_once_timeout_late_callback")
+        }
+
+        do {
+            let normalBox = PublisherProcessResultBox()
+            let normalDone = DispatchSemaphore(value: 0)
+            _ = EDPAsyncPublisherProcessRegressionHarness.run(
+                executable: "/bin/echo",
+                arguments: ["publisher-ok"],
+                timeout: 2
+            ) { status, stdout, errorMessage in
+                normalBox.record(status: status, stdout: stdout, errorMessage: errorMessage)
+                normalDone.signal()
+            }
+            guard normalDone.wait(timeout: .now() + 5) == .success else {
+                throw LifecycleValidationError("S20 normal async publisher process did not complete")
+            }
+            let normal = normalBox.snapshot()
+            guard normal.count == 1,
+                  normal.status == 0,
+                  normal.stdout.contains("publisher-ok"),
+                  normal.errorMessage == nil else {
+                throw LifecycleValidationError("S20 normal async publisher process result changed")
+            }
+
+            let timeoutBox = PublisherProcessResultBox()
+            let timeoutDone = DispatchSemaphore(value: 0)
+            _ = EDPAsyncPublisherProcessRegressionHarness.run(
+                executable: "/bin/sh",
+                arguments: ["-c", "trap '' TERM; while :; do :; done"],
+                timeout: 0.1
+            ) { status, stdout, errorMessage in
+                timeoutBox.record(status: status, stdout: stdout, errorMessage: errorMessage)
+                timeoutDone.signal()
+            }
+            guard timeoutDone.wait(timeout: .now() + 5) == .success else {
+                throw LifecycleValidationError("S20 timed-out publisher process did not terminate")
+            }
+            let timedOut = timeoutBox.snapshot()
+            guard timedOut.count == 1,
+                  timedOut.errorMessage?.contains("timed out") == true else {
+                throw LifecycleValidationError("S20 publisher timeout did not fail exactly once")
+            }
+
+            let cancelBox = PublisherProcessResultBox()
+            let cancelDone = DispatchSemaphore(value: 0)
+            let cancellable = EDPAsyncPublisherProcessRegressionHarness.run(
+                executable: "/bin/sleep",
+                arguments: ["5"],
+                timeout: 2
+            ) { status, stdout, errorMessage in
+                cancelBox.record(status: status, stdout: stdout, errorMessage: errorMessage)
+                cancelDone.signal()
+            }
+            cancellable.cancel()
+            guard cancelDone.wait(timeout: .now() + 5) == .success else {
+                throw LifecycleValidationError("S20 cancelled publisher process did not terminate")
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+            let cancelled = cancelBox.snapshot()
+            guard cancelled.count == 1,
+                  cancelled.errorMessage?.contains("cancelled") == true else {
+                throw LifecycleValidationError("S20 publisher cancellation completed more than once or lost cancellation")
+            }
+            print("SCENARIO=S20_OK async_publisher_process_timeout_cancel_once")
         }
 
         do {

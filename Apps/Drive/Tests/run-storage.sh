@@ -34,8 +34,33 @@ if (( LOOP_COUNT < MIN_LOOPS || LOOP_COUNT > MAX_LOOPS )); then
   exit 64
 fi
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edp-storage-e2e.XXXXXX")"
-WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
+STORAGE_PHASE="${EDP_STORAGE_PHASE:-all}"
+case "$STORAGE_PHASE" in
+  all|prepare|core|stress|recovery|contracts|final) ;;
+  *)
+    echo "EDP_STORAGE_PHASE must be all, prepare, core, stress, recovery, contracts, or final" >&2
+    exit 64
+    ;;
+esac
+
+if [[ -n "${EDP_STORAGE_WORK_DIR:-}" ]]; then
+  mkdir -p "$EDP_STORAGE_WORK_DIR"
+  WORK_DIR="$(cd "$EDP_STORAGE_WORK_DIR" && pwd -P)"
+  TMP_ROOT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+  [[ "$WORK_DIR" == "$TMP_ROOT"/edp-storage-e2e.* ]] || {
+    echo "EDP_STORAGE_WORK_DIR must stay under $TMP_ROOT with edp-storage-e2e.* name" >&2
+    exit 64
+  }
+  PRESERVE_WORK_DIR=1
+else
+  [[ "$STORAGE_PHASE" == all ]] || {
+    echo "phased storage execution requires EDP_STORAGE_WORK_DIR" >&2
+    exit 64
+  }
+  WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edp-storage-e2e.XXXXXX")"
+  WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
+  PRESERVE_WORK_DIR=0
+fi
 BUILD_DIR="$WORK_DIR/build"
 MOUNT_ROOT="$WORK_DIR/mounts"
 LOG_ROOT="$WORK_DIR/logs"
@@ -44,10 +69,7 @@ ACTIVE_FIXTURE_DEVICES="$WORK_DIR/active-fixture-devices.txt"
 ACTIVE_PROCESSES="$WORK_DIR/active-processes.txt"
 ACTIVE_MOUNTS="$WORK_DIR/active-mounts.txt"
 mkdir -p "$BUILD_DIR" "$MOUNT_ROOT" "$LOG_ROOT"
-: >"$ACTIVE_DEVICES"
-: >"$ACTIVE_FIXTURE_DEVICES"
-: >"$ACTIVE_PROCESSES"
-: >"$ACTIVE_MOUNTS"
+touch "$ACTIVE_DEVICES" "$ACTIVE_FIXTURE_DEVICES" "$ACTIVE_PROCESSES" "$ACTIVE_MOUNTS"
 
 ATTACH_BIN="$BUILD_DIR/diskimages2-attach"
 PREPARE_BIN="$BUILD_DIR/prepare-edp-filesystem-fixture"
@@ -148,6 +170,38 @@ for image in root.get("images", []):
     raise SystemExit(0 if valid else 1)
 raise SystemExit(1)
 PY
+}
+
+synthetic_publication_exists() {
+  local backing="$1"
+  local info="$WORK_DIR/hdiutil-publication-check.plist"
+  [[ "$backing" == "$WORK_DIR"/* || "$backing" == "$MOUNT_ROOT"/* ]] || return 1
+  /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
+  /usr/bin/python3 - "$info" "$backing" <<'PY'
+import os
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    root = plistlib.load(handle)
+expected = os.path.realpath(sys.argv[2])
+for image in root.get("images", []):
+    if os.path.realpath(image.get("image-path", "")) != expected:
+        continue
+    if image.get("diskimages2") is True:
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+wait_for_synthetic_publication_gone() {
+  local backing="$1"
+  local attempts="${2:-100}"
+  for _ in $(/usr/bin/seq 1 "$attempts"); do
+    synthetic_publication_exists "$backing" || return 0
+    /bin/sleep 0.1
+  done
+  return 1
 }
 
 assert_fixture_device() {
@@ -339,8 +393,10 @@ cleanup() {
   fi
   if (( status != 0 )); then
     echo "STORAGE_E2E_ARTIFACTS=$WORK_DIR" >&2
-  else
+  elif (( PRESERVE_WORK_DIR == 0 )) || [[ "$STORAGE_PHASE" == final ]]; then
     /usr/bin/find "$WORK_DIR" -depth -delete >/dev/null 2>&1 || true
+  else
+    echo "STORAGE_E2E_WORK_DIR=$WORK_DIR"
   fi
   exit "$status"
 }
@@ -382,13 +438,66 @@ eject_image() {
   [[ -e "/dev/$bsd" ]] || return 0
   assert_synthetic_device "$bsd" "$backing"
   bounded 15 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
-  bounded 15 /usr/sbin/diskutil eject "$bsd" >/dev/null
+
+  # Disk Arbitration can complete the synthetic eject in-kernel while the
+  # diskutil client itself remains blocked waiting for a reply. Treat an
+  # already-disappeared exact synthetic device as success even if the client
+  # hit its bounded timeout. If it is still present, re-prove exact backing
+  # identity before using hdiutil as the narrow recovery path.
+  local eject_rc=0
+  if bounded 15 /usr/sbin/diskutil eject "$bsd" >/dev/null 2>&1; then
+    eject_rc=0
+  else
+    eject_rc=$?
+    if [[ ! -e "/dev/$bsd" ]]; then
+      if wait_for_synthetic_publication_gone "$backing" 100; then
+        return 0
+      fi
+      echo "DiskImages2 owner remained after BSD device disappeared: $backing" >&2
+      return 1
+    fi
+    assert_synthetic_device "$bsd" "$backing"
+    bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
+  fi
   for _ in $(/usr/bin/seq 1 100); do
-    [[ ! -e "/dev/$bsd" ]] && return 0
+    if [[ ! -e "/dev/$bsd" ]] && ! synthetic_publication_exists "$backing"; then
+      return 0
+    fi
     /bin/sleep 0.05
   done
-  echo "synthetic device remained after eject: $bsd" >&2
+  if [[ ! -e "/dev/$bsd" ]] && synthetic_publication_exists "$backing"; then
+    echo "DiskImages2 owner remained after BSD device disappeared: $backing" >&2
+  else
+    echo "synthetic device remained after eject: $bsd diskutil_rc=$eject_rc" >&2
+  fi
   return 1
+}
+
+filesystem_format_completed() {
+  local path="$1"
+  local filesystem="$2"
+  if [[ "$filesystem" == "MS-DOS FAT16" ]]; then
+    /sbin/fsck_msdos -n "$path" >/dev/null 2>&1
+    return
+  fi
+  [[ "$filesystem" == "ExFAT" ]] || return 1
+  /usr/bin/python3 - "$path" <<'PY'
+import pathlib
+import struct
+import sys
+
+data = pathlib.Path(sys.argv[1]).read_bytes()[: 12 * 512]
+if len(data) != 12 * 512 or data[3:11] != b"EXFAT   " or data[510:512] != b"\x55\xaa":
+    raise SystemExit(1)
+checksum = 0
+for index, value in enumerate(data[: 11 * 512]):
+    if index in (106, 107, 112):
+        continue
+    checksum = (((checksum << 31) | (checksum >> 1)) + value) & 0xFFFFFFFF
+expected = struct.pack("<I", checksum)
+checksum_sector = data[11 * 512 : 12 * 512]
+raise SystemExit(0 if checksum_sector == expected * (512 // 4) else 1)
+PY
 }
 
 format_raw_filesystem() {
@@ -399,63 +508,108 @@ format_raw_filesystem() {
   local tag="$5"
   /usr/bin/truncate -s "$size" "$path"
 
-  local attach_output bsd
-  attach_output="$(/usr/bin/hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "$path")"
-  bsd="$(printf '%s\n' "$attach_output" \
-    | /usr/bin/awk '/\/dev\/disk[0-9]+/ { gsub("/dev/", "", $1); print $1; exit }')"
-  [[ -n "$bsd" && -b "/dev/$bsd" ]]
-  assert_fixture_device "$bsd" "$path"
-  printf '%s|%s\n' "$bsd" "$path" >>"$ACTIVE_FIXTURE_DEVICES"
-
-  # hdiutil can publish the BSD name before the raw device can be opened by
-  # Disk Arbitration. Require repeated identity checks plus one harmless read
-  # before any destructive formatter is allowed to run.
-  local ready=0
-  for _ in $(/usr/bin/seq 1 100); do
-    if assert_fixture_device "$bsd" "$path" >/dev/null 2>&1 \
-      && /usr/bin/head -c 512 "/dev/r$bsd" >/dev/null 2>&1; then
-      ready=1
-      break
-    fi
-    /bin/sleep 0.05
-  done
-  [[ "$ready" -eq 1 ]] || {
-    echo "fixture device did not become safely openable: $bsd" >&2
-    return 1
-  }
-
-  # Fixture creation is deliberately separate from the product publication
-  # path. Every destructive attempt revalidates the exact WORK_DIR backing and
-  # diskutil Virtual: Yes identity, so a transient BSD-name reuse can never
-  # redirect eraseVolume to physical media.
+  # A CRawDiskImage can occasionally disappear in the narrow handoff between
+  # hdiutil publishing its BSD name and diskutil opening it for eraseVolume.
+  # Retry the *entire* attach transaction rather than reusing a stale diskN.
+  # Every transaction re-proves exact WORK_DIR backing + Virtual: Yes before
+  # the destructive formatter is allowed to run.
   local format_log="$LOG_ROOT/format-$tag.log"
-  local erased=0
-  local format_rc=0
-  for attempt in 1 2 3; do
+  local format_rc=1
+  local transaction attach_output bsd ready stable_checks
+  for transaction in 1 2 3; do
+    if attach_output="$(bounded 15 /usr/bin/hdiutil attach -nomount -imagekey diskimage-class=CRawDiskImage "$path")"; then
+      :
+    else
+      format_rc=$?
+      echo "fixture hdiutil attach did not complete: tag=$tag transaction=$transaction rc=$format_rc" >&2
+      /bin/sleep 2
+      (( transaction < 3 )) && continue
+      return "$format_rc"
+    fi
+    bsd="$(printf '%s\n' "$attach_output" \
+      | /usr/bin/awk '/\/dev\/disk[0-9]+/ { gsub("/dev/", "", $1); print $1; exit }')"
+    [[ -n "$bsd" && -b "/dev/$bsd" ]]
     assert_fixture_device "$bsd" "$path"
+    printf '%s|%s\n' "$bsd" "$path" >>"$ACTIVE_FIXTURE_DEVICES"
+
+    # Require three consecutive identity/open checks. One successful probe is
+    # insufficient because DiskImages can briefly publish a device that is
+    # already being torn down by the time diskutil consumes the BSD name.
+    ready=0
+    stable_checks=0
+    for _ in $(/usr/bin/seq 1 100); do
+      if assert_fixture_device "$bsd" "$path" >/dev/null 2>&1 \
+        && /usr/bin/head -c 512 "/dev/r$bsd" >/dev/null 2>&1; then
+        stable_checks=$((stable_checks + 1))
+        if (( stable_checks >= 3 )); then
+          ready=1
+          break
+        fi
+      else
+        stable_checks=0
+      fi
+      /bin/sleep 0.05
+    done
+    if (( ready != 1 )); then
+      if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
+        bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
+      else
+        recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
+      fi
+      (( transaction < 3 )) && continue
+      echo "fixture device did not become stably openable after $transaction transactions: $bsd" >&2
+      return 1
+    fi
+
+    # DiskImages/Disk Arbitration can report a newly reused BSD name as
+    # queryable slightly before eraseVolume can safely reopen it. Hold a short
+    # settle window, then re-prove both exact backing identity and raw readability
+    # immediately before the destructive synthetic-only formatter.
+    /bin/sleep 2
+    assert_fixture_device "$bsd" "$path"
+    /usr/bin/head -c 512 "/dev/r$bsd" >/dev/null 2>&1
     if bounded 30 /usr/sbin/diskutil eraseVolume "$filesystem" "$label" "$bsd" \
       >"$format_log" 2>&1; then
-      erased=1
-      break
+      format_rc=0
     else
       format_rc=$?
     fi
+
+    # diskutil can block in its final mount/reply phase even though newfs has
+    # already completed. Judge the synthetic fixture by the persisted backing
+    # result, not by the client process exit alone. FAT16 gets a full read-only
+    # fsck; ExFAT verifies its complete main boot region checksum. Later native
+    # mount/remount tests still provide the end-to-end filesystem proof.
+    if filesystem_format_completed "$path" "$filesystem"; then
+      if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
+        bounded 15 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
+        if ! bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1; then
+          recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
+        fi
+      else
+        recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
+      fi
+      return 0
+    fi
+
     if (( format_rc == 124 )) \
       || ! /usr/bin/grep -Eq -- '-69879|Couldn.t open disk' "$format_log"; then
       /bin/cat "$format_log" >&2 || true
       return "$format_rc"
     fi
-    assert_fixture_device "$bsd" "$path"
+
+    # -69879 is retryable only for this proven synthetic fixture. The device
+    # may already be gone; never carry its BSD name into the next attempt.
+    if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
+      bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
+    else
+      recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
+    fi
     /bin/sleep 0.25
   done
-  [[ "$erased" -eq 1 ]] || {
-    /bin/cat "$format_log" >&2 || true
-    return 1
-  }
-  /usr/sbin/diskutil info "$bsd" | /usr/bin/grep -Fq "File System Personality"
-  assert_fixture_device "$bsd" "$path"
-  bounded 15 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
-  bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null
+
+  /bin/cat "$format_log" >&2 || true
+  return 1
 }
 
 start_adapter() {
@@ -584,6 +738,63 @@ PY
     echo "adapter process leaked after $label" >&2
     return 1
   fi
+}
+
+reset_active_trackers() {
+  : >"$ACTIVE_DEVICES"
+  : >"$ACTIVE_FIXTURE_DEVICES"
+  : >"$ACTIVE_PROCESSES"
+  : >"$ACTIVE_MOUNTS"
+}
+
+storage_profile_marker="$WORK_DIR/.storage-profile"
+
+record_storage_profile() {
+  printf '%s|%s\n' "$STORAGE_PROFILE" "$LOOP_COUNT" >"$storage_profile_marker"
+}
+
+require_storage_profile() {
+  [[ -f "$storage_profile_marker" ]] || {
+    echo "shared storage fixture has no profile marker; run prepare first" >&2
+    return 1
+  }
+  local expected="$STORAGE_PROFILE|$LOOP_COUNT"
+  local actual
+  actual="$(/bin/cat "$storage_profile_marker")"
+  [[ "$actual" == "$expected" ]] || {
+    echo "shared storage profile mismatch: expected=$expected actual=$actual" >&2
+    return 1
+  }
+}
+
+mark_storage_phase() {
+  local phase="$1"
+  local phase_upper
+  phase_upper="$(printf '%s' "$phase" | /usr/bin/tr '[:lower:]' '[:upper:]')"
+  printf '%s|%s\n' "$STORAGE_PROFILE" "$LOOP_COUNT" >"$WORK_DIR/.phase-$phase.ok"
+  log "RESULT=DRIVE_STORAGE_PHASE_${phase_upper}_OK"
+}
+
+require_storage_phase() {
+  local phase="$1"
+  local marker="$WORK_DIR/.phase-$phase.ok"
+  [[ -f "$marker" && "$(/bin/cat "$marker")" == "$STORAGE_PROFILE|$LOOP_COUNT" ]] || {
+    echo "storage phase marker missing or mismatched: $phase" >&2
+    return 1
+  }
+}
+
+require_prepared_fixture() {
+  require_storage_profile
+  [[ -f "$EDP_IMAGE" ]]
+  [[ "$(/usr/bin/stat -f %z "$EDP_IMAGE")" == "$DEVICE_SIZE" ]]
+}
+
+ensure_tools() {
+  if [[ -x "$ATTACH_BIN" && -x "$PREPARE_BIN" && -x "$ADAPTER_BIN" && -x "$FAILURE_BIN" ]]; then
+    return 0
+  fi
+  build_tools
 }
 
 build_tools() {
@@ -935,14 +1146,71 @@ for prohibited_pattern in \
   fi
 done
 
-build_tools
-prepare_fixture
-run_m01
-run_exchange_core
-run_secure_core
-run_m10
-run_m12
-run_m14
-validate_failure_and_build_contracts
-assert_no_test_artifacts final
-log "RESULT=DRIVE_STORAGE_E2E_OK"
+if (( PRESERVE_WORK_DIR == 1 )); then
+  if [[ -s "$ACTIVE_DEVICES" || -s "$ACTIVE_FIXTURE_DEVICES" || -s "$ACTIVE_PROCESSES" || -s "$ACTIVE_MOUNTS" ]]; then
+    assert_no_test_artifacts "phase-start-$STORAGE_PHASE"
+  fi
+  reset_active_trackers
+fi
+
+case "$STORAGE_PHASE" in
+  all)
+    build_tools
+    prepare_fixture
+    run_m01
+    run_exchange_core
+    run_secure_core
+    run_m10
+    run_m12
+    run_m14
+    validate_failure_and_build_contracts
+    assert_no_test_artifacts final
+    log "RESULT=DRIVE_STORAGE_E2E_OK"
+    ;;
+  prepare)
+    build_tools
+    prepare_fixture
+    record_storage_profile
+    assert_no_test_artifacts prepare
+    mark_storage_phase prepare
+    ;;
+  core)
+    require_prepared_fixture
+    ensure_tools
+    run_m01
+    run_exchange_core
+    run_secure_core
+    assert_no_test_artifacts core
+    mark_storage_phase core
+    ;;
+  stress)
+    require_prepared_fixture
+    ensure_tools
+    run_m10
+    assert_no_test_artifacts stress
+    mark_storage_phase stress
+    ;;
+  recovery)
+    require_prepared_fixture
+    ensure_tools
+    run_m12
+    run_m14
+    assert_no_test_artifacts recovery
+    mark_storage_phase recovery
+    ;;
+  contracts)
+    require_storage_profile
+    ensure_tools
+    validate_failure_and_build_contracts
+    assert_no_test_artifacts contracts
+    mark_storage_phase contracts
+    ;;
+  final)
+    require_storage_profile
+    for phase in prepare core stress recovery contracts; do
+      require_storage_phase "$phase"
+    done
+    assert_no_test_artifacts final
+    log "RESULT=DRIVE_STORAGE_E2E_OK"
+    ;;
+esac

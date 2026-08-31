@@ -13,7 +13,7 @@
 |---|---|---|
 | A | 基线、计划、架构 ratchet | DONE |
 | B | Disk Arbitration async | DONE |
-| C | BlockPublisher / DiskImages2 async | TODO |
+| C | BlockPublisher / DiskImages2 async | DONE* |
 | D | Typed lifecycle errors | TODO |
 | E | Virtual clock / scheduler | TODO |
 | F | Deterministic model/property tests | TODO |
@@ -81,21 +81,26 @@
 - [x] `make drive-test-virtual-usb` PASS
 - [x] `make drive-test-storage-smoke` PASS，M10 5/5，FD 9/9，M12/M13/M14 PASS
 - [x] `git diff --check` PASS
-- [ ] commit/push
+- [x] commit/push：`6ebbf02 refactor(drive): harden asynchronous lifecycle boundaries`
 
 ## Phase C — BlockPublisher / DiskImages2 async
 
-状态：TODO
+状态：DONE*（代码/hardware-free gate 完成；本机 storage ×2 因 root-owned 历史 orphan 污染环境待管理员清理后补验，不伪记 PASS）
 
 验收项：
 
-- [ ] async publication protocol
-- [ ] async bounded helper process
-- [ ] scratch cleanup 无 `Thread.sleep`
-- [ ] exact backing/owner revalidation
-- [ ] cancellation priority
-- [ ] publication late callback once-only
-- [ ] storage smoke ×2 PASS
+- [x] async publication protocol：`publishWritableImageAsync` + cancellable operation ownership
+- [x] async bounded helper process：normal / timeout / TERM / KILL / cancel / once-only completion
+- [x] scratch cleanup 无 production `Thread.sleep`
+- [x] exact backing/owner revalidation；BSD 消失不再等价于 DiskImages2 owner 已退出
+- [x] cancellation priority；cancel-before-launch 与 publication-wins race 均有明确资源回收语义
+- [x] publication late callback once-only；S20 覆盖 async process timeout/cancel/once-only
+- [x] 独立 `run-block-publisher.sh` 已接入 `drive-test-fast`；`RESULT=DRIVE_BLOCK_PUBLISHER_OK`
+- [x] macFUSE scratch parser/baseline async contract 实际编译执行；`RESULT=MACFUSE_SCRATCH_CLEANUP_CONTRACT_OK`
+- [x] policy persistence race 同期修复：store load-modify-save 串行化、PID+UUID temp file；lifecycle harness direct run 20/20 PASS
+- [x] storage harness 加固：phased mode、profile marker、phase-start leak gate、synthetic BSD settle/revalidation、bounded hdiutil attach、erase timeout result-state recovery、owner-only publication detection
+- [ ] storage smoke ×2 PASS：本机存在 root-owned 4KiB macFUSE scratch orphan 与 owner-only DiskImages2 publication，普通用户不可安全回收；待一次管理员清理后补验
+- [ ] installed service-cycle：同上，待管理员安装 clean combined installer 后执行
 - [ ] commit/push
 
 ## Phase D — Typed lifecycle errors
@@ -191,6 +196,18 @@
 - 创建本轮完整实施计划与实时 tracker。
 - 明确本轮不再继续增加同步 fallback；后续以 async callback/state-event 为唯一产品路径。
 - Phase A 基线验证完成：`git diff --check`、`make drive-test-fast`、`make drive-test-system` 全部 PASS。
+
+### 2026-08-31 09:35 — Phase C
+
+- BlockPublisher/DiskImages2 正式路径已改成 cancellable async operation；删除同步 publication、publisher 内 `Thread.sleep` 与 `waitUntilExit`。
+- async child process 使用 termination handler + deadline，覆盖 timeout→TERM→KILL、显式 cancel、completion exactly-once，并修复 fire-and-forget operation 提前释放导致 completion 丢失的 ownership bug。
+- MountManager publication 阶段接入 operation cancellation；若 publication 已完成则先 exact unpublish synthetic device，再继续 transport cleanup。
+- scratch baseline/orphan cleanup、persisted-session scratch recovery 与 DiskImages2 backing disappearance polling 全部异步化。
+- S20 新增 `async_publisher_process_timeout_cancel_once`；独立 publisher/scratch contract 已接入 fast gate。
+- service lifecycle 发现并修复 policy persistence 并发竞态：同 PID temp file 冲突已改 PID+UUID，load-modify-save 事务由 recursive lock 串行化；D03/D05/D06/D08/D09 setup 改为先配置默认策略再插入 virtual media。已编译 harness 连续 20/20 PASS。
+- hardware-free 验证：fast、system、virtual-usb、UI 均 PASS；UI 最新 max hitch 25ms、0 个 >33ms。
+- clean combined installer `artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg` 已构建，`verify-clean-installer.sh` 完整 PASS。
+- storage 本机运行暴露并修复多项 harness 边界，但当前系统仍有普通用户无权回收的历史 root-owned scratch/owner-only DiskImages2 orphan；因此 storage ×2 与 installed service-cycle 保持未验收，必须管理员清理后再补，不写成 PASS。
 
 ### 2026-08-31 00:14 — Phase B
 

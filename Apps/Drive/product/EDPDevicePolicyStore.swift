@@ -136,6 +136,13 @@ struct EDPDevicePolicyStoreError: Error, CustomStringConvertible, Sendable {
 
 final class EDPDevicePolicyStore {
     private let path: String
+    private let lock = NSRecursiveLock()
+
+    private func synchronized<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
 
     init(path: String) throws {
         self.path = path
@@ -153,18 +160,20 @@ final class EDPDevicePolicyStore {
     }
 
     func load() throws -> EDPPolicyDocument {
-        guard FileManager.default.fileExists(atPath: path) else {
-            return EDPPolicyDocument()
+        try synchronized {
+            guard FileManager.default.fileExists(atPath: path) else {
+                return EDPPolicyDocument()
+            }
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            let sourceSchemaVersion = (
+                (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            )?["schemaVersion"] as? Int ?? 1
+            let document = try JSONDecoder().decode(EDPPolicyDocument.self, from: data)
+            if sourceSchemaVersion < EDPPolicyDocument.currentSchemaVersion {
+                try save(document)
+            }
+            return document
         }
-        let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        let sourceSchemaVersion = (
-            (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        )?["schemaVersion"] as? Int ?? 1
-        let document = try JSONDecoder().decode(EDPPolicyDocument.self, from: data)
-        if sourceSchemaVersion < EDPPolicyDocument.currentSchemaVersion {
-            try save(document)
-        }
-        return document
     }
 
     @discardableResult
@@ -174,169 +183,187 @@ final class EDPDevicePolicyStore {
         vidPID: String,
         sizeBytes: UInt64
     ) throws -> EDPDevicePolicy {
-        var document = try load()
-        if let index = document.devices.firstIndex(where: { $0.deviceID == deviceID }) {
-            let existing = document.devices[index]
-            guard existing.lastMediaName != mediaName
-                    || existing.lastVIDPID != vidPID
-                    || existing.lastSizeBytes != sizeBytes else {
-                return existing
+        try synchronized {
+            var document = try load()
+            if let index = document.devices.firstIndex(where: { $0.deviceID == deviceID }) {
+                let existing = document.devices[index]
+                guard existing.lastMediaName != mediaName
+                        || existing.lastVIDPID != vidPID
+                        || existing.lastSizeBytes != sizeBytes else {
+                    return existing
+                }
+                document.devices[index].lastMediaName = mediaName
+                document.devices[index].lastVIDPID = vidPID
+                document.devices[index].lastSizeBytes = sizeBytes
+                try save(document)
+                return document.devices[index]
             }
-            document.devices[index].lastMediaName = mediaName
-            document.devices[index].lastVIDPID = vidPID
-            document.devices[index].lastSizeBytes = sizeBytes
+            let policy = EDPDevicePolicy(
+                deviceID: deviceID,
+                displayName: mediaName,
+                lastMediaName: mediaName,
+                lastVIDPID: vidPID,
+                lastSizeBytes: sizeBytes,
+                partitions: EDPPartitionKind.allCases.map {
+                    let defaultPolicy = document.defaultPolicy(for: $0.rawValue)
+                    return EDPPartitionPolicy(
+                        partitionType: $0.rawValue,
+                        autoMount: defaultPolicy.autoMount,
+                        autoProbePassword: $0.isEncrypted && defaultPolicy.autoProbePassword
+                    )
+                }
+            )
+            document.devices.append(policy)
+            document.devices.sort { $0.deviceID < $1.deviceID }
             try save(document)
-            return document.devices[index]
+            return policy
         }
-        let policy = EDPDevicePolicy(
-            deviceID: deviceID,
-            displayName: mediaName,
-            lastMediaName: mediaName,
-            lastVIDPID: vidPID,
-            lastSizeBytes: sizeBytes,
-            partitions: EDPPartitionKind.allCases.map {
-                let defaultPolicy = document.defaultPolicy(for: $0.rawValue)
-                return EDPPartitionPolicy(
-                    partitionType: $0.rawValue,
-                    autoMount: defaultPolicy.autoMount,
-                    autoProbePassword: $0.isEncrypted && defaultPolicy.autoProbePassword
-                )
-            }
-        )
-        document.devices.append(policy)
-        document.devices.sort { $0.deviceID < $1.deviceID }
-        try save(document)
-        return policy
     }
 
     func setDefaultAutoMount(partitionType: UInt32, enabled: Bool) throws {
-        guard EDPPartitionKind(rawValue: partitionType) != nil else {
-            throw EDPDevicePolicyStoreError(description: "unsupported partition type \(partitionType)")
-        }
-        var document = try load()
-        if let index = document.partitionDefaults.firstIndex(where: { $0.partitionType == partitionType }) {
-            document.partitionDefaults[index].autoMount = enabled
-        } else {
-            document.partitionDefaults.append(EDPPartitionPolicy(
-                partitionType: partitionType,
-                autoMount: enabled,
-                autoProbePassword: false
-            ))
-        }
-        document.partitionDefaults.sort { $0.partitionType < $1.partitionType }
-        try save(document)
-    }
-
-    func setDefaultAutoProbePassword(partitionType: UInt32, enabled: Bool) throws {
-        guard let kind = EDPPartitionKind(rawValue: partitionType), kind.isEncrypted else {
-            throw EDPDevicePolicyStoreError(
-                description: "automatic password probing is only valid for partition 2 or 4"
-            )
-        }
-        var document = try load()
-        if let index = document.partitionDefaults.firstIndex(where: { $0.partitionType == partitionType }) {
-            document.partitionDefaults[index].autoProbePassword = enabled
-        } else {
-            document.partitionDefaults.append(EDPPartitionPolicy(
-                partitionType: partitionType,
-                autoMount: false,
-                autoProbePassword: enabled
-            ))
-        }
-        document.partitionDefaults.sort { $0.partitionType < $1.partitionType }
-        try save(document)
-    }
-
-    func setAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool) throws {
-        guard EDPPartitionKind(rawValue: partitionType) != nil else {
-            throw EDPDevicePolicyStoreError(description: "unsupported partition type \(partitionType)")
-        }
-        var document = try load()
-        guard let deviceIndex = document.devices.firstIndex(where: { $0.deviceID == deviceID }) else {
-            throw EDPDevicePolicyStoreError(description: "device policy not found")
-        }
-        if let partitionIndex = document.devices[deviceIndex].partitions.firstIndex(
-            where: { $0.partitionType == partitionType }
-        ) {
-            document.devices[deviceIndex].partitions[partitionIndex].autoMount = enabled
-        } else {
-            document.devices[deviceIndex].partitions.append(
-                EDPPartitionPolicy(
+        try synchronized {
+            guard EDPPartitionKind(rawValue: partitionType) != nil else {
+                throw EDPDevicePolicyStoreError(description: "unsupported partition type \(partitionType)")
+            }
+            var document = try load()
+            if let index = document.partitionDefaults.firstIndex(where: { $0.partitionType == partitionType }) {
+                document.partitionDefaults[index].autoMount = enabled
+            } else {
+                document.partitionDefaults.append(EDPPartitionPolicy(
                     partitionType: partitionType,
                     autoMount: enabled,
                     autoProbePassword: false
-                )
-            )
+                ))
+            }
+            document.partitionDefaults.sort { $0.partitionType < $1.partitionType }
+            try save(document)
         }
-        document.devices[deviceIndex].partitions.sort { $0.partitionType < $1.partitionType }
-        try save(document)
+    }
+
+    func setDefaultAutoProbePassword(partitionType: UInt32, enabled: Bool) throws {
+        try synchronized {
+            guard let kind = EDPPartitionKind(rawValue: partitionType), kind.isEncrypted else {
+                throw EDPDevicePolicyStoreError(
+                    description: "automatic password probing is only valid for partition 2 or 4"
+                )
+            }
+            var document = try load()
+            if let index = document.partitionDefaults.firstIndex(where: { $0.partitionType == partitionType }) {
+                document.partitionDefaults[index].autoProbePassword = enabled
+            } else {
+                document.partitionDefaults.append(EDPPartitionPolicy(
+                    partitionType: partitionType,
+                    autoMount: false,
+                    autoProbePassword: enabled
+                ))
+            }
+            document.partitionDefaults.sort { $0.partitionType < $1.partitionType }
+            try save(document)
+        }
+    }
+
+    func setAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool) throws {
+        try synchronized {
+            guard EDPPartitionKind(rawValue: partitionType) != nil else {
+                throw EDPDevicePolicyStoreError(description: "unsupported partition type \(partitionType)")
+            }
+            var document = try load()
+            guard let deviceIndex = document.devices.firstIndex(where: { $0.deviceID == deviceID }) else {
+                throw EDPDevicePolicyStoreError(description: "device policy not found")
+            }
+            if let partitionIndex = document.devices[deviceIndex].partitions.firstIndex(
+                where: { $0.partitionType == partitionType }
+            ) {
+                document.devices[deviceIndex].partitions[partitionIndex].autoMount = enabled
+            } else {
+                document.devices[deviceIndex].partitions.append(
+                    EDPPartitionPolicy(
+                        partitionType: partitionType,
+                        autoMount: enabled,
+                        autoProbePassword: false
+                    )
+                )
+            }
+            document.devices[deviceIndex].partitions.sort { $0.partitionType < $1.partitionType }
+            try save(document)
+        }
     }
 
     func setAutoProbePassword(deviceID: String, partitionType: UInt32, enabled: Bool) throws {
-        guard let kind = EDPPartitionKind(rawValue: partitionType), kind.isEncrypted else {
-            throw EDPDevicePolicyStoreError(
-                description: "automatic password probing is only valid for partition 2 or 4"
-            )
+        try synchronized {
+            guard let kind = EDPPartitionKind(rawValue: partitionType), kind.isEncrypted else {
+                throw EDPDevicePolicyStoreError(
+                    description: "automatic password probing is only valid for partition 2 or 4"
+                )
+            }
+            var document = try load()
+            guard let deviceIndex = document.devices.firstIndex(where: { $0.deviceID == deviceID }) else {
+                throw EDPDevicePolicyStoreError(description: "device policy not found")
+            }
+            if let partitionIndex = document.devices[deviceIndex].partitions.firstIndex(
+                where: { $0.partitionType == partitionType }
+            ) {
+                document.devices[deviceIndex].partitions[partitionIndex].autoProbePassword = enabled
+            } else {
+                document.devices[deviceIndex].partitions.append(EDPPartitionPolicy(
+                    partitionType: partitionType,
+                    autoMount: false,
+                    autoProbePassword: enabled
+                ))
+            }
+            document.devices[deviceIndex].partitions.sort { $0.partitionType < $1.partitionType }
+            try save(document)
         }
-        var document = try load()
-        guard let deviceIndex = document.devices.firstIndex(where: { $0.deviceID == deviceID }) else {
-            throw EDPDevicePolicyStoreError(description: "device policy not found")
-        }
-        if let partitionIndex = document.devices[deviceIndex].partitions.firstIndex(
-            where: { $0.partitionType == partitionType }
-        ) {
-            document.devices[deviceIndex].partitions[partitionIndex].autoProbePassword = enabled
-        } else {
-            document.devices[deviceIndex].partitions.append(EDPPartitionPolicy(
-                partitionType: partitionType,
-                autoMount: false,
-                autoProbePassword: enabled
-            ))
-        }
-        document.devices[deviceIndex].partitions.sort { $0.partitionType < $1.partitionType }
-        try save(document)
     }
 
     func setDisplayName(deviceID: String, displayName: String) throws {
-        let normalized = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty, normalized.count <= 64 else {
-            throw EDPDevicePolicyStoreError(description: "device name must contain 1...64 characters")
+        try synchronized {
+            let normalized = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty, normalized.count <= 64 else {
+                throw EDPDevicePolicyStoreError(description: "device name must contain 1...64 characters")
+            }
+            var document = try load()
+            guard let index = document.devices.firstIndex(where: { $0.deviceID == deviceID }) else {
+                throw EDPDevicePolicyStoreError(description: "device policy not found")
+            }
+            document.devices[index].displayName = normalized
+            try save(document)
         }
-        var document = try load()
-        guard let index = document.devices.firstIndex(where: { $0.deviceID == deviceID }) else {
-            throw EDPDevicePolicyStoreError(description: "device policy not found")
-        }
-        document.devices[index].displayName = normalized
-        try save(document)
     }
 
     func setGlobalAutoMount(_ enabled: Bool) throws {
-        var document = try load()
-        document.globalAutoMountEnabled = enabled
-        try save(document)
+        try synchronized {
+            var document = try load()
+            document.globalAutoMountEnabled = enabled
+            try save(document)
+        }
     }
 
     func remove(deviceID: String) throws {
-        var document = try load()
-        document.devices.removeAll { $0.deviceID == deviceID }
-        try save(document)
+        try synchronized {
+            var document = try load()
+            document.devices.removeAll { $0.deviceID == deviceID }
+            try save(document)
+        }
     }
 
     private func save(_ document: EDPPolicyDocument) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(document)
-        let temporary = path + ".tmp.\(getpid())"
-        try data.write(to: URL(fileURLWithPath: temporary), options: .withoutOverwriting)
-        guard chmod(temporary, 0o600) == 0 else {
-            let saved = errno
-            try? FileManager.default.removeItem(atPath: temporary)
-            throw EDPDevicePolicyStoreError(description: "chmod policy failed: errno=\(saved)")
-        }
-        if rename(temporary, path) != 0 {
-            let saved = errno
-            try? FileManager.default.removeItem(atPath: temporary)
-            throw EDPDevicePolicyStoreError(description: "atomic policy write failed: errno=\(saved)")
+        try synchronized {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(document)
+            let temporary = path + ".tmp.\(getpid()).\(UUID().uuidString)"
+            try data.write(to: URL(fileURLWithPath: temporary), options: .withoutOverwriting)
+            guard chmod(temporary, 0o600) == 0 else {
+                let saved = errno
+                try? FileManager.default.removeItem(atPath: temporary)
+                throw EDPDevicePolicyStoreError(description: "chmod policy failed: errno=\(saved)")
+            }
+            if rename(temporary, path) != 0 {
+                let saved = errno
+                try? FileManager.default.removeItem(atPath: temporary)
+                throw EDPDevicePolicyStoreError(description: "atomic policy write failed: errno=\(saved)")
+            }
         }
     }
 }

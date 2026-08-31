@@ -57,6 +57,7 @@ check: core-test drive-check
 
 drive-test-fast: core-test drive-check
 	@"$(ROOT)/Apps/Drive/Tests/run-fast.sh"
+	@"$(ROOT)/Apps/Drive/Tests/run-block-publisher.sh"
 
 # Canonical phase targets. Later regression phases replace these aliases with
 # their dedicated harnesses while preserving a stable developer-facing API.
