@@ -40,7 +40,8 @@ fi
 /usr/bin/grep -Fq 'diskutil eraseVolume "$filesystem" "$label" "$bsd"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'fixture backing escaped test root' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'synthetic backing escaped test root' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'Virtual:                   Yes' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'image.get("diskimages2") is False' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'image.get("owner-uid") == os.getuid()' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'A vanished BSD node is not sufficient teardown proof.' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_fixture_publication_gone "$path" 100' "${STORAGE_RUNNER}"
@@ -57,6 +58,12 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 /usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'command" == "/usr/libexec/fskit_agent"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_FSKIT_HOST_RETRY=' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq -- '--mountpoint-for-source' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq -- '--assert-readonly' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq -- '--assert-writable' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq -- '--assert-no-mount-prefix' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq '/usr/sbin/diskutil info' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Eq '/sbin/mount([[:space:]]|$)' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'while adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_FSKIT_BOUNDED_RECOVERY_OK'
 

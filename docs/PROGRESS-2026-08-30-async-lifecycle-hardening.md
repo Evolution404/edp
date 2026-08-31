@@ -210,6 +210,16 @@
 
 ## 变更日志
 
+### 2026-08-31 20:29 — Release 50-loop exposed unbounded mount metadata query
+
+- `367de1f` exact-head fast / virtual-usb / system 全绿后启动 release `make drive-test-storage`，M01、M02/M04-M09、M03 均通过并进入 M10 50-loop。
+- M10 第 2 轮出现异常长停顿；进程树证明 `diskutil info -plist disk27` 进入 `U`（内核不可中断等待）超过 6 分钟，导致父 `run-storage.sh` 永久阻塞。对应 `disk27` 已由 `hdiutil info` 精确证明为当前 `edp-storage-e2e.M8HIDD/.../m10-2-bridge/volume.raw` 的 DiskImages2 synthetic publication，不涉及 physical USB。
+- 根因不是产品状态机，而是 storage harness 的“bounded”漏洞：`mount_native()` 在完成 native mount 后用裸 `diskutil info -plist` 查询 MountPoint；另外 `is_mounted()` / leak/cleanup 仍依赖裸 `/sbin/mount`。这些查询在 FSKit 内核等待时可自身进入 `U`，使外层循环/timeout 失效。
+- `DirectMFMountUnmountHelper` 扩展为 `getmntinfo(MNT_NOWAIT)` 只读查询工具：支持 mounted/source/source→mountpoint、read-only/writable、macFUSE 类型、mount-prefix leak、outside macFUSE 检查；保留原 privileged unmount 模式。
+- `run-storage.sh` 已删除全部裸 `/usr/sbin/diskutil info` 与 `/sbin/mount` 查询；mountpoint/read-only/writeable/is-mounted/leak 判断全部走 helper。DiskImages2 readiness 改为 exact backing publication + raw 512B 可读，fixture synthetic proof继续要求 exact WORK_DIR backing、CRawDiskImage (`diskimages2=false`)、console-user owner、writable/removable、512B block size。
+- system ratchet 新增 helper query mode 存在性，并禁止 storage runner 重新出现裸 `diskutil info` / `/sbin/mount`；`bash -n`、C17 `-Wall -Wextra -Werror`、`make drive-test-system`、`git diff --check` PASS。
+- 当前运行中的旧 release 仍卡在重启前已生成的 `diskutil info` U-state；不触发 cleanup trap、不叠加磁盘命令。代码修复提交后需要重启一次清理该内核等待，再从全新枚举重新跑 release 50-loop。
+
 ### 2026-08-31 20:12 — Storage teardown / FSKit recovery hardening and smoke 2/2
 
 - 重启后重新枚举：storage process=0、EDP hidden mount=0、EDP DiskImages publication=0、4KiB macFUSE scratch=0、external physical=0；重启前所有 diskN/PID 均作废，未复用历史编号。

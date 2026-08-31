@@ -95,21 +95,23 @@ chmod 0600 "$PASSWORD_FILE"
 log() { printf '%s\n' "$*"; }
 
 is_mounted() {
-  /sbin/mount | /usr/bin/awk -v target="$1" '$3 == target { found=1 } END { exit found ? 0 : 1 }'
+  [[ -x "$FSKIT_GUARD_BIN" ]] || return 1
+  "$FSKIT_GUARD_BIN" --is-mounted "$1" >/dev/null 2>&1
 }
 
 cleanup_crashed_local_mount() {
   local target="$1"
   local source
-  source="$(/sbin/mount | /usr/bin/awk -v target="$target" '$3 == target && $0 ~ /\(macfuse, local,/ { print $1 }')"
+  source="$("$FSKIT_GUARD_BIN" --mount-source "$target" 2>/dev/null || true)"
   [[ "$source" =~ ^/dev/disk[0-9]+$ ]] || {
     echo "refusing crash cleanup for unknown mount source: $target source=$source" >&2
     return 1
   }
-  local outside_count
-  outside_count="$(/sbin/mount | /usr/bin/awk -v root="$WORK_DIR/" \
-    '$0 ~ /\(macfuse, local,/ && index($3, root) != 1 { count++ } END { print count + 0 }')"
-  if (( outside_count != 0 )); then
+  "$FSKIT_GUARD_BIN" --is-macfuse-mount "$target" >/dev/null 2>&1 || {
+    echo "refusing crash cleanup for non-macFUSE mount: $target" >&2
+    return 1
+  }
+  if ! "$FSKIT_GUARD_BIN" --assert-no-macfuse-mounts-outside "$WORK_DIR/"; then
     echo "refusing macFUSE Local module restart while unrelated Local mounts exist" >&2
     return 1
   fi
@@ -328,12 +330,13 @@ for image in root.get("images", []):
         and image.get("owner-uid") == os.getuid()
         and image.get("writeable") is True
         and image.get("removable") is True
+        and isinstance(image.get("blockcount"), int)
+        and image.get("blockcount") > 0
+        and image.get("blocksize") == 512
     )
     raise SystemExit(0 if valid else 1)
 raise SystemExit(1)
 PY
-  /usr/sbin/diskutil info "$bsd" \
-    | /usr/bin/grep -Fq 'Virtual:                   Yes'
 }
 
 recover_fixture_image() {
@@ -472,8 +475,7 @@ cleanup() {
     while IFS= read -r mountpoint; do
       [[ -n "$mountpoint" ]] || continue
       if is_mounted "$mountpoint"; then
-        if /sbin/mount | /usr/bin/awk -v target="$mountpoint" \
-          '$3 == target && $0 ~ /\(macfuse, local,/ { found=1 } END { exit found ? 0 : 1 }'; then
+        if "$FSKIT_GUARD_BIN" --is-macfuse-mount "$mountpoint" >/dev/null 2>&1; then
           cleanup_crashed_local_mount "$mountpoint" >/dev/null 2>&1 || true
         else
           bounded 8 /sbin/umount -f "$mountpoint" >/dev/null 2>&1 || true
@@ -502,13 +504,14 @@ attach_image() {
   attached_bsd="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "$attach_log" | /usr/bin/tail -1)"
   [[ -n "$attached_bsd" && -b "/dev/$attached_bsd" ]]
   assert_synthetic_device "$attached_bsd" "$backing"
-  # DiskImages2 can return the BSD name a few milliseconds before Disk
-  # Arbitration/diskutil can open the media. Wait for the synthetic device to
-  # become fully queryable before any destructive fixture formatting step.
+  # DiskImages2 can return the BSD name a few milliseconds before the raw
+  # device is openable. Exact backing + DiskImages2 provenance already proves
+  # this is synthetic; use a direct raw-read readiness check instead of
+  # diskutil metadata queries, which can enter an uninterruptible FSKit wait.
   local ready=0
   for _ in $(/usr/bin/seq 1 100); do
-    if /usr/sbin/diskutil info "$attached_bsd" 2>/dev/null \
-      | /usr/bin/grep -Fq 'Virtual:                   Yes'; then
+    if assert_synthetic_device "$attached_bsd" "$backing" >/dev/null 2>&1 \
+      && /usr/bin/head -c 512 "/dev/r$attached_bsd" >/dev/null 2>&1; then
       ready=1
       break
     fi
@@ -840,16 +843,10 @@ mount_native() {
   local bsd="$1"
   local output_variable="$2"
   bounded 20 /usr/sbin/diskutil mount "$bsd" >/dev/null
-  local info="$WORK_DIR/disk-info-$bsd.plist"
+  local source="/dev/$bsd"
   local resolved_mountpoint=""
   for _ in $(/usr/bin/seq 1 100); do
-    /usr/sbin/diskutil info -plist "$bsd" >"$info"
-    resolved_mountpoint="$(/usr/bin/python3 - "$info" <<'PY'
-import plistlib, sys
-with open(sys.argv[1], "rb") as handle:
-    print(plistlib.load(handle).get("MountPoint") or "")
-PY
-)"
+    resolved_mountpoint="$("$FSKIT_GUARD_BIN" --mountpoint-for-source "$source" 2>/dev/null || true)"
     [[ -n "$resolved_mountpoint" && -d "$resolved_mountpoint" ]] && break
     /bin/sleep 0.1
   done
@@ -867,7 +864,7 @@ mount_boot_read_only() {
     -o rdonly -u "$(/usr/bin/id -u)" -g "$(/usr/bin/id -g)" -m 755 \
     "/dev/$bsd" "$mountpoint"
   is_mounted "$mountpoint"
-  /usr/sbin/diskutil info "$bsd" | /usr/bin/grep -Eq 'Volume Read-Only:[[:space:]]+Yes'
+  "$FSKIT_GUARD_BIN" --assert-readonly "$mountpoint"
 }
 
 unmount_path() {
@@ -880,9 +877,8 @@ unmount_path() {
 
 assert_no_test_artifacts() {
   local label="$1"
-  if /sbin/mount | /usr/bin/grep -F "$WORK_DIR" >/dev/null; then
+  if ! "$FSKIT_GUARD_BIN" --assert-no-mount-prefix "$WORK_DIR/"; then
     echo "test mount leaked after $label" >&2
-    /sbin/mount | /usr/bin/grep -F "$WORK_DIR" >&2 || true
     return 1
   fi
   /usr/bin/hdiutil info -plist >"$WORK_DIR/hdiutil-artifact-check.plist"
@@ -1108,7 +1104,7 @@ run_exchange_core() {
   start_adapter 2 "$bridge" m02-stage1 pid
   attach_image "$bridge/volume.raw" bsd m02-stage1
   mount_native "$bsd" mountpoint
-  /usr/sbin/diskutil info "$bsd" | /usr/bin/grep -Eq 'Volume Read-Only:[[:space:]]+No'
+  "$FSKIT_GUARD_BIN" --assert-writable "$mountpoint"
   output="$(/usr/bin/python3 Tests/Storage/ExerciseNativeFilesystem.py core "$mountpoint")"
   printf '%s\n' "$output"
   expected_hash="$(printf '%s\n' "$output" | /usr/bin/awk -F= '/^M02_SHA256=/{print $2}')"
