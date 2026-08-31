@@ -918,6 +918,7 @@ private final class EDPFSKitMountOperationBox: @unchecked Sendable {
     let partitionType: UInt32
     var password: [UInt8]
     let rawFD: Int32
+    let journalContext: EDPLifecycleOperationContext
     let completion: EDPDaemonMountCompletion
     var publicationOperation: (any EDPCancellableOperation)?
     var finished = false
@@ -928,6 +929,7 @@ private final class EDPFSKitMountOperationBox: @unchecked Sendable {
         partitionType: UInt32,
         password: [UInt8],
         rawFD: Int32,
+        journalContext: EDPLifecycleOperationContext,
         completion: @escaping EDPDaemonMountCompletion
     ) {
         self.sessionKey = sessionKey
@@ -935,6 +937,7 @@ private final class EDPFSKitMountOperationBox: @unchecked Sendable {
         self.partitionType = partitionType
         self.password = password
         self.rawFD = rawFD
+        self.journalContext = journalContext
         self.completion = completion
     }
 
@@ -976,6 +979,7 @@ protocol EDPDaemonMountManaging: AnyObject {
     func mountedSummaries() -> [[String: String]]
     func summary(deviceID: String, partitionType: UInt32) -> [String: String]?
     func lastFailureCode(deviceID: String, partitionType: UInt32) -> EDPLifecycleFailureCode?
+    func lifecycleJournalSnapshot() -> [EDPLifecycleJournalEntry]
     func mountAsync(
         disk: PhysicalDisk,
         partitionType: UInt32,
@@ -989,6 +993,11 @@ protocol EDPDaemonMountManaging: AnyObject {
         completion: @escaping EDPDaemonMountCompletion
     )
     func ejectAsync(deviceID: String, completion: @escaping EDPDaemonMountCompletion)
+    func recordPhysicalEjectResult(
+        deviceID: String,
+        failureCode: EDPLifecycleFailureCode?
+    )
+    func recordShutdownCoalesced()
     @discardableResult
     func removeMissing(availableDisks: [String: String], graceSeconds: TimeInterval) -> Bool
     func unmountAllAsync(completion: @escaping EDPDaemonMountCompletion)
@@ -1000,6 +1009,18 @@ extension EDPDaemonMountManaging {
         _ = partitionType
         return nil
     }
+
+    func lifecycleJournalSnapshot() -> [EDPLifecycleJournalEntry] { [] }
+
+    func recordPhysicalEjectResult(
+        deviceID: String,
+        failureCode: EDPLifecycleFailureCode?
+    ) {
+        _ = deviceID
+        _ = failureCode
+    }
+
+    func recordShutdownCoalesced() {}
 }
 
 private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
@@ -1009,6 +1030,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private let diskArbitration: EDPDiskArbitrationController
     private let blockPublisher: any EDPBlockDevicePublisher
     private let scheduler: any EDPLifecycleScheduling
+    private let journal: EDPLifecycleJournal
     private let lifecycleQueue = DispatchQueue(label: "com.edp.drive.mount-lifecycle", qos: .userInitiated)
     private let filesystemOperationQueue = DispatchQueue(
         label: "com.edp.drive.filesystem-operation",
@@ -1021,12 +1043,18 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     private var mountWaiters = [String: [EDPDaemonMountCompletion]]()
     private var lastMountFailureCodes = [String: EDPLifecycleFailureCode]()
     private var unmountWaiters = [String: [EDPDaemonMountCompletion]]()
+    private var unmountJournalContexts = [String: EDPLifecycleOperationContext]()
     private var ejectWaiters = [String: [EDPDaemonMountCompletion]]()
+    private var ejectJournalContexts = [String: EDPLifecycleOperationContext]()
+    private var shutdownWaiters = [EDPDaemonMountCompletion]()
+    private var shutdownJournalContext: EDPLifecycleOperationContext?
 
     init(
-        scheduler: any EDPLifecycleScheduling = EDPDispatchLifecycleScheduler.shared
+        scheduler: any EDPLifecycleScheduling = EDPDispatchLifecycleScheduler.shared,
+        journal: EDPLifecycleJournal = EDPLifecycleJournal()
     ) throws {
         self.scheduler = scheduler
+        self.journal = journal
         if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
             binaryRoot = configuredRoot
         } else {
@@ -1046,6 +1074,55 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             return try body()
         }
         return try lifecycleQueue.sync(execute: body)
+    }
+
+    private func makeLifecycleContext(
+        operation: String,
+        deviceID: String,
+        partitionType: UInt32? = nil
+    ) -> EDPLifecycleOperationContext {
+        EDPLifecycleOperationContext(
+            operation: operation,
+            deviceID: deviceID,
+            partitionType: partitionType,
+            startedAtNanoseconds: scheduler.nowNanoseconds
+        )
+    }
+
+    private func makeLifecycleContext(
+        operation: String,
+        sessionKey: String
+    ) -> EDPLifecycleOperationContext {
+        guard let separator = sessionKey.lastIndex(of: ":"),
+              let partitionType = UInt32(sessionKey[sessionKey.index(after: separator)...]) else {
+            return makeLifecycleContext(operation: operation, deviceID: sessionKey)
+        }
+        return makeLifecycleContext(
+            operation: operation,
+            deviceID: String(sessionKey[..<separator]),
+            partitionType: partitionType
+        )
+    }
+
+    private func recordLifecycle(
+        _ context: EDPLifecycleOperationContext,
+        state: String,
+        event: String,
+        attempt: Int? = nil,
+        recoveryBudget: Int? = nil,
+        ownedResources: [String] = [],
+        diagnosticCode: EDPLifecycleFailureCode? = nil
+    ) {
+        journal.record(
+            context: context,
+            scheduler: scheduler,
+            state: state,
+            event: event,
+            attempt: attempt,
+            recoveryBudget: recoveryBudget,
+            ownedResources: ownedResources,
+            diagnosticCode: diagnosticCode?.rawValue
+        )
     }
 
     func recoverPersistedSessionsAsync(completion: @escaping EDPDaemonMountCompletion) {
@@ -1193,6 +1270,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         lifecycleSync { lastMountFailureCodes["\(deviceID):\(partitionType)"] }
     }
 
+    func lifecycleJournalSnapshot() -> [EDPLifecycleJournalEntry] {
+        journal.snapshot()
+    }
+
     func mountedPhysicalDisks() -> Set<String> {
         lifecycleSync { Set(sessions.values.map(\.physicalBSD)) }
     }
@@ -1263,6 +1344,12 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             partitionType: partitionType,
             password: password,
             rawFD: rawFD,
+            journalContext: EDPLifecycleOperationContext(
+                operation: "mount",
+                deviceID: disk.deviceID,
+                partitionType: partitionType,
+                startedAtNanoseconds: scheduler.nowNanoseconds
+            ),
             completion: completion
         )
         lifecycleQueue.async { [weak self, operation] in
@@ -1270,24 +1357,85 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 completion("mount manager was released")
                 return
             }
+            self.recordMountJournal(operation, event: "request")
             if self.sessions[sessionKey] != nil {
+                self.recordMountJournal(
+                    operation,
+                    event: "alreadyMounted",
+                    ownedResources: ["transport", "publication", "filesystem"]
+                )
                 completion(nil)
                 return
             }
             if self.activeMountOperations.contains(sessionKey) {
+                self.recordMountJournal(operation, event: "singleFlightJoined")
                 self.mountWaiters[sessionKey, default: []].append(completion)
                 return
             }
             self.activeMountOperations.insert(sessionKey)
             self.activeMountOperationBoxes[sessionKey] = operation
             self.cancelledMountOperations.remove(sessionKey)
-            self.executeMountAction(operation.machine.start(), operation: operation)
+            let action = operation.machine.start()
+            self.recordMountJournal(operation, event: "started")
+            self.executeMountAction(action, operation: operation)
         }
+    }
+
+    private func recordMountJournal(
+        _ operation: EDPFSKitMountOperationBox,
+        event: String,
+        ownedResources: [String] = [],
+        diagnosticCode: EDPLifecycleFailureCode? = nil
+    ) {
+        let state: String
+        let attempt: Int?
+        switch operation.machine.state {
+        case .idle:
+            state = "idle"
+            attempt = nil
+        case .preparing(let value):
+            state = "preparing"
+            attempt = value
+        case .waitingForBridge(let value):
+            state = "waitingForBridge"
+            attempt = value
+        case .cleaningUp(let value, _, _):
+            state = "cleaningUp"
+            attempt = value
+        case .recoveringHost(let value, _):
+            state = "recoveringHost"
+            attempt = value
+        case .publishing(let value):
+            state = "publishing"
+            attempt = value
+        case .mountingFilesystem(let value):
+            state = "mountingFilesystem"
+            attempt = value
+        case .mounted:
+            state = "mounted"
+            attempt = nil
+        case .failed:
+            state = "failed"
+            attempt = nil
+        }
+        journal.record(
+            context: operation.journalContext,
+            scheduler: scheduler,
+            state: state,
+            event: event,
+            attempt: attempt,
+            recoveryBudget: operation.machine.recoveryBudget,
+            ownedResources: ownedResources,
+            diagnosticCode: diagnosticCode?.rawValue
+        )
     }
 
     private func cancelMountOperation(_ sessionKey: String) {
         cancelledMountOperations.insert(sessionKey)
-        activeMountOperationBoxes[sessionKey]?.publicationOperation?.cancel()
+        if let operation = activeMountOperationBoxes[sessionKey] {
+            recordMountJournal(operation, event: "cancelRequested")
+            operation.publicationOperation?.cancel()
+        }
     }
 
     private func executeMountAction(
@@ -1299,8 +1447,18 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         case .launchAttempt(let attempt):
             launchMountAttempt(operation, attempt: attempt)
         case .fail(let failure):
+            recordMountJournal(
+                operation,
+                event: "terminalFailure",
+                diagnosticCode: failure.code
+            )
             finishMountOperation(operation, error: failure)
         case .complete:
+            recordMountJournal(
+                operation,
+                event: "terminalSuccess",
+                ownedResources: ["transport", "publication", "filesystem"]
+            )
             finishMountOperation(operation, error: nil)
         case .waitForBridge, .cleanup, .restartHost, .publish, .mountFilesystem:
             break
@@ -1311,6 +1469,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         _ operation: EDPFSKitMountOperationBox,
         attempt: Int
     ) {
+        recordMountJournal(operation, event: "launchAttempt")
         if cancelledMountOperations.contains(operation.sessionKey) {
             executeMountAction(operation.machine.cancel(), operation: operation)
             return
@@ -1480,6 +1639,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             executeMountAction(operation.machine.cancel(), operation: operation)
             return
         }
+        recordMountJournal(operation, event: "bridgeLaunchStarted")
         do {
             let passwordPipe = Pipe()
             let logPath = sessionRoot + "/\(suffix).bridge.log"
@@ -1511,6 +1671,11 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 scheduler: scheduler
             )
             _ = operation.machine.attemptLaunched(attempt)
+            recordMountJournal(
+                operation,
+                event: "bridgeWaitStarted",
+                ownedResources: ["transport"]
+            )
             pollBridgeActivation(
                 operation,
                 attempt: attempt,
@@ -1571,6 +1736,11 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         let bridgeMounted = EDPNativeMountTable.isMountpoint(bridgeMount)
         if bridgeMounted && transportSession.isRunning {
             _ = operation.machine.bridgeActivated(attempt)
+            recordMountJournal(
+                operation,
+                event: "bridgeReady",
+                ownedResources: ["transport"]
+            )
             continueMountedBridge(
                 operation,
                 attempt: attempt,
@@ -1603,6 +1773,12 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 transportStillRunning: false,
                 bridgeMounted: bridgeMounted
             )
+            recordMountJournal(
+                operation,
+                event: "bridgeFailure",
+                ownedResources: ["transport"],
+                diagnosticCode: failure.code
+            )
             failBridgeAttempt(
                 operation,
                 attempt: attempt,
@@ -1627,6 +1803,12 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 failure: failure,
                 transportStillRunning: transportSession.isRunning,
                 bridgeMounted: bridgeMounted
+            )
+            recordMountJournal(
+                operation,
+                event: "bridgeFailure",
+                ownedResources: ["transport"],
+                diagnosticCode: failure.code
             )
             failBridgeAttempt(
                 operation,
@@ -1692,6 +1874,11 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         }
 
         let decryptedVolume = bridgeMount + "/volume.raw"
+        recordMountJournal(
+            operation,
+            event: "publicationStarted",
+            ownedResources: ["transport"]
+        )
         operation.publicationOperation = blockPublisher.publishWritableImageAsync(
             at: decryptedVolume
         ) { [weak self, operation] published, errorMessage in
@@ -1700,6 +1887,18 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 operation.publicationOperation = nil
                 let cancelled = self.cancelledMountOperations.contains(operation.sessionKey)
                 guard let published else {
+                    let failure = cancelled
+                        ? EDPLifecycleFailure.cancelled
+                        : EDPLifecycleFailure(
+                            code: .publicationFailed,
+                            detail: errorMessage ?? "block publication returned no device"
+                        )
+                    self.recordMountJournal(
+                        operation,
+                        event: cancelled ? "publicationCancelled" : "publicationFailure",
+                        ownedResources: ["transport"],
+                        diagnosticCode: failure.code
+                    )
                     self.cleanupPublishedMount(
                         operation,
                         attempt: attempt,
@@ -1708,12 +1907,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                         scratchBaseline: scratchBaseline,
                         transportSession: transportSession,
                         publishedDevice: nil,
-                        failure: cancelled
-                            ? .cancelled
-                            : EDPLifecycleFailure(
-                                code: .publicationFailed,
-                                detail: errorMessage ?? "block publication returned no device"
-                            ),
+                        failure: failure,
                         cancelled: cancelled
                     )
                     return
@@ -1722,12 +1916,33 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 guard !cancelled else {
                     // Publication won the cancellation race. Tear down that exact
                     // backing/device tuple before transport cleanup continues.
+                    self.recordMountJournal(
+                        operation,
+                        event: "publicationCancelled",
+                        ownedResources: ["transport", "publication"],
+                        diagnosticCode: .cancelled
+                    )
+                    self.recordMountJournal(
+                        operation,
+                        event: "publicationTeardownStarted",
+                        ownedResources: ["transport", "publication"]
+                    )
                     self.blockPublisher.unpublishAsync(published) { [weak self, operation] unpublishError in
                         guard let self else { return }
                         self.lifecycleQueue.async {
                             if let unpublishError {
                                 NSLog("EDP cancelled publication teardown: %@", unpublishError)
                             }
+                            self.recordMountJournal(
+                                operation,
+                                event: unpublishError == nil
+                                    ? "publicationTeardownComplete"
+                                    : "publicationTeardownFailure",
+                                ownedResources: unpublishError == nil
+                                    ? ["transport"]
+                                    : ["transport", "publication"],
+                                diagnosticCode: unpublishError == nil ? nil : .teardownFailed
+                            )
                             self.cleanupPublishedMount(
                                 operation,
                                 attempt: attempt,
@@ -1745,6 +1960,16 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 }
 
                 _ = operation.machine.publicationFinished(attempt)
+                self.recordMountJournal(
+                    operation,
+                    event: "publicationComplete",
+                    ownedResources: ["transport", "publication"]
+                )
+                self.recordMountJournal(
+                    operation,
+                    event: "filesystemMountStarted",
+                    ownedResources: ["transport", "publication"]
+                )
                 do {
                     let resolved = try resolveFilesystemDevice(published.bsdName)
                     self.mountResolvedFilesystemAsync(
@@ -1767,6 +1992,12 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                                         code: .filesystemMountFailed,
                                         detail: filesystemError ?? "filesystem mount failed"
                                     )
+                                self.recordMountJournal(
+                                    operation,
+                                    event: cancelled ? "filesystemMountCancelled" : "filesystemMountFailure",
+                                    ownedResources: ["transport", "publication"],
+                                    diagnosticCode: failure.code
+                                )
                                 self.cleanupPublishedMount(
                                     operation,
                                     attempt: attempt,
@@ -1781,6 +2012,16 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                                 return
                             }
                             guard let filesystem else {
+                                let failure = EDPLifecycleFailure(
+                                    code: .filesystemMountFailed,
+                                    detail: "filesystem mount returned no result"
+                                )
+                                self.recordMountJournal(
+                                    operation,
+                                    event: "filesystemMountFailure",
+                                    ownedResources: ["transport", "publication"],
+                                    diagnosticCode: failure.code
+                                )
                                 self.cleanupPublishedMount(
                                     operation,
                                     attempt: attempt,
@@ -1789,10 +2030,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                                     scratchBaseline: scratchBaseline,
                                     transportSession: transportSession,
                                     publishedDevice: published,
-                                    failure: EDPLifecycleFailure(
-                                        code: .filesystemMountFailed,
-                                        detail: "filesystem mount returned no result"
-                                    ),
+                                    failure: failure,
                                     cancelled: false
                                 )
                                 return
@@ -1810,6 +2048,11 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                             )
                             self.persistSessions()
                             _ = operation.machine.filesystemMounted(attempt)
+                            self.recordMountJournal(
+                                operation,
+                                event: "filesystemMountComplete",
+                                ownedResources: ["transport", "publication", "filesystem"]
+                            )
                             NSLog(
                                 "EDP mounted %@ partition %u as %@ at %@",
                                 operation.disk.deviceID,
@@ -1821,6 +2064,16 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                         }
                     }
                 } catch {
+                    let failure = EDPLifecycleFailure(
+                        code: .filesystemMountFailed,
+                        detail: String(describing: error)
+                    )
+                    self.recordMountJournal(
+                        operation,
+                        event: "filesystemMountFailure",
+                        ownedResources: ["transport", "publication"],
+                        diagnosticCode: failure.code
+                    )
                     self.cleanupPublishedMount(
                         operation,
                         attempt: attempt,
@@ -1829,10 +2082,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                         scratchBaseline: scratchBaseline,
                         transportSession: transportSession,
                         publishedDevice: published,
-                        failure: EDPLifecycleFailure(
-                            code: .filesystemMountFailed,
-                            detail: String(describing: error)
-                        ),
+                        failure: failure,
                         cancelled: false
                     )
                 }
@@ -1997,6 +2247,14 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         allowHostRecoveryDuringStop: Bool,
         failure: EDPLifecycleFailure
     ) {
+        recordMountJournal(
+            operation,
+            event: "cleanupStarted",
+            ownedResources: publishedDevice == nil
+                ? ["transport"]
+                : ["transport", "publication"],
+            diagnosticCode: failure.code
+        )
         guard let publishedDevice else {
             stopTransportAfterMountCleanup(
                 operation,
@@ -2010,12 +2268,27 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             )
             return
         }
+        recordMountJournal(
+            operation,
+            event: "publicationTeardownStarted",
+            ownedResources: ["transport", "publication"]
+        )
         blockPublisher.unpublishAsync(publishedDevice) { [weak self, operation] unpublishError in
             guard let self else { return }
             self.lifecycleQueue.async {
                 if let unpublishError {
                     NSLog("EDP async publication cleanup after %@: %@", failure.description, unpublishError)
                 }
+                self.recordMountJournal(
+                    operation,
+                    event: unpublishError == nil
+                        ? "publicationTeardownComplete"
+                        : "publicationTeardownFailure",
+                    ownedResources: unpublishError == nil
+                        ? ["transport"]
+                        : ["transport", "publication"],
+                    diagnosticCode: unpublishError == nil ? nil : .teardownFailed
+                )
                 self.stopTransportAfterMountCleanup(
                     operation,
                     attempt: attempt,
@@ -2046,10 +2319,27 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                       !self.cancelledMountOperations.contains(operation.sessionKey) else {
                     return false
                 }
-                return EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
+                self.recordMountJournal(
+                    operation,
+                    event: "hostRecoveryStarted",
+                    ownedResources: ["transport"]
+                )
+                let recovered = EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
+                self.recordMountJournal(
+                    operation,
+                    event: recovered ? "hostRecoveryComplete" : "hostRecoveryFailure",
+                    ownedResources: ["transport"],
+                    diagnosticCode: recovered ? nil : .teardownFailed
+                )
+                return recovered
             }
             : nil
 
+        recordMountJournal(
+            operation,
+            event: "transportTeardownStarted",
+            ownedResources: ["transport"]
+        )
         transportSession.stopAsync(
             on: lifecycleQueue,
             unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
@@ -2097,6 +2387,16 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         if let stopError {
             NSLog("EDP async transport cleanup after %@: %@", failure.description, stopError)
         }
+        recordMountJournal(
+            operation,
+            event: stopError == nil ? "transportTeardownComplete" : "transportTeardownFailure",
+            diagnosticCode: stopError == nil ? nil : .teardownFailed
+        )
+        recordMountJournal(
+            operation,
+            event: "cleanupComplete",
+            diagnosticCode: failure.code
+        )
 
         if cancelledMountOperations.contains(operation.sessionKey) {
             executeMountAction(operation.machine.cancel(), operation: operation)
@@ -2126,8 +2426,14 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             hostAlreadyRecovered: false
         )
         if case .restartHost = action {
+            recordMountJournal(operation, event: "hostRecoveryStarted")
             let recovered = EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
                 && !transportSession.isRunning
+            recordMountJournal(
+                operation,
+                event: recovered ? "hostRecoveryComplete" : "hostRecoveryFailure",
+                diagnosticCode: recovered ? nil : .teardownFailed
+            )
             executeMountAction(
                 operation.machine.hostRecoveryFinished(recovered),
                 operation: operation
@@ -2330,9 +2636,17 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 completion("mount manager was released")
                 return
             }
+            let context = self.makeLifecycleContext(
+                operation: "unmount",
+                deviceID: deviceID,
+                partitionType: partitionType
+            )
+            self.recordLifecycle(context, state: "requested", event: "request")
             self.requestUnmount(
                 sessionKey,
-                deadline: scheduler.deadline(after: 15),
+                context: context,
+                deadline: self.scheduler.deadline(after: 15),
+                waitingRecorded: false,
                 completion: completion
             )
         }
@@ -2340,39 +2654,76 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
 
     private func requestUnmount(
         _ sessionKey: String,
+        context: EDPLifecycleOperationContext,
         deadline: UInt64,
+        waitingRecorded: Bool,
         completion: @escaping EDPDaemonMountCompletion
     ) {
         if activeMountOperations.contains(sessionKey) {
+            if !waitingRecorded {
+                recordLifecycle(
+                    context,
+                    state: "waitingForMountDrain",
+                    event: "cancelActiveMount"
+                )
+            }
             cancelMountOperation(sessionKey)
             guard !scheduler.hasReached(deadline) else {
+                recordLifecycle(
+                    context,
+                    state: "failed",
+                    event: "terminalFailure",
+                    diagnosticCode: .teardownFailed
+                )
                 completion("mount cancellation did not drain before unmount deadline")
                 return
             }
             scheduler.schedule(on: lifecycleQueue, after: 0.1) { [weak self] in
-                self?.requestUnmount(sessionKey, deadline: deadline, completion: completion)
+                self?.requestUnmount(
+                    sessionKey,
+                    context: context,
+                    deadline: deadline,
+                    waitingRecorded: true,
+                    completion: completion
+                )
             }
             return
         }
-        beginUnmount(sessionKey, completion: completion)
+        beginUnmount(sessionKey, context: context, completion: completion)
     }
 
     private func beginUnmount(
         _ sessionKey: String,
+        context: EDPLifecycleOperationContext? = nil,
         completion: @escaping EDPDaemonMountCompletion
     ) {
+        let journalContext = context
+            ?? makeLifecycleContext(operation: "unmount", sessionKey: sessionKey)
         if unmountWaiters[sessionKey] != nil {
+            recordLifecycle(
+                journalContext,
+                state: "coalesced",
+                event: "joinedExistingUnmount"
+            )
             unmountWaiters[sessionKey, default: []].append(completion)
             return
         }
         guard let session = sessions[sessionKey] else {
+            recordLifecycle(journalContext, state: "completed", event: "terminalSuccess")
             completion(nil)
             return
         }
         unmountWaiters[sessionKey] = [completion]
+        unmountJournalContexts[sessionKey] = journalContext
         missingSince.removeValue(forKey: sessionKey)
 
         if let userMount = session.userMount, EDPNativeMountTable.isMountpoint(userMount) {
+            recordLifecycle(
+                journalContext,
+                state: "tearingDownFilesystem",
+                event: "userFilesystemTeardownStarted",
+                ownedResources: ["filesystem", "publication", "transport"]
+            )
             do {
                 try EDPNativeMountTable.unmountPath(userMount)
             } catch {
@@ -2386,10 +2737,22 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 )
                 return
             }
+            recordLifecycle(
+                journalContext,
+                state: "tearingDownPublication",
+                event: "userFilesystemTeardownComplete",
+                ownedResources: ["publication", "transport"]
+            )
         }
 
         session.filesystemProcess?.terminate()
         if !session.exposedBSD.isEmpty {
+            recordLifecycle(
+                journalContext,
+                state: "tearingDownPublication",
+                event: "publicationTeardownStarted",
+                ownedResources: ["publication", "transport"]
+            )
             blockPublisher.unpublishAsync(
                 EDPPublishedBlockDevice(
                     bsdName: session.exposedBSD,
@@ -2399,9 +2762,22 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 guard let self else { return }
                 self.lifecycleQueue.async {
                     if let errorMessage {
+                        self.recordLifecycle(
+                            journalContext,
+                            state: "failed",
+                            event: "publicationTeardownFailure",
+                            ownedResources: ["publication", "transport"],
+                            diagnosticCode: .teardownFailed
+                        )
                         self.finishUnmount(sessionKey, error: errorMessage)
                         return
                     }
+                    self.recordLifecycle(
+                        journalContext,
+                        state: "tearingDownTransport",
+                        event: "publicationTeardownComplete",
+                        ownedResources: ["transport"]
+                    )
                     self.stopSessionTransport(sessionKey, session: session)
                 }
             }
@@ -2412,6 +2788,14 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     }
 
     private func stopSessionTransport(_ sessionKey: String, session: MountSession) {
+        if let context = unmountJournalContexts[sessionKey] {
+            recordLifecycle(
+                context,
+                state: "tearingDownTransport",
+                event: "transportTeardownStarted",
+                ownedResources: ["transport"]
+            )
+        }
         session.transport.stopAsync(
             on: lifecycleQueue,
             unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
@@ -2420,8 +2804,24 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         ) { [weak self] _, _, errorMessage in
             guard let self else { return }
             if let errorMessage {
+                if let context = self.unmountJournalContexts[sessionKey] {
+                    self.recordLifecycle(
+                        context,
+                        state: "failed",
+                        event: "transportTeardownFailure",
+                        ownedResources: ["transport"],
+                        diagnosticCode: .teardownFailed
+                    )
+                }
                 self.finishUnmount(sessionKey, error: errorMessage)
                 return
+            }
+            if let context = self.unmountJournalContexts[sessionKey] {
+                self.recordLifecycle(
+                    context,
+                    state: "finalizing",
+                    event: "transportTeardownComplete"
+                )
             }
             self.sessions.removeValue(forKey: sessionKey)
             try? FileManager.default.removeItem(atPath: session.bridgeMount)
@@ -2432,6 +2832,14 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
 
     private func finishUnmount(_ sessionKey: String, error: String?) {
         if error != nil { persistSessions() }
+        if let context = unmountJournalContexts.removeValue(forKey: sessionKey) {
+            recordLifecycle(
+                context,
+                state: error == nil ? "completed" : "failed",
+                event: error == nil ? "terminalSuccess" : "terminalFailure",
+                diagnosticCode: error == nil ? nil : .teardownFailed
+            )
+        }
         let callbacks = unmountWaiters.removeValue(forKey: sessionKey) ?? []
         for callback in callbacks { callback(error) }
     }
@@ -2443,33 +2851,85 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 return
             }
             if self.ejectWaiters[deviceID] != nil {
+                if let context = self.ejectJournalContexts[deviceID] {
+                    self.recordLifecycle(
+                        context,
+                        state: "coalesced",
+                        event: "coalescedRequest"
+                    )
+                }
                 self.ejectWaiters[deviceID, default: []].append(completion)
                 return
             }
+            let context = self.makeLifecycleContext(operation: "eject", deviceID: deviceID)
             self.ejectWaiters[deviceID] = [completion]
+            self.ejectJournalContexts[deviceID] = context
+            self.recordLifecycle(context, state: "requested", event: "request")
             let active = self.activeMountOperations.filter { $0.hasPrefix("\(deviceID):") }
+            if !active.isEmpty {
+                self.recordLifecycle(
+                    context,
+                    state: "waitingForMountDrain",
+                    event: "cancelActiveMounts"
+                )
+            }
             for sessionKey in active { self.cancelMountOperation(sessionKey) }
             self.waitForDeviceMountsToDrain(
                 deviceID: deviceID,
-                deadline: scheduler.deadline(after: 15)
+                deadline: self.scheduler.deadline(after: 15),
+                waitingRecorded: !active.isEmpty
             )
         }
     }
 
-    private func waitForDeviceMountsToDrain(deviceID: String, deadline: UInt64) {
+    private func waitForDeviceMountsToDrain(
+        deviceID: String,
+        deadline: UInt64,
+        waitingRecorded: Bool
+    ) {
         if activeMountOperations.contains(where: { $0.hasPrefix("\(deviceID):") }) {
+            if !waitingRecorded, let context = ejectJournalContexts[deviceID] {
+                recordLifecycle(
+                    context,
+                    state: "waitingForMountDrain",
+                    event: "waitingForMountDrain"
+                )
+            }
             guard !scheduler.hasReached(deadline) else {
                 finishEject(deviceID, error: "mount operations did not drain before eject deadline")
                 return
             }
             scheduler.schedule(on: lifecycleQueue, after: 0.1) { [weak self] in
-                self?.waitForDeviceMountsToDrain(deviceID: deviceID, deadline: deadline)
+                self?.waitForDeviceMountsToDrain(
+                    deviceID: deviceID,
+                    deadline: deadline,
+                    waitingRecorded: true
+                )
             }
             return
         }
         let keys = sessions.compactMap { $0.value.deviceID == deviceID ? $0.key : nil }.sorted()
+        if let context = ejectJournalContexts[deviceID] {
+            recordLifecycle(
+                context,
+                state: "tearingDownSessions",
+                event: "sessionTeardownStarted",
+                ownedResources: keys.isEmpty ? [] : ["filesystem", "publication", "transport"]
+            )
+        }
         teardownSessionKeys(keys, index: 0) { [weak self] errorMessage in
-            self?.finishEject(deviceID, error: errorMessage)
+            guard let self else { return }
+            if let context = self.ejectJournalContexts[deviceID] {
+                self.recordLifecycle(
+                    context,
+                    state: errorMessage == nil ? "physicalEjectHandoff" : "failed",
+                    event: errorMessage == nil
+                        ? "sessionTeardownComplete"
+                        : "sessionTeardownFailure",
+                    diagnosticCode: errorMessage == nil ? nil : .teardownFailed
+                )
+            }
+            self.finishEject(deviceID, error: errorMessage)
         }
     }
 
@@ -2493,8 +2953,54 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     }
 
     private func finishEject(_ deviceID: String, error: String?) {
+        if let context = ejectJournalContexts[deviceID] {
+            if error == nil {
+                recordLifecycle(
+                    context,
+                    state: "physicalEjectHandoff",
+                    event: "physicalEjectHandoff"
+                )
+            } else {
+                ejectJournalContexts.removeValue(forKey: deviceID)
+                recordLifecycle(
+                    context,
+                    state: "failed",
+                    event: "terminalFailure",
+                    diagnosticCode: .teardownFailed
+                )
+            }
+        }
         let callbacks = ejectWaiters.removeValue(forKey: deviceID) ?? []
         for callback in callbacks { callback(error) }
+    }
+
+    func recordPhysicalEjectResult(
+        deviceID: String,
+        failureCode: EDPLifecycleFailureCode?
+    ) {
+        lifecycleQueue.async { [weak self] in
+            guard let self,
+                  let context = self.ejectJournalContexts.removeValue(forKey: deviceID) else {
+                return
+            }
+            self.recordLifecycle(
+                context,
+                state: failureCode == nil ? "completed" : "failed",
+                event: failureCode == nil ? "terminalSuccess" : "terminalFailure",
+                diagnosticCode: failureCode
+            )
+        }
+    }
+
+    func recordShutdownCoalesced() {
+        lifecycleQueue.async { [weak self] in
+            guard let self, let context = self.shutdownJournalContext else { return }
+            self.recordLifecycle(
+                context,
+                state: "coalesced",
+                event: "coalescedRequest"
+            )
+        }
     }
 
     func unmountAllAsync(completion: @escaping EDPDaemonMountCompletion) {
@@ -2503,36 +3009,102 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 completion("mount manager was released")
                 return
             }
+            if let context = self.shutdownJournalContext {
+                self.shutdownWaiters.append(completion)
+                self.recordLifecycle(
+                    context,
+                    state: "coalesced",
+                    event: "coalescedRequest"
+                )
+                return
+            }
+            let context = self.makeLifecycleContext(operation: "shutdown", deviceID: "service")
+            self.shutdownJournalContext = context
+            self.shutdownWaiters = [completion]
+            self.recordLifecycle(context, state: "requested", event: "request")
+            if !self.activeMountOperations.isEmpty {
+                self.recordLifecycle(
+                    context,
+                    state: "waitingForMountDrain",
+                    event: "cancelActiveMounts"
+                )
+            }
             for sessionKey in self.activeMountOperations { self.cancelMountOperation(sessionKey) }
             self.waitForAllMountsToDrain(
-                deadline: scheduler.deadline(after: 15),
-                completion: completion
+                deadline: self.scheduler.deadline(after: 15),
+                waitingRecorded: !self.activeMountOperations.isEmpty
             )
         }
     }
 
     private func waitForAllMountsToDrain(
         deadline: UInt64,
-        completion: @escaping EDPDaemonMountCompletion
+        waitingRecorded: Bool
     ) {
         if !activeMountOperations.isEmpty {
+            if !waitingRecorded, let context = shutdownJournalContext {
+                recordLifecycle(
+                    context,
+                    state: "waitingForMountDrain",
+                    event: "waitingForMountDrain"
+                )
+            }
             guard !scheduler.hasReached(deadline) else {
-                completion("mount operations did not drain before shutdown deadline")
+                finishShutdown("mount operations did not drain before shutdown deadline")
                 return
             }
             scheduler.schedule(on: lifecycleQueue, after: 0.1) { [weak self] in
-                self?.waitForAllMountsToDrain(deadline: deadline, completion: completion)
+                self?.waitForAllMountsToDrain(
+                    deadline: deadline,
+                    waitingRecorded: true
+                )
             }
             return
         }
-        teardownSessionKeys(Array(sessions.keys).sorted(), index: 0) { [weak self] errorMessage in
-            guard let self else { return }
-            if errorMessage == nil, !self.sessions.isEmpty {
-                completion("one or more EDP sessions could not be safely unmounted")
-            } else {
-                completion(errorMessage)
-            }
+        let keys = Array(sessions.keys).sorted()
+        if let context = shutdownJournalContext {
+            recordLifecycle(
+                context,
+                state: "tearingDownSessions",
+                event: "sessionTeardownStarted",
+                ownedResources: keys.isEmpty ? [] : ["filesystem", "publication", "transport"]
+            )
         }
+        teardownSessionKeys(keys, index: 0) { [weak self] errorMessage in
+            guard let self else { return }
+            let finalError: String?
+            if errorMessage == nil, !self.sessions.isEmpty {
+                finalError = "one or more EDP sessions could not be safely unmounted"
+            } else {
+                finalError = errorMessage
+            }
+            if let context = self.shutdownJournalContext {
+                self.recordLifecycle(
+                    context,
+                    state: finalError == nil ? "finalizing" : "failed",
+                    event: finalError == nil
+                        ? "sessionTeardownComplete"
+                        : "sessionTeardownFailure",
+                    diagnosticCode: finalError == nil ? nil : .teardownFailed
+                )
+            }
+            self.finishShutdown(finalError)
+        }
+    }
+
+    private func finishShutdown(_ error: String?) {
+        if let context = shutdownJournalContext {
+            recordLifecycle(
+                context,
+                state: error == nil ? "completed" : "failed",
+                event: error == nil ? "terminalSuccess" : "terminalFailure",
+                diagnosticCode: error == nil ? nil : .teardownFailed
+            )
+        }
+        shutdownJournalContext = nil
+        let callbacks = shutdownWaiters
+        shutdownWaiters.removeAll()
+        for callback in callbacks { callback(error) }
     }
 
     private func persistSessions() {
@@ -3867,6 +4439,10 @@ final class EDPDaemonController: @unchecked Sendable {
                         guard let self else { return }
                         self.onControllerQueue {
                             if let errorMessage {
+                                self.manager.recordPhysicalEjectResult(
+                                    deviceID: deviceID,
+                                    failureCode: .teardownFailed
+                                )
                                 self.recoverFailedEjectLocked(
                                     disk: disk,
                                     errorMessage: errorMessage,
@@ -3874,6 +4450,10 @@ final class EDPDaemonController: @unchecked Sendable {
                                 )
                                 return
                             }
+                            self.manager.recordPhysicalEjectResult(
+                                deviceID: deviceID,
+                                failureCode: nil
+                            )
                             self.connectedDisks.removeAll { $0.deviceID == deviceID }
                             self.rawAccessReadyByDeviceID.removeValue(forKey: deviceID)
                             self.rawAccessErrorsByDeviceID.removeValue(forKey: deviceID)
@@ -3956,6 +4536,7 @@ final class EDPDaemonController: @unchecked Sendable {
         queue.sync {
             let payload: [String: Any] = [
                 "mounts": manager.mountedSummaries(),
+                "lifecycleJournal": manager.lifecycleJournalSnapshot().map(\.jsonObject),
                 "failedMounts": failedMounts,
                 "manualUnmountSuppressions": manualUnmountSuppressions.sorted(),
                 "rawAccessMode": "persistent Full Disk Access daemon + retained raw fd + inherited transport fd",
@@ -3987,7 +4568,10 @@ final class EDPDaemonController: @unchecked Sendable {
                 return
             }
             self.shutdownCompletions.append(completion)
-            guard !self.shutdownInProgress else { return }
+            guard !self.shutdownInProgress else {
+                self.manager.recordShutdownCoalesced()
+                return
+            }
 
             self.shutdownRequested = true
             self.shutdownInProgress = true

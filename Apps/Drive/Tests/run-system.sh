@@ -7,6 +7,7 @@ STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
+JOURNAL_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleJournal.swift"
 NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
 MACFUSE_POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPMacFUSERuntimePolicy.swift"
 PUBLISHER_SOURCE="${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
@@ -174,6 +175,26 @@ echo 'RESULT=DRIVE_SYSTEM_VIRTUAL_CLOCK_LIFECYCLE_OK'
 /usr/bin/grep -Fq 'cancelled mount launched a new attempt' "${MODEL_PROPERTY_SOURCE}"
 /usr/bin/grep -Fq 'failed terminal state retained publication ownership' "${MODEL_PROPERTY_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_MODEL_PROPERTIES_OK'
+
+# Runtime lifecycle diagnostics are bounded, monotonic, machine-readable, and
+# deliberately exclude credential/raw-data fields. The controller must export
+# the journal as JSON without exposing helper stderr or filesystem/raw paths.
+/usr/bin/grep -Fq 'static let defaultCapacity = 256' "${JOURNAL_SOURCE}"
+/usr/bin/grep -Fq 'entries.removeFirst(entries.count - capacity)' "${JOURNAL_SOURCE}"
+/usr/bin/grep -Fq 'let elapsedMs: UInt64' "${JOURNAL_SOURCE}"
+/usr/bin/grep -Fq 'let diagnosticCode: String?' "${JOURNAL_SOURCE}"
+/usr/bin/grep -Fq '"lifecycleJournal": manager.lifecycleJournalSnapshot().map(\.jsonObject)' "${RUNTIME_SOURCE}"
+if /usr/bin/grep -Ei 'password|credential|plaintext|stderr|rawPath|secret|keyData|keyBytes' "${JOURNAL_SOURCE}"; then
+  echo 'sensitive field leaked into lifecycle journal schema' >&2
+  exit 1
+fi
+echo 'RESULT=DRIVE_SYSTEM_LIFECYCLE_JOURNAL_OK'
+
+# Explicitly reopening the foreground App must restore discovery-service intent.
+# A prior Stop/Complete Quit may stop the daemon for that UI session, but must
+# never make the next visible app launch silently unable to discover USB media.
+/usr/bin/grep -Fq 'Explicitly opening EDP Drive always restores the discovery daemon.' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 
 # Normal product lifecycle must not fall back to shell-side process inspection
 # or codesign/umount helpers. Runtime signature validation is Security.framework,

@@ -17,7 +17,7 @@
 | D | Typed lifecycle errors | DONE |
 | E | Virtual clock / scheduler | DONE |
 | F | Deterministic model/property tests | DONE |
-| G | Structured lifecycle journal | TODO |
+| G | Structured lifecycle journal | DONE |
 | H | 全量/安装态/真盘验收 | TODO |
 
 ## 进入本计划前已确认完成
@@ -151,7 +151,7 @@
 
 ## Phase G — Structured lifecycle journal
 
-状态：IN PROGRESS（未提交 WIP，下一位 AI 必须原地继续，不得 reset/stash/drop）
+状态：DONE
 
 验收项：
 
@@ -160,12 +160,12 @@
 - [x] journal API 不提供 password/key/raw plaintext/helper stderr 字段
 - [x] MountManager protocol 已增加 `lifecycleJournalSnapshot()`，mount request/single-flight/cancel/terminal 已开始接入
 - [x] journal 源文件已开始加入 service/installer/storage 构建清单
-- [ ] bridge/publication/filesystem/cleanup/recovery 全 transition 接全
-- [ ] unmount/eject/shutdown structured events 接入
-- [ ] `diagnosticsData()` export `lifecycleJournal`
-- [ ] bounded/redaction/sequence/elapsed contract tests
-- [ ] system journal ratchet
-- [ ] fast/service/system/virtual-usb + `git diff --check`
+- [x] bridge/publication/filesystem/cleanup/recovery 全 transition 接全
+- [x] unmount/eject/shutdown structured events 接入；eject terminal 延伸到 physical Disk Arbitration handoff，shutdown 重复请求记录 coalesced event
+- [x] `diagnosticsData()` export `lifecycleJournal`
+- [x] S23 bounded/redaction/sequence/elapsed/operationID/JSON diagnostics contract tests
+- [x] system journal ratchet，禁止无界 journal 与 password/credential/plaintext/stderr/rawPath 等敏感 schema 字段
+- [x] `make drive-test-fast` / service lifecycle / `make drive-test-system` / `make drive-test-virtual-usb` + `git diff --check` PASS
 - [ ] commit/push
 
 完整后续执行说明：`docs/HANDOFF-2026-08-31-async-lifecycle-finalization.md`
@@ -209,6 +209,15 @@
 - [ ] 严禁 format/erase/raw write
 
 ## 变更日志
+
+### 2026-08-31 12:38 — Phase G structured lifecycle journal
+
+- 完成 256 条 bounded structured lifecycle journal；schema 固定为 operationID/operation/deviceID/partitionType/state/event/attempt/recoveryBudget/elapsedMs/ownedResources/diagnosticCode。
+- mount 已覆盖 request/single-flight/cancel、bridge launch/wait/ready/failure/timeout、publication start/complete/failure/cancel、filesystem mount、cleanup、transport teardown、host recovery 与 terminal。
+- unmount/eject/shutdown 已使用独立 operation context；eject terminal 延伸到 controller physical Disk Arbitration handoff，shutdown 重复请求记录 coalesced event。
+- `diagnosticsData()` 新增 `lifecycleJournal` JSON 数组，不导出密码、凭据、密钥、raw plaintext、helper stderr 或 raw path。
+- 新增 S23：capacity 截断、sequence/elapsed 单调、operationID 一致、JSON 可序列化、credential sentinel 不出现在 diagnostics；system 新增 journal 敏感字段/有界性 ratchet。
+- 验证：service lifecycle C01-C08/D01-D13/S01-S23/M11 PASS；10,000×32 property PASS；fast/system/virtual-usb 与 `git diff --check` PASS。
 
 ### 2026-08-31 12:02 — Finalization handoff
 

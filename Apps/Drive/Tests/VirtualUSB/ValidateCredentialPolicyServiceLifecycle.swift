@@ -182,6 +182,7 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
     private var lastFailureCodes = [String: EDPLifecycleFailureCode]()
     private var unmountFailures = [String: (remaining: Int, message: String)]()
     private var ejectFailures = [String: (remaining: Int, message: String)]()
+    private var lifecycleJournalEntries = [EDPLifecycleJournalEntry]()
     var staleSessionCount = 0
 
     private func key(_ deviceID: String, _ partitionType: UInt32) -> String {
@@ -328,6 +329,18 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
         asyncLock.lock()
         defer { asyncLock.unlock() }
         return lastFailureCodes[key(deviceID, partitionType)]
+    }
+
+    func setLifecycleJournalEntries(_ entries: [EDPLifecycleJournalEntry]) {
+        asyncLock.lock()
+        lifecycleJournalEntries = entries
+        asyncLock.unlock()
+    }
+
+    func lifecycleJournalSnapshot() -> [EDPLifecycleJournalEntry] {
+        asyncLock.lock()
+        defer { asyncLock.unlock() }
+        return lifecycleJournalEntries
     }
 
     func ejectAsync(deviceID: String, completion: @escaping EDPDaemonMountCompletion) {
@@ -1913,6 +1926,97 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 throw LifecycleValidationError("S22 cancellation did not remain terminal across same-tick late work")
             }
             print("SCENARIO=S22_OK virtual_clock_same_tick_cancellation_terminal")
+        }
+
+        do {
+            let scheduler = ManualLifecycleScheduler()
+            let journal = EDPLifecycleJournal(capacity: 3)
+            let context = EDPLifecycleOperationContext(
+                id: UUID(uuidString: "ed505a17-2026-0831-0000-000000000023")!,
+                operation: "mount",
+                deviceID: "S23-DEVICE",
+                partitionType: 2,
+                startedAtNanoseconds: scheduler.nowNanoseconds
+            )
+            journal.record(
+                context: context,
+                scheduler: scheduler,
+                state: "preparing",
+                event: "request",
+                attempt: 0,
+                recoveryBudget: 1
+            )
+            scheduler.advance(by: 0.001)
+            journal.record(
+                context: context,
+                scheduler: scheduler,
+                state: "waitingForBridge",
+                event: "bridgeWaitStarted",
+                attempt: 0,
+                recoveryBudget: 1,
+                ownedResources: ["transport"]
+            )
+            scheduler.advance(by: 0.001)
+            journal.record(
+                context: context,
+                scheduler: scheduler,
+                state: "publishing",
+                event: "publicationStarted",
+                attempt: 0,
+                recoveryBudget: 1,
+                ownedResources: ["transport"]
+            )
+            scheduler.advance(by: 0.001)
+            journal.record(
+                context: context,
+                scheduler: scheduler,
+                state: "mounted",
+                event: "terminalSuccess",
+                recoveryBudget: 1,
+                ownedResources: ["filesystem", "publication", "transport"]
+            )
+
+            let entries = journal.snapshot()
+            guard entries.count == 3,
+                  entries.map(\.sequence) == [2, 3, 4],
+                  entries.map(\.elapsedMs) == [1, 2, 3],
+                  Set(entries.map(\.operationID)).count == 1,
+                  entries.allSatisfy({ $0.operationID == context.id.uuidString.lowercased() }) else {
+                throw LifecycleValidationError("S23 lifecycle journal bounds/order/context contract failed")
+            }
+            let journalData = try JSONSerialization.data(withJSONObject: journal.jsonObjects())
+            guard JSONSerialization.isValidJSONObject(journal.jsonObjects()),
+                  !journalData.isEmpty else {
+                throw LifecycleValidationError("S23 lifecycle journal was not JSON serializable")
+            }
+
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            let passwordSentinel = "S23_PASSWORD_SENTINEL_DO_NOT_EXPORT"
+            try env.credentials.put(
+                deviceID: device.deviceID,
+                partitionType: 2,
+                password: Array(passwordSentinel.utf8)
+            )
+            env.manager.setLifecycleJournalEntries(entries)
+            let diagnostics = env.controller.diagnosticsData()
+            let diagnosticsText = String(decoding: diagnostics, as: UTF8.self)
+            guard diagnosticsText.contains("\"lifecycleJournal\"") else {
+                throw LifecycleValidationError("S23 diagnostics omitted lifecycleJournal")
+            }
+            for sentinel in [
+                passwordSentinel,
+                "S23_KEY_SENTINEL_DO_NOT_EXPORT",
+                "S23_RAW_PLAINTEXT_SENTINEL_DO_NOT_EXPORT",
+            ] where diagnosticsText.contains(sentinel) {
+                throw LifecycleValidationError("S23 diagnostics leaked sensitive sentinel")
+            }
+            _ = try JSONSerialization.jsonObject(with: diagnostics)
+            print("SCENARIO=S23_OK bounded_redacted_lifecycle_journal_diagnostics")
         }
 
         do {

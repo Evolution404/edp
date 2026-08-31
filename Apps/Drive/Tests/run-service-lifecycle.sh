@@ -24,6 +24,7 @@ PRODUCT_SOURCES=(
   product/EDPDevicePolicyStore.swift
   product/EDPMacFUSERuntimePolicy.swift
   product/EDPLifecycleScheduler.swift
+  product/EDPLifecycleJournal.swift
   product/EDPTransportProvider.swift
   product/EDPTransportRuntimePolicy.swift
   product/EDPFinderVolumeDefaults.swift
@@ -66,7 +67,7 @@ done
 for scenario in D01 D02 D03 D04 D05 D06 D07 D08 D09 D10 D11 D12 D13; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
-for scenario in S01 S02 S03 S04 S05 S06 S07 S08 S09 S10 S11 S12 S13 S14 S15 S16 S17 S18 S19 S20 S21 S22; do
+for scenario in S01 S02 S03 S04 S05 S06 S07 S08 S09 S10 S11 S12 S13 S14 S15 S16 S17 S18 S19 S20 S21 S22 S23; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
 grep -Fq 'SCENARIO=M11_OK' <<<"$OUTPUT"
