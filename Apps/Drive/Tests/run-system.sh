@@ -41,6 +41,24 @@ fi
 /usr/bin/grep -Fq 'fixture backing escaped test root' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'synthetic backing escaped test root' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'Virtual:                   Yes' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'A vanished BSD node is not sufficient teardown proof.' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'wait_for_fixture_publication_gone "$path" 100' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'successful detach call is not enough' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq '[[ -e "/dev/$bsd" ]] || return 0' "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
+
+# Storage-only FSKit host recovery mirrors the production one-shot policy. It
+# must use real MNT_EXT_FSKIT mount detection, never restart the user agent while
+# any FSKit volume is active, and never grow into an unbounded retry loop.
+FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c"
+/usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${FSKIT_GUARD_SOURCE}"
+/usr/bin/grep -Fq -- '--assert-no-fskit-mounts' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'command" == "/usr/libexec/fskit_agent"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'STORAGE_FSKIT_HOST_RETRY=' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'while adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_FSKIT_BOUNDED_RECOVERY_OK'
 
 # The console launcher must allow both transport modes.  A missing read-only
 # target breaks the boot FAT16 path while leaving encrypted partitions healthy,
@@ -84,6 +102,10 @@ PREINSTALL_SOURCE="${ROOT}/Apps/Drive/installer/scripts/native-preinstall"
 /usr/bin/grep -Fq 'Refresh immediately before signalling so a recycled PID/backing tuple' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'macfuse_scratch_pid_for_identity' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'exact backing + device identity' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'found macFUSE scratch ${device} with stale helper record' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'refused to recover macFUSE scratch while an FSKit filesystem is mounted' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'Never act on the recorded PID by itself.' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'recover_stale_console_fskit_agent' "${PREINSTALL_SOURCE}"
 ! /usr/bin/grep -Fq 'refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"' "${PREINSTALL_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UPGRADE_UI_HANDOFF_OK'
 echo 'RESULT=DRIVE_SYSTEM_INSTALLER_TEST_ORPHAN_REVALIDATION_OK'

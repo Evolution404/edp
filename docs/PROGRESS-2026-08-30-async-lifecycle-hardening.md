@@ -180,8 +180,8 @@
 - [x] virtual-usb
 - [x] system
 - [x] UI（当前 WIP exact-source：max 25.000ms，0 个 >33ms，`RESULT=DRIVE_UI_OK`）
-- [ ] storage smoke #1
-- [ ] storage smoke #2
+- [x] storage smoke #1
+- [x] storage smoke #2
 - [ ] release storage final marker
 - [x] bash -n
 - [x] plutil -lint
@@ -209,6 +209,18 @@
 - [ ] 严禁 format/erase/raw write
 
 ## 变更日志
+
+### 2026-08-31 20:12 — Storage teardown / FSKit recovery hardening and smoke 2/2
+
+- 重启后重新枚举：storage process=0、EDP hidden mount=0、EDP DiskImages publication=0、4KiB macFUSE scratch=0、external physical=0；重启前所有 diskN/PID 均作废，未复用历史编号。
+- storage fixture teardown 修正为 exact backing authority：BSD node 消失不再等价于 DiskImages2 publication 已退出；synthetic detach 后必须等待 exact backing publication=0，才允许下一次 attach，避免 diskN 立即复用造成 `-69879 Couldn't open disk` 连锁重试。
+- `DirectMFMountUnmountHelper` 新增 `--assert-no-fskit-mounts`，用 `getmntinfo + MNT_EXT_FSKIT` 对齐生产 `EDPFSKitHostRecovery` 的安全边界。
+- storage adapter 对 `mount(8) returned 69` / FSKit not found/not enabled 只允许一次 host recovery；恢复前必须证明 0 FSKit mount，只重启当前 UID 的精确 `/usr/libexec/fskit_agent`，禁止无限重试。
+- installer scratch recovery 修复 stale `hdid-pid`：当 exact 4KiB UUID scratch 仍在、记录 helper PID 已失效且 0 FSKit mount 时，允许精确 console-user `fskit_agent` reset 后再次按 backing/device revalidation；实机 upgrade 已成功把 scratch 清到 0。
+- 重启后 canonical `make drive-test-storage-smoke` 改为独立后台运行并轮询最终 marker，避免聊天执行器 300s 上限杀掉父进程。
+- smoke #1：exit=0，M01–M14 PASS，M10=5/5，FD 9→9，最终 `RESULT=DRIVE_STORAGE_E2E_OK`；退出后 process/mount/publication/scratch residue=0。
+- smoke #2：exit=0，M01–M14 PASS，M10=5/5，FD 9→9，最终 `RESULT=DRIVE_STORAGE_E2E_OK`。
+- 静态验证：`bash -n`、C17 `-Wall -Wextra -Werror`、`make drive-test-system`、`git diff --check` 全绿；system 新增 storage exact-publication teardown / bounded FSKit recovery ratchet。
 
 ### 2026-08-31 18:55 — Clean-install FSKit enablement bounded stability retry
 

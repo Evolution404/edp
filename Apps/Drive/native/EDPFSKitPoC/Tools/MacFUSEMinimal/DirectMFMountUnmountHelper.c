@@ -31,10 +31,40 @@ static int copy_mount_source(const char *mountpoint,
     return ENOENT;
 }
 
+static int assert_no_fskit_mounts(void) {
+    struct statfs *mounts = NULL;
+    int count = getmntinfo(&mounts, MNT_NOWAIT);
+    if (count < 0 || mounts == NULL) {
+        fprintf(stderr, "FSKIT_MOUNT_ENUMERATION_FAILED errno=%d\n", errno);
+        return 2;
+    }
+
+    int found = 0;
+    for (int index = 0; index < count; index++) {
+        if ((mounts[index].f_flags_ext & MNT_EXT_FSKIT) == 0) {
+            continue;
+        }
+        found++;
+        fprintf(stderr,
+                "FSKIT_MOUNT_PRESENT source=%s mountpoint=%s\n",
+                mounts[index].f_mntfromname,
+                mounts[index].f_mntonname);
+    }
+    if (found != 0) {
+        fprintf(stderr, "FSKIT_MOUNT_COUNT=%d\n", found);
+        return 1;
+    }
+    fprintf(stderr, "FSKIT_MOUNT_COUNT=0\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
-        fprintf(stderr, "usage: %s <mountpoint>\n", argv[0]);
+        fprintf(stderr, "usage: %s <mountpoint>|--assert-no-fskit-mounts\n", argv[0]);
         return 64;
+    }
+    if (strcmp(argv[1], "--assert-no-fskit-mounts") == 0) {
+        return assert_no_fskit_mounts();
     }
 
     char source[PATH_MAX];

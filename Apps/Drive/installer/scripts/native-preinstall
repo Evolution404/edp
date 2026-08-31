@@ -421,7 +421,7 @@ recover_macfuse_scratch_orphans() {
       image_path="$(hdi_value "${info}" "${image_index}" image-path)"
       device="$(/usr/bin/plutil -extract "images.${image_index}.system-entities.0.dev-entry" raw -o - "${info}" 2>/dev/null || true)"
       pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-      if [[ -n "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+      if [[ -n "${pid}" ]]; then
         break
       fi
       image_path=""
@@ -437,33 +437,62 @@ recover_macfuse_scratch_orphans() {
     # is the only stable authority; array indices and historical diskN are not.
     /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
     refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-    if [[ "${refreshed_pid}" != "${pid}" ]] || ! validate_diskimages_helper_pid "${pid}"; then
+    if [[ "${refreshed_pid}" != "${pid}" ]]; then
       continue
     fi
 
-    echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
-    /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
-
-    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-    if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
-      /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
-      /bin/sleep 0.2
-    fi
-
-    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-    if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
-      /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
-      /bin/sleep 0.2
-    fi
-
-    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-    if [[ -n "${refreshed_pid}" ]]; then
-      echo "EDP Drive upgrade could not recover macFUSE scratch orphan ${device}; restart macOS and retry." >&2
+    if /sbin/mount | /usr/bin/grep -Fq 'fskit'; then
+      echo "EDP Drive upgrade refused to recover macFUSE scratch while an FSKit filesystem is mounted." >&2
       exit 1
     fi
+
+    if validate_diskimages_helper_pid "${pid}"; then
+      echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
+      /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
+
+      /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+      refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+      if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+        /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
+        /bin/sleep 0.2
+      fi
+
+      /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+      refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+      if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
+        /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
+        /bin/sleep 0.2
+      fi
+    else
+      echo "EDP Drive upgrade found macFUSE scratch ${device} with stale helper record (${pid})."
+    fi
+
+    # macOS can keep the 4 KiB scratch IOMedia alive after diskimages-helper has
+    # exited, leaving hdiutil's hdid-pid field stale. In the exact no-mount
+    # state, recycle only the console user's fskit_agent and then re-prove the
+    # same backing + device tuple. Never act on the recorded PID by itself.
+    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+    refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+    if [[ -z "${refreshed_pid}" ]]; then
+      continue
+    fi
+    if [[ "${refreshed_pid}" != "${pid}" ]]; then
+      continue
+    fi
+
+    if ! validate_diskimages_helper_pid "${pid}"; then
+      if recover_stale_console_fskit_agent; then
+        wait_for_device_to_disappear "${device#/dev/}" 100 || true
+      fi
+      /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+      refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
+      if [[ -z "${refreshed_pid}" ]]; then
+        continue
+      fi
+    fi
+
+    echo "EDP Drive upgrade could not recover macFUSE scratch orphan ${device}; restart macOS and retry." >&2
+    exit 1
   done
   /bin/rm -f "${info}"
   trap - EXIT

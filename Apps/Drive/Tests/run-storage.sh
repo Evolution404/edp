@@ -74,6 +74,7 @@ touch "$ACTIVE_DEVICES" "$ACTIVE_FIXTURE_DEVICES" "$ACTIVE_PROCESSES" "$ACTIVE_M
 ATTACH_BIN="$BUILD_DIR/diskimages2-attach"
 PREPARE_BIN="$BUILD_DIR/prepare-edp-filesystem-fixture"
 ADAPTER_BIN="$BUILD_DIR/edp-mfmount-fixture"
+FSKIT_GUARD_BIN="$BUILD_DIR/edp-assert-no-fskit-mounts"
 FAILURE_BIN="$BUILD_DIR/validate-storage-failures"
 BOUNDED="$DRIVE_ROOT/Tests/Storage/RunBounded.py"
 FIXTURE_DIR="$DRIVE_ROOT/fixtures/real_disks/disk4"
@@ -132,6 +133,57 @@ cleanup_crashed_local_mount() {
   done
   echo "macFUSE Local crash mount remained after module restart: $target" >&2
   return 1
+}
+
+adapter_log_is_transient_fskit_failure() {
+  local log_path="$1"
+  /usr/bin/grep -Eiq \
+    'mount\(8\) returned 69|File system extension not found|File system extension not enabled' \
+    "$log_path"
+}
+
+restart_console_fskit_agent_if_safe() {
+  [[ -x "$FSKIT_GUARD_BIN" ]] || {
+    echo "FSKit mount guard is unavailable" >&2
+    return 1
+  }
+  if ! "$FSKIT_GUARD_BIN" --assert-no-fskit-mounts; then
+    echo "refusing FSKit agent restart while an FSKit mount is active" >&2
+    return 1
+  fi
+
+  local uid
+  uid="$(/usr/bin/id -u)"
+  local pids=""
+  local pid command
+  for pid in $(/usr/bin/pgrep -U "$uid" -x fskit_agent || true); do
+    command="$(/bin/ps -p "$pid" -o command= 2>/dev/null | /usr/bin/xargs || true)"
+    [[ "$command" == "/usr/libexec/fskit_agent" ]] || continue
+    pids="${pids} ${pid}"
+  done
+  [[ -n "${pids// }" ]] || {
+    echo "no exact console-user fskit_agent process found for recovery" >&2
+    return 1
+  }
+
+  /bin/kill -KILL $pids >/dev/null 2>&1 || true
+  for _ in $(/usr/bin/seq 1 50); do
+    local alive=0
+    for pid in $pids; do
+      /bin/kill -0 "$pid" >/dev/null 2>&1 && alive=1
+    done
+    (( alive == 0 )) && break
+    /bin/sleep 0.05
+  done
+  for pid in $pids; do
+    /bin/kill -0 "$pid" >/dev/null 2>&1 && {
+      echo "console-user fskit_agent did not exit after bounded recovery" >&2
+      return 1
+    }
+  done
+  log "STORAGE_FSKIT_HOST_RECOVERY=console-agent-restarted"
+  /bin/sleep 1
+  return 0
 }
 
 assert_synthetic_device() {
@@ -199,6 +251,44 @@ wait_for_synthetic_publication_gone() {
   local attempts="${2:-100}"
   for _ in $(/usr/bin/seq 1 "$attempts"); do
     synthetic_publication_exists "$backing" || return 0
+    /bin/sleep 0.1
+  done
+  return 1
+}
+
+fixture_publication_exists() {
+  local backing="$1"
+  local info="$WORK_DIR/hdiutil-fixture-publication-check.plist"
+  [[ "$backing" == "$WORK_DIR"/* ]] || return 1
+  /usr/bin/hdiutil info -plist >"$info" 2>/dev/null || return 0
+  /usr/bin/python3 - "$info" "$backing" <<'PY'
+import os
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    root = plistlib.load(handle)
+expected = os.path.realpath(sys.argv[2])
+for image in root.get("images", []):
+    if os.path.realpath(image.get("image-path", "")) != expected:
+        continue
+    valid = (
+        image.get("diskimages2") is False
+        and image.get("autodiskmount") is False
+        and image.get("owner-uid") == os.getuid()
+        and image.get("writeable") is True
+        and image.get("removable") is True
+    )
+    raise SystemExit(0 if valid else 1)
+raise SystemExit(1)
+PY
+}
+
+wait_for_fixture_publication_gone() {
+  local backing="$1"
+  local attempts="${2:-100}"
+  for _ in $(/usr/bin/seq 1 "$attempts"); do
+    fixture_publication_exists "$backing" || return 0
     /bin/sleep 0.1
   done
   return 1
@@ -435,40 +525,63 @@ attach_image() {
 eject_image() {
   local bsd="$1"
   local backing="$2"
-  [[ -e "/dev/$bsd" ]] || return 0
+  [[ "$bsd" =~ ^disk[0-9]+$ ]] || {
+    echo "unsafe synthetic BSD name during eject: $bsd" >&2
+    return 1
+  }
+  [[ "$backing" == "$WORK_DIR"/* || "$backing" == "$MOUNT_ROOT"/* ]] || {
+    echo "synthetic eject backing escaped test root: $backing" >&2
+    return 1
+  }
+
+  # A vanished BSD node is not sufficient teardown proof. DiskImages2 can leave
+  # an owner-only publication with system-entities=[] after the IOMedia identity
+  # disappears, so always key completion to the exact backing publication too.
+  if [[ ! -e "/dev/$bsd" ]]; then
+    if wait_for_synthetic_publication_gone "$backing" 100; then
+      return 0
+    fi
+    echo "DiskImages2 owner remained after BSD device disappeared: $backing" >&2
+    return 1
+  fi
+
   assert_synthetic_device "$bsd" "$backing"
   bounded 15 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
 
-  # Disk Arbitration can complete the synthetic eject in-kernel while the
-  # diskutil client itself remains blocked waiting for a reply. Treat an
-  # already-disappeared exact synthetic device as success even if the client
-  # hit its bounded timeout. If it is still present, re-prove exact backing
-  # identity before using hdiutil as the narrow recovery path.
-  local eject_rc=0
-  if bounded 15 /usr/sbin/diskutil eject "$bsd" >/dev/null 2>&1; then
-    eject_rc=0
-  else
-    eject_rc=$?
-    if [[ ! -e "/dev/$bsd" ]]; then
-      if wait_for_synthetic_publication_gone "$backing" 100; then
-        return 0
-      fi
-      echo "DiskImages2 owner remained after BSD device disappeared: $backing" >&2
-      return 1
-    fi
+  # For a proven synthetic DiskImages2 publication, prefer hdiutil detach while
+  # the BSD identity still exists. This lets DiskImages2 retire both IOMedia and
+  # its owner process atomically instead of first losing diskN through diskutil
+  # eject and then being unable to address an owner-only publication.
+  if [[ -e "/dev/$bsd" ]]; then
     assert_synthetic_device "$bsd" "$backing"
     bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
   fi
+
+  for _ in $(/usr/bin/seq 1 120); do
+    if [[ ! -e "/dev/$bsd" ]] && ! synthetic_publication_exists "$backing"; then
+      return 0
+    fi
+    /bin/sleep 0.05
+  done
+
+  if [[ -e "/dev/$bsd" ]]; then
+    # hdiutil did not complete; re-prove the exact synthetic identity before a
+    # final Disk Arbitration eject fallback. No stale diskN is ever trusted.
+    assert_synthetic_device "$bsd" "$backing"
+    bounded 15 /usr/sbin/diskutil eject "$bsd" >/dev/null 2>&1 || true
+  fi
+
   for _ in $(/usr/bin/seq 1 100); do
     if [[ ! -e "/dev/$bsd" ]] && ! synthetic_publication_exists "$backing"; then
       return 0
     fi
     /bin/sleep 0.05
   done
+
   if [[ ! -e "/dev/$bsd" ]] && synthetic_publication_exists "$backing"; then
     echo "DiskImages2 owner remained after BSD device disappeared: $backing" >&2
   else
-    echo "synthetic device remained after eject: $bsd diskutil_rc=$eject_rc" >&2
+    echo "synthetic publication remained after exact detach/eject: $bsd backing=$backing" >&2
   fi
   return 1
 }
@@ -556,7 +669,17 @@ format_raw_filesystem() {
       else
         recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
       fi
-      (( transaction < 3 )) && continue
+      if ! wait_for_fixture_publication_gone "$path" 100; then
+        recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
+        wait_for_fixture_publication_gone "$path" 100 || {
+          echo "fixture publication remained after unstable-device cleanup: $path" >&2
+          return 1
+        }
+      fi
+      if (( transaction < 3 )); then
+        /bin/sleep 1
+        continue
+      fi
       echo "fixture device did not become stably openable after $transaction transactions: $bsd" >&2
       return 1
     fi
@@ -589,6 +712,13 @@ format_raw_filesystem() {
       else
         recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
       fi
+      if ! wait_for_fixture_publication_gone "$path" 100; then
+        recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
+        wait_for_fixture_publication_gone "$path" 100 || {
+          echo "fixture publication remained after successful format cleanup: $path" >&2
+          return 1
+        }
+      fi
       return 0
     fi
 
@@ -599,13 +729,22 @@ format_raw_filesystem() {
     fi
 
     # -69879 is retryable only for this proven synthetic fixture. The device
-    # may already be gone; never carry its BSD name into the next attempt.
+    # may already be gone; never carry its BSD name into the next attempt. A
+    # successful detach call is not enough: wait until the exact CRawDiskImage
+    # backing publication is gone before allowing diskN to be reused.
     if [[ -e "/dev/$bsd" ]] && assert_fixture_device "$bsd" "$path" >/dev/null 2>&1; then
       bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
     else
       recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
     fi
-    /bin/sleep 0.25
+    if ! wait_for_fixture_publication_gone "$path" 100; then
+      recover_fixture_image "$bsd" "$path" >/dev/null 2>&1 || true
+      wait_for_fixture_publication_gone "$path" 100 || {
+        echo "fixture publication remained after retry cleanup: $path" >&2
+        return 1
+      }
+    fi
+    /bin/sleep 1
   done
 
   /bin/cat "$format_log" >&2 || true
@@ -617,26 +756,53 @@ start_adapter() {
   local bridge="$2"
   local tag="$3"
   local output_variable="$4"
+  local adapter_log="$LOG_ROOT/adapter-$tag.log"
   mkdir -p "$bridge"
   printf '%s\n' "$bridge" >>"$ACTIVE_MOUNTS"
-  "$ADAPTER_BIN" \
-    --raw-device-file "$EDP_IMAGE" \
-    --vid "$VID" --pid "$PID" --device-size "$DEVICE_SIZE" \
-    --partition-type "$partition" --password-file "$PASSWORD_FILE" \
-    --mountpoint "$bridge" --volume-name "EDP Storage $tag" \
-    >"$LOG_ROOT/adapter-$tag.log" 2>&1 &
-  local adapter_pid=$!
-  printf '%s|%s\n' "$adapter_pid" "$ADAPTER_BIN" >>"$ACTIVE_PROCESSES"
-  for _ in $(/usr/bin/seq 1 200); do
-    if is_mounted "$bridge" && [[ -f "$bridge/volume.raw" ]]; then
-      printf -v "$output_variable" '%s' "$adapter_pid"
-      return 0
+
+  local attempt adapter_pid
+  for attempt in 1 2; do
+    : >"$adapter_log"
+    "$ADAPTER_BIN" \
+      --raw-device-file "$EDP_IMAGE" \
+      --vid "$VID" --pid "$PID" --device-size "$DEVICE_SIZE" \
+      --partition-type "$partition" --password-file "$PASSWORD_FILE" \
+      --mountpoint "$bridge" --volume-name "EDP Storage $tag" \
+      >"$adapter_log" 2>&1 &
+    adapter_pid=$!
+    printf '%s|%s\n' "$adapter_pid" "$ADAPTER_BIN" >>"$ACTIVE_PROCESSES"
+
+    for _ in $(/usr/bin/seq 1 200); do
+      if is_mounted "$bridge" && [[ -f "$bridge/volume.raw" ]]; then
+        printf -v "$output_variable" '%s' "$adapter_pid"
+        return 0
+      fi
+      /bin/kill -0 "$adapter_pid" >/dev/null 2>&1 || break
+      /bin/sleep 0.1
+    done
+
+    if /bin/kill -0 "$adapter_pid" >/dev/null 2>&1; then
+      /bin/kill -TERM "$adapter_pid" >/dev/null 2>&1 || true
+      for _ in $(/usr/bin/seq 1 50); do
+        /bin/kill -0 "$adapter_pid" >/dev/null 2>&1 || break
+        /bin/sleep 0.05
+      done
+      /bin/kill -0 "$adapter_pid" >/dev/null 2>&1 \
+        && /bin/kill -KILL "$adapter_pid" >/dev/null 2>&1 || true
     fi
-    /bin/kill -0 "$adapter_pid" >/dev/null 2>&1 || break
-    /bin/sleep 0.1
+    wait "$adapter_pid" >/dev/null 2>&1 || true
+
+    if (( attempt == 1 )) \
+      && adapter_log_is_transient_fskit_failure "$adapter_log" \
+      && restart_console_fskit_agent_if_safe; then
+      log "STORAGE_FSKIT_HOST_RETRY=$tag attempt=2"
+      continue
+    fi
+
+    /usr/bin/tail -80 "$adapter_log" >&2 || true
+    echo "macFUSE Local adapter did not become ready: $tag attempt=$attempt" >&2
+    return 1
   done
-  /usr/bin/tail -80 "$LOG_ROOT/adapter-$tag.log" >&2 || true
-  echo "macFUSE Local adapter did not become ready: $tag" >&2
   return 1
 }
 
@@ -791,7 +957,7 @@ require_prepared_fixture() {
 }
 
 ensure_tools() {
-  if [[ -x "$ATTACH_BIN" && -x "$PREPARE_BIN" && -x "$ADAPTER_BIN" && -x "$FAILURE_BIN" ]]; then
+  if [[ -x "$ATTACH_BIN" && -x "$PREPARE_BIN" && -x "$ADAPTER_BIN" && -x "$FSKIT_GUARD_BIN" && -x "$FAILURE_BIN" ]]; then
     return 0
   fi
   build_tools
@@ -802,6 +968,9 @@ build_tools() {
   xcrun clang -std=c17 -Wall -Wextra -Werror -fobjc-arc -fblocks \
     native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
     -framework Foundation -o "$ATTACH_BIN"
+  xcrun clang -std=c17 -Wall -Wextra -Werror \
+    native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c \
+    -o "$FSKIT_GUARD_BIN"
 
   local core_sources=(
     native/EDPFSKitPoC/Extension/EDPRawIO.swift
