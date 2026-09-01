@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "${REPO_ROOT}/scripts/prepare-shared-edp-core.sh"
 OUTPUT_BIN="${1:?usage: build-transport-backends.sh OUTPUT_BIN}"
 FRAMEWORKS="${MACFUSE_FRAMEWORKS:-/Library/Filesystems/macfuse.fs/Contents/Frameworks}"
+RUNTIME_FRAMEWORKS="${MACFUSE_RUNTIME_FRAMEWORKS:-/Library/Filesystems/macfuse.fs/Contents/Frameworks}"
 MOUNT_COMMIT="${MACFUSE_MOUNT_COMMIT:-313b9c68d04cd779bffc9f8bd9f32a4e1f5baf70}"
 LIBRARY3_COMMIT="${MACFUSE_LIBRARY3_COMMIT:-9a3db24bf7e3896d69a514a70e91dc41eefb948b}"
 
@@ -65,7 +66,7 @@ xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
   "${BUILD_ROOT}/adapter.o" "${BUILD_ROOT}/async-shim.o" \
-  -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${FRAMEWORKS}" \
+  -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${RUNTIME_FRAMEWORKS}" \
   -framework MFMount -framework CoreFoundation -framework DiskArbitration \
   -o "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
 cp "${OUTPUT_BIN}/edp-mfmount-local-readwrite" "${OUTPUT_BIN}/edp-mfmount-local-readonly"

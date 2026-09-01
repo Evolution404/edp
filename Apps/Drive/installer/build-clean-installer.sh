@@ -113,6 +113,32 @@ fi
 }
 printf '%s  %s\n' "${MACFUSE_SHA256}" "${MACFUSE_DMG}" | /usr/bin/shasum -a 256 -c -
 
+# Build from the signed macFUSE payload itself so a factory-clean machine does
+# not need macFUSE installed just to compile the EDP transport adapter.
+MACFUSE_BUILD_EXPANDED="${BUILD_ROOT}/macfuse-build-expanded"
+MACFUSE_BUILD_PAYLOAD="${BUILD_ROOT}/macfuse-build-payload"
+/usr/bin/hdiutil attach -quiet -readonly -nobrowse -mountpoint "${MACFUSE_MOUNT}" "${MACFUSE_DMG}"
+MACFUSE_BUILD_PRODUCT="$(find "${MACFUSE_MOUNT}" -maxdepth 2 -name 'Install macFUSE*.pkg' -print -quit)"
+[[ -n "${MACFUSE_BUILD_PRODUCT}" ]] || {
+  echo "signed macFUSE product package not found in dmg" >&2
+  exit 3
+}
+/usr/sbin/pkgutil --expand "${MACFUSE_BUILD_PRODUCT}" "${MACFUSE_BUILD_EXPANDED}"
+mkdir -p "${MACFUSE_BUILD_PAYLOAD}"
+(
+  cd "${MACFUSE_BUILD_PAYLOAD}"
+  /usr/bin/gzip -dc "${MACFUSE_BUILD_EXPANDED}/Core.pkg/Payload" \
+    | /usr/bin/cpio -idm --quiet
+)
+MACFUSE_BUILD_FRAMEWORKS="${MACFUSE_BUILD_PAYLOAD}/Library/Filesystems/macfuse.fs/Contents/Frameworks"
+[[ -d "${MACFUSE_BUILD_FRAMEWORKS}/MFMount.framework" ]] || {
+  echo "MFMount.framework missing from signed macFUSE payload" >&2
+  exit 3
+}
+/usr/bin/hdiutil detach -quiet "${MACFUSE_MOUNT}"
+
+echo "RESULT=MACFUSE_BUILD_FRAMEWORK_EXTRACTED_FROM_SIGNED_DMG"
+
 RUNTIME_STAGE="${BUILD_ROOT}/runtime"
 mkdir -p "${RUNTIME_STAGE}/bin" "${RUNTIME_STAGE}/licenses/macfuse"
 
@@ -166,7 +192,7 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -o "${RUNTIME_STAGE}/bin/libEDPReadWriteBridge.dylib"
 
 echo "Building macFUSE Local transport..."
-MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
+MACFUSE_FRAMEWORKS="${MACFUSE_BUILD_FRAMEWORKS}" \
   "${REPO_ROOT}/installer/build-transport-backends.sh" "${RUNTIME_STAGE}/bin"
 
 /usr/bin/clang -fobjc-arc -fblocks \

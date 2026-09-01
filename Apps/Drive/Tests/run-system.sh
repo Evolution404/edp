@@ -16,6 +16,7 @@ CREDENTIAL_SOURCE="${ROOT}/Apps/Drive/product/EDPCredentialStore.swift"
 MODEL_PROPERTY_SOURCE="${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateLifecycleModelProperties.swift"
 EMBEDDED_SERVICE_PLIST="${ROOT}/Apps/Drive/product/App/com.edp.drive.service.plist"
 LEGACY_SERVICE_PLIST="${ROOT}/Apps/Drive/installer/com.edp.drive.service.plist"
+CLEAN_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
 
 # The default regression suite must never gain an interactive elevation path.
 if /usr/bin/grep -RInE '(^|[[:space:]])sudo([[:space:]]|$)|/usr/bin/sudo' "${TEST_ROOT}" \
@@ -98,7 +99,18 @@ RAW_TRANSPORT="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/Direct
 /usr/bin/grep -Fq 'localVolume: true' "${TRANSPORT_PROVIDER}"
 /usr/bin/grep -Fq 'EDP_MFMOUNT_OPTIONS": "local,nobrowse"' "${TRANSPORT_PROVIDER}"
 /usr/bin/grep -Fq 'local,nobrowse,volname=%s' "${TRANSPORT_BUILD}" "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'RUNTIME_FRAMEWORKS="${MACFUSE_RUNTIME_FRAMEWORKS:-/Library/Filesystems/macfuse.fs/Contents/Frameworks}"' "${TRANSPORT_BUILD}"
+/usr/bin/grep -Fq -- '-Xlinker -rpath -Xlinker "${RUNTIME_FRAMEWORKS}"' "${TRANSPORT_BUILD}"
 echo 'RESULT=DRIVE_SYSTEM_TRANSPORT_BRIDGE_LOCAL_OK'
+
+# A factory-clean host has no installed macFUSE framework. The clean installer
+# must compile against the verified framework extracted from the signed DMG,
+# never depend on /Library/Filesystems/macfuse.fs already being installed.
+/usr/bin/grep -Fq 'MACFUSE_BUILD_FRAMEWORKS="${MACFUSE_BUILD_PAYLOAD}/Library/Filesystems/macfuse.fs/Contents/Frameworks"' "${CLEAN_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'RESULT=MACFUSE_BUILD_FRAMEWORK_EXTRACTED_FROM_SIGNED_DMG' "${CLEAN_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'MACFUSE_FRAMEWORKS="${MACFUSE_BUILD_FRAMEWORKS}"' "${CLEAN_INSTALLER_SOURCE}"
+! /usr/bin/grep -Fq 'MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks"' "${CLEAN_INSTALLER_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_FACTORY_CLEAN_INSTALLER_BUILD_OK'
 
 # The console launcher must allow both transport modes.  A missing read-only
 # target breaks the boot FAT16 path while leaving encrypted partitions healthy,

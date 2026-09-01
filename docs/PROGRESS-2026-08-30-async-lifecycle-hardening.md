@@ -441,6 +441,13 @@
 - 新增 S19 once-only completion gate，覆盖 timeout 与 late/duplicate callback 竞态。
 - 验证：service lifecycle、system、virtual-usb、storage smoke、`git diff --check` 全部 PASS。
 
+### 2026-09-01 12:30 — Factory-clean baseline and clean-host installer build
+
+- 用户已物理拔出真实 U 盘。`first-install-acceptance.sh preflight -> user-cleanup -> factory-first-install -> verify-clean` 完成；实机确认 `/Applications/EDP Drive.app`、`/Library/Filesystems/macfuse.fs`、`/Library/Application Support/EDP Drive`、`com.edp.drive.service` LaunchDaemon 与 `com.edp.drive` FDA 记录均不存在，`RESULT=FACTORY_CLEAN_BASELINE_VERIFIED`。源码仓库和普通用户文件未删除，DefaultKeychain 仍为 login.keychain。
+- factory-clean 后暴露打包器隐含依赖：`build-clean-installer.sh` 仍从已安装 `/Library/Filesystems/macfuse.fs/.../MFMount.framework` 编译 transport，导致真正第一次安装基线无法构建发布包。
+- Clean installer 现从已校验 SHA-256 的官方 macFUSE 5.3.3 DMG 临时展开 `Core.pkg/Payload`，使用其中 `MFMount.framework` 作为 build-time framework；不安装 macFUSE、不改变 FDA/TCC/用户 FSKit 状态。`build-transport-backends.sh` 将 build-time framework 与固定 runtime rpath 分离，最终 `LC_RPATH=/Library/Filesystems/macfuse.fs/Contents/Frameworks`。
+- system 新增 `RESULT=DRIVE_SYSTEM_FACTORY_CLEAN_INSTALLER_BUILD_OK` ratchet；在 App/macFUSE 均不存在的 factory-clean 主机上正式 `build-self-signed-installer.sh` 已成功，输出 `RESULT=MACFUSE_BUILD_FRAMEWORK_EXTRACTED_FROM_SIGNED_DMG`、`RESULT=EDP_CLEAN_COMBINED_INSTALLER_BUILT`。完整 `verify-clean-installer.sh` PASS，包内 transport 无临时构建路径，打包后主机仍保持 APP_ABSENT / MACFUSE_ABSENT / 无 EDP FDA。
+
 ### 2026-09-01 08:34 — Full Disk Access 收口为单一 EDP Drive App 身份
 
 - 真实 SanDisk 插入后发现当前安装态 `privilegedAccessReady=false`；TCC 只存在 `com.edp.drive` 的 `SystemPolicyAllFiles` 记录，且 csreq 为稳定 `identifier com.edp.drive + certificate root 040b5488...`，没有 `com.edp.drive.service` FDA 记录。由此确认覆盖升级没有丢主 App FDA，真正问题是 raw `O_RDWR /dev/rdiskN` 在 service 中执行，错误地把 service 变成第二个 FDA 主体。
