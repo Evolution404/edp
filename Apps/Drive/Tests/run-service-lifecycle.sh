@@ -37,6 +37,7 @@ PRODUCT_SOURCES=(
   product/EDPDeviceOperations.swift
   product/EDPRawAccess.swift
   product/EDPMountLifecycle.swift
+  product/EDPMountSupport.swift
   product/EDPVaultRuntime.swift
 )
 

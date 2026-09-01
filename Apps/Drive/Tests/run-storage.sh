@@ -1385,6 +1385,7 @@ validate_failure_and_build_contracts() {
     product/EDPDeviceOperations.swift
     product/EDPRawAccess.swift
     product/EDPMountLifecycle.swift
+    product/EDPMountSupport.swift
     product/EDPVaultRuntime.swift
   )
   local raw_validation_obj="$production_bin/EDPRawValidation.o"

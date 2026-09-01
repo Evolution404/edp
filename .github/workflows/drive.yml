@@ -99,7 +99,7 @@ jobs:
           grep -Fq 'service-cycle' Apps/Drive/scripts/first-install-acceptance.sh
           test "$(/usr/libexec/PlistBuddy -c 'Print :ThrottleInterval' Apps/Drive/product/App/com.edp.drive.service.plist)" = '1'
           test "$(/usr/libexec/PlistBuddy -c 'Print :ThrottleInterval' Apps/Drive/installer/com.edp.drive.service.plist)" = '1'
-          grep -Fq 'F_DUPFD_CLOEXEC' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'F_DUPFD_CLOEXEC' Apps/Drive/product/EDPMountSupport.swift
           grep -Fq 'prepare_inherited_raw_fd' Apps/Drive/product/EDPConsoleExec.c
           grep -Fq 'FD_CLOEXEC' Apps/Drive/product/EDPConsoleExec.c
           ! grep -Fq 'kickstart -k system/com.edp.drive.service' Apps/Drive/scripts/first-install-acceptance.sh
@@ -250,6 +250,7 @@ jobs:
             product/EDPDeviceOperations.swift
             product/EDPRawAccess.swift
             product/EDPMountLifecycle.swift
+            product/EDPMountSupport.swift
             product/EDPVaultRuntime.swift
           )
           /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "${RUNNER_TEMP}/EDPRawValidation.o"

@@ -12,6 +12,7 @@ RUNTIME_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeState.swift"
 DEVICE_OPERATIONS_SOURCE="${ROOT}/Apps/Drive/product/EDPDeviceOperations.swift"
 RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
+MOUNT_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPMountSupport.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
 JOURNAL_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleJournal.swift"
 NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
@@ -380,6 +381,18 @@ echo 'RESULT=DRIVE_SYSTEM_RUNTIME_SUPPORT_SPLIT_OK'
 ! /usr/bin/grep -Fq 'private let dataRoot' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'private func migrateLegacyRuntimeState()' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RUNTIME_STATE_SPLIT_OK'
+
+# Transport spawn/session/mount-operation support belongs outside the daemon
+# orchestration file; keep raw-fd inheritance and mount-operation ownership in
+# the dedicated mount-support unit.
+/usr/bin/grep -Fq 'final class EDPSpawnedProcess' "${MOUNT_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'func spawnConsoleTransport(' "${MOUNT_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'F_DUPFD_CLOEXEC' "${MOUNT_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'final class MountSession' "${MOUNT_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'final class EDPFSKitMountOperationBox' "${MOUNT_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'private final class EDPSpawnedProcess' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private final class MountSession' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_MOUNT_SUPPORT_SPLIT_OK'
 
 # Device discovery, filesystem probing, credential verification, and CLI
 # authorization are reusable device operations, not daemon orchestration.

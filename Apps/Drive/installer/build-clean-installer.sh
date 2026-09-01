@@ -183,6 +183,7 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   "${REPO_ROOT}/product/EDPDeviceOperations.swift" \
   "${REPO_ROOT}/product/EDPRawAccess.swift" \
   "${REPO_ROOT}/product/EDPMountLifecycle.swift" \
+  "${REPO_ROOT}/product/EDPMountSupport.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \
   "${RAW_VALIDATION_OBJ}" "${RAW_BROKER_OBJ}" \
   -o "${SERVICE_STAGE}"
