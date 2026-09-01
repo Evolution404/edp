@@ -66,9 +66,13 @@ int edp_raw_fd_broker_run_child(int socket_fd, const char *raw_path) {
         return 77;
     }
 
-    int raw_fd = edp_open_validated_raw_device(raw_path);
+    int validation_error = EDP_RAW_VALIDATION_OK;
+    int raw_fd = edp_open_validated_raw_device_diagnostic(raw_path, &validation_error);
     if (raw_fd < 0) {
-        int error_code = errno != 0 ? errno : EPERM;
+        int error_code = validation_error != EDP_RAW_VALIDATION_OK
+            ? validation_error
+            : (errno != 0 ? errno : EPERM);
+        fprintf(stderr, "EDP_RAW_BROKER_VALIDATION_FAILED code=%d errno=%d\n", error_code, errno);
         (void)send_broker_message(socket_fd, 1, error_code, -1);
         return 77;
     }

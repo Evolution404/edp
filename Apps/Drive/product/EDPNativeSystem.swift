@@ -518,16 +518,19 @@ private final class DAOperationBox: @unchecked Sendable {
     private let lock = NSLock()
     private let completion: @Sendable (String?, RuntimeNativeError?) -> Void
     private let successValue: @Sendable () -> Result<String?, RuntimeNativeError>
+    private let acceptedDissenterStatuses: Set<DAReturn>
     private var completionGate = EDPDiskArbitrationCompletionGate()
 
     init(
         bsdName: String,
         controller: EDPDiskArbitrationController,
+        acceptedDissenterStatuses: Set<DAReturn> = [],
         successValue: @escaping @Sendable () -> Result<String?, RuntimeNativeError>,
         completion: @escaping @Sendable (String?, RuntimeNativeError?) -> Void
     ) {
         self.bsdName = bsdName
         self.controller = controller
+        self.acceptedDissenterStatuses = acceptedDissenterStatuses
         self.successValue = successValue
         self.completion = completion
     }
@@ -536,11 +539,15 @@ private final class DAOperationBox: @unchecked Sendable {
         let result: Result<String?, RuntimeNativeError>
         if let dissenter {
             let status = DADissenterGetStatus(dissenter)
-            let detail = DADissenterGetStatusString(dissenter)
-                .map { " (\($0 as String))" } ?? ""
-            result = .failure(RuntimeNativeError(
-                "Disk Arbitration refused \(bsdName): status=\(status)\(detail)"
-            ))
+            if acceptedDissenterStatuses.contains(status) {
+                result = successValue()
+            } else {
+                let detail = DADissenterGetStatusString(dissenter)
+                    .map { " (\($0 as String))" } ?? ""
+                result = .failure(RuntimeNativeError(
+                    "Disk Arbitration refused \(bsdName): status=\(status)\(detail)"
+                ))
+            }
         } else {
             result = successValue()
         }
@@ -610,6 +617,11 @@ protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
     func suppressAutomount(usbRegistryEntryID: UInt64)
     func allowAutomount(usbRegistryEntryID: UInt64)
     func unmountWholeAsync(
+        _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    )
+    func forceUnmountWholeAsync(
         _ bsdName: String,
         expectedRegistryEntryID: UInt64?,
         completion: @escaping EDPDiskArbitrationVoidCompletion
@@ -707,6 +719,7 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         timeout: TimeInterval = 20,
         bsdName: String,
         expectedRegistryEntryID: UInt64? = nil,
+        acceptedDissenterStatuses: Set<DAReturn> = [],
         successValue: @escaping @Sendable () -> Result<String?, RuntimeNativeError>,
         request: (DADisk, UnsafeMutableRawPointer) -> Void,
         completion: @escaping @Sendable (String?, RuntimeNativeError?) -> Void
@@ -727,6 +740,7 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         let box = DAOperationBox(
             bsdName: bsdName,
             controller: self,
+            acceptedDissenterStatuses: acceptedDissenterStatuses,
             successValue: successValue,
             completion: delivered
         )
@@ -748,11 +762,34 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         performAsync(
             bsdName: bsdName,
             expectedRegistryEntryID: expectedRegistryEntryID,
+            acceptedDissenterStatuses: [DAReturn(kDAReturnNotMounted)],
             successValue: { .success(nil) },
             request: { disk, context in
                 DADiskUnmount(
                     disk,
                     DADiskUnmountOptions(kDADiskUnmountOptionWhole),
+                    daOperationCallback,
+                    context
+                )
+            },
+            completion: { _, error in completion(error) }
+        )
+    }
+
+    func forceUnmountWholeAsync(
+        _ bsdName: String,
+        expectedRegistryEntryID: UInt64? = nil,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
+        performAsync(
+            bsdName: bsdName,
+            expectedRegistryEntryID: expectedRegistryEntryID,
+            acceptedDissenterStatuses: [DAReturn(kDAReturnNotMounted)],
+            successValue: { .success(nil) },
+            request: { disk, context in
+                DADiskUnmount(
+                    disk,
+                    DADiskUnmountOptions(kDADiskUnmountOptionWhole | kDADiskUnmountOptionForce),
                     daOperationCallback,
                     context
                 )

@@ -17,6 +17,9 @@ MODEL_PROPERTY_SOURCE="${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateLifecycleMode
 EMBEDDED_SERVICE_PLIST="${ROOT}/Apps/Drive/product/App/com.edp.drive.service.plist"
 LEGACY_SERVICE_PLIST="${ROOT}/Apps/Drive/installer/com.edp.drive.service.plist"
 CLEAN_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
+RAW_VALIDATION_SOURCE="${ROOT}/Apps/Drive/product/EDPRawValidation.c"
+RAW_VALIDATION_HEADER="${ROOT}/Apps/Drive/product/EDPRawValidation.h"
+RAW_BROKER_SOURCE="${ROOT}/Apps/Drive/product/EDPRawFDBroker.c"
 
 # The default regression suite must never gain an interactive elevation path.
 if /usr/bin/grep -RInE '(^|[[:space:]])sudo([[:space:]]|$)|/usr/bin/sudo' "${TEST_ROOT}" \
@@ -347,6 +350,32 @@ echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
 ! /usr/bin/grep -Fq 'failure.contains("File system extension' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'errorMessage.contains("EDP_RAW_' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK'
+
+# Raw validation must preserve the true open(2) errno and use separate stable
+# codes for target/path/generation/metadata revalidation. Otherwise a metadata
+# or IOKit mismatch is indistinguishable from FDA EPERM and the UI gives the
+# user a false privacy-permission diagnosis.
+/usr/bin/grep -Fq 'EDP_RAW_VALIDATION_TARGET = 1001' "${RAW_VALIDATION_HEADER}"
+/usr/bin/grep -Fq 'EDP_RAW_VALIDATION_METADATA = 1007' "${RAW_VALIDATION_HEADER}"
+/usr/bin/grep -Fq 'edp_open_validated_raw_device_diagnostic' "${RAW_VALIDATION_SOURCE}" "${RAW_BROKER_SOURCE}"
+/usr/bin/grep -Fq 'out_error_code = errno != 0 ? errno : EIO' "${RAW_VALIDATION_SOURCE}"
+/usr/bin/grep -Fq 'EDP_RAW_BROKER_VALIDATION_FAILED code=%d errno=%d' "${RAW_BROKER_SOURCE}"
+/usr/bin/grep -Fq 'EDP_RAW_LEASE_OPEN_FAILED:1007' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+echo 'RESULT=DRIVE_SYSTEM_RAW_VALIDATION_DIAGNOSTICS_OK'
+
+# A failed macOS filesystem probe can leave an otherwise-unmounted physical EDP
+# whole media busy for O_RDWR. Recovery is exact-generation, EBUSY-only, bounded
+# to one forced whole-disk unmount plus one raw-open retry, and never applies to
+# EPERM/metadata failures or a replacement disk reusing the BSD name.
+/usr/bin/grep -Fq 'func forceUnmountWholeAsync(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'kDADiskUnmountOptionWhole | kDADiskUnmountOptionForce' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'EDPLifecycleFailure.isRawAccessBusy(failure)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'allowBusyRecovery: false' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'expectedRegistryEntryID: disk.registryEntryID' "${RUNTIME_SOURCE}"
+for scenario in S31 S32 S33 S34 S35; do
+  /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+done
+echo 'RESULT=DRIVE_SYSTEM_RAW_EBUSY_RECOVERY_OK'
 
 # Lifecycle deadlines are monotonic and scheduler-driven. Bridge activation and
 # mount drain timeouts must not regress to wall-clock Date()/asyncAfter logic.

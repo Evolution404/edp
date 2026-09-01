@@ -474,7 +474,10 @@ private final class FakeDiskArbitration: EDPDaemonDiskArbitrating, @unchecked Se
     private let lock = NSLock()
     private(set) var suppressed = Set<UInt64>()
     private(set) var unmountWholeCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
+    private(set) var forceUnmountWholeCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
     private(set) var ejectCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
+    private var nextForceUnmountError: RuntimeNativeError?
+    private var nextForceUnmountCallbackHook: (@Sendable () -> Void)?
     private var nextEjectError: RuntimeNativeError?
     private var nextEjectCallbackHook: (@Sendable () -> Void)?
     private var holdNextEjectCompletion = false
@@ -499,6 +502,34 @@ private final class FakeDiskArbitration: EDPDaemonDiskArbitrating, @unchecked Se
         unmountWholeCalls.append((bsdName, expectedRegistryEntryID))
         lock.unlock()
         callbackQueue.async { completion(nil) }
+    }
+
+    func forceUnmountWholeAsync(
+        _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    ) {
+        lock.lock()
+        forceUnmountWholeCalls.append((bsdName, expectedRegistryEntryID))
+        let error = nextForceUnmountError
+        let hook = nextForceUnmountCallbackHook
+        nextForceUnmountError = nil
+        nextForceUnmountCallbackHook = nil
+        lock.unlock()
+        callbackQueue.async {
+            hook?()
+            completion(error)
+        }
+    }
+
+    func setNextForceUnmountResult(
+        error: RuntimeNativeError?,
+        callbackHook: (@Sendable () -> Void)? = nil
+    ) {
+        lock.lock()
+        nextForceUnmountError = error
+        nextForceUnmountCallbackHook = callbackHook
+        lock.unlock()
     }
 
     func setNextEjectResult(
@@ -567,6 +598,11 @@ private extension FakeDiskArbitration {
         return unmountWholeCalls
     }
 
+    func snapshotForceUnmountWholeCalls() -> [(bsdName: String, expectedRegistryEntryID: UInt64?)] {
+        lock.lock(); defer { lock.unlock() }
+        return forceUnmountWholeCalls
+    }
+
     func snapshotEjectCalls() -> [(bsdName: String, expectedRegistryEntryID: UInt64?)] {
         lock.lock(); defer { lock.unlock() }
         return ejectCalls
@@ -632,6 +668,35 @@ private final class PublisherProcessResultBox: @unchecked Sendable {
     }
 }
 
+private final class RawAccessOpenScript: @unchecked Sendable {
+    private let lock = NSLock()
+    private var steps: [String]
+    private var callCount = 0
+
+    init(_ steps: [String]) {
+        self.steps = steps
+    }
+
+    func open(_ disk: PhysicalDisk) throws -> EDPRawAccessLease {
+        lock.lock()
+        callCount += 1
+        let step = steps.isEmpty ? "OK" : steps.removeFirst()
+        lock.unlock()
+        if step != "OK" { throw LifecycleValidationError(step) }
+        return EDPRawAccessLease(
+            deviceID: disk.deviceID,
+            registryEntryID: disk.registryEntryID,
+            rawPath: disk.rawPath,
+            fd: -1
+        )
+    }
+
+    func count() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return callCount
+    }
+}
+
 private struct ControllerEnvironment {
     let security: TemporaryKeychainContext
     let state: EDPVirtualUSBState
@@ -647,7 +712,9 @@ private struct ControllerEnvironment {
         fixtureDirectory: String,
         insertDevice: Bool,
         manager: FakeMountManager = FakeMountManager(),
-        security: TemporaryKeychainContext? = nil
+        security: TemporaryKeychainContext? = nil,
+        diskArbitration: FakeDiskArbitration = FakeDiskArbitration(),
+        rawAccessLeaseOpener: EDPRawAccessLeaseOpening? = nil
     ) throws -> ControllerEnvironment {
         let security = try security ?? TemporaryKeychainContext()
         let state = EDPVirtualUSBState()
@@ -662,7 +729,6 @@ private struct ControllerEnvironment {
         }
         let credentials = try security.credentialStore()
         let policies = try security.policyStore()
-        let diskArbitration = FakeDiskArbitration()
         let correctPassword = Array("0000aaaa".utf8)
         let verifierMetadata = fixture.metadata
         let controller = try EDPDaemonController(
@@ -672,7 +738,7 @@ private struct ControllerEnvironment {
             diskArbitration: diskArbitration,
             mediaProvider: EDPVirtualWholeUSBMediaProvider(state: state),
             metadataReader: EDPVirtualRawMetadataReader(state: state),
-            rawAccessLeaseOpener: { disk in
+            rawAccessLeaseOpener: rawAccessLeaseOpener ?? { disk in
                 EDPRawAccessLease(
                     deviceID: disk.deviceID,
                     registryEntryID: disk.registryEntryID,
@@ -1925,6 +1991,14 @@ struct ValidateCredentialPolicyServiceLifecycle {
             guard unavailable.code == .rawAccessUnavailable else {
                 throw LifecycleValidationError("S21 generic raw-open error lost unavailable classification")
             }
+            let metadataValidation = EDPLifecycleFailure.classifyRawAccess(
+                LifecycleValidationError("EDP_RAW_LEASE_OPEN_FAILED:1007")
+            )
+            guard metadataValidation.code == .rawAccessUnavailable else {
+                throw LifecycleValidationError(
+                    "S21 raw metadata validation failure was misclassified as FDA permission"
+                )
+            }
 
             let publicationFailure = EDPLifecycleFailure(
                 code: .publicationFailed,
@@ -2340,6 +2414,153 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 )
             }
             print("SCENARIO=S30_OK duplicate_eject_failure_fanout")
+        }
+
+        do {
+            let openScript = RawAccessOpenScript([
+                "EDP_RAW_LEASE_OPEN_FAILED:16",
+                "OK",
+            ])
+            let diskArbitration = FakeDiskArbitration()
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                diskArbitration: diskArbitration,
+                rawAccessLeaseOpener: { try openScript.open($0) }
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S31 EBUSY recovery did not complete") {
+                openScript.count() == 2
+                    && diskArbitration.snapshotForceUnmountWholeCalls().count == 1
+            }
+            let device = try env.connectedDevice()
+            let forceCalls = diskArbitration.snapshotForceUnmountWholeCalls()
+            guard device.privilegedAccessReady,
+                  openScript.count() == 2,
+                  forceCalls.count == 1,
+                  forceCalls[0].bsdName == "disk90",
+                  forceCalls[0].expectedRegistryEntryID == 0x9000 else {
+                throw LifecycleValidationError(
+                    "S31 EBUSY recovery did not force-unmount the exact generation once"
+                )
+            }
+            print("SCENARIO=S31_OK raw_ebusy_force_unmount_retry_once")
+        }
+
+        do {
+            let openScript = RawAccessOpenScript([
+                "EDP_RAW_LEASE_OPEN_FAILED:16",
+                "EDP_RAW_LEASE_OPEN_FAILED:16",
+            ])
+            let diskArbitration = FakeDiskArbitration()
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                diskArbitration: diskArbitration,
+                rawAccessLeaseOpener: { try openScript.open($0) }
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S32 second EBUSY did not terminate") {
+                openScript.count() == 2
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+            let device = try env.connectedDevice()
+            guard !device.privilegedAccessReady,
+                  openScript.count() == 2,
+                  diskArbitration.snapshotForceUnmountWholeCalls().count == 1 else {
+                throw LifecycleValidationError(
+                    "S32 repeated EBUSY entered an unbounded recovery loop"
+                )
+            }
+            print("SCENARIO=S32_OK repeated_raw_ebusy_stops_after_one_recovery")
+        }
+
+        do {
+            let openScript = RawAccessOpenScript(["EDP_RAW_LEASE_OPEN_FAILED:16"])
+            let diskArbitration = FakeDiskArbitration()
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                diskArbitration: diskArbitration,
+                rawAccessLeaseOpener: { try openScript.open($0) }
+            )
+            let replacementState = env.state
+            let replacementFixture = env.fixture
+            diskArbitration.setNextForceUnmountResult(error: nil) {
+                replacementState.replace(
+                    "disk90",
+                    with: replacementFixture,
+                    registryEntryID: 0x9100,
+                    usbRegistryEntryID: 0x9101
+                )
+            }
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S33 generation replacement recovery did not terminate") {
+                diskArbitration.snapshotForceUnmountWholeCalls().count == 1
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+            guard openScript.count() == 1,
+                  diskArbitration.snapshotForceUnmountWholeCalls().count == 1 else {
+                throw LifecycleValidationError(
+                    "S33 replacement generation received a raw-open retry"
+                )
+            }
+            print("SCENARIO=S33_OK busy_recovery_refuses_replacement_generation")
+        }
+
+        do {
+            let openScript = RawAccessOpenScript(["EDP_RAW_LEASE_OPEN_FAILED:16"])
+            let diskArbitration = FakeDiskArbitration()
+            diskArbitration.setNextForceUnmountResult(
+                error: RuntimeNativeError("Disk Arbitration refused force whole-unmount")
+            )
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                diskArbitration: diskArbitration,
+                rawAccessLeaseOpener: { try openScript.open($0) }
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S34 force-unmount failure did not terminate") {
+                diskArbitration.snapshotForceUnmountWholeCalls().count == 1
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+            let device = try env.connectedDevice()
+            guard !device.privilegedAccessReady,
+                  openScript.count() == 1,
+                  diskArbitration.snapshotForceUnmountWholeCalls().count == 1 else {
+                throw LifecycleValidationError(
+                    "S34 force-unmount failure did not fail closed"
+                )
+            }
+            print("SCENARIO=S34_OK busy_recovery_da_failure_is_fail_closed")
+        }
+
+        do {
+            for failure in [
+                "EDP_RAW_LEASE_OPEN_FAILED:1",
+                "EDP_RAW_LEASE_OPEN_FAILED:1007",
+            ] {
+                let openScript = RawAccessOpenScript([failure])
+                let diskArbitration = FakeDiskArbitration()
+                let env = try ControllerEnvironment.make(
+                    fixtureDirectory: fixtureDirectory,
+                    insertDevice: true,
+                    diskArbitration: diskArbitration,
+                    rawAccessLeaseOpener: { try openScript.open($0) }
+                )
+                env.controller.reconcileSynchronouslyForTesting()
+                try waitForCondition("S35 non-EBUSY raw failure did not execute") {
+                    openScript.count() >= 1
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+                guard diskArbitration.snapshotForceUnmountWholeCalls().isEmpty else {
+                    throw LifecycleValidationError(
+                        "S35 non-EBUSY raw failure incorrectly triggered force-unmount"
+                    )
+                }
+            }
+            print("SCENARIO=S35_OK non_busy_raw_failures_never_force_unmount")
         }
 
         do {

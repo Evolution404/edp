@@ -514,22 +514,41 @@ struct EDPLifecycleFailure: Error, Equatable, Sendable, CustomStringConvertible,
         )
     }
 
+    static func rawAccessTaggedCode(in detail: String) -> Int? {
+        for tag in ["EDP_RAW_BROKER_OPEN_FAILED:", "EDP_RAW_LEASE_OPEN_FAILED:"] {
+            guard let range = detail.range(of: tag) else { continue }
+            let suffix = detail[range.upperBound...]
+            let digits = suffix.prefix { $0.isNumber }
+            guard !digits.isEmpty else { continue }
+            if let value = Int(digits) { return value }
+        }
+        return nil
+    }
+
+    static func isRawAccessBusy(_ failure: EDPLifecycleFailure) -> Bool {
+        rawAccessTaggedCode(in: failure.detail) == Int(EBUSY)
+    }
+
     static func recognizedRawAccessFailure(_ error: Error) -> EDPLifecycleFailure? {
         let nsError = error as NSError
         let detail = String(describing: error)
         if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EPERM) {
             return EDPLifecycleFailure(code: .rawAccessPermission, detail: detail)
         }
+
         // The privileged helper protocol predates typed errors. Parse its
         // stable machine-readable tags once at this adapter boundary; callers
-        // receive only a typed failure code from this point onward.
-        if detail.contains("EDP_RAW_BROKER_OPEN_FAILED:1")
-            || detail.contains("EDP_RAW_LEASE_OPEN_FAILED:1")
+        // receive only a typed failure code from this point onward. Match the
+        // complete numeric code: a validation code such as 1007 must never be
+        // mistaken for EPERM merely because its decimal text begins with "1".
+        let taggedCode = rawAccessTaggedCode(in: detail)
+        if taggedCode == Int(EPERM)
             || detail.contains("Operation not permitted")
             || detail.contains("操作不被允许") {
             return EDPLifecycleFailure(code: .rawAccessPermission, detail: detail)
         }
-        if detail.contains("EDP_RAW_BROKER_") || detail.contains("EDP_RAW_LEASE_") {
+        if taggedCode != nil
+            || detail.contains("EDP_RAW_BROKER_") || detail.contains("EDP_RAW_LEASE_") {
             return EDPLifecycleFailure(code: .rawAccessUnavailable, detail: detail)
         }
         return nil
@@ -3691,6 +3710,112 @@ final class EDPDaemonController: @unchecked Sendable {
         return lease
     }
 
+    private func rawAccessGenerationMatchesLocked(_ disk: PhysicalDisk) -> Bool {
+        guard ejectingUSBRegistryIDs[disk.deviceID] == nil,
+              let current = connectedDisks.first(where: { $0.deviceID == disk.deviceID }),
+              current.registryEntryID == disk.registryEntryID,
+              current.rawPath == disk.rawPath,
+              mediaProvider.registryEntryExists(disk.registryEntryID) else {
+            return false
+        }
+        return true
+    }
+
+    private func launchRawAccessOpenAttemptLocked(
+        for disk: PhysicalDisk,
+        allowBusyRecovery: Bool
+    ) {
+        let performOpen: @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            let result: Result<EDPRawAccessLease, EDPLifecycleFailure>
+            do {
+                result = .success(try self.rawAccessLeaseOpener(disk))
+            } catch {
+                result = .failure(userFacingRawAccessFailure(error))
+            }
+            self.onControllerQueue {
+                self.handleRawAccessOpenResultLocked(
+                    disk: disk,
+                    result: result,
+                    allowBusyRecovery: allowBusyRecovery
+                )
+            }
+        }
+        if rawAccessOpenerRunsOffControllerQueue {
+            rawAccessQueue.async(execute: performOpen)
+        } else {
+            performOpen()
+        }
+    }
+
+    private func handleRawAccessOpenResultLocked(
+        disk: PhysicalDisk,
+        result: Result<EDPRawAccessLease, EDPLifecycleFailure>,
+        allowBusyRecovery: Bool
+    ) {
+        guard rawAccessGenerationMatchesLocked(disk) else {
+            if case .success(let lease) = result { lease.invalidate() }
+            finishRawAccessProbeLocked(
+                disk: disk,
+                lease: nil,
+                failure: EDPLifecycleFailure(
+                    code: .deviceChanged,
+                    detail: "EDP device changed while raw access was being prepared"
+                )
+            )
+            return
+        }
+
+        switch result {
+        case .success(let lease):
+            finishRawAccessProbeLocked(disk: disk, lease: lease, failure: nil)
+        case .failure(let failure):
+            guard allowBusyRecovery, EDPLifecycleFailure.isRawAccessBusy(failure) else {
+                finishRawAccessProbeLocked(disk: disk, lease: nil, failure: failure)
+                return
+            }
+
+            addActivity(
+                "物理介质被系统占用，执行一次强制整盘卸载后重试",
+                deviceID: disk.deviceID
+            )
+            diskArbitration.forceUnmountWholeAsync(
+                disk.bsdName,
+                expectedRegistryEntryID: disk.registryEntryID
+            ) { [weak self] error in
+                guard let self else { return }
+                self.onControllerQueue {
+                    guard self.rawAccessGenerationMatchesLocked(disk) else {
+                        self.finishRawAccessProbeLocked(
+                            disk: disk,
+                            lease: nil,
+                            failure: EDPLifecycleFailure(
+                                code: .deviceChanged,
+                                detail: "EDP device changed during raw busy recovery"
+                            )
+                        )
+                        return
+                    }
+                    if let error {
+                        self.finishRawAccessProbeLocked(
+                            disk: disk,
+                            lease: nil,
+                            failure: EDPLifecycleFailure(
+                                code: .teardownFailed,
+                                detail: "EDP raw busy recovery failed: \(error)"
+                            )
+                        )
+                        return
+                    }
+                    self.launchRawAccessOpenAttemptLocked(
+                        for: disk,
+                        allowBusyRecovery: false
+                    )
+                }
+            }
+        }
+    }
+
     private func rawAccessProbeAsyncLocked(
         for disk: PhysicalDisk,
         temporarilyUnmount: Bool,
@@ -3710,43 +3835,7 @@ final class EDPDaemonController: @unchecked Sendable {
 
         let openLease: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
-            let performOpen: @Sendable () -> Void = { [weak self] in
-                guard let self else { return }
-                let result: Result<EDPRawAccessLease, EDPLifecycleFailure>
-                do {
-                    result = .success(try self.rawAccessLeaseOpener(disk))
-                } catch {
-                    result = .failure(userFacingRawAccessFailure(error))
-                }
-                self.onControllerQueue {
-                    guard self.ejectingUSBRegistryIDs[disk.deviceID] == nil,
-                          let current = self.connectedDisks.first(where: { $0.deviceID == disk.deviceID }),
-                          current.registryEntryID == disk.registryEntryID,
-                          current.rawPath == disk.rawPath else {
-                        if case .success(let lease) = result { lease.invalidate() }
-                        self.finishRawAccessProbeLocked(
-                            disk: disk,
-                            lease: nil,
-                            failure: EDPLifecycleFailure(
-                                code: .deviceChanged,
-                                detail: "EDP device changed while raw access was being prepared"
-                            )
-                        )
-                        return
-                    }
-                    switch result {
-                    case .success(let lease):
-                        self.finishRawAccessProbeLocked(disk: disk, lease: lease, failure: nil)
-                    case .failure(let failure):
-                        self.finishRawAccessProbeLocked(disk: disk, lease: nil, failure: failure)
-                    }
-                }
-            }
-            if self.rawAccessOpenerRunsOffControllerQueue {
-                self.rawAccessQueue.async(execute: performOpen)
-            } else {
-                performOpen()
-            }
+            self.launchRawAccessOpenAttemptLocked(for: disk, allowBusyRecovery: true)
         }
 
         guard temporarilyUnmount,

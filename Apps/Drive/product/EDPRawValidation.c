@@ -217,30 +217,68 @@ int edp_fd_has_edp_metadata(int fd) {
     return lba4_has_only_id(lba4) && lba7_has_edp_layout(lba7);
 }
 
-int edp_open_validated_raw_device(const char *raw_device) {
+int edp_open_validated_raw_device_diagnostic(const char *raw_device, int *out_error_code) {
+    if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_OK;
     if (!is_whole_raw_disk_path(raw_device) || !is_whole_usb_media(raw_device)) {
+        if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_TARGET;
         errno = EPERM;
         return -1;
     }
 
     struct stat path_before;
     if (lstat(raw_device, &path_before) != 0 || !S_ISCHR(path_before.st_mode)) {
+        if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_PATH_BEFORE;
         errno = EPERM;
         return -1;
     }
 
     int fd = open(raw_device, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        if (out_error_code) *out_error_code = errno != 0 ? errno : EIO;
+        return -1;
+    }
 
     struct stat status;
-    struct stat path_after;
-    if (fstat(fd, &status) != 0 || !S_ISCHR(status.st_mode) ||
-        lstat(raw_device, &path_after) != 0 || !S_ISCHR(path_after.st_mode) ||
-        status.st_rdev != path_before.st_rdev || status.st_rdev != path_after.st_rdev ||
-        !is_whole_usb_media(raw_device) || !edp_fd_has_edp_metadata(fd)) {
+    if (fstat(fd, &status) != 0 || !S_ISCHR(status.st_mode)) {
         close(fd);
+        if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_FSTAT;
+        errno = EPERM;
+        return -1;
+    }
+
+    struct stat path_after;
+    if (lstat(raw_device, &path_after) != 0 || !S_ISCHR(path_after.st_mode)) {
+        close(fd);
+        if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_PATH_AFTER;
+        errno = EPERM;
+        return -1;
+    }
+    if (status.st_rdev != path_before.st_rdev || status.st_rdev != path_after.st_rdev) {
+        close(fd);
+        if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_RDEV_CHANGED;
+        errno = EPERM;
+        return -1;
+    }
+    if (!is_whole_usb_media(raw_device)) {
+        close(fd);
+        if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_MEDIA_CHANGED;
+        errno = EPERM;
+        return -1;
+    }
+    if (!edp_fd_has_edp_metadata(fd)) {
+        close(fd);
+        if (out_error_code) *out_error_code = EDP_RAW_VALIDATION_METADATA;
         errno = EPERM;
         return -1;
     }
     return fd;
+}
+
+int edp_open_validated_raw_device(const char *raw_device) {
+    int diagnostic = EDP_RAW_VALIDATION_OK;
+    int fd = edp_open_validated_raw_device_diagnostic(raw_device, &diagnostic);
+    if (fd >= 0) return fd;
+    if (diagnostic > 0 && diagnostic < 1000) errno = diagnostic;
+    else errno = EPERM;
+    return -1;
 }
