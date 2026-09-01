@@ -1597,7 +1597,10 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
                 continueLaunch()
                 return
             }
-            diskArbitration.unmountWholeAsync(disk.bsdName) { [weak self, operation] error in
+            diskArbitration.unmountWholeAsync(
+                disk.bsdName,
+                expectedRegistryEntryID: disk.registryEntryID
+            ) { [weak self, operation] error in
                 guard let self else { return }
                 self.lifecycleQueue.async {
                     guard !self.cancelledMountOperations.contains(operation.sessionKey) else {
@@ -3508,6 +3511,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private var rawAccessLeases = [String: EDPRawAccessLease]()
     private var rawAccessProbeWaiters = [String: [EDPRawAccessLeaseCompletion]]()
     private var ejectingUSBRegistryIDs = [String: UInt64]()
+    private var ejectCompletionWaiters = [String: [EDPDaemonMountCompletion]]()
     private var rawAccessReadyByDeviceID = [String: Bool]()
     private var rawAccessErrorsByDeviceID = [String: String]()
     private var lastDiscoveryDiagnostics = ["discovery_not_started"]
@@ -3517,6 +3521,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private var startupRecoveryError: String?
     private var shutdownRequested = false
     private var shutdownInProgress = false
+    private var shutdownTeardownStarted = false
     private var shutdownCompletions = [EDPDaemonMountCompletion]()
 
     init(
@@ -3749,7 +3754,10 @@ final class EDPDaemonController: @unchecked Sendable {
             openLease()
             return
         }
-        diskArbitration.unmountWholeAsync(disk.bsdName) { [weak self] error in
+        diskArbitration.unmountWholeAsync(
+            disk.bsdName,
+            expectedRegistryEntryID: disk.registryEntryID
+        ) { [weak self] error in
             guard let self else { return }
             self.onControllerQueue {
                 if let error {
@@ -3960,7 +3968,10 @@ final class EDPDaemonController: @unchecked Sendable {
                 for disk in disks {
                     if ejectingUSBRegistryIDs[disk.deviceID] != nil {
                         if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
-                            diskArbitration.unmountWholeAsync(disk.bsdName) { error in
+                            diskArbitration.unmountWholeAsync(
+                                disk.bsdName,
+                                expectedRegistryEntryID: disk.registryEntryID
+                            ) { error in
                                 if let error {
                                     NSLog(
                                         "EDP eject-pending whole unmount failed for %@: %@",
@@ -4630,16 +4641,23 @@ final class EDPDaemonController: @unchecked Sendable {
                 completion("EDP service is shutting down")
                 return
             }
+            if self.ejectingUSBRegistryIDs[deviceID] != nil {
+                self.ejectCompletionWaiters[deviceID, default: []].append(completion)
+                return
+            }
             guard let disk = self.connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 completion("EDP device is no longer connected")
                 return
             }
-            if self.ejectingUSBRegistryIDs[deviceID] != nil {
-                completion("EDP device eject is already in progress")
-                return
-            }
 
             self.ejectingUSBRegistryIDs[deviceID] = disk.usbRegistryEntryID
+            self.ejectCompletionWaiters[deviceID] = [completion]
+            let finishRequest: EDPDaemonMountCompletion = { [weak self] errorMessage in
+                guard let self else { return }
+                self.onControllerQueue {
+                    self.finishEjectWaitersLocked(deviceID: deviceID, errorMessage: errorMessage)
+                }
+            }
             self.diskArbitration.suppressAutomount(usbRegistryEntryID: disk.usbRegistryEntryID)
             self.manager.ejectAsync(deviceID: deviceID) { [weak self] teardownError in
                 guard let self else { return }
@@ -4648,7 +4666,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         self.recoverFailedEjectLocked(
                             disk: disk,
                             errorMessage: teardownError,
-                            completion: completion
+                            completion: finishRequest
                         )
                         return
                     }
@@ -4670,7 +4688,7 @@ final class EDPDaemonController: @unchecked Sendable {
                                 self.recoverFailedEjectLocked(
                                     disk: disk,
                                     errorMessage: errorMessage,
-                                    completion: completion
+                                    completion: finishRequest
                                 )
                                 return
                             }
@@ -4678,11 +4696,18 @@ final class EDPDaemonController: @unchecked Sendable {
                                 deviceID: deviceID,
                                 failureCode: nil
                             )
+                            if let usbRegistryEntryID = self.ejectingUSBRegistryIDs.removeValue(
+                                forKey: deviceID
+                            ) {
+                                self.diskArbitration.allowAutomount(
+                                    usbRegistryEntryID: usbRegistryEntryID
+                                )
+                            }
                             self.connectedDisks.removeAll { $0.deviceID == deviceID }
                             self.rawAccessReadyByDeviceID.removeValue(forKey: deviceID)
                             self.rawAccessErrorsByDeviceID.removeValue(forKey: deviceID)
                             self.addActivity("设备已安全推出", deviceID: deviceID)
-                            completion(nil)
+                            finishRequest(nil)
                         }
                     }
                 }
@@ -4690,32 +4715,69 @@ final class EDPDaemonController: @unchecked Sendable {
         }
     }
 
+    private func finishEjectWaitersLocked(deviceID: String, errorMessage: String?) {
+        let waiters = ejectCompletionWaiters.removeValue(forKey: deviceID) ?? []
+        for waiter in waiters {
+            waiter(errorMessage)
+        }
+        beginShutdownTeardownIfReadyLocked()
+    }
+
     private func performPhysicalEjectAsyncLocked(
         disk: PhysicalDisk,
         completion: @escaping EDPDaemonMountCompletion
     ) {
+        let originalGenerationPresent: @Sendable () -> Bool = { [mediaProvider] in
+            mediaProvider.registryEntryExists(disk.usbRegistryEntryID)
+        }
         let ejectNow: @Sendable () -> Void = { [weak self] in
             guard let self else {
                 completion("EDP service controller was released")
                 return
             }
-            self.diskArbitration.ejectAsync(disk.bsdName) { [weak self] error in
+            // The original USB generation may disappear while synthetic
+            // publications are being torn down. Its disappearance is already
+            // the desired physical-eject terminal state; never issue DA work
+            // against a stale or reused BSD name.
+            guard originalGenerationPresent() else {
+                completion(nil)
+                return
+            }
+            self.diskArbitration.ejectAsync(
+                disk.bsdName,
+                expectedRegistryEntryID: disk.registryEntryID
+            ) { [weak self] error in
                 guard let self else { return }
                 self.onControllerQueue {
-                    completion(error.map { String(describing: $0) })
+                    if error != nil, !originalGenerationPresent() {
+                        completion(nil)
+                    } else {
+                        completion(error.map { String(describing: $0) })
+                    }
                 }
             }
         }
 
+        guard originalGenerationPresent() else {
+            completion(nil)
+            return
+        }
         guard EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) else {
             ejectNow()
             return
         }
-        diskArbitration.unmountWholeAsync(disk.bsdName) { [weak self] error in
+        diskArbitration.unmountWholeAsync(
+            disk.bsdName,
+            expectedRegistryEntryID: disk.registryEntryID
+        ) { [weak self] error in
             guard let self else { return }
             self.onControllerQueue {
                 if let error {
-                    completion(String(describing: error))
+                    if originalGenerationPresent() {
+                        completion(String(describing: error))
+                    } else {
+                        completion(nil)
+                    }
                     return
                 }
                 ejectNow()
@@ -4799,34 +4861,43 @@ final class EDPDaemonController: @unchecked Sendable {
 
             self.shutdownRequested = true
             self.shutdownInProgress = true
-            self.manager.unmountAllAsync { [weak self] errorMessage in
-                guard let self else { return }
-                self.onControllerQueue {
-                    var finalError = errorMessage
-                    if finalError == nil, !self.manager.mountedSummaries().isEmpty {
-                        finalError = "one or more EDP sessions could not be safely unmounted"
-                    }
-                    if finalError == nil {
-                        for lease in self.rawAccessLeases.values { lease.invalidate() }
-                        self.rawAccessLeases.removeAll()
-                        self.rawAccessReadyByDeviceID.removeAll()
-                        self.rawAccessErrorsByDeviceID.removeAll()
-                        self.connectedDisks.removeAll()
-                        self.addActivity("后台服务已安全停止")
-                    } else {
-                        // Failed shutdown remains quiesced. The caller can report
-                        // the error without allowing new mount work to race the
-                        // partially torn-down state.
-                        self.addActivity(
-                            "后台服务停止失败：\(finalError!)",
-                            level: "error"
-                        )
-                    }
-                    self.shutdownInProgress = false
-                    let completions = self.shutdownCompletions
-                    self.shutdownCompletions.removeAll()
-                    for callback in completions { callback(finalError) }
+            self.beginShutdownTeardownIfReadyLocked()
+        }
+    }
+
+    private func beginShutdownTeardownIfReadyLocked() {
+        guard shutdownInProgress,
+              !shutdownTeardownStarted,
+              ejectingUSBRegistryIDs.isEmpty else { return }
+        shutdownTeardownStarted = true
+        manager.unmountAllAsync { [weak self] errorMessage in
+            guard let self else { return }
+            self.onControllerQueue {
+                var finalError = errorMessage
+                if finalError == nil, !self.manager.mountedSummaries().isEmpty {
+                    finalError = "one or more EDP sessions could not be safely unmounted"
                 }
+                if finalError == nil {
+                    for lease in self.rawAccessLeases.values { lease.invalidate() }
+                    self.rawAccessLeases.removeAll()
+                    self.rawAccessReadyByDeviceID.removeAll()
+                    self.rawAccessErrorsByDeviceID.removeAll()
+                    self.connectedDisks.removeAll()
+                    self.addActivity("后台服务已安全停止")
+                } else {
+                    // Failed shutdown remains quiesced. The caller can report
+                    // the error without allowing new mount work to race the
+                    // partially torn-down state.
+                    self.addActivity(
+                        "后台服务停止失败：\(finalError!)",
+                        level: "error"
+                    )
+                }
+                self.shutdownTeardownStarted = false
+                self.shutdownInProgress = false
+                let completions = self.shutdownCompletions
+                self.shutdownCompletions.removeAll()
+                for callback in completions { callback(finalError) }
             }
         }
     }

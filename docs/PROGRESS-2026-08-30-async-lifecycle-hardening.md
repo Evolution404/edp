@@ -179,10 +179,10 @@
 - [x] fast
 - [x] virtual-usb
 - [x] system
-- [x] UI（当前 WIP exact-source：max 25.000ms，0 个 >33ms，`RESULT=DRIVE_UI_OK`）
+- [ ] UI：功能/结构/accessibility PASS；当前独立 sidebar animation performance gate 连续出现 91–116ms hitch，和本轮 eject lifecycle 修改无代码路径交叉，未伪记 PASS
 - [x] storage smoke #1
 - [x] storage smoke #2
-- [ ] release storage final marker
+- [x] release storage final marker（2026-09-01 eject generation hardening exact-source：M10 5/5，`RESULT=DRIVE_STORAGE_E2E_OK`）
 - [x] bash -n
 - [x] plutil -lint
 - [x] git diff --check
@@ -209,6 +209,19 @@
 - [ ] 严禁 format/erase/raw write
 
 ## 变更日志
+
+### 2026-09-01 13:31 — Physical eject stale-BSD race / generation reuse / concurrent lifecycle hardening
+
+- 真实用户现场复现：点击安全推出后 UI 弹 `Disk Arbitration refused disk4: status=-119930877`。该值为 `0xF8DA0003 = kDAReturnBadArgument`。Disk Arbitration 日志证明 physical `/dev/disk4` 已先 `removed`，随后 EDP 继续完成 synthetic `/dev/disk6` 与 `/dev/disk5` teardown；旧代码最终仍使用缓存 `bsdName=disk4` 发 `DADiskEject`，把“设备已经成功离开系统”误报成操作失败。
+- 正式 physical DA 操作不再只绑定易复用的 `diskN`。`unmountWholeAsync/ejectAsync` 新增可选 exact whole-media `registryEntryID`，在发 DA request 前通过 `DADiskCopyIOMedia + IORegistryEntryGetRegistryEntryID` 复核当前 BSD generation；原盘消失或同名 `diskN` 已被替换时不允许触碰 replacement device。
+- controller 的 physical eject 改为 generation-aware idempotence：synthetic teardown 期间原 USB `usbRegistryEntryID` 已消失时直接 terminal success；DA callback 返回 error 后若重新枚举证明原 USB generation 已消失，同样归一化为 success；只有原 generation 仍存在时保留真实 DA failure。绝不全局吞 `BadArgument/NotFound`。
+- duplicate eject 改成 single-flight completion fanout，重复点击只共享一次 teardown/physical eject；成功和失败均向所有等待者返回同一个 terminal result，不再弹“eject is already in progress”。
+- graceful shutdown 与 physical eject 交错时，shutdown 先 quiesce/reject 新工作并等待所有 in-flight eject terminal，再执行 `unmountAll -> raw lease release -> service exit`，防止 daemon 在 DA callback 前退出。
+- synthetic DiskImages2 publisher 仍以 exact backing-path metadata 为 identity；其 DA API 显式传 `expectedRegistryEntryID:nil`，不把 physical IOKit generation 规则错误套用到 DiskImages2 synthetic publication。
+- 新增 deterministic lifecycle S24–S30：physical disappearance during teardown、diskN replacement generation、live-generation DA failure、late DA error after disappearance、duplicate eject success fanout、shutdown waits eject、duplicate eject failure fanout。全部 PASS；10,000×32 lifecycle model 仍 PASS。
+- system 新 marker `RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK`，锁定 registry-generation 绑定、disappearance idempotence、duplicate-eject single-flight 与 shutdown/eject ordering。
+- hardware-free：`drive-test-fast`、`drive-test-system`、`drive-test-virtual-usb` 全 PASS。fresh release storage workdir 完成 prepare/core/M10 5/5/recovery/contracts/final：`M10_FD_BASELINE=9`、`M10_FD_MAX=9`、无 mount/device/process/FD leak，最终 `RESULT=DRIVE_STORAGE_E2E_OK`。Clean.pkg 构建与 verifier PASS。
+- UI 功能/结构/accessibility 仍 PASS，但当前 sidebar animation performance gate 独立出现 91–116ms hitch；该问题不属于 eject lifecycle 路径，保持未通过状态，未降低门槛。
 
 ### 2026-09-01 08:05 — Native-FS quiescence build/install and installed-runtime PASS
 

@@ -609,8 +609,16 @@ private func daOperationCallback(
 protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
     func suppressAutomount(usbRegistryEntryID: UInt64)
     func allowAutomount(usbRegistryEntryID: UInt64)
-    func unmountWholeAsync(_ bsdName: String, completion: @escaping EDPDiskArbitrationVoidCompletion)
-    func ejectAsync(_ bsdName: String, completion: @escaping EDPDiskArbitrationVoidCompletion)
+    func unmountWholeAsync(
+        _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    )
+    func ejectAsync(
+        _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
+        completion: @escaping EDPDiskArbitrationVoidCompletion
+    )
 }
 
 final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked Sendable {
@@ -662,10 +670,29 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         stateLock.unlock()
     }
 
-    private func disk(_ bsdName: String) throws -> DADisk {
+    private func disk(
+        _ bsdName: String,
+        expectedRegistryEntryID: UInt64? = nil
+    ) throws -> DADisk {
         let path = "/dev/\(bsdName)"
         guard let disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, path) else {
             throw RuntimeNativeError("DADiskCreateFromBSDName failed for \(path)")
+        }
+        if let expectedRegistryEntryID {
+            let media = DADiskCopyIOMedia(disk)
+            guard media != IO_OBJECT_NULL else {
+                throw RuntimeNativeError("Disk Arbitration target has no IOMedia for \(bsdName)")
+            }
+            defer { IOObjectRelease(media) }
+            var actualRegistryEntryID: UInt64 = 0
+            guard IORegistryEntryGetRegistryEntryID(media, &actualRegistryEntryID) == KERN_SUCCESS else {
+                throw RuntimeNativeError("Disk Arbitration target registry identity unavailable for \(bsdName)")
+            }
+            guard actualRegistryEntryID == expectedRegistryEntryID else {
+                throw RuntimeNativeError(
+                    "Disk Arbitration target changed for \(bsdName): expectedRegistryEntryID=\(expectedRegistryEntryID) actualRegistryEntryID=\(actualRegistryEntryID)"
+                )
+            }
         }
         return disk
     }
@@ -679,13 +706,14 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
     private func performAsync(
         timeout: TimeInterval = 20,
         bsdName: String,
+        expectedRegistryEntryID: UInt64? = nil,
         successValue: @escaping @Sendable () -> Result<String?, RuntimeNativeError>,
         request: (DADisk, UnsafeMutableRawPointer) -> Void,
         completion: @escaping @Sendable (String?, RuntimeNativeError?) -> Void
     ) {
         let target: DADisk
         do {
-            target = try disk(bsdName)
+            target = try disk(bsdName, expectedRegistryEntryID: expectedRegistryEntryID)
         } catch {
             let runtimeError = error as? RuntimeNativeError
                 ?? RuntimeNativeError(String(describing: error))
@@ -714,10 +742,12 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
 
     func unmountWholeAsync(
         _ bsdName: String,
+        expectedRegistryEntryID: UInt64? = nil,
         completion: @escaping EDPDiskArbitrationVoidCompletion
     ) {
         performAsync(
             bsdName: bsdName,
+            expectedRegistryEntryID: expectedRegistryEntryID,
             successValue: { .success(nil) },
             request: { disk, context in
                 DADiskUnmount(
@@ -862,10 +892,12 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
 
     func ejectAsync(
         _ bsdName: String,
+        expectedRegistryEntryID: UInt64? = nil,
         completion: @escaping EDPDiskArbitrationVoidCompletion
     ) {
         performAsync(
             bsdName: bsdName,
+            expectedRegistryEntryID: expectedRegistryEntryID,
             successValue: { .success(nil) },
             request: { disk, context in
                 DADiskEject(
@@ -911,7 +943,7 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
     }
 
     func unmountWhole(_ bsdName: String) throws {
-        try waitVoid { unmountWholeAsync(bsdName, completion: $0) }
+        try waitVoid { unmountWholeAsync(bsdName, expectedRegistryEntryID: nil, completion: $0) }
     }
 
     func unmount(_ bsdName: String) throws {
@@ -919,7 +951,7 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
     }
 
     func eject(_ bsdName: String) throws {
-        try waitVoid { ejectAsync(bsdName, completion: $0) }
+        try waitVoid { ejectAsync(bsdName, expectedRegistryEntryID: nil, completion: $0) }
     }
 #endif
 }

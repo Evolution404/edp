@@ -746,38 +746,42 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
                     return
                 }
 
-                self.diskArbitration.ejectAsync(device.bsdName) { [weak self] ejectError in
-                    guard let self else {
-                        completion("block publisher was released")
-                        return
-                    }
-                    self.operationQueue.async {
-                        // A successful Disk Arbitration eject only means the BSD
-                        // media was accepted for teardown. DiskImages2 may still
-                        // own the exact volume.raw publication for a short period,
-                        // and reusing the next diskN before that owner disappears
-                        // can overlap two FSKit/LIFS generations. Never report
-                        // unpublish success until the exact backing publication is
-                        // absent from hdiutil's owner snapshot.
-                        self.ensurePublicationGoneAsync(
-                            backingPath: backingPath,
-                            timeout: 2.5
-                        ) { goneError in
-                            if goneError == nil {
-                                completion(nil)
-                                return
+                self.diskArbitration.ejectAsync(
+                    device.bsdName,
+                    expectedRegistryEntryID: nil,
+                    completion: { [weak self] ejectError in
+                        guard let self else {
+                            completion("block publisher was released")
+                            return
+                        }
+                        self.operationQueue.async {
+                            // A successful Disk Arbitration eject only means the BSD
+                            // media was accepted for teardown. DiskImages2 may still
+                            // own the exact volume.raw publication for a short period,
+                            // and reusing the next diskN before that owner disappears
+                            // can overlap two FSKit/LIFS generations. Never report
+                            // unpublish success until the exact backing publication is
+                            // absent from hdiutil's owner snapshot.
+                            self.ensurePublicationGoneAsync(
+                                backingPath: backingPath,
+                                timeout: 2.5
+                            ) { goneError in
+                                if goneError == nil {
+                                    completion(nil)
+                                    return
+                                }
+                                if let ejectError {
+                                    NSLog(
+                                        "EDP DiskImages2 eject for %@ also reported %@",
+                                        backingPath,
+                                        String(describing: ejectError)
+                                    )
+                                }
+                                completion(goneError)
                             }
-                            if let ejectError {
-                                NSLog(
-                                    "EDP DiskImages2 eject for %@ also reported %@",
-                                    backingPath,
-                                    String(describing: ejectError)
-                                )
-                            }
-                            completion(goneError)
                         }
                     }
-                }
+                )
             }
         }
     }

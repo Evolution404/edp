@@ -269,6 +269,29 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_DIRECT_DA_MOUNT_OK'
 /usr/bin/grep -Fq 'func unpublishAsync(' "${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
 echo 'RESULT=DRIVE_SYSTEM_ASYNC_DISK_ARBITRATION_OK'
 
+# Physical USB DA operations are authorized by the exact IOMedia generation,
+# never by a reusable diskN alone. A generation that disappears while safe
+# eject is tearing down synthetic publications is an idempotent success; a
+# live generation DA failure remains fail-closed. Duplicate eject joins the
+# existing single-flight request, and graceful shutdown waits for eject terminal.
+/usr/bin/grep -Fq 'DADiskCopyIOMedia(disk)' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'actualRegistryEntryID == expectedRegistryEntryID' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'expectedRegistryEntryID: disk.registryEntryID' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'mediaProvider.registryEntryExists(disk.usbRegistryEntryID)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'ejectCompletionWaiters' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'beginShutdownTeardownIfReadyLocked()' "${RUNTIME_SOURCE}"
+for marker in \
+  'SCENARIO=S24_OK physical_disappears_during_teardown_is_idempotent_success' \
+  'SCENARIO=S25_OK diskn_reuse_never_ejects_replacement_generation' \
+  'SCENARIO=S26_OK live_generation_da_error_remains_failure' \
+  'SCENARIO=S27_OK late_da_error_after_generation_removal_is_success' \
+  'SCENARIO=S28_OK duplicate_eject_single_flight_fanout' \
+  'SCENARIO=S29_OK shutdown_waits_for_inflight_eject' \
+  'SCENARIO=S30_OK duplicate_eject_failure_fanout'; do
+  /usr/bin/grep -Fq "${marker}" "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+done
+echo 'RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK'
+
 # DiskImages2 publication and macFUSE scratch recovery are also asynchronous.
 # The publisher may still invoke hdiutil as a bounded adapter, but it must never
 # block a lifecycle queue with sleep/wait loops or expose a synchronous publish

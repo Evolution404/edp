@@ -182,6 +182,7 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
     private var lastFailureCodes = [String: EDPLifecycleFailureCode]()
     private var unmountFailures = [String: (remaining: Int, message: String)]()
     private var ejectFailures = [String: (remaining: Int, message: String)]()
+    private var ejectSuccessHook: (@Sendable () -> Void)?
     private var lifecycleJournalEntries = [EDPLifecycleJournalEntry]()
     var staleSessionCount = 0
 
@@ -202,6 +203,12 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
     func holdNextMount(deviceID: String, partitionType: UInt32) {
         asyncLock.lock()
         heldMountKeys.insert(key(deviceID, partitionType))
+        asyncLock.unlock()
+    }
+
+    func setEjectSuccessHook(_ hook: (@Sendable () -> Void)?) {
+        asyncLock.lock()
+        ejectSuccessHook = hook
         asyncLock.unlock()
     }
 
@@ -360,7 +367,10 @@ private final class FakeMountManager: EDPDaemonMountManaging, @unchecked Sendabl
             return
         }
         mounted = mounted.filter { $0.value.deviceID != deviceID }
+        let successHook = ejectSuccessHook
+        ejectSuccessHook = nil
         asyncLock.unlock()
+        successHook?()
         completion(nil)
     }
 
@@ -463,8 +473,14 @@ private final class FakeDiskArbitration: EDPDaemonDiskArbitrating, @unchecked Se
     private let callbackQueue = DispatchQueue(label: "com.edp.drive.tests.fake-da")
     private let lock = NSLock()
     private(set) var suppressed = Set<UInt64>()
-    private(set) var unmountWholeCalls = [String]()
-    private(set) var ejectCalls = [String]()
+    private(set) var unmountWholeCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
+    private(set) var ejectCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
+    private var nextEjectError: RuntimeNativeError?
+    private var nextEjectCallbackHook: (@Sendable () -> Void)?
+    private var holdNextEjectCompletion = false
+    private var heldEjectCompletion: EDPDiskArbitrationVoidCompletion?
+    private var heldEjectError: RuntimeNativeError?
+    private var heldEjectCallbackHook: (@Sendable () -> Void)?
 
     func suppressAutomount(usbRegistryEntryID: UInt64) {
         lock.lock(); suppressed.insert(usbRegistryEntryID); lock.unlock()
@@ -476,28 +492,82 @@ private final class FakeDiskArbitration: EDPDaemonDiskArbitrating, @unchecked Se
 
     func unmountWholeAsync(
         _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
         completion: @escaping EDPDiskArbitrationVoidCompletion
     ) {
-        lock.lock(); unmountWholeCalls.append(bsdName); lock.unlock()
+        lock.lock()
+        unmountWholeCalls.append((bsdName, expectedRegistryEntryID))
+        lock.unlock()
         callbackQueue.async { completion(nil) }
+    }
+
+    func setNextEjectResult(
+        error: RuntimeNativeError?,
+        callbackHook: (@Sendable () -> Void)? = nil
+    ) {
+        lock.lock()
+        nextEjectError = error
+        nextEjectCallbackHook = callbackHook
+        lock.unlock()
+    }
+
+    func holdNextEject() {
+        lock.lock()
+        holdNextEjectCompletion = true
+        lock.unlock()
+    }
+
+    func releaseHeldEject() {
+        lock.lock()
+        let completion = heldEjectCompletion
+        let error = heldEjectError
+        let hook = heldEjectCallbackHook
+        heldEjectCompletion = nil
+        heldEjectError = nil
+        heldEjectCallbackHook = nil
+        lock.unlock()
+        if let completion {
+            callbackQueue.async {
+                hook?()
+                completion(error)
+            }
+        }
     }
 
     func ejectAsync(
         _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
         completion: @escaping EDPDiskArbitrationVoidCompletion
     ) {
-        lock.lock(); ejectCalls.append(bsdName); lock.unlock()
-        callbackQueue.async { completion(nil) }
+        lock.lock()
+        ejectCalls.append((bsdName, expectedRegistryEntryID))
+        let error = nextEjectError
+        let hook = nextEjectCallbackHook
+        nextEjectError = nil
+        nextEjectCallbackHook = nil
+        if holdNextEjectCompletion {
+            holdNextEjectCompletion = false
+            heldEjectCompletion = completion
+            heldEjectError = error
+            heldEjectCallbackHook = hook
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        callbackQueue.async {
+            hook?()
+            completion(error)
+        }
     }
 }
 
 private extension FakeDiskArbitration {
-    func snapshotUnmountWholeCalls() -> [String] {
+    func snapshotUnmountWholeCalls() -> [(bsdName: String, expectedRegistryEntryID: UInt64?)] {
         lock.lock(); defer { lock.unlock() }
         return unmountWholeCalls
     }
 
-    func snapshotEjectCalls() -> [String] {
+    func snapshotEjectCalls() -> [(bsdName: String, expectedRegistryEntryID: UInt64?)] {
         lock.lock(); defer { lock.unlock() }
         return ejectCalls
     }
@@ -1678,7 +1748,9 @@ struct ValidateCredentialPolicyServiceLifecycle {
                   ejectDone.wait(timeout: .now() + 5) == .success,
                   mountResult.snapshot().1?.contains("cancelled") == true,
                   ejectResult.snapshot().1 == nil,
-                  env.diskArbitration.ejectCalls == [device.bsdName],
+                  env.diskArbitration.snapshotEjectCalls().count == 1,
+                  env.diskArbitration.snapshotEjectCalls().first?.bsdName == device.bsdName,
+                  env.diskArbitration.snapshotEjectCalls().first?.expectedRegistryEntryID == 0x9000,
                   !env.manager.containsPhysical(deviceID: device.deviceID, partitionType: 1) else {
                 throw LifecycleValidationError("S17 mount→eject did not serialize cancellation before physical eject")
             }
@@ -2017,6 +2089,257 @@ struct ValidateCredentialPolicyServiceLifecycle {
             }
             _ = try JSONSerialization.jsonObject(with: diagnostics)
             print("SCENARIO=S23_OK bounded_redacted_lifecycle_journal_diagnostics")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            let state = env.state
+            let bsdName = device.bsdName
+            env.manager.setEjectSuccessHook {
+                state.remove(bsdName)
+            }
+
+            try env.controller.eject(deviceID: device.deviceID)
+            guard env.diskArbitration.snapshotEjectCalls().isEmpty,
+                  env.diskArbitration.suppressed.isEmpty else {
+                throw LifecycleValidationError(
+                    "S24 vanished physical generation still reached Disk Arbitration or left suppression"
+                )
+            }
+            print("SCENARIO=S24_OK physical_disappears_during_teardown_is_idempotent_success")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            let state = env.state
+            let fixture = env.fixture
+            let bsdName = device.bsdName
+            env.manager.setEjectSuccessHook {
+                state.replace(
+                    bsdName,
+                    with: fixture,
+                    registryEntryID: 0xA000,
+                    usbRegistryEntryID: 0xA001
+                )
+            }
+
+            try env.controller.eject(deviceID: device.deviceID)
+            guard env.diskArbitration.snapshotEjectCalls().isEmpty else {
+                throw LifecycleValidationError(
+                    "S25 reused BSD name was sent to Disk Arbitration for the replacement generation"
+                )
+            }
+            env.controller.reconcileSynchronouslyForTesting()
+            let replacement = try env.connectedDevice()
+            guard replacement.bsdName == bsdName,
+                  replacement.deviceID == device.deviceID else {
+                throw LifecycleValidationError("S25 replacement generation was not preserved")
+            }
+            print("SCENARIO=S25_OK diskn_reuse_never_ejects_replacement_generation")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.diskArbitration.setNextEjectResult(
+                error: RuntimeNativeError("Disk Arbitration refused disk90: status=-119930878")
+            )
+
+            try expectThrows("S26 live physical generation DA failure was incorrectly swallowed") {
+                try env.controller.eject(deviceID: device.deviceID)
+            }
+            let calls = env.diskArbitration.snapshotEjectCalls()
+            guard calls.count == 1,
+                  calls[0].bsdName == device.bsdName,
+                  calls[0].expectedRegistryEntryID == 0x9000,
+                  env.diskArbitration.suppressed.isEmpty else {
+                throw LifecycleValidationError(
+                    "S26 live-generation DA failure did not remain fail-closed with exact registry identity"
+                )
+            }
+            print("SCENARIO=S26_OK live_generation_da_error_remains_failure")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            let state = env.state
+            let bsdName = device.bsdName
+            env.diskArbitration.setNextEjectResult(
+                error: RuntimeNativeError("Disk Arbitration refused disk90: status=-119930877"),
+                callbackHook: {
+                    state.remove(bsdName)
+                }
+            )
+
+            try env.controller.eject(deviceID: device.deviceID)
+            let calls = env.diskArbitration.snapshotEjectCalls()
+            guard calls.count == 1,
+                  calls[0].bsdName == device.bsdName,
+                  calls[0].expectedRegistryEntryID == 0x9000,
+                  env.diskArbitration.suppressed.isEmpty else {
+                throw LifecycleValidationError(
+                    "S27 late BadArgument after physical removal was not normalized safely"
+                )
+            }
+            print("SCENARIO=S27_OK late_da_error_after_generation_removal_is_success")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.diskArbitration.holdNextEject()
+
+            let firstResult = SendableOptionalStringBox()
+            let secondResult = SendableOptionalStringBox()
+            let firstDone = DispatchSemaphore(value: 0)
+            let secondDone = DispatchSemaphore(value: 0)
+            env.controller.ejectAsync(deviceID: device.deviceID) { error in
+                firstResult.set(error)
+                firstDone.signal()
+            }
+            try waitForCondition("S28 first eject did not reach held physical DA stage") {
+                env.diskArbitration.snapshotEjectCalls().count == 1
+            }
+            env.controller.ejectAsync(deviceID: device.deviceID) { error in
+                secondResult.set(error)
+                secondDone.signal()
+            }
+            env.controller.drainForTesting()
+            guard env.diskArbitration.snapshotEjectCalls().count == 1,
+                  !firstResult.snapshot().0,
+                  !secondResult.snapshot().0 else {
+                throw LifecycleValidationError(
+                    "S28 duplicate eject launched twice or completed before the shared terminal result"
+                )
+            }
+
+            env.diskArbitration.releaseHeldEject()
+            guard firstDone.wait(timeout: .now() + 5) == .success,
+                  secondDone.wait(timeout: .now() + 5) == .success,
+                  firstResult.snapshot().1 == nil,
+                  secondResult.snapshot().1 == nil,
+                  env.diskArbitration.snapshotEjectCalls().count == 1 else {
+                throw LifecycleValidationError("S28 duplicate eject completion fanout failed")
+            }
+            print("SCENARIO=S28_OK duplicate_eject_single_flight_fanout")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.diskArbitration.holdNextEject()
+
+            let ejectResult = SendableOptionalStringBox()
+            let shutdownResult = SendableOptionalStringBox()
+            let ejectDone = DispatchSemaphore(value: 0)
+            let shutdownDone = DispatchSemaphore(value: 0)
+            env.controller.ejectAsync(deviceID: device.deviceID) { error in
+                ejectResult.set(error)
+                ejectDone.signal()
+            }
+            try waitForCondition("S29 eject did not reach held physical DA stage") {
+                env.diskArbitration.snapshotEjectCalls().count == 1
+            }
+            env.controller.shutdownGracefullyAsync { error in
+                shutdownResult.set(error)
+                shutdownDone.signal()
+            }
+            env.controller.drainForTesting()
+            guard !shutdownResult.snapshot().0,
+                  env.manager.unmountAllCount == 0 else {
+                throw LifecycleValidationError(
+                    "S29 shutdown did not wait for the in-flight physical eject terminal"
+                )
+            }
+
+            env.diskArbitration.releaseHeldEject()
+            guard ejectDone.wait(timeout: .now() + 5) == .success,
+                  shutdownDone.wait(timeout: .now() + 5) == .success,
+                  ejectResult.snapshot().1 == nil,
+                  shutdownResult.snapshot().1 == nil,
+                  env.manager.unmountAllCount == 1 else {
+                throw LifecycleValidationError(
+                    "S29 graceful shutdown did not resume after eject completion"
+                )
+            }
+            print("SCENARIO=S29_OK shutdown_waits_for_inflight_eject")
+        }
+
+        do {
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            let device = try env.connectedDevice()
+            env.diskArbitration.setNextEjectResult(
+                error: RuntimeNativeError("Disk Arbitration refused disk90: status=-119930878")
+            )
+            env.diskArbitration.holdNextEject()
+
+            let firstResult = SendableOptionalStringBox()
+            let secondResult = SendableOptionalStringBox()
+            let firstDone = DispatchSemaphore(value: 0)
+            let secondDone = DispatchSemaphore(value: 0)
+            env.controller.ejectAsync(deviceID: device.deviceID) { error in
+                firstResult.set(error)
+                firstDone.signal()
+            }
+            try waitForCondition("S30 first eject did not reach held physical DA stage") {
+                env.diskArbitration.snapshotEjectCalls().count == 1
+            }
+            env.controller.ejectAsync(deviceID: device.deviceID) { error in
+                secondResult.set(error)
+                secondDone.signal()
+            }
+            env.controller.drainForTesting()
+            guard env.diskArbitration.snapshotEjectCalls().count == 1,
+                  !firstResult.snapshot().0,
+                  !secondResult.snapshot().0 else {
+                throw LifecycleValidationError(
+                    "S30 duplicate eject failure path launched twice or completed early"
+                )
+            }
+
+            env.diskArbitration.releaseHeldEject()
+            guard firstDone.wait(timeout: .now() + 5) == .success,
+                  secondDone.wait(timeout: .now() + 5) == .success,
+                  firstResult.snapshot().1?.contains("status=-119930878") == true,
+                  secondResult.snapshot().1?.contains("status=-119930878") == true,
+                  env.diskArbitration.snapshotEjectCalls().count == 1,
+                  env.diskArbitration.suppressed.isEmpty else {
+                throw LifecycleValidationError(
+                    "S30 duplicate eject waiters did not receive the same fail-closed terminal result"
+                )
+            }
+            print("SCENARIO=S30_OK duplicate_eject_failure_fanout")
         }
 
         do {

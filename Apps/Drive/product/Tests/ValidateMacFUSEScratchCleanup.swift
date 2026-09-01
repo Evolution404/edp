@@ -9,6 +9,7 @@ typealias EDPDiskArbitrationVoidCompletion = @Sendable (Error?) -> Void
 protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
     func ejectAsync(
         _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
         completion: @escaping EDPDiskArbitrationVoidCompletion
     )
 }
@@ -16,9 +17,11 @@ protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
 final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked Sendable {
     func ejectAsync(
         _ bsdName: String,
+        expectedRegistryEntryID: UInt64?,
         completion: @escaping EDPDiskArbitrationVoidCompletion
     ) {
         _ = bsdName
+        _ = expectedRegistryEntryID
         completion(nil)
     }
 }
