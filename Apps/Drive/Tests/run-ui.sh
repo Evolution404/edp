@@ -89,6 +89,8 @@ grep -Fq 'RESULT=DRIVE_UI_HITCH_AUTOMATION_OK' "${HITCH_LOG}"
 xcrun xctrace export --input "${TRACE}" --toc --output "${TOC_XML}"
 echo 'UI_HITCH_TRACE_TIMEBASE:'
 /usr/bin/grep -E '<start-date>|UI_HITCH_TOGGLES_(BEGIN|END)_EPOCH=' "${TOC_XML}" "${HITCH_LOG}" || true
+echo 'UI_HITCH_TRACE_SCHEMAS:'
+/usr/bin/grep -oE 'schema="[^"]+"' "${TOC_XML}" | /usr/bin/sort -u || true
 xcrun xctrace export --input "${TRACE}" \
   --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches"]' \
   --output "${HITCH_XML}"

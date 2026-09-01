@@ -1,5 +1,6 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <DiskArbitration/DiskArbitration.h>
+#include <libproc.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -153,8 +154,24 @@ static int run_eject(DASessionRef session, DADiskRef disk) {
 }
 
 int main(int argc, char **argv) {
+    if (argc == 4 && strcmp(argv[1], "--assert-process-path") == 0) {
+        char *end = NULL;
+        const long parsed = strtol(argv[2], &end, 10);
+        if (end == argv[2] || *end != '\0' || parsed <= 1 || parsed > INT32_MAX) {
+            fprintf(stderr, "invalid process id\n");
+            return 64;
+        }
+        char actual[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        const int length = proc_pidpath((pid_t)parsed, actual, sizeof(actual));
+        if (length <= 0 || strcmp(actual, argv[3]) != 0) {
+            return 1;
+        }
+        printf("RESULT=PROCESS_EXECUTABLE_PATH_OK\n");
+        return 0;
+    }
+
     if (argc < 3) {
-        fprintf(stderr, "usage: %s --mount BSD | --mount-readonly-at BSD MOUNTPOINT | --unmount BSD | --eject BSD\n", argv[0]);
+        fprintf(stderr, "usage: %s --mount BSD | --mount-readonly-at BSD MOUNTPOINT | --unmount BSD | --eject BSD | --assert-process-path PID PATH\n", argv[0]);
         return 64;
     }
 

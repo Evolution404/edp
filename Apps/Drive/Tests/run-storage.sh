@@ -337,11 +337,7 @@ recover_synthetic_publication() {
   local pid=""
   pid="$(synthetic_publication_owner_pid "$bsd" "$backing")" || return 1
 
-  local process_uid process_command
-  process_uid="$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')"
-  process_command="$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)"
-  [[ "$process_uid" == "$(/usr/bin/id -u)" ]] || return 1
-  [[ "$process_command" == "/usr/libexec/diskimagesiod" ]] || return 1
+  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || return 1
 
   /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
   if wait_for_synthetic_publication_gone "$backing" 15; then
@@ -351,8 +347,7 @@ recover_synthetic_publication() {
   local revalidated_pid=""
   revalidated_pid="$(synthetic_publication_owner_pid "$bsd" "$backing")" || return 1
   [[ "$revalidated_pid" == "$pid" ]] || return 1
-  [[ "$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')" == "$(/usr/bin/id -u)" ]] || return 1
-  [[ "$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)" == "/usr/libexec/diskimagesiod" ]] || return 1
+  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || return 1
   /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
   wait_for_synthetic_publication_gone "$backing" 20
 }

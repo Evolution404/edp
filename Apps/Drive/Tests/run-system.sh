@@ -62,6 +62,7 @@ fi
 /usr/bin/grep -Fq 'hdiutil info snapshot did not stabilize' "${STORAGE_RUNNER}"
 [[ "$(/usr/bin/grep -Fc '/usr/bin/hdiutil info -plist' "${STORAGE_RUNNER}")" -eq 1 ]]
 /usr/bin/grep -Fq 'capture_hdiutil_info "$WORK_DIR/hdiutil-artifact-check.plist" 20' "${STORAGE_RUNNER}"
+DA_MOUNT_SOURCE="${ROOT}/Apps/Drive/Tests/Storage/DiskArbitrationMountHelper.c"
 EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_completed\(\)/' "${STORAGE_RUNNER}")"
 /usr/bin/grep -Fq 'bounded 25 "$DA_MOUNT_BIN" --eject "$bsd"' <<<"${EJECT_IMAGE_SECTION}"
 /usr/bin/grep -Fq 'recover_synthetic_publication "$bsd" "$backing"' <<<"${EJECT_IMAGE_SECTION}"
@@ -70,13 +71,13 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 ! /usr/bin/grep -Fq 'diskutil unmountDisk' <<<"${EJECT_IMAGE_SECTION}"
 /usr/bin/grep -Fq 'image.get("diskimages2") is True' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'image.get("owner-uid") == os.getuid()' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'process_command" == "/usr/libexec/diskimagesiod"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq -- '--assert-process-path "$pid" /usr/libexec/diskimagesiod' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'proc_pidpath(' "${DA_MOUNT_SOURCE}"
 /usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS=3' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'Keep the DiskImages2 IOMedia' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_remount_quiescence' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'if (( iteration < LOOP_COUNT )); then' "${STORAGE_RUNNER}"
-DA_MOUNT_SOURCE="${ROOT}/Apps/Drive/Tests/Storage/DiskArbitrationMountHelper.c"
 /usr/bin/grep -Fq 'DADiskEject(disk, kDADiskEjectOptionDefault' "${DA_MOUNT_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'

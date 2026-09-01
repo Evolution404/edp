@@ -97,6 +97,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [ ] 每步 S01-S35/property/fast/system/virtual 不回退。
 - [ ] Phase B storage smoke PASS。
 - [x] 连续两轮 CI M14 暴露旧 storage teardown 与生产不一致：测试曾使用 `hdiutil detach → diskutil eject`；已改为 DA eject + exact current-user `diskimagesiod` owner recovery，保持 exact backing / residue=0 fail-closed。
+- [x] M12 后续 CI 暴露 `ps command=` 进程身份判断不等价于生产 executable-path 校验；storage helper 已改用 `proc_pidpath()`，TERM/KILL 前均重新验证 exact `diskimagesiod` PID/path。
 - [ ] Phase B commits/push。
 
 ## Phase C — App/UI 文件职责拆分
