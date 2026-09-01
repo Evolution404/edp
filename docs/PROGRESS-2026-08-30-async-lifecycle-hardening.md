@@ -481,3 +481,16 @@
 - exact-head `6ff00db` Clean.pkg 已覆盖安装；TCC 全程只有 `com.edp.drive` 一条 `SystemPolicyAllFiles` 记录，没有 `com.edp.drive.service` FDA。首次覆盖安装后旧插盘 generation 上 raw probe 暂时失败，但物理重新插拔后 App broker 立即取得 retained raw fd，canonical `verify-fda-device 0781:5591` 返回 `RESULT=FDA_RETAINED_RAW_ACCESS_READY`。
 - 真实 SanDisk 三分区 capability-aware E2E 已 PASS：type1 FAT16、type2 NTFS、type4 NTFS 均完成 mount→unmount→remount→unmount；其中 type4 第二次 teardown 正常，`RESULT=ALL_THREE_PARTITIONS_CAPABILITY_PERSISTENCE_OK`。Finder 保持正常，无 UVFSService / transport 残留。
 - 产品 XPC `safe-eject` 返回 `RESULT=XPC_EJECT_SMOKE_OK` 与 `RESULT=SAFE_EJECT_SUPPRESSION_OK`；随后再次物理拔插并重新插入，同一五因素身份重新识别且 `privilegedAccessReady=true`，canonical gate 再次返回 `RESULT=FDA_RETAINED_RAW_ACCESS_READY`，无新增 FDA、无管理员/Touch ID 授权。single-App FDA 模型实机闭环 PASS，后台 `edp-drive-service` 不需要单独授权。
+
+### 2026-09-01 16:58 — 真实盘 EBUSY 根因与 bounded raw recovery
+
+- safe-eject generation hardening 后继续第一次安装/真实盘验收时，fresh SanDisk 插入出现 `privilegedAccessReady=false`。TCC 已明确 `com.edp.drive auth_value=2`，tccd 对实际 root App broker 也返回 allow；由此排除 FDA 丢失。
+- raw validation 增加 machine-readable 分阶段诊断：真实现场最终返回 `EDP_RAW_LEASE_OPEN_FAILED:16`，即 `EBUSY`。同时修复旧 adapter 的 `contains(":1")` 前缀误匹配，避免 `1007` metadata validation 被错误归类为 EPERM/FDA。
+- 毫秒级 DA 日志证明 macOS `msdos_fskit` probe 在 EDP metadata helper 启动前约 265ms 已失败，并留下 whole IOMedia `Open=Yes`；盘无 mount、无用户态 lsof 句柄、只读五扇区 metadata 正常，因此不是 EDP discovery 并发导致。
+- 公开 `DADiskClaim` exact-generation probe 已实证 claim/unclaim 成功，但 claim 持有期间 raw O_RDWR 仍 EBUSY，排除 claim 作为恢复方案。
+- 普通 whole-unmount 不能清 EBUSY；对五因素已识别且 registry generation 精确匹配的 EDP whole media 执行 forced whole-unmount 后，同一 FDA App broker 从 raw-open failure exit 77 变为 fd-send-only failure exit 71，随后旧 service 无重新授权/拔插即恢复 `privilegedAccessReady=true`。根因与恢复条件实机闭环。
+- 正式实现已提交并 push：`1a639f94418a9c682b540d25bab4b42a505f449f fix(drive): recover raw access from fskit busy state`。新增 `forceUnmountWholeAsync`：公开 Disk Arbitration `Whole|Force` callback API，继续绑定 exact IOMedia registryEntryID。raw acquisition 只在真正 `EBUSY(16)` 时触发一次 force whole-unmount，generation 未变化才只重试一次；第二次仍 EBUSY、DA failure、deviceChanged 或任何非 EBUSY error 均 fail-closed。
+- 新增 deterministic S31–S35：EBUSY 单次恢复、重复 EBUSY 有界、replacement generation 拒绝、DA failure fail-closed、非 EBUSY 不触发 force。service lifecycle C01–C08/D01–D13/S01–S35/M11、10,000×32 model、fast、virtual-usb、system、`git diff --check` 全部 PASS；system 新 marker `RESULT=DRIVE_SYSTEM_RAW_VALIDATION_DIAGNOSTICS_OK`、`RESULT=DRIVE_SYSTEM_RAW_EBUSY_RECOVERY_OK`。
+- 提交前 WIP Clean.pkg 已构建并完整 verifier PASS，SHA-256=`9fbd47a71edb86246259012fa70248d64c75924afcc3965a0a4ccb39e455bfd5`。此包尚未安装；提交后必须从 exact new HEAD 重打包，不能把该 pre-commit SHA 当最终发布包。
+- **未完成硬门槛**：当前 physical generation 的 busy 已经通过人工 force-unmount 清掉，所以当前 `privilegedAccessReady=true` 不能证明产品自动 recovery。下一步必须安装 exact-head 新包后物理拔插一次制造 fresh generation，验证自动 `EBUSY -> exact-generation force whole-unmount -> single retry -> raw ready`；随后完成 capability-aware 三分区、safe eject stale-BadArgument 复测和 residue/U-state 检查。
+- 新增交接：`docs/HANDOFF-2026-09-01-real-device-ebusy-finalization.md`。
