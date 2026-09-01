@@ -7,6 +7,7 @@ STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
+RUNTIME_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeSupport.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
 JOURNAL_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleJournal.swift"
@@ -350,6 +351,14 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
 /usr/bin/grep -Fq 'RESULT=REMOUNT_QUIESCENCE_GENERATION_OK' \
   "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift"
 echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
+
+# Generic runtime utilities live outside the orchestration file so controller
+# responsibilities do not grow back through local process/error/file helpers.
+/usr/bin/grep -Fq 'enum RuntimeError' "${RUNTIME_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'func atomicWrite(' "${RUNTIME_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'private enum RuntimeError' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private func atomicWrite(' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_RUNTIME_SUPPORT_SPLIT_OK'
 
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery

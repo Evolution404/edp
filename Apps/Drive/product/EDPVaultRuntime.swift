@@ -19,18 +19,6 @@ private let policyPath = dataRoot + "/device-policies.json"
 private let legacyCredentialPath = legacyDataRoot + "/credentials.json"
 private let legacyMasterKeyPath = legacyDataRoot + "/master.key"
 
-private enum RuntimeError: Error, CustomStringConvertible {
-    case message(String)
-
-    var description: String {
-        switch self {
-        case .message(let value): return value
-        }
-    }
-}
-
-private func fail(_ message: String) -> RuntimeError { .message(message) }
-
 private func migrateLegacyRuntimeState() throws {
     try FileManager.default.createDirectory(
         atPath: dataRoot,
@@ -114,95 +102,6 @@ private func finalizeLegacyRuntimeStateMigration() {
         try? FileManager.default.removeItem(atPath: oldPath)
     }
     try? FileManager.default.removeItem(atPath: legacyDataRoot)
-}
-
-private func secureZero<T>(_ bytes: inout [T]) {
-    bytes.withUnsafeMutableBytes { raw in
-        if let base = raw.baseAddress { memset_s(base, raw.count, 0, raw.count) }
-    }
-}
-
-private struct CommandResult {
-    let status: Int32
-    let stdout: Data
-    let stderr: Data
-
-    var stdoutText: String { String(decoding: stdout, as: UTF8.self) }
-    var stderrText: String { String(decoding: stderr, as: UTF8.self) }
-}
-
-@discardableResult
-private func run(
-    _ executable: String,
-    _ arguments: [String] = [],
-    environment: [String: String]? = nil,
-    input: Data? = nil,
-    accepted: Set<Int32> = [0]
-) throws -> CommandResult {
-    let process = Process()
-    let output = Pipe()
-    let errors = Pipe()
-    process.executableURL = URL(fileURLWithPath: executable)
-    process.arguments = arguments
-    process.standardOutput = output
-    process.standardError = errors
-    let inputPipe = input == nil ? nil : Pipe()
-    if let inputPipe { process.standardInput = inputPipe }
-    if let environment { process.environment = environment }
-    try process.run()
-    if let input, let inputPipe {
-        inputPipe.fileHandleForWriting.write(input)
-        try inputPipe.fileHandleForWriting.close()
-    }
-    // Drain output while the child is running. `ioreg -a` can exceed the pipe
-    // buffer on machines with many USB devices.
-    let stdout = output.fileHandleForReading.readDataToEndOfFile()
-    let stderr = errors.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    let result = CommandResult(
-        status: process.terminationStatus,
-        stdout: stdout,
-        stderr: stderr
-    )
-    guard accepted.contains(result.status) else {
-        throw fail(
-            "command failed (\(result.status)): \(executable) "
-                + arguments.joined(separator: " ") + "\n" + result.stderrText
-        )
-    }
-    return result
-}
-
-private func plist(_ data: Data) throws -> [String: Any] {
-    guard let value = try PropertyListSerialization.propertyList(
-        from: data,
-        options: [],
-        format: nil
-    ) as? [String: Any] else {
-        throw fail("command did not return a property-list dictionary")
-    }
-    return value
-}
-
-private func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
-    let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
-    try FileManager.default.createDirectory(
-        atPath: directory,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
-    )
-    let temporary = path + ".tmp.\(getpid()).\(UUID().uuidString)"
-    try data.write(to: URL(fileURLWithPath: temporary), options: .withoutOverwriting)
-    guard chmod(temporary, mode) == 0 else {
-        let saved = errno
-        try? FileManager.default.removeItem(atPath: temporary)
-        throw fail("chmod failed for \(temporary): errno=\(saved)")
-    }
-    if rename(temporary, path) != 0 {
-        let saved = errno
-        try? FileManager.default.removeItem(atPath: temporary)
-        throw fail("atomic rename failed for \(path): errno=\(saved)")
-    }
 }
 
 final class EDPRawAccessLease: @unchecked Sendable {

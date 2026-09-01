@@ -32,6 +32,7 @@ PRODUCT_SOURCES=(
   product/EDPBlockDevicePublisher.swift
   product/EDPXPCProtocol.swift
   product/EDPXPCSecurity.swift
+  product/EDPRuntimeSupport.swift
   product/EDPMountLifecycle.swift
   product/EDPVaultRuntime.swift
 )

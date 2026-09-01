@@ -78,6 +78,7 @@ UI_HITCH_COUNT_GT33MS=1
 状态：IN PROGRESS
 
 - [x] 第一阶段纯 lifecycle model 抽取：`EDPLifecycleFailure*`、FSKit recovery policy、mount lifecycle state machine 移至 `EDPMountLifecycle.swift`；runtime 减少 302 行，行为不变。
+- [x] 通用 runtime support 抽取：`RuntimeError/fail/secureZero/run/plist/atomicWrite` 移至 `EDPRuntimeSupport.swift`；runtime 再减少 101 行，并由 system ratchet 禁止回流。
 - [ ] 继续抽纯 model/key/helper。
 - [ ] 抽 `EDPRawAccessController` 或等价模块。
 - [ ] 抽 auto-mount policy/manual suppression。
