@@ -7,6 +7,7 @@ STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
+MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
 JOURNAL_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleJournal.swift"
 NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
@@ -353,8 +354,10 @@ echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery
 # policy code must never branch on user-facing error text.
-/usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'recognizedRawAccessFailure' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'recognizedRawAccessFailure' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPFSKitMountLifecycleMachine' "${MOUNT_LIFECYCLE_SOURCE}"
+! /usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func lastFailureCode(deviceID:' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'failedMountCodes[partitionKey] == .bridgeExtensionUnavailable' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'failure.contains("File system extension' "${RUNTIME_SOURCE}"

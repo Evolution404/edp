@@ -12,7 +12,7 @@
 | Phase | 内容 | 状态 |
 |---|---|---|
 | A | Sidebar 33 ms 性能收口 | CI VERIFY |
-| B | Runtime 职责拆分 | TODO |
+| B | Runtime 职责拆分 | IN PROGRESS |
 | C | App/UI 文件职责拆分 | TODO |
 | D | 发布可靠性与 recovery 可观测性 | TODO |
 | E | 文档、测试矩阵、Release Checklist 收口 | TODO |
@@ -75,9 +75,10 @@ UI_HITCH_COUNT_GT33MS=1
 
 ## Phase B — Runtime 职责拆分
 
-状态：TODO
+状态：IN PROGRESS
 
-- [ ] 抽纯 model/key/helper。
+- [x] 第一阶段纯 lifecycle model 抽取：`EDPLifecycleFailure*`、FSKit recovery policy、mount lifecycle state machine 移至 `EDPMountLifecycle.swift`；runtime 减少 302 行，行为不变。
+- [ ] 继续抽纯 model/key/helper。
 - [ ] 抽 `EDPRawAccessController` 或等价模块。
 - [ ] 抽 auto-mount policy/manual suppression。
 - [ ] 抽 eject/shutdown orchestration。

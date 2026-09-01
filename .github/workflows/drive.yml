@@ -243,6 +243,7 @@ jobs:
             product/EDPBlockDevicePublisher.swift
             product/EDPXPCProtocol.swift
             product/EDPXPCSecurity.swift
+            product/EDPMountLifecycle.swift
             product/EDPVaultRuntime.swift
           )
           /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "${RUNNER_TEMP}/EDPRawValidation.o"

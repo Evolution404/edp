@@ -111,6 +111,7 @@ PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPBlockDevicePublisher.swift"
   "${REPO_ROOT}/product/EDPXPCProtocol.swift"
   "${REPO_ROOT}/product/EDPXPCSecurity.swift"
+  "${REPO_ROOT}/product/EDPMountLifecycle.swift"
   "${REPO_ROOT}/product/EDPVaultRuntime.swift"
 )
 
