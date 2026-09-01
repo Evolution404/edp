@@ -4,6 +4,11 @@ import Foundation
 import ServiceManagement
 import SwiftUI
 
+#if !EDP_UI_AUTOMATION
+@_silgen_name("edp_raw_fd_broker_run_child")
+private func edpRawFDBrokerRunChild(_ socketFD: Int32, _ rawPath: UnsafePointer<CChar>) -> Int32
+#endif
+
 private let edpDriveAppPath = "/Applications/EDP Drive.app"
 private let edpDriveServicePath = edpDriveAppPath
     + "/Contents/Library/LaunchServices/edp-drive-service"
@@ -3345,6 +3350,15 @@ struct EDPUSBVaultApp: App {
     @StateObject private var model = EDPVaultViewModel()
 
     init() {
+#if !EDP_UI_AUTOMATION
+        if let brokerIndex = CommandLine.arguments.firstIndex(of: "--raw-fd-broker"),
+           CommandLine.arguments.count > brokerIndex + 2,
+           let socketFD = Int32(CommandLine.arguments[brokerIndex + 1]) {
+            let rawPath = CommandLine.arguments[brokerIndex + 2]
+            let status = rawPath.withCString { edpRawFDBrokerRunChild(socketFD, $0) }
+            exit(status)
+        }
+#endif
         if CommandLine.arguments.contains("--refresh-raw-access-smoke") {
             let connection = NSXPCConnection(
                 machServiceName: edpVaultMachServiceName,

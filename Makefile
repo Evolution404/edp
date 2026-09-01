@@ -82,12 +82,18 @@ drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-
 
 drive-build:
 	@mkdir -p "$(ARTIFACTS)"
+	@/usr/bin/cc -O2 -Wall -Wextra -I"$(ROOT)/Apps/Drive/product" -c \
+		"$(ROOT)/Apps/Drive/product/EDPRawValidation.c" -o "$(ARTIFACTS)/EDPRawValidation.o"
+	@/usr/bin/cc -O2 -Wall -Wextra -I"$(ROOT)/Apps/Drive/product" -c \
+		"$(ROOT)/Apps/Drive/product/EDPRawFDBroker.c" -o "$(ARTIFACTS)/EDPRawFDBroker.o"
 	@DEVELOPER_DIR="$(DEVELOPER_DIR)" xcrun swiftc \
 		-O -swift-version 6 -warnings-as-errors \
 		-framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
+		-framework CoreFoundation -framework IOKit \
 		"$(ROOT)/Shared/UI/EDPDesignSystem.swift" \
 		"$(ROOT)/Apps/Drive/product/EDPXPCProtocol.swift" \
 		"$(ROOT)/Apps/Drive/product/App/EDPUSBVaultApp.swift" \
+		"$(ARTIFACTS)/EDPRawValidation.o" "$(ARTIFACTS)/EDPRawFDBroker.o" \
 		-o "$(DRIVE_UI_BINARY)"
 	@echo "OUTPUT=$(DRIVE_UI_BINARY)"
 

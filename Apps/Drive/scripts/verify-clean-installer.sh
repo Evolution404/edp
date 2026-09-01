@@ -112,7 +112,7 @@ case "${SERVICE_MODE}" in
       exit 5
     fi
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :ThrottleInterval' "${LEGACY_DAEMON_PLIST}")" == "1" ]]
-    echo "RESULT=LEGACY_FDA_DAEMON_PACKAGED"
+    echo "RESULT=LEGACY_XPC_ROOT_SERVICE_PACKAGED"
     echo "RESULT=LEGACY_XPC_DAEMON_PACKAGED"
     ;;
   *)
@@ -133,8 +133,10 @@ echo "RESULT=DRIVE_APP_ICON_PACKAGED"
 [[ ! -e "${ROOT}/lib/libntfs-3g.90.dylib" ]]
 echo "RESULT=NTFS3G_RUNTIME_ABSENT"
 
-# The stable Raw Access helper is the only writable raw-device broker. The
-# foreground App never creates AuthorizationExternalForm/sys.openfile rights.
+# Full Disk Access belongs to the single visible EDP Drive App identity. The
+# privileged service never opens raw media directly; it spawns the same signed
+# App executable in hidden root broker mode and receives the validated fd over
+# SCM_RIGHTS. The foreground App never creates AuthorizationExternalForm/sys.openfile rights.
 if /usr/bin/nm -u "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F '_AuthorizationCopyRights' >/dev/null; then
   echo "foreground App unexpectedly contains Authorization Services raw access" >&2
@@ -166,10 +168,26 @@ if /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" | /usr/bin/grep -F 'authopen'
   echo "raw metadata helper unexpectedly contains authopen" >&2
   exit 6
 fi
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+  | /usr/bin/grep -F -- '--raw-fd-broker' >/dev/null
+/usr/bin/nm "${APP}/Contents/MacOS/EDP Drive" \
+  | /usr/bin/grep -F '_edp_raw_fd_broker_run_child' >/dev/null
+/usr/bin/nm "${APP}/Contents/MacOS/EDP Drive" \
+  | /usr/bin/grep -F '_edp_open_validated_raw_device' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+  | /usr/bin/grep -F '/dev/rdisk' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+  | /usr/bin/grep -F 'idVendor' >/dev/null
+/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+  | /usr/bin/grep -F 'idProduct' >/dev/null
 /usr/bin/strings "${SERVICE}" \
-  | /usr/bin/grep -F 'persistent Full Disk Access daemon + retained raw fd + inherited transport fd' >/dev/null
+  | /usr/bin/grep -F 'single EDP Drive Full Disk Access identity broker + retained raw fd + inherited transport fd' >/dev/null
 /usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F 'EDP_RAW_LEASE_METADATA_REFUSED' >/dev/null
+/usr/bin/nm "${SERVICE}" \
+  | /usr/bin/grep -F '_edp_raw_fd_broker_spawn' >/dev/null
+/usr/bin/strings "${SERVICE}" \
+  | /usr/bin/grep -F '/Applications/EDP Drive.app/Contents/MacOS/EDP Drive' >/dev/null
 /usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F 'com.edp.drive.service:running' >/dev/null
 /usr/bin/strings "${SERVICE}" \
@@ -178,25 +196,19 @@ fi
   | /usr/bin/grep -F '_posix_spawn' >/dev/null
 /usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \
   | /usr/bin/grep -F 'Identifier=com.edp.drive.service' >/dev/null
-for BROKER in \
-  "${ROOT}/bin/edp-console-exec"; do
-  /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_TARGET_REFUSED' >/dev/null
-  /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_METADATA_REFUSED' >/dev/null
-  /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'EDP_RAW_BROKER_PROBE_OK' >/dev/null
-  /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'idVendor' >/dev/null
-  /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'idProduct' >/dev/null
-  /usr/bin/strings "${BROKER}" | /usr/bin/grep -F '/dev/rdisk' >/dev/null
-  /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'edp-mfmount-local-readwrite' >/dev/null
-  if /usr/bin/strings "${BROKER}" | /usr/bin/grep -F 'authopen' >/dev/null; then
-    echo "FDA raw broker unexpectedly contains authopen" >&2
-    exit 6
-  fi
-  if /usr/bin/strings "${BROKER}" | /usr/bin/grep -F -- '--raw-device-auth' >/dev/null; then
-    echo "FDA raw broker unexpectedly contains exact-path authorization mode" >&2
-    exit 6
-  fi
-done
-echo "RESULT=FULL_DISK_ACCESS_RAW_FD3_TRANSPORT_PATH_ENFORCED"
+CONSOLE_EXEC="${ROOT}/bin/edp-console-exec"
+/usr/bin/strings "${CONSOLE_EXEC}" | /usr/bin/grep -F 'EDP_CONSOLE_EXEC_INHERITED_RAW_METADATA_REFUSED' >/dev/null
+/usr/bin/strings "${CONSOLE_EXEC}" | /usr/bin/grep -F 'edp-mfmount-local-readwrite' >/dev/null
+if /usr/bin/strings "${CONSOLE_EXEC}" | /usr/bin/grep -F -- '--probe-raw-device' >/dev/null \
+   || /usr/bin/strings "${CONSOLE_EXEC}" | /usr/bin/grep -F -- '--raw-device /dev/rdisk' >/dev/null; then
+  echo "console transport launcher unexpectedly retains a direct raw-open mode" >&2
+  exit 6
+fi
+if /usr/bin/strings "${CONSOLE_EXEC}" | /usr/bin/grep -F 'authopen' >/dev/null; then
+  echo "console transport launcher unexpectedly contains authopen" >&2
+  exit 6
+fi
+echo "RESULT=FULL_DISK_ACCESS_SINGLE_APP_RAW_FD3_TRANSPORT_PATH_ENFORCED"
 
 /usr/bin/strings "${SERVICE}" \
   | /usr/bin/grep -F 'NTFS (read-only; Finder erasable)' >/dev/null

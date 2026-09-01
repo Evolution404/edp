@@ -6,7 +6,7 @@ set -euo pipefail
 # Destructive scope is deliberately narrow:
 # - EDP Drive installed app/runtime/state/receipts/credentials
 # - macFUSE runtime and its per-user containers/settings
-# - EDP embedded service FDA entry when factory-first-install mode is requested
+# - EDP Drive App FDA entry when factory-first-install mode is requested
 #
 # The cleanup commands refuse to run while any external physical disk is
 # connected. They never format, partition, erase, or write raw disk sectors.
@@ -25,7 +25,7 @@ OLD_DATA_ROOT="/var/db/com.edp.usbvault"
 LEGACY_PLIST="/Library/LaunchDaemons/com.edp.drive.service.plist"
 MACFUSE_ROOT="/Library/Filesystems/macfuse.fs"
 MACFUSE_PREFPANE="/Library/PreferencePanes/macFUSE.prefPane"
-RAW_ACCESS_BUNDLE_ID="com.edp.drive.service"
+RAW_ACCESS_BUNDLE_ID="com.edp.drive"
 MACFUSE_GENERIC_ID="io.macfuse.app.fsmodule.macfuse"
 MACFUSE_LOCAL_ID="io.macfuse.app.fsmodule.macfuse-local"
 REPORT_ROOT="${EDP_ACCEPTANCE_REPORT_ROOT:-/Users/Shared/EDP Drive Acceptance}"

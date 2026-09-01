@@ -14,8 +14,9 @@ The accepted product path is macFUSE-only:
 
 ```text
 physical standardEncrypted EDP USB
-  -> EDP Drive embedded Full Disk Access service
-  -> retained whole-device O_RDWR fd
+  -> EDP Drive App Full Disk Access identity
+  -> hidden root broker mode of the same EDP Drive executable
+  -> retained whole-device O_RDWR fd in the privileged service
   -> partition 1: plaintext MBR FAT slice
   -> partition 2/4: SM4 read/write block translation
   -> macFUSE Local FSKit transport
@@ -35,7 +36,7 @@ The cleanup harness is intentionally fail-closed.
 - It never calls disk formatting, partitioning, erase, zeroing, or raw-sector write commands.
 - Real exchange/secret passwords are never accepted as script arguments, environment variables, files, or log content. Password validation and storage occur only in the App UI and System Keychain.
 - `user-cleanup` runs without `sudo` so macOS TCC permits the logged-in user to remove their own macFUSE/EDP Containers, Group Containers, preferences, caches, saved state, and FSKit enablement state. Privileged cleanup must not try to bypass these user-domain TCC boundaries.
-- `factory-first-install` resets only the EDP Drive embedded service Full Disk Access entry with Apple's `tccutil`; it does not modify the TCC database directly.
+- `factory-first-install` resets only the visible EDP Drive App Full Disk Access entry (`com.edp.drive`) with Apple's `tccutil`; it does not modify the TCC database directly.
 - The user's DefaultKeychain must remain `login.keychain`; temporary EDP signing keychains are treated as a hard failure.
 - Acceptance result storage rejects symlinked report roots/session pointers and is mode `0700`.
 - Test files are ordinary filesystem files with unique names. They are removed after hash/persistence verification.
@@ -54,7 +55,7 @@ sudo ./scripts/first-install-acceptance.sh factory-first-install
 ./scripts/first-install-acceptance.sh verify-clean
 ```
 
-`user-cleanup` must run in the logged-in user's normal TCC context. The sudo stage requires its session marker, then removes EDP App/embedded-service/runtime/system state/credentials/receipts, uninstalls the system macFUSE runtime, and resets the EDP Drive service FDA entry. This split is required on macOS 26 because a root shell launched through an authorization context is not automatically allowed to traverse the logged-in user's protected Containers/Group Containers.
+`user-cleanup` must run in the logged-in user's normal TCC context. The sudo stage requires its session marker, then removes EDP App/embedded-service/runtime/system state/credentials/receipts, uninstalls the system macFUSE runtime, and resets the EDP Drive App FDA entry. This split is required on macOS 26 because a root shell launched through an authorization context is not automatically allowed to traverse the logged-in user's protected Containers/Group Containers.
 
 Reboot after `verify-clean`, then run `verify-clean` again before installing the release candidate.
 
@@ -69,7 +70,7 @@ sudo ./scripts/first-install-acceptance.sh clean-install
 ./scripts/first-install-acceptance.sh verify-clean
 ```
 
-This removes installed state but deliberately preserves the EDP Drive embedded-service FDA grant. The same non-root `user-cleanup` gate is required before the privileged stage.
+This removes installed state but deliberately preserves the single EDP Drive App FDA grant. The same non-root `user-cleanup` gate is required before the privileged stage.
 
 ## Canonical first-install sequence
 
@@ -85,7 +86,7 @@ Run the following sequence for each release candidate.
 7.  sudo install <candidate.pkg>
 8.  verify-installed
 9.  open-fda
-10. user grants FDA once to EDP Drive and its embedded service
+10. user grants FDA once to EDP Drive only
 11. insert one real EDP USB
 12. verify-fda-device [VID:PID]
 13. save/validate exchange and secret passwords in the App UI

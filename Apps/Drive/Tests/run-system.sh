@@ -373,6 +373,20 @@ echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 /usr/bin/grep -Fq 'drive-test-system:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system' "${ROOT}/Makefile"
 
+RAW_BROKER_SOURCE="${ROOT}/Apps/Drive/product/EDPRawFDBroker.c"
+/usr/bin/grep -Fq 'EDP_RAW_BROKER_APP_PATH "/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"' "${RAW_BROKER_SOURCE}"
+/usr/bin/grep -Fq 'SCM_RIGHTS' "${RAW_BROKER_SOURCE}"
+/usr/bin/grep -Fq 'geteuid() != 0' "${RAW_BROKER_SOURCE}"
+/usr/bin/grep -Fq 'edpRawFDBrokerSpawn(appPath, rawPath, 5_000' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'EDPPhysicalDeviceRevalidation.metadataStillMatches(metadata, disk: disk)' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'Darwin.open(disk.rawPath' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'CommandLine.arguments.firstIndex(of: "--raw-fd-broker")' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'RAW_ACCESS_BUNDLE_ID="com.edp.drive"' "${ACCEPTANCE_SOURCE}"
+! /usr/bin/grep -Fq 'RAW_ACCESS_BUNDLE_ID="com.edp.drive.service"' "${ACCEPTANCE_SOURCE}"
+/usr/bin/grep -Fq 'open -R "${APP}"' "${ACCEPTANCE_SOURCE}"
+! /usr/bin/grep -Fq 'open -R "${SERVICE_BIN}"' "${ACCEPTANCE_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_SINGLE_APP_FDA_RAW_BROKER_OK'
+
 echo 'RESULT=DRIVE_SYSTEM_NO_SUDO_OK'
 echo 'RESULT=DRIVE_SYSTEM_NO_PHYSICAL_RAW_OPEN_OK'
 echo 'RESULT=DRIVE_SYSTEM_SYNTHETIC_WRITE_GUARD_OK'

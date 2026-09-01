@@ -2,6 +2,15 @@ import Darwin
 import Foundation
 import Security
 
+@_silgen_name("edp_raw_fd_broker_spawn")
+private func edpRawFDBrokerSpawn(
+    _ appExecutable: UnsafePointer<CChar>,
+    _ rawPath: UnsafePointer<CChar>,
+    _ timeoutMilliseconds: Int32,
+    _ outError: UnsafeMutablePointer<Int32>
+) -> Int32
+
+private let edpRawAccessBrokerAppPath = "/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"
 private let dataRoot = "/var/db/com.edp.drive"
 private let legacyDataRoot = "/var/db/com.edp.usbvault"
 private let sessionRoot = dataRoot + "/sessions"
@@ -282,9 +291,14 @@ private func openPersistentRawAccess(
         throw fail("EDP_RAW_LEASE_PATH_REFUSED")
     }
 
-    let fd = Darwin.open(disk.rawPath, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+    var brokerError: Int32 = 0
+    let fd = edpRawAccessBrokerAppPath.withCString { appPath in
+        disk.rawPath.withCString { rawPath in
+            edpRawFDBrokerSpawn(appPath, rawPath, 5_000, &brokerError)
+        }
+    }
     guard fd >= 0 else {
-        throw fail("EDP_RAW_LEASE_OPEN_FAILED:\(errno)")
+        throw fail("EDP_RAW_LEASE_OPEN_FAILED:\(brokerError)")
     }
     do {
         var opened = stat()
@@ -323,8 +337,7 @@ private func runtimeBinaryRoot() -> String {
         .resolvingSymlinksInPath().deletingLastPathComponent().path
 }
 
-private let defaultRawAccessDaemonPath =
-    "/Applications/EDP Drive.app/Contents/Library/LaunchServices/edp-drive-service"
+private let defaultRawAccessDaemonPath = edpRawAccessBrokerAppPath
 
 private func rawAccessDaemonPath() -> String {
     if let override = ProcessInfo.processInfo.environment["EDP_RAW_ACCESS_DAEMON"],
@@ -3480,8 +3493,10 @@ final class EDPDaemonController: @unchecked Sendable {
     private let mediaProvider: any EDPWholeUSBMediaProviding
     private let metadataReader: any EDPRawMetadataReading
     private let rawAccessLeaseOpener: EDPRawAccessLeaseOpening
+    private let rawAccessOpenerRunsOffControllerQueue: Bool
     private let credentialVerifier: EDPCredentialVerifying
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
+    private let rawAccessQueue = DispatchQueue(label: "com.edp.drive.raw-access", qos: .userInitiated)
     private let queueKey = DispatchSpecificKey<UInt8>()
     private var failedMounts = [String: String]()
     private var failedMountCodes = [String: EDPLifecycleFailureCode]()
@@ -3518,8 +3533,14 @@ final class EDPDaemonController: @unchecked Sendable {
         self.mediaProvider = mediaProvider
         queue.setSpecific(key: queueKey, value: 1)
         self.metadataReader = metadataReader
-        self.rawAccessLeaseOpener = rawAccessLeaseOpener ?? { disk in
-            try openPersistentRawAccess(for: disk, mediaProvider: mediaProvider)
+        if let rawAccessLeaseOpener {
+            self.rawAccessLeaseOpener = rawAccessLeaseOpener
+            self.rawAccessOpenerRunsOffControllerQueue = false
+        } else {
+            self.rawAccessLeaseOpener = { disk in
+                try openPersistentRawAccess(for: disk, mediaProvider: mediaProvider)
+            }
+            self.rawAccessOpenerRunsOffControllerQueue = true
         }
         self.credentialVerifier = credentialVerifier ?? { disk, partitionType, password, rawFD in
             try verifyPartitionType(
@@ -3684,31 +3705,42 @@ final class EDPDaemonController: @unchecked Sendable {
 
         let openLease: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
-            self.onControllerQueue {
-                guard self.ejectingUSBRegistryIDs[disk.deviceID] == nil,
-                      let current = self.connectedDisks.first(where: { $0.deviceID == disk.deviceID }),
-                      current.registryEntryID == disk.registryEntryID,
-                      current.rawPath == disk.rawPath else {
-                    self.finishRawAccessProbeLocked(
-                        disk: disk,
-                        lease: nil,
-                        failure: EDPLifecycleFailure(
-                            code: .deviceChanged,
-                            detail: "EDP device changed while raw access was being prepared"
-                        )
-                    )
-                    return
-                }
+            let performOpen: @Sendable () -> Void = { [weak self] in
+                guard let self else { return }
+                let result: Result<EDPRawAccessLease, EDPLifecycleFailure>
                 do {
-                    let lease = try self.rawAccessLeaseOpener(disk)
-                    self.finishRawAccessProbeLocked(disk: disk, lease: lease, failure: nil)
+                    result = .success(try self.rawAccessLeaseOpener(disk))
                 } catch {
-                    self.finishRawAccessProbeLocked(
-                        disk: disk,
-                        lease: nil,
-                        failure: userFacingRawAccessFailure(error)
-                    )
+                    result = .failure(userFacingRawAccessFailure(error))
                 }
+                self.onControllerQueue {
+                    guard self.ejectingUSBRegistryIDs[disk.deviceID] == nil,
+                          let current = self.connectedDisks.first(where: { $0.deviceID == disk.deviceID }),
+                          current.registryEntryID == disk.registryEntryID,
+                          current.rawPath == disk.rawPath else {
+                        if case .success(let lease) = result { lease.invalidate() }
+                        self.finishRawAccessProbeLocked(
+                            disk: disk,
+                            lease: nil,
+                            failure: EDPLifecycleFailure(
+                                code: .deviceChanged,
+                                detail: "EDP device changed while raw access was being prepared"
+                            )
+                        )
+                        return
+                    }
+                    switch result {
+                    case .success(let lease):
+                        self.finishRawAccessProbeLocked(disk: disk, lease: lease, failure: nil)
+                    case .failure(let failure):
+                        self.finishRawAccessProbeLocked(disk: disk, lease: nil, failure: failure)
+                    }
+                }
+            }
+            if self.rawAccessOpenerRunsOffControllerQueue {
+                self.rawAccessQueue.async(execute: performOpen)
+            } else {
+                performOpen()
             }
         }
 
@@ -4731,7 +4763,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 "lifecycleJournal": manager.lifecycleJournalSnapshot().map(\.jsonObject),
                 "failedMounts": failedMounts,
                 "manualUnmountSuppressions": manualUnmountSuppressions.sorted(),
-                "rawAccessMode": "persistent Full Disk Access daemon + retained raw fd + inherited transport fd",
+                "rawAccessMode": "single EDP Drive Full Disk Access identity broker + retained raw fd + inherited transport fd",
                 "rawAccessDaemon": rawAccessDaemonPath(),
                 "rawAccessReadyDeviceIDs": rawAccessReadyByDeviceID
                     .filter { $0.value }.map(\.key).sorted(),

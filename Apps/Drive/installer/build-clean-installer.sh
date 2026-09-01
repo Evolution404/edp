@@ -118,6 +118,13 @@ mkdir -p "${RUNTIME_STAGE}/bin" "${RUNTIME_STAGE}/licenses/macfuse"
 
 echo "Building EDP encrypted block runtime..."
 SERVICE_STAGE="${BUILD_ROOT}/edp-drive-service"
+RAW_VALIDATION_OBJ="${BUILD_ROOT}/EDPRawValidation.o"
+RAW_BROKER_OBJ="${BUILD_ROOT}/EDPRawFDBroker.o"
+/usr/bin/cc -O2 -Wall -Wextra -I"${REPO_ROOT}/product" -c \
+  "${REPO_ROOT}/product/EDPRawValidation.c" -o "${RAW_VALIDATION_OBJ}"
+/usr/bin/cc -O2 -Wall -Wextra -I"${REPO_ROOT}/product" -c \
+  "${REPO_ROOT}/product/EDPRawFDBroker.c" -o "${RAW_BROKER_OBJ}"
+
 CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPRawIO.swift"
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift"
@@ -130,7 +137,7 @@ CORE_SOURCES=(
 
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -Xfrontend -disable-availability-checking \
-  -framework CryptoKit -framework Security \
+  -framework CryptoKit -framework Security -framework CoreFoundation -framework IOKit \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
   "${REPO_ROOT}/product/EDPCredentialStore.swift" \
@@ -146,6 +153,7 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/EDPXPCSecurity.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \
+  "${RAW_VALIDATION_OBJ}" "${RAW_BROKER_OBJ}" \
   -o "${SERVICE_STAGE}"
 
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
@@ -166,8 +174,9 @@ MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks" \
   -framework Foundation \
   -o "${RUNTIME_STAGE}/bin/diskimages2-attach"
 
-/usr/bin/cc -O2 -Wall -Wextra \
+/usr/bin/cc -O2 -Wall -Wextra -I"${REPO_ROOT}/product" \
   "${REPO_ROOT}/product/EDPConsoleExec.c" \
+  "${REPO_ROOT}/product/EDPRawValidation.c" \
   -framework CoreFoundation -framework IOKit \
   -o "${RUNTIME_STAGE}/bin/edp-console-exec"
 
@@ -194,9 +203,11 @@ cp "${REPO_ROOT}/product/App/Info.plist" "${APP_STAGE}/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :EDPServiceMode ${SERVICE_MODE}" "${APP_STAGE}/Contents/Info.plist"
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
+  -framework CoreFoundation -framework IOKit \
   "${REPO_ROOT}/../../Shared/UI/EDPDesignSystem.swift" \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
+  "${RAW_VALIDATION_OBJ}" "${RAW_BROKER_OBJ}" \
   -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
 cp "${SERVICE_STAGE}" \
   "${APP_STAGE}/Contents/Library/LaunchServices/edp-drive-service"

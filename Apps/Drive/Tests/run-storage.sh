@@ -1329,11 +1329,16 @@ validate_failure_and_build_contracts() {
     product/EDPXPCSecurity.swift
     product/EDPVaultRuntime.swift
   )
+  local raw_validation_obj="$production_bin/EDPRawValidation.o"
+  local raw_broker_obj="$production_bin/EDPRawFDBroker.o"
+  /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "$raw_validation_obj"
+  /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawFDBroker.c -o "$raw_broker_obj"
   xcrun swiftc -O -swift-version 6 -warnings-as-errors \
     -Xfrontend -disable-availability-checking \
-    -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
+    -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit -framework CoreFoundation \
     "${EDP_CORE_SWIFTC_FLAGS[@]}" \
     "${core_sources[@]}" "${product_sources[@]}" \
+    "$raw_validation_obj" "$raw_broker_obj" \
     -o "$production_bin/edp-drive-service"
   log "RESULT=DRIVE_STORAGE_PRODUCTION_SWIFT6_C17_STRICT_OK"
 }

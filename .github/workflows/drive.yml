@@ -245,16 +245,21 @@ jobs:
             product/EDPXPCSecurity.swift
             product/EDPVaultRuntime.swift
           )
+          /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "${RUNNER_TEMP}/EDPRawValidation.o"
+          /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawFDBroker.c -o "${RUNNER_TEMP}/EDPRawFDBroker.o"
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
             -Xfrontend -disable-availability-checking \
-            -framework CryptoKit -framework Security \
+            -framework CryptoKit -framework Security -framework CoreFoundation -framework IOKit \
             "${EDP_CORE_SWIFTC_FLAGS[@]}" \
             "${CORE_SOURCES[@]}" "${PRODUCT_SOURCES[@]}" \
+            "${RUNNER_TEMP}/EDPRawValidation.o" "${RUNNER_TEMP}/EDPRawFDBroker.o" \
             -o "${RUNNER_TEMP}/edp-drive-service"
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
             -framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
+            -framework CoreFoundation -framework IOKit \
             ../../Shared/UI/EDPDesignSystem.swift \
             product/EDPXPCProtocol.swift product/App/EDPUSBVaultApp.swift \
+            "${RUNNER_TEMP}/EDPRawValidation.o" "${RUNNER_TEMP}/EDPRawFDBroker.o" \
             -o "${RUNNER_TEMP}/edp-drive-app"
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
             -Xfrontend -disable-availability-checking \

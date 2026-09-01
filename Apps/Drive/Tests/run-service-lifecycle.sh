@@ -47,16 +47,21 @@ VIRTUAL_USB_SOURCES=(
 BUILD_DIR="${TMPDIR:-/tmp}/edp-drive-tests-${USER:-user}"
 mkdir -p "$BUILD_DIR"
 BINARY="$BUILD_DIR/validate-credential-policy-service-lifecycle"
+RAW_VALIDATION_OBJ="$BUILD_DIR/EDPRawValidation.o"
+RAW_BROKER_OBJ="$BUILD_DIR/EDPRawFDBroker.o"
+/usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "$RAW_VALIDATION_OBJ"
+/usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawFDBroker.c -o "$RAW_BROKER_OBJ"
 
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -D EDP_REGRESSION_TESTS \
   -Xfrontend -disable-availability-checking \
-  -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
+  -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit -framework CoreFoundation \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
   "${PRODUCT_SOURCES[@]}" \
   "${VIRTUAL_USB_SOURCES[@]}" \
   Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift \
+  "$RAW_VALIDATION_OBJ" "$RAW_BROKER_OBJ" \
   -o "$BINARY"
 
 OUTPUT="$($BINARY fixtures/real_disks/disk4 2>&1)"

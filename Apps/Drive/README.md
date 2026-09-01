@@ -78,17 +78,20 @@ FSKit module enablement，root daemon 不修改用户的 FSKit 设置。
 原始磁盘访问不保存 `AuthorizationExternalForm`，也不修改 AuthorizationDB。
 安装包只部署 `/Applications/EDP Drive.app`；无 UI 的签名服务位于
 `Contents/Library/LaunchServices/edp-drive-service`，不会作为第二个 App 出现在
-应用列表。首次配置时，用户只需要为这一固定 App/embedded-service 组合开启一次
-Full Disk Access。root 后台服务先通过 IOKit 与只读 metadata helper 对 whole USB
-执行 LBA0/4/7/11/12 passive classification；只有标准加密形态才进入受管设备列表。
-随后 embedded service 对当前 `/dev/rdiskN` 再做 whole-USB、字符设备、device-node
-一致性、LBA0/4/7/11/12 标准形态以及 stable device identity 二次校验。校验通过后才以
-`O_RDWR` 打开整盘，将 fd 固定继承为 3，随后
-降权到当前控制台用户并启动加密 transport。正式路径不再使用
+应用列表。首次配置时，用户只需要为固定的 `EDP Drive.app` 开启一次 Full Disk Access；
+embedded service 不需要、也不允许成为第二个 FDA 主体。root 后台服务先通过 IOKit
+与只读 metadata helper 对 whole USB 执行 LBA0/4/7/11/12 passive classification；
+只有标准加密形态才进入受管设备列表。需要 writable raw lease 时，service 以 root
+身份启动同一个 `/Applications/EDP Drive.app/Contents/MacOS/EDP Drive` 可执行文件的
+隐藏 broker 模式；TCC 因而仍按 `com.edp.drive` 主 App 身份判定 FDA。broker 对
+whole-USB、字符设备、device-node、LBA4/LBA7 标准形态再次校验，`O_RDWR` 打开整盘后
+仅通过 Unix `SCM_RIGHTS` 把 fd 传回 service。service 随即按 VID/PID、LBA4 onlyID、
+容量、LBA11 deviceID 与 registry identity 再次精确复核，只有完全一致才保留 lease；
+transport 仍只接收固定继承的 fd 3，随后降权到当前控制台用户。正式路径不再使用
 `sys.openfile.*` / `authopen`，因此 U 盘拔插和 `diskN` 变化不依赖 300 秒授权缓存。
 
-正式发布前仍需用同一稳定 self-signed certificate 完成“首次 FDA → App/daemon
-重启 → U 盘拔插与 diskN 变化 → Mac 重启 → 版本升级仍无重复授权”的实体盘 E2E。
+正式发布前仍需用同一稳定 self-signed certificate 完成“只给 EDP Drive App 一次 FDA →
+App/service 重启 → U 盘拔插与 diskN 变化 → Mac 重启 → 版本升级仍无重复授权”的实体盘 E2E。
 当前本机统一签名身份为 `EDP Project Code Signing`，证书 SHA-256 为
 `D9142CE44ABCB5DD662DF9621D48A88C88EDBCB0392D3C74EBACBB1292B7B5A7`，
 designated requirement 的 certificate root 为

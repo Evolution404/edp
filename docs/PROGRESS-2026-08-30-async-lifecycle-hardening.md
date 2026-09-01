@@ -440,3 +440,15 @@
 - startup persisted-session recovery 改为 async gate，reconcile 仅在 recovery terminal 后启动。
 - 新增 S19 once-only completion gate，覆盖 timeout 与 late/duplicate callback 竞态。
 - 验证：service lifecycle、system、virtual-usb、storage smoke、`git diff --check` 全部 PASS。
+
+### 2026-09-01 08:34 — Full Disk Access 收口为单一 EDP Drive App 身份
+
+- 真实 SanDisk 插入后发现当前安装态 `privilegedAccessReady=false`；TCC 只存在 `com.edp.drive` 的 `SystemPolicyAllFiles` 记录，且 csreq 为稳定 `identifier com.edp.drive + certificate root 040b5488...`，没有 `com.edp.drive.service` FDA 记录。由此确认覆盖升级没有丢主 App FDA，真正问题是 raw `O_RDWR /dev/rdiskN` 在 service 中执行，错误地把 service 变成第二个 FDA 主体。
+- 用户明确拒绝为后台 service 单独授权。正式模型改为：只有 `/Applications/EDP Drive.app` / `com.edp.drive` 接受一次 FDA；root service 通过 `socketpair + posix_spawn` 启动同一个 EDP Drive executable 的隐藏 `--raw-fd-broker` 模式，由该 App identity 在 root 上下文完成 whole USB + device-node + LBA4/LBA7 校验并 `O_RDWR` open；fd 仅通过 Unix `SCM_RIGHTS` 回传 service。
+- service 收到 fd 后仍执行原有 `st_rdev`、IOKit inventory、VID/PID、capacity、registry identity 与 LBA4/7/11/12 `metadataStillMatches` 精确复核；失败即关闭 fd，五因素设备身份规则没有放宽。
+- `edp-console-exec` 已删除 `--probe-raw-device` / `--raw-device` direct-open 能力，只允许消费 service 继承的 fd 3，复核 EDP metadata 后再降权启动白名单 transport；raw open 因而只有 EDP Drive App broker 一个入口。
+- 新增共享 `EDPRawValidation.c/.h`，避免 App broker 与 console transport 复制两套 whole-USB/LBA 安全判定；新增 `EDPRawFDBroker.c` 实现 root-only fixed-App-path broker 与 SCM_RIGHTS fd passing。
+- Clean/Native installer、UI update、Makefile、service lifecycle、storage strict build 与 GitHub Actions direct build 均已链接 broker core；installer verifier 新 marker `RESULT=FULL_DISK_ACCESS_SINGLE_APP_RAW_FD3_TRANSPORT_PATH_ENFORCED`，system 新 marker `RESULT=DRIVE_SYSTEM_SINGLE_APP_FDA_RAW_BROKER_OK`。
+- `factory-first-install` 的 TCC reset target 已从 `com.edp.drive.service` 改为 `com.edp.drive`；UI/acceptance 继续只 reveal `/Applications/EDP Drive.app`，文档明确“只授权 EDP Drive 一次”。
+- hardware-free 验证：fast、service lifecycle C01-C08/D01-D13/S01-S23/M11、10,000×32 model、system、virtual-usb、UI 均 PASS；UI max hitch 25ms、0 个 >33ms；Native installer 与 Clean installer 均实际构建成功，Clean verifier PASS。当前 Clean.pkg SHA-256=`0e1e5d39f5cd22eb1ae7865c7725546af8fb7231b2d5997ef778ef5a28fd58e7`。
+- 当前真实 U 盘仍插入，尚未安装新包；下一步必须先物理拔盘，再安装 exact-head package，随后仅使用现有 `com.edp.drive` FDA 记录验证 root App broker `privilegedAccessReady=true`。绝不要求第二个 service FDA。

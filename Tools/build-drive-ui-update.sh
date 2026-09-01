@@ -37,12 +37,19 @@ APP_STAGE="${PAYLOAD}/Applications/EDP Drive.app"
   "${INSTALLED_APP}" "${APP_STAGE}"
 
 echo "Building EDP Drive foreground UI..."
+RAW_VALIDATION_OBJ="${BUILD_ROOT}/EDPRawValidation.o"
+RAW_BROKER_OBJ="${BUILD_ROOT}/EDPRawFDBroker.o"
+/usr/bin/cc -O2 -Wall -Wextra -I"${REPO_ROOT}/Apps/Drive/product" -c \
+  "${REPO_ROOT}/Apps/Drive/product/EDPRawValidation.c" -o "${RAW_VALIDATION_OBJ}"
+/usr/bin/cc -O2 -Wall -Wextra -I"${REPO_ROOT}/Apps/Drive/product" -c \
+  "${REPO_ROOT}/Apps/Drive/product/EDPRawFDBroker.c" -o "${RAW_BROKER_OBJ}"
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -framework AppKit -framework FSKit -framework SwiftUI \
-  -framework ServiceManagement \
+  -framework ServiceManagement -framework CoreFoundation -framework IOKit \
   "${REPO_ROOT}/Shared/UI/EDPDesignSystem.swift" \
   "${REPO_ROOT}/Apps/Drive/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift" \
+  "${RAW_VALIDATION_OBJ}" "${RAW_BROKER_OBJ}" \
   -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
 
 INSTALLED_CERT_ROOT="$(certificate_root "${INSTALLED_APP}")"
