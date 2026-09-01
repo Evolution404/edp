@@ -85,6 +85,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] `EDPVaultRuntime.swift` 已由约 5462 行降至 4839 行。
 - [x] raw primitive 抽取后 S01-S35、320000-step property、fast/system/virtual 全绿。
 - [x] FSKit host recovery helper 已从主 runtime 移至 `EDPMountLifecycle.swift`，保持 mount-free fail-closed agent recovery 语义不变。
+- [x] persistent runtime state 已抽至 `EDPRuntimeState.swift`：state roots、legacy migration、credential/policy store factory 不再属于 daemon orchestration；runtime 降至 4697 行。
 - [ ] 继续抽纯 model/key/helper。
 - [ ] 抽 `EDPRawAccessController` orchestration（single-flight + EBUSY exact-generation recovery + lease state）。
 - [ ] 抽 auto-mount policy/manual suppression。

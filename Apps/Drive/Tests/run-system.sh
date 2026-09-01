@@ -8,6 +8,7 @@ UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 RUNTIME_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeSupport.swift"
+RUNTIME_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeState.swift"
 RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -361,6 +362,15 @@ echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
 ! /usr/bin/grep -Fq 'private enum RuntimeError' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'private func atomicWrite(' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RUNTIME_SUPPORT_SPLIT_OK'
+
+# Persistent runtime paths and legacy-state migration are infrastructure, not
+# daemon orchestration. Keep their ownership in the dedicated runtime-state unit.
+/usr/bin/grep -Fq 'let dataRoot = "/var/db/com.edp.drive"' "${RUNTIME_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func migrateLegacyRuntimeState() throws' "${RUNTIME_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func makeCredentialStore() throws' "${RUNTIME_STATE_SOURCE}"
+! /usr/bin/grep -Fq 'private let dataRoot' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private func migrateLegacyRuntimeState()' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_RUNTIME_STATE_SPLIT_OK'
 
 # Raw lease ownership and raw metadata adapter live outside the daemon controller.
 # The orchestration layer may retain leases and own EBUSY recovery, but it must
