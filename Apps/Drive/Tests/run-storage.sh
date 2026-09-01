@@ -293,6 +293,70 @@ wait_for_synthetic_publication_gone() {
   return 1
 }
 
+synthetic_publication_owner_pid() {
+  local bsd="$1"
+  local backing="$2"
+  local info="$WORK_DIR/hdiutil-synthetic-owner.plist"
+  [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
+  [[ "$backing" == "$WORK_DIR"/* || "$backing" == "$MOUNT_ROOT"/* ]] || return 1
+  capture_hdiutil_info "$info" 10 >/dev/null 2>&1 || return 1
+  /usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
+import os
+import plistlib
+import sys
+with open(sys.argv[1], "rb") as handle:
+    root = plistlib.load(handle)
+expected_device = "/dev/" + sys.argv[2]
+expected_path = os.path.abspath(os.path.normpath(sys.argv[3]))
+for image in root.get("images", []):
+    if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected_path:
+        continue
+    devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
+    pid = image.get("hdid-pid")
+    valid = (
+        expected_device in devices
+        and image.get("diskimages2") is True
+        and image.get("autodiskmount") is False
+        and image.get("image-encrypted") is False
+        and image.get("owner-uid") == os.getuid()
+        and image.get("owner-mode") == 0o600
+        and isinstance(pid, int)
+        and pid > 1
+    )
+    if not valid:
+        raise SystemExit(1)
+    print(pid)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+recover_synthetic_publication() {
+  local bsd="$1"
+  local backing="$2"
+  local pid=""
+  pid="$(synthetic_publication_owner_pid "$bsd" "$backing")" || return 1
+
+  local process_uid process_command
+  process_uid="$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')"
+  process_command="$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$process_uid" == "$(/usr/bin/id -u)" ]] || return 1
+  [[ "$process_command" == "/usr/libexec/diskimagesiod" ]] || return 1
+
+  /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
+  if wait_for_synthetic_publication_gone "$backing" 15; then
+    return 0
+  fi
+
+  local revalidated_pid=""
+  revalidated_pid="$(synthetic_publication_owner_pid "$bsd" "$backing")" || return 1
+  [[ "$revalidated_pid" == "$pid" ]] || return 1
+  [[ "$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')" == "$(/usr/bin/id -u)" ]] || return 1
+  [[ "$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)" == "/usr/libexec/diskimagesiod" ]] || return 1
+  /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
+  wait_for_synthetic_publication_gone "$backing" 20
+}
+
 fixture_publication_exists() {
   local backing="$1"
   local info="$WORK_DIR/hdiutil-fixture-publication-check.plist"
@@ -579,26 +643,20 @@ eject_image() {
   fi
   assert_synthetic_device "$bsd" "$backing"
 
-  # The native filesystem has already been unmounted by the caller. Detach the
-  # exact, freshly-proven publication first, then judge completion solely by
-  # disappearance from the DiskImages2 metadata snapshot.
-  bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || true
-  if wait_for_synthetic_publication_gone "$backing" 120; then
+  # Mirror the production publisher contract: exact synthetic identity is
+  # proven above, Disk Arbitration performs the eject handoff, and success is
+  # not reported until the exact DiskImages2 backing publication disappears.
+  # If the callback succeeds but the owner remains, recover only the exact
+  # current-user diskimagesiod proven by the same hdiutil owner snapshot.
+  bounded 25 "$DA_MOUNT_BIN" --eject "$bsd" >/dev/null 2>&1 || true
+  if wait_for_synthetic_publication_gone "$backing" 25; then
+    return 0
+  fi
+  if recover_synthetic_publication "$bsd" "$backing"; then
     return 0
   fi
 
-  # A failed detach can leave the same synthetic BSD entity live. Re-prove the
-  # exact backing+BSD association immediately before the fallback; if the media
-  # identity has already disappeared, assert_synthetic_device fails closed and
-  # we never act on a stale/reused diskN.
-  if assert_synthetic_device "$bsd" "$backing" >/dev/null 2>&1; then
-    bounded 15 /usr/sbin/diskutil eject "$bsd" >/dev/null 2>&1 || true
-  fi
-  if wait_for_synthetic_publication_gone "$backing" 100; then
-    return 0
-  fi
-
-  echo "synthetic DiskImages2 publication remained after exact detach/eject: $bsd backing=$backing" >&2
+  echo "synthetic DiskImages2 publication remained after exact DA eject/owner recovery: $bsd backing=$backing" >&2
   return 1
 }
 

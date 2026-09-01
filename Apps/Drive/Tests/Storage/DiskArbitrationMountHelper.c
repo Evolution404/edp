@@ -136,9 +136,25 @@ static int run_unmount(DASessionRef session, DADiskRef disk, const char *source)
     return 0;
 }
 
+static int run_eject(DASessionRef session, DADiskRef disk) {
+    EDPDAContext state = {.done = false, .status = kDAReturnError};
+    DADiskEject(disk, kDADiskEjectOptionDefault, edp_da_callback, &state);
+    if (!wait_for_callback(&state, 20.0)) {
+        fprintf(stderr, "Disk Arbitration eject callback timed out\n");
+        return 124;
+    }
+    if (state.status != kDAReturnSuccess) {
+        fprintf(stderr, "Disk Arbitration eject failed: 0x%08x\n", state.status);
+        return 1;
+    }
+    printf("RESULT=DISK_ARBITRATION_EJECT_OK\n");
+    (void)session;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s --mount BSD | --mount-readonly-at BSD MOUNTPOINT | --unmount BSD\n", argv[0]);
+        fprintf(stderr, "usage: %s --mount BSD | --mount-readonly-at BSD MOUNTPOINT | --unmount BSD | --eject BSD\n", argv[0]);
         return 64;
     }
 
@@ -176,6 +192,8 @@ int main(int argc, char **argv) {
         result = run_mount(session, disk, source, argv[3], true);
     } else if (strcmp(operation, "--unmount") == 0 && argc == 3) {
         result = run_unmount(session, disk, source);
+    } else if (strcmp(operation, "--eject") == 0 && argc == 3) {
+        result = run_eject(session, disk);
     } else {
         fprintf(stderr, "invalid arguments\n");
     }

@@ -56,16 +56,29 @@ def parse_hitches(hitches_path: Path, trace_start: float, begin: float, end: flo
     start_cache: dict[str, int] = {}
     duration_cache: dict[str, int] = {}
     in_window: list[int] = []
+    observed_starts: list[int] = []
 
     for row in root.iter("row"):
         start_ns = resolve_numeric(row.find("start-time"), start_cache)
         duration_ns = resolve_numeric(row.find("duration"), duration_cache)
         if start_ns is None or duration_ns is None:
             continue
+        observed_starts.append(start_ns)
         row_epoch = trace_start + start_ns / 1_000_000_000
         # A small guard absorbs the millisecond precision of xctrace's start-date.
         if begin - 0.010 <= row_epoch <= end + 0.010:
             in_window.append(duration_ns)
+
+    print(f"UI_HITCH_TRACE_START_EPOCH={trace_start:.6f}")
+    print(f"UI_HITCH_TOGGLE_BEGIN_EPOCH={begin:.6f}")
+    print(f"UI_HITCH_TOGGLE_END_EPOCH={end:.6f}")
+    if observed_starts:
+        first_start = min(observed_starts)
+        last_start = max(observed_starts)
+        print(f"UI_HITCH_FIRST_START_NS={first_start}")
+        print(f"UI_HITCH_LAST_START_NS={last_start}")
+        print(f"UI_HITCH_FIRST_ROW_EPOCH={trace_start + first_start / 1_000_000_000:.6f}")
+        print(f"UI_HITCH_LAST_ROW_EPOCH={trace_start + last_start / 1_000_000_000:.6f}")
 
     if not in_window:
         raise SystemExit("no Animation Hitches frames overlapped the sidebar toggle interval")
