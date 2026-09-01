@@ -9,6 +9,7 @@ APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 RUNTIME_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeSupport.swift"
 RUNTIME_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeState.swift"
+DEVICE_OPERATIONS_SOURCE="${ROOT}/Apps/Drive/product/EDPDeviceOperations.swift"
 RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -378,6 +379,16 @@ echo 'RESULT=DRIVE_SYSTEM_RUNTIME_SUPPORT_SPLIT_OK'
 ! /usr/bin/grep -Fq 'private let dataRoot' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'private func migrateLegacyRuntimeState()' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RUNTIME_STATE_SPLIT_OK'
+
+# Device discovery, filesystem probing, credential verification, and CLI
+# authorization are reusable device operations, not daemon orchestration.
+/usr/bin/grep -Fq 'func discoverEDPDisks(' "${DEVICE_OPERATIONS_SOURCE}"
+/usr/bin/grep -Fq 'func filesystemMagic(' "${DEVICE_OPERATIONS_SOURCE}"
+/usr/bin/grep -Fq 'func verifyPartitionType(' "${DEVICE_OPERATIONS_SOURCE}"
+/usr/bin/grep -Fq 'func authorize(' "${DEVICE_OPERATIONS_SOURCE}"
+! /usr/bin/grep -Fq 'private func filesystemMagic(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private func verifyPartitionType(' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_DEVICE_OPERATIONS_SPLIT_OK'
 
 # Raw lease ownership and raw metadata adapter live outside the daemon controller.
 # The orchestration layer may retain leases and own EBUSY recovery, but it must

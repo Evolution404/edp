@@ -1387,6 +1387,7 @@ validate_failure_and_build_contracts() {
     product/EDPXPCSecurity.swift
     product/EDPRuntimeSupport.swift
     product/EDPRuntimeState.swift
+    product/EDPDeviceOperations.swift
     product/EDPRawAccess.swift
     product/EDPMountLifecycle.swift
     product/EDPVaultRuntime.swift
