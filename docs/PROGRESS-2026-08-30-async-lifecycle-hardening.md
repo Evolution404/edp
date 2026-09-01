@@ -210,6 +210,13 @@
 
 ## 变更日志
 
+### 2026-09-01 13:50 — Installer scratch recovery no longer blocked by unrelated FSKit mounts
+
+- exact-head upgrade 验证时，系统同时挂载无关外接盘 `/Volumes/SN750-500GB`（ExFAT/FSKit），且此前 synthetic run 留有一个 exact 4 KiB macFUSE scratch `/dev/disk27`（8×512、root owner、标准 UUID dmg、live `diskimages-helper`）。旧 preinstall 在 scratch direct-detach 前用全局 `mount | grep fskit` 直接拒绝安装，导致 package script 97.75% 失败。
+- 根因是安全门位置过早：live exact scratch 可独立 `hdiutil detach`，不需要重启 `fskit_agent`，因此不应被与 EDP 无关的 FSKit 卷阻断。真正可能影响其他 FSKit 卷的只有 stale-helper recovery 中的 `fskit_agent` recycle。
+- 修复：删除 direct-detach 前的全局 FSKit mount 拒绝；保留 `recover_stale_console_fskit_agent()` 内已有的全局 FSKit mount fail-closed。也就是说 live-helper scratch 允许在无关 FSKit 卷存在时精确回收；只有 stale helper 且必须 recycle agent 时才要求全局无 FSKit mount。
+- system 新 marker `RESULT=DRIVE_SYSTEM_INSTALLER_UNRELATED_FSKIT_MOUNT_OK`，锁定：全局 `fskit` mount 检查仅保留一处、direct scratch detach 必须位于 stale agent recovery 之前、旧的过宽拒绝文本不得回归。`bash -n`、`run-system.sh`、Clean.pkg build/verifier PASS。
+
 ### 2026-09-01 13:31 — Physical eject stale-BSD race / generation reuse / concurrent lifecycle hardening
 
 - 真实用户现场复现：点击安全推出后 UI 弹 `Disk Arbitration refused disk4: status=-119930877`。该值为 `0xF8DA0003 = kDAReturnBadArgument`。Disk Arbitration 日志证明 physical `/dev/disk4` 已先 `removed`，随后 EDP 继续完成 synthetic `/dev/disk6` 与 `/dev/disk5` teardown；旧代码最终仍使用缓存 `bsdName=disk4` 发 `DADiskEject`，把“设备已经成功离开系统”误报成操作失败。

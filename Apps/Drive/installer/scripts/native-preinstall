@@ -441,11 +441,12 @@ recover_macfuse_scratch_orphans() {
       continue
     fi
 
-    if /sbin/mount | /usr/bin/grep -Fq 'fskit'; then
-      echo "EDP Drive upgrade refused to recover macFUSE scratch while an FSKit filesystem is mounted." >&2
-      exit 1
-    fi
-
+    # A live, exact diskimages-helper scratch can be detached independently of
+    # unrelated FSKit filesystems. Do not block this safe direct-detach path just
+    # because another volume (for example an external ExFAT disk) uses FSKit.
+    # The only operation that can disturb unrelated FSKit volumes is recycling
+    # fskit_agent; recover_stale_console_fskit_agent() already fail-closes when
+    # any FSKit mount is active.
     if validate_diskimages_helper_pid "${pid}"; then
       echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
       /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
@@ -481,6 +482,9 @@ recover_macfuse_scratch_orphans() {
     fi
 
     if ! validate_diskimages_helper_pid "${pid}"; then
+      # Stale-helper recovery may recycle the console user's fskit_agent. That
+      # helper performs its own global FSKit-mount guard and refuses the recycle
+      # while any unrelated FSKit filesystem is active.
       if recover_stale_console_fskit_agent; then
         wait_for_device_to_disappear "${device#/dev/}" 100 || true
       fi

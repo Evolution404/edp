@@ -155,12 +155,22 @@ PREINSTALL_SOURCE="${ROOT}/Apps/Drive/installer/scripts/native-preinstall"
 /usr/bin/grep -Fq 'macfuse_scratch_pid_for_identity' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'exact backing + device identity' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'found macFUSE scratch ${device} with stale helper record' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'refused to recover macFUSE scratch while an FSKit filesystem is mounted' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'A live, exact diskimages-helper scratch can be detached independently of' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'The only operation that can disturb unrelated FSKit volumes is recycling' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'Never act on the recorded PID by itself.' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'recover_stale_console_fskit_agent' "${PREINSTALL_SOURCE}"
+# Global FSKit mount refusal belongs only inside fskit_agent recovery. A live
+# exact 4 KiB scratch helper must remain directly detachable even while an
+# unrelated ExFAT/FSKit volume is mounted.
+[[ "$(/usr/bin/grep -Fc "/sbin/mount | /usr/bin/grep -Fq 'fskit'" "${PREINSTALL_SOURCE}")" -eq 1 ]]
+DIRECT_DETACH_LINE="$(/usr/bin/grep -nF '/usr/bin/hdiutil detach "${device}" -force' "${PREINSTALL_SOURCE}" | /usr/bin/cut -d: -f1)"
+STALE_RECOVERY_LINE="$(/usr/bin/grep -nF 'if recover_stale_console_fskit_agent; then' "${PREINSTALL_SOURCE}" | /usr/bin/cut -d: -f1 | /usr/bin/tail -1)"
+[[ "${DIRECT_DETACH_LINE}" =~ ^[0-9]+$ && "${STALE_RECOVERY_LINE}" =~ ^[0-9]+$ && "${DIRECT_DETACH_LINE}" -lt "${STALE_RECOVERY_LINE}" ]]
+! /usr/bin/grep -Fq 'refused to recover macFUSE scratch while an FSKit filesystem is mounted' "${PREINSTALL_SOURCE}"
 ! /usr/bin/grep -Fq 'refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"' "${PREINSTALL_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UPGRADE_UI_HANDOFF_OK'
 echo 'RESULT=DRIVE_SYSTEM_INSTALLER_TEST_ORPHAN_REVALIDATION_OK'
+echo 'RESULT=DRIVE_SYSTEM_INSTALLER_UNRELATED_FSKIT_MOUNT_OK'
 
 # launchd defaults to a 10-second minimum runtime. The Drive daemon is explicitly
 # user-stoppable and restartable, so both packaging modes must override that
