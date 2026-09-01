@@ -18,7 +18,7 @@
 | E | Virtual clock / scheduler | DONE |
 | F | Deterministic model/property tests | DONE |
 | G | Structured lifecycle journal | DONE |
-| H | 全量/安装态/真盘验收 | TODO |
+| H | 全量/安装态/真盘验收 | PARTIAL（仅独立 UI performance gate） |
 
 ## 进入本计划前已确认完成
 
@@ -172,14 +172,14 @@
 
 ## Phase H — 最终验收
 
-状态：TODO
+状态：PARTIAL（安装态与真实盘收口 DONE；仅独立 sidebar animation 33ms performance gate 未通过）
 
 ### Hardware-free
 
 - [x] fast
 - [x] virtual-usb
 - [x] system
-- [ ] UI：功能/结构/accessibility PASS；当前独立 sidebar animation performance gate 连续出现 91–116ms hitch，和本轮 eject lifecycle 修改无代码路径交叉，未伪记 PASS
+- [ ] UI：功能/结构/accessibility PASS；2026-09-01 17:25 exact-head 复跑 sidebar animation performance gate：`UI_HITCH_MAX_MS=66.666`、`UI_HITCH_COUNT_GT33MS=2`，仍未通过；和本轮 raw/eject lifecycle 修改无代码路径交叉，未降低 33ms 门槛
 - [x] storage smoke #1
 - [x] storage smoke #2
 - [x] release storage final marker（2026-09-01 eject generation hardening exact-source：M10 5/5，`RESULT=DRIVE_STORAGE_E2E_OK`）
@@ -201,14 +201,28 @@
 
 ### Physical EDP USB
 
-- [ ] 等用户插入标准加密 EDP U 盘后再执行
-- [ ] 五因素重新识别
-- [ ] Exchange ExFAT RW filesystem-level test
-- [ ] mount/unmount >=5
-- [ ] teardown residue=0
-- [ ] 严禁 format/erase/raw write
+- [x] 标准加密 SanDisk EDP 真实盘重新插入并按 fresh generation 枚举；五因素一致：VID:PID=`0781:5591`、onlyID=`2387350191`、capacity=`123010547712`、metadata deviceID=`disk&ven_sandisk&prod_ultra_usb_3.0&rev_1.00`
+- [x] exact-head 安装后两次 fresh physical reinsert 均 `RESULT=FDA_RETAINED_RAW_ACCESS_READY`，`privilegedAccessReady=true`；未要求或新增 `com.edp.drive.service` 单独 FDA
+- [x] 两次 fresh insert 均未实际出现 raw `EBUSY`，Disk Arbitration 只记录正常 pre-open whole-unmount `options=0x00000001`，因此不虚构 physical EBUSY recovery 被触发；S31–S35/system deterministic gate 已证明 `EBUSY -> exact-generation Whole|Force -> 单次 retry` 逻辑
+- [x] type1 FAT16 read-only：两轮 mount -> unmount -> remount -> unmount PASS，无 filesystem write
+- [x] type2 Apple NTFS read-only：两轮 mount -> unmount -> remount -> unmount PASS；`autoMount=true` 策略在 fresh reinsert 后自动恢复挂载
+- [x] type4 凭据由用户在 App UI 验证并保存；Apple NTFS read-only 两轮 mount -> unmount -> remount -> unmount PASS，密码未进入 shell/log
+- [x] device policy round-trip/restore PASS
+- [x] 产品 XPC safe eject 连续两次 PASS；不再出现 `Disk Arbitration refused ... status=-119930877` / `kDAReturnBadArgument`
+- [x] 最终 safe-eject 后 EDP physical media 从系统消失；EDP/macFUSE mount=0、`.edp-block-*`=0、transport process=0；Finder/UVFS/service 无 U-state
+- [x] 全程未 format / erase / repartition / raw test write；真实盘仅执行识别、raw lease、filesystem read-only mount/unmount 与产品 safe eject
 
 ## 变更日志
+
+### 2026-09-01 17:25 — Exact-head real-device finalization PASS; only unrelated UI perf gate remains
+
+- 从远端 exact HEAD `b9883503f43602f499139cf72895834c8ba5954e` 重新执行 `make drive-test-fast`、`make drive-test-virtual-usb`、`make drive-test-system` 与 `git diff --check`，S31–S35、10,000×32 deterministic model、raw validation/EBUSY recovery system ratchet 全部 PASS。
+- 从 exact HEAD 重新构建并 verifier PASS 的 `Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg` SHA-256=`ed2ad5aa41b745f08f2f06906d1786fb32c756444bc34dfc7623c400f1b51f3f`；在 SN750 作为无关 FSKit 外盘存在、EDP 用户文件系统未挂载的受控现场完成 upgrade install，App/service/runtime strict codesign、LaunchDaemon/XPC/FSKit enablement 正常。
+- 第一次 fresh reinsert 将 EDP 重新枚举为 `disk30`；五因素一致，`verify-fda-device 0781:5591` 返回 `RESULT=FDA_RETAINED_RAW_ACCESS_READY`。该轮 DA 只出现 `options=0x00000001` 的正常 whole-unmount，没有 `0x00080001` force request，因此本次未触发 EBUSY recovery，不把它误记为 recovery activation PASS。
+- type1 FAT16 read-only 与 type2 Apple NTFS read-only 各完成两轮 capability-aware mount/unmount/remount；用户随后只在 App UI 保存 type4 真实密码，type4 Apple NTFS read-only 同样完成两轮，无密码进入命令行/日志、无真实盘 filesystem marker/raw write。
+- 第一次产品 XPC safe eject 返回 `RESULT=SAFE_EJECT_SUPPRESSION_OK`，EDP physical generation 消失，EDP/macFUSE/backing/transport residue=0，Finder/UVFS/service 无 U-state，日志无 `-119930877/BadArgument`。
+- 第二次 fresh reinsert 再次 `RESULT=FDA_RETAINED_RAW_ACCESS_READY`，type2/type4 credential 均保留且 type2 autoMount 正常；本轮仍只有正常 whole-unmount、无 EBUSY/force。随后第二次产品 XPC safe eject 再次 PASS，最终系统只剩无关 SN750，EDP residue=0、无 U-state、无 BadArgument。
+- 真实盘 EBUSY/safe-eject/capability-aware/FDA-retention 收口至此完成。独立 `make drive-test-ui` 同一 exact source 复跑功能/结构/accessibility 全 PASS，但 sidebar animation performance 为 `UI_HITCH_MAX_MS=66.666`、`UI_HITCH_COUNT_GT33MS=2`，保留 33ms 硬门槛，作为本计划唯一未完成项。
 
 ### 2026-09-01 13:50 — Installer scratch recovery no longer blocked by unrelated FSKit mounts
 

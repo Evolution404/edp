@@ -6,6 +6,8 @@
 本文所在提交即最新交接基线；接手后第一步执行 `git fetch`、`git rev-parse HEAD`、`git status --short`，不要复用本文中的历史 BSD 号作为操作依据。
 
 > 目标：完成真实标准加密 EDP U 盘的 raw EBUSY 自动恢复、三分区 capability-aware 验收、safe eject 复测，并证明此前 `Disk Arbitration refused diskN: status=-119930877` 假失败不再出现。本文记录的是当前已验证事实；未完成项明确标注，不得把手工恢复后的 PASS 误写成产品自动恢复 PASS。
+>
+> **2026-09-01 17:25 完成更新：本交接中的真实盘收口任务已执行完成。** exact HEAD `b9883503f43602f499139cf72895834c8ba5954e` 的 fast/virtual/system 全绿，Clean.pkg exact-head SHA-256=`ed2ad5aa41b745f08f2f06906d1786fb32c756444bc34dfc7623c400f1b51f3f` 已安装；两次 fresh reinsert 均 retained FDA/raw ready，三分区 capability-aware 验收通过，产品 XPC safe eject 连续两次 PASS，最终 residue=0、无 U-state、无 `-119930877/BadArgument`。两次 fresh insert 都没有实际出现 EBUSY，所以没有虚构 physical force-recovery activation；S31–S35/system gate 已覆盖该路径。完整证据见 `docs/PROGRESS-2026-08-30-async-lifecycle-hardening.md` 17:25 记录。除独立 UI sidebar 33ms performance gate 外，不要重复本文第 7 节的真实盘收口步骤。
 
 ## 1. 已完成并已进入远端基线的关键提交
 
