@@ -210,6 +210,15 @@
 
 ## 变更日志
 
+### 2026-09-01 08:05 — Native-FS quiescence build/install and installed-runtime PASS
+
+- storage release PASS 后提交验收记录，package build HEAD 为 `73e11288f4646c6ed4bb0a86fbbe8a70b2f1830f`（产品代码仍为 `fec8de129db337695b8084ab1c9443053bcd87b9`）。
+- 重建 `Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg` 并通过 clean-installer verifier；SHA-256=`5dd3895bf3bd4065cbaa1edc5427417ac5d4687b13338cdabaeba5f0426a2e46`。
+- 在无 external physical USB、无活动 EDP mount 的现场通过 acceptance 管理员路径完成 upgrade install；`verify-installed` PASS，App/service/runtime codesign、LaunchDaemon、XPC roundtrip/snapshot 均正常。
+- 重启 App 后 FSKit enablement 稳定：`io.macfuse.app.fsmodule.macfuse` 与 `io.macfuse.app.fsmodule.macfuse-local` 均在 enabledModules，PluginKit 两者均为 `+`；service health PASS。
+- installed `service-cycle` 8/8 PASS：`48 / 1055 / 1061 / 1085 / 1062 / 1065 / 1060 / 1061 ms`，FIRST_AVG=1067.0ms、LAST_AVG=1062.0ms、slope=-0.1ms/cycle，每轮单 daemon；结束后 App/service 正常、Finder 为 `S`、无 UVFSService 残留。
+- 当前无 external physical USB；下一 gate 为重新插入同一标准加密 EDP U 盘，复核 retained FDA + 五因素身份，并重点验证 type1/type2/type4 最终 unmount/pre-unpublish quiescence/safe eject。
+
 ### 2026-09-01 07:56 — Native-FS pre-unpublish quiescence synthetic release PASS
 
 - 重启后以 exact code HEAD `fec8de129db337695b8084ab1c9443053bcd87b9`、无 external physical USB、无历史 U-state 的干净基线，使用全新 synthetic workdir 执行 canonical release storage 5-loop。
