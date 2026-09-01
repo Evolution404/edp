@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
+UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -121,6 +122,15 @@ echo 'RESULT=DRIVE_SYSTEM_FACTORY_CLEAN_INSTALLER_BUILD_OK'
 /usr/bin/grep -Fq 'edp-mfmount-local-readwrite' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 /usr/bin/grep -Fq 'edp-mfmount-local-readonly' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
+
+# The Animation Hitches performance gate is compositor-sensitive and therefore
+# release-authoritative only on the GitHub Actions runner. Local runs may still
+# execute deterministic UI structure checks, but must skip xctrace performance.
+/usr/bin/grep -Fq 'GITHUB_ACTIONS:-false' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
+echo 'RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK'
 
 # Identity and architecture invariants that must not regress during release
 # hardening.

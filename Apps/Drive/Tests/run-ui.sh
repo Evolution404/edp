@@ -62,6 +62,17 @@ grep -Fq '.accessibilityLabel("显示或隐藏侧栏")' "${APP_SOURCE}"
 
 echo 'RESULT=DRIVE_UI_ACCESSIBILITY_STRUCTURE_OK'
 
+# Animation Hitches is a compositor-sensitive performance gate. Local desktop
+# load is intentionally not used as release evidence; only GitHub Actions runs
+# the 33 ms xctrace gate. Local invocations still validate deterministic preview,
+# layout, and accessibility contracts above.
+if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
+  echo 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY'
+  echo 'RESULT=DRIVE_UI_OK'
+  exit 0
+fi
+
+echo 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT'
 command -v xcrun >/dev/null
 xcrun xctrace list templates | grep -Fx 'Animation Hitches' >/dev/null
 "${BIN}" --hitch-only >"${HITCH_LOG}" 2>&1 &

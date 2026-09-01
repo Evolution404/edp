@@ -11,7 +11,7 @@
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| A | Sidebar 33 ms 性能收口 | IN PROGRESS |
+| A | Sidebar 33 ms 性能收口 | CI VERIFY |
 | B | Runtime 职责拆分 | TODO |
 | C | App/UI 文件职责拆分 | TODO |
 | D | 发布可靠性与 recovery 可观测性 | TODO |
@@ -32,7 +32,7 @@
 
 ## Phase A — Sidebar 33 ms 性能收口
 
-状态：IN PROGRESS
+状态：CI VERIFY
 
 ### A1 基线
 
@@ -41,7 +41,7 @@
 - [x] page rendering PASS。
 - [x] 900×680 sidebar 20 toggles geometry PASS。
 - [x] accessibility structure PASS。
-- [ ] Animation Hitches gate PASS。
+- [ ] GitHub Actions Animation Hitches 33 ms gate PASS。
 
 2026-09-01 19:29 基线：
 
@@ -55,24 +55,23 @@ UI_HITCH_COUNT_GT33MS=1
 
 ### A2 定位
 
-- [ ] 审查现有 hitch-only runner / trace window / automation toggle timing。
-- [ ] 增加或复用 signpost/epoch，把 toggle 与主线程 layout/render hotspot 对齐。
-- [ ] 导出 Time Profiler / Animation Hitches 相关数据，定位 >33ms 帧归因。
-- [ ] 验证 `NSHostingController` live-resize invalidation。
-- [ ] 验证 backdrop/glass material 合成开销。
-- [ ] 验证 snapshot/@ObservedObject refresh 与 sidebar animation 是否重叠。
-- [ ] 验证多重 implicit animation / hover / selection 是否叠加。
+- [x] 审查现有 hitch-only runner / trace window / automation toggle timing。
+- [x] 复用 epoch marker 对齐 Animation Hitches / Time Profiler。
+- [x] 导出 Time Profiler：观察到 `NSHostingView.setFrameSize`、text metrics、display-list render 等 live-resize 工作。
+- [x] 历史 exact known-good `fff906c` 在当前本机同样可出现 66–75 ms，排除当前代码独有回归。
+- [x] 关闭第二个已安装 EDP Drive UI 后曾连续得到 16.667 / 16.667 / 25.000 ms，证明本机 compositor/workload 会污染结果。
+- [x] 用户明确要求：本机不再执行 UI 性能测试，33 ms 只在 GitHub Actions 执行。
 
 ### A3 修复与验收
 
-- [ ] 根因修复，不降低 33 ms 门槛。
-- [ ] `make drive-test-ui` 连续 #1 PASS。
-- [ ] `make drive-test-ui` 连续 #2 PASS。
-- [ ] `make drive-test-ui` 连续 #3 PASS。
-- [ ] `make drive-test-fast` PASS。
-- [ ] `make drive-test-system` PASS。
-- [ ] `git diff --check` PASS。
+- [x] `run-ui.sh` 将 compositor-sensitive xctrace 性能段收口为 `GITHUB_ACTIONS=true` 才执行；本机只输出 `DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY`，不产生性能 PASS 证据。
+- [x] 33 ms 阈值、toggle 数量、测量窗口未降低。
+- [x] system ratchet 锁定 CI-only policy 与 `THRESHOLD_NS = 33_000_000`。
+- [x] `make drive-test-fast` PASS，`RESULT=DRIVE_FAST_OK`。
+- [x] `make drive-test-system` PASS，含 `RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK`。
+- [x] `git diff --check` PASS。
 - [ ] Phase A commit/push。
+- [ ] GitHub Actions `make drive-test-ui` PASS。
 
 ## Phase B — Runtime 职责拆分
 
@@ -164,6 +163,14 @@ UI_HITCH_COUNT_GT33MS=1
 - [ ] 若选择 B，另建独立实施计划，本计划不直接实现。
 
 ## 变更日志
+
+### 2026-09-01 20:37 — UI performance evidence moved to GitHub Actions only
+
+- 用户明确要求不再使用本机桌面作为 UI 性能基准；本机负载/WindowServer 状态不是静态变量，不能驱动 sidebar 性能结论。
+- 历史 known-good `fff906c` 在当前本机亦可出现 66–75 ms，证明本机 xctrace 数值不是当前代码独有回归；此前关闭第二个已安装 Drive UI 后又可回落到 16.667–25 ms，进一步证明 compositor 环境污染。
+- 所有实验性 production UI 参数改动均已回退；不以固定内容宽度、LazyVStack、live-resize redraw policy 等未稳定方案改变产品视觉。
+- `run-ui.sh` 保留 deterministic preview/page/geometry/accessibility 检查；Animation Hitches 只在 `GITHUB_ACTIONS=true` 执行。本机调用明确输出 `RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY` 后结束。
+- `ParseAnimationHitches.py` 的 `THRESHOLD_NS = 33_000_000`、toggle 数量和 trace window 均保持不变；system ratchet 锁定 CI-only policy，等待 GitHub Actions 作为 Phase A 最终性能证据。
 
 ### 2026-09-01 19:29 — Plan baseline and UI performance failure reproduced
 
