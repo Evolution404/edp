@@ -74,6 +74,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] Phase A CI-only policy commit/push：`2945d54`。
 - [x] macOS 26 runner geometry contract 已修正为 900 px 宽 + split usable height ≥620；不把 toolbar 后 content height 锁死为 680。
 - [x] xctrace runner race 已定位：先启动 preview 再 `--attach PID` 时，GitHub runner 的 xctrace 启动可能晚于 preview 生命周期；已改为 Instruments 原生 `--launch -- ${BIN} --hitch-only`。
+- [x] Xcode 26 TOC 已确认完整帧表为 `hitches-frame-lifetimes`；旧 `hitches` 表只包含已判定 hitch 事件。33 ms gate 已切换到完整 frame lifetime 表，阈值仍为 `33_000_000ns`。
 - [ ] GitHub Actions `make drive-test-ui` 33 ms gate PASS。
 
 ## Phase B — Runtime 职责拆分

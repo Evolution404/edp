@@ -81,7 +81,7 @@ def parse_hitches(hitches_path: Path, trace_start: float, begin: float, end: flo
         print(f"UI_HITCH_LAST_ROW_EPOCH={trace_start + last_start / 1_000_000_000:.6f}")
 
     if not in_window:
-        raise SystemExit("no Animation Hitches frames overlapped the sidebar toggle interval")
+        raise SystemExit("no frame-lifetime samples overlapped the sidebar toggle interval")
     max_ns = max(in_window)
     hitch_count = sum(value > THRESHOLD_NS for value in in_window)
     return len(in_window), max_ns, hitch_count

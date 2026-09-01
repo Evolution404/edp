@@ -92,7 +92,7 @@ echo 'UI_HITCH_TRACE_TIMEBASE:'
 echo 'UI_HITCH_TRACE_SCHEMAS:'
 /usr/bin/grep -oE 'schema="[^"]+"' "${TOC_XML}" | /usr/bin/sort -u || true
 xcrun xctrace export --input "${TRACE}" \
-  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches"]' \
+  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches-frame-lifetimes"]' \
   --output "${HITCH_XML}"
 python3 "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py" \
   --toc "${TOC_XML}" \

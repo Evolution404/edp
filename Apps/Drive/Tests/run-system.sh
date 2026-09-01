@@ -144,6 +144,7 @@ echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
 /usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'table[@schema="hitches-frame-lifetimes"]' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
 echo 'RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK'
 
