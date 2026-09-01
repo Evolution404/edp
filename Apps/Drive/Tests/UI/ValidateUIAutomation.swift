@@ -164,15 +164,13 @@ struct EDPUIAutomationMain {
         try require(sidebar.maximumThickness == 220, "sidebar maximum thickness changed")
         try require(sidebar.canCollapse, "sidebar canCollapse disabled")
         try require(!sidebar.canCollapseFromWindowResize, "sidebar auto-collapse on resize re-enabled")
-        let requestedContentSize = window.contentRect(forFrameRect: window.frame).size
         let splitSize = split.view.bounds.size
-        print("UI_SIDEBAR_WINDOW_CONTENT_SIZE=\(requestedContentSize.width)x\(requestedContentSize.height)")
         print("UI_SIDEBAR_SPLIT_SIZE=\(splitSize.width)x\(splitSize.height)")
-        try require(
-            requestedContentSize.width >= 899 && requestedContentSize.width <= 901
-                && requestedContentSize.height >= 679 && requestedContentSize.height <= 681,
-            "900×680 requested window content geometry drifted: \(requestedContentSize)"
-        )
+        // The test requests a 900×680 native window. AppKit's toolbar/titlebar
+        // consumes part of that height on the GitHub macOS 26 runner, so the
+        // actual split content region is currently about 900×622. The product
+        // contract is the 900 px narrow width plus EDPMainView's 620 px minimum
+        // usable content height, not a runner-specific toolbar height.
         try require(splitSize.width >= 899 && splitSize.width <= 901, "900px split width drifted: \(splitSize.width)")
         try require(splitSize.height >= 619 && splitSize.height <= 681, "split height escaped 620...680: \(splitSize.height)")
         var expandedSidebarWidths = [CGFloat]()
