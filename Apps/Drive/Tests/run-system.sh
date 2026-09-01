@@ -8,6 +8,7 @@ UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 RUNTIME_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeSupport.swift"
+RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
 JOURNAL_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleJournal.swift"
@@ -131,6 +132,7 @@ echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'GITHUB_ACTIONS:-false' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
+/usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
 echo 'RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK'
 
@@ -360,6 +362,17 @@ echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
 ! /usr/bin/grep -Fq 'private func atomicWrite(' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RUNTIME_SUPPORT_SPLIT_OK'
 
+# Raw lease ownership and raw metadata adapter live outside the daemon controller.
+# The orchestration layer may retain leases and own EBUSY recovery, but it must
+# not grow back direct broker/open/pread validation primitives.
+/usr/bin/grep -Fq 'final class EDPRawAccessLease' "${RAW_ACCESS_SOURCE}"
+/usr/bin/grep -Fq 'func openPersistentRawAccess(' "${RAW_ACCESS_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPPrivilegedRawMetadataReader' "${RAW_ACCESS_SOURCE}"
+/usr/bin/grep -Fq 'EDPPhysicalDeviceRevalidation.metadataStillMatches' "${RAW_ACCESS_SOURCE}"
+! /usr/bin/grep -Fq 'final class EDPRawAccessLease' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private func openPersistentRawAccess(' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_RAW_ACCESS_SPLIT_OK'
+
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery
 # policy code must never branch on user-facing error text.
@@ -473,9 +486,9 @@ RAW_BROKER_SOURCE="${ROOT}/Apps/Drive/product/EDPRawFDBroker.c"
 /usr/bin/grep -Fq 'EDP_RAW_BROKER_APP_PATH "/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"' "${RAW_BROKER_SOURCE}"
 /usr/bin/grep -Fq 'SCM_RIGHTS' "${RAW_BROKER_SOURCE}"
 /usr/bin/grep -Fq 'geteuid() != 0' "${RAW_BROKER_SOURCE}"
-/usr/bin/grep -Fq 'edpRawFDBrokerSpawn(appPath, rawPath, 5_000' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'EDPPhysicalDeviceRevalidation.metadataStillMatches(metadata, disk: disk)' "${RUNTIME_SOURCE}"
-! /usr/bin/grep -Fq 'Darwin.open(disk.rawPath' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'edpRawFDBrokerSpawn(appPath, rawPath, 5_000' "${RAW_ACCESS_SOURCE}"
+/usr/bin/grep -Fq 'EDPPhysicalDeviceRevalidation.metadataStillMatches(metadata, disk: disk)' "${RAW_ACCESS_SOURCE}"
+! /usr/bin/grep -Fq 'Darwin.open(disk.rawPath' "${RUNTIME_SOURCE}" "${RAW_ACCESS_SOURCE}"
 /usr/bin/grep -Fq 'CommandLine.arguments.firstIndex(of: "--raw-fd-broker")' "${APP_SOURCE}"
 /usr/bin/grep -Fq 'RAW_ACCESS_BUNDLE_ID="com.edp.drive"' "${ACCEPTANCE_SOURCE}"
 ! /usr/bin/grep -Fq 'RAW_ACCESS_BUNDLE_ID="com.edp.drive.service"' "${ACCEPTANCE_SOURCE}"

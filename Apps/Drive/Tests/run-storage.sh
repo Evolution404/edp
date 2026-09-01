@@ -1328,6 +1328,7 @@ validate_failure_and_build_contracts() {
     product/EDPXPCProtocol.swift
     product/EDPXPCSecurity.swift
     product/EDPRuntimeSupport.swift
+    product/EDPRawAccess.swift
     product/EDPMountLifecycle.swift
     product/EDPVaultRuntime.swift
   )
@@ -1349,7 +1350,7 @@ for prohibited_pattern in \
   'diskutil[[:space:]]+erase''Disk' \
   'd''d.*of=/dev/' \
   '--raw-device[[:space:]]+/''dev/'; do
-  if rg -n -- "$prohibited_pattern" Tests/Storage Tests/run-storage.sh >/dev/null; then
+  if /usr/bin/grep -REn -- "$prohibited_pattern" Tests/Storage Tests/run-storage.sh >/dev/null; then
     echo "storage test contains a prohibited physical-device write pattern" >&2
     exit 1
   fi

@@ -75,28 +75,15 @@ fi
 echo 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT'
 command -v xcrun >/dev/null
 xcrun xctrace list templates | grep -Fx 'Animation Hitches' >/dev/null
-"${BIN}" --hitch-only >"${HITCH_LOG}" 2>&1 &
-HITCH_PID=$!
-for _ in $(seq 1 120); do
-  if grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"; then
-    break
-  fi
-  if ! kill -0 "${HITCH_PID}" 2>/dev/null; then
-    cat "${HITCH_LOG}" >&2
-    exit 1
-  fi
-  sleep 0.03
-done
-grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"
-
 xcrun xctrace record --quiet \
   --template 'Animation Hitches' \
   --output "${TRACE}" \
   --time-limit 8s \
   --no-prompt \
-  --attach "${HITCH_PID}"
-wait "${HITCH_PID}"
-HITCH_PID=""
+  --target-stdout "${HITCH_LOG}" \
+  --launch -- "${BIN}" --hitch-only
+
+grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"
 grep -Fq 'RESULT=DRIVE_UI_HITCH_AUTOMATION_OK' "${HITCH_LOG}"
 
 xcrun xctrace export --input "${TRACE}" --toc --output "${TOC_XML}"

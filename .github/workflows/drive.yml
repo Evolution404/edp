@@ -182,6 +182,7 @@ jobs:
           grep -Fq 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/native-core.txt"
           grep -Fq 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/native-core.txt"
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+            product/EDPLifecycleScheduler.swift \
             product/EDPTransportProvider.swift \
             native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift \
             -o "${RUNNER_TEMP}/validate-transport-lifecycle"
@@ -235,6 +236,8 @@ jobs:
             product/EDPCredentialStore.swift
             product/EDPDevicePolicyStore.swift
             product/EDPMacFUSERuntimePolicy.swift
+            product/EDPLifecycleScheduler.swift
+            product/EDPLifecycleJournal.swift
             product/EDPTransportProvider.swift
             product/EDPTransportRuntimePolicy.swift
             product/EDPFinderVolumeDefaults.swift
@@ -243,6 +246,7 @@ jobs:
             product/EDPXPCProtocol.swift
             product/EDPXPCSecurity.swift
             product/EDPRuntimeSupport.swift
+            product/EDPRawAccess.swift
             product/EDPMountLifecycle.swift
             product/EDPVaultRuntime.swift
           )

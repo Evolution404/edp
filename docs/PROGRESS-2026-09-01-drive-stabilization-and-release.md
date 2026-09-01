@@ -70,8 +70,10 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] `make drive-test-fast` PASS，`RESULT=DRIVE_FAST_OK`。
 - [x] `make drive-test-system` PASS，含 `RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK`。
 - [x] `git diff --check` PASS。
-- [ ] Phase A commit/push。
-- [ ] GitHub Actions `make drive-test-ui` PASS。
+- [x] Phase A CI-only policy commit/push：`2945d54`。
+- [x] macOS 26 runner geometry contract 已修正为 900 px 宽 + split usable height ≥620；不把 toolbar 后 content height 锁死为 680。
+- [x] xctrace runner race 已定位：先启动 preview 再 `--attach PID` 时，GitHub runner 的 xctrace 启动可能晚于 preview 生命周期；已改为 Instruments 原生 `--launch -- ${BIN} --hitch-only`。
+- [ ] GitHub Actions `make drive-test-ui` 33 ms gate PASS。
 
 ## Phase B — Runtime 职责拆分
 
@@ -79,8 +81,11 @@ UI_HITCH_COUNT_GT33MS=1
 
 - [x] 第一阶段纯 lifecycle model 抽取：`EDPLifecycleFailure*`、FSKit recovery policy、mount lifecycle state machine 移至 `EDPMountLifecycle.swift`；runtime 减少 302 行，行为不变。
 - [x] 通用 runtime support 抽取：`RuntimeError/fail/secureZero/run/plist/atomicWrite` 移至 `EDPRuntimeSupport.swift`；runtime 再减少 101 行，并由 system ratchet 禁止回流。
+- [x] raw access primitive 抽取：`EDPRawAccessLease`、broker raw open、raw metadata read、五因素/metadata revalidation、`EDPPrivilegedRawMetadataReader` 移至 `EDPRawAccess.swift`；controller 继续只拥有 single-flight/EBUSY orchestration。
+- [x] `EDPVaultRuntime.swift` 已由约 5462 行降至 4839 行。
+- [x] raw primitive 抽取后 S01-S35、320000-step property、fast/system/virtual 全绿。
 - [ ] 继续抽纯 model/key/helper。
-- [ ] 抽 `EDPRawAccessController` 或等价模块。
+- [ ] 抽 `EDPRawAccessController` orchestration（single-flight + EBUSY exact-generation recovery + lease state）。
 - [ ] 抽 auto-mount policy/manual suppression。
 - [ ] 抽 eject/shutdown orchestration。
 - [ ] 抽 recovery orchestration。

@@ -81,6 +81,45 @@ func plist(_ data: Data) throws -> [String: Any] {
     return value
 }
 
+func runtimeBinaryRoot() -> String {
+    if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
+        return configuredRoot
+    }
+    return URL(fileURLWithPath: CommandLine.arguments[0])
+        .resolvingSymlinksInPath().deletingLastPathComponent().path
+}
+
+func consoleIdentity() throws -> (uid_t, gid_t) {
+    var status = stat()
+    guard stat("/dev/console", &status) == 0,
+          status.st_uid != 0,
+          getpwuid(status.st_uid) != nil else {
+        throw fail("no authenticated console user is available")
+    }
+    return (status.st_uid, status.st_gid)
+}
+
+func rawAccessDaemonPath() -> String {
+    if let override = ProcessInfo.processInfo.environment["EDP_RAW_ACCESS_DAEMON"],
+       !override.isEmpty {
+        return override
+    }
+    return edpRawAccessBrokerAppPath
+}
+
+func installedProductVersion() -> String {
+    if let override = ProcessInfo.processInfo.environment["EDP_SERVICE_VERSION"],
+       !override.isEmpty {
+        return override
+    }
+    if let bundle = Bundle(path: "/Applications/EDP Drive.app"),
+       let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+       !version.isEmpty {
+        return version
+    }
+    return "development"
+}
+
 func atomicWrite(_ data: Data, to path: String, mode: mode_t) throws {
     let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
     try FileManager.default.createDirectory(
