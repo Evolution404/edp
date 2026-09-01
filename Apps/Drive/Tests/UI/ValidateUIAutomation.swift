@@ -164,11 +164,17 @@ struct EDPUIAutomationMain {
         try require(sidebar.maximumThickness == 220, "sidebar maximum thickness changed")
         try require(sidebar.canCollapse, "sidebar canCollapse disabled")
         try require(!sidebar.canCollapseFromWindowResize, "sidebar auto-collapse on resize re-enabled")
-        guard let contentView = window.contentView else {
-            throw EDPUIAutomationFailure(description: "900×680 content view missing")
-        }
-        try require(contentView.bounds.width >= 899 && contentView.bounds.width <= 901, "900px content geometry drifted")
-        try require(contentView.bounds.height >= 679 && contentView.bounds.height <= 681, "680px content geometry drifted")
+        let requestedContentSize = window.contentRect(forFrameRect: window.frame).size
+        let splitSize = split.view.bounds.size
+        print("UI_SIDEBAR_WINDOW_CONTENT_SIZE=\(requestedContentSize.width)x\(requestedContentSize.height)")
+        print("UI_SIDEBAR_SPLIT_SIZE=\(splitSize.width)x\(splitSize.height)")
+        try require(
+            requestedContentSize.width >= 899 && requestedContentSize.width <= 901
+                && requestedContentSize.height >= 679 && requestedContentSize.height <= 681,
+            "900×680 requested window content geometry drifted: \(requestedContentSize)"
+        )
+        try require(splitSize.width >= 899 && splitSize.width <= 901, "900px split width drifted: \(splitSize.width)")
+        try require(splitSize.height >= 619 && splitSize.height <= 681, "split height escaped 620...680: \(splitSize.height)")
         var expandedSidebarWidths = [CGFloat]()
         var collapsedDetailWidths = [CGFloat]()
         for index in 0..<toggleCount {

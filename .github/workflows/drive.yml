@@ -47,8 +47,8 @@ jobs:
           ! grep -Fq '<key>RunAtLoad</key>' Apps/Drive/product/App/com.edp.drive.service.plist
           grep -Fq 'requestGracefulShutdown' Apps/Drive/product/EDPXPCProtocol.swift
           grep -Fq 'retryTransientAutomaticMounts' Apps/Drive/product/EDPXPCProtocol.swift
-          grep -Fq 'failure.contains("File system extension not found")' Apps/Drive/product/EDPVaultRuntime.swift
-          grep -Fq 'failure.contains("File system extension not enabled")' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'failedMountCodes[partitionKey] == .bridgeExtensionUnavailable' Apps/Drive/product/EDPVaultRuntime.swift
+          ! grep -Fq 'failure.contains("File system extension' Apps/Drive/product/EDPVaultRuntime.swift
           grep -Fq 'retryTransientAutomaticMounts()' Apps/Drive/product/App/EDPUSBVaultApp.swift
           test "$(grep -Fc 'retryTransientAutomaticMounts()' Apps/Drive/product/App/EDPUSBVaultApp.swift)" -ge 3
           grep -Fq 'remoteObjectProxyWithErrorHandler { @Sendable [weak self] error in' Apps/Drive/product/App/EDPUSBVaultApp.swift
