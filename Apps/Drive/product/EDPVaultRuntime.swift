@@ -130,43 +130,6 @@ private func readPassword(prompt: String) throws -> [UInt8] {
     return result
 }
 
-private enum EDPFSKitHostRecovery {
-    static func restartConsoleAgentIfSafe() -> Bool {
-        guard geteuid() == 0 else { return false }
-
-        var mounts: UnsafeMutablePointer<statfs>?
-        let count = getmntinfo(&mounts, MNT_NOWAIT)
-        guard count >= 0, let mounts else { return false }
-        for index in 0..<Int(count) {
-            if (mounts[index].f_flags_ext & UInt32(MNT_EXT_FSKIT)) != 0 {
-                NSLog("EDP refused FSKit agent recovery because an FSKit mount is still active")
-                return false
-            }
-        }
-
-        var console = stat()
-        guard stat("/dev/console", &console) == 0,
-              console.st_uid != 0 else {
-            return false
-        }
-
-        do {
-            let status = try EDPNativeBoundedProcess.run(
-                executable: "/usr/bin/pkill",
-                arguments: ["-9", "-U", String(console.st_uid), "-x", "fskit_agent"],
-                timeout: 3,
-                label: "restart console-user FSKit agent"
-            )
-            guard status == 0 else { return false }
-            NSLog("EDP restarted console-user fskit_agent after a mount-free stuck transport")
-            return true
-        } catch {
-            NSLog("EDP FSKit agent recovery failed: %@", String(describing: error))
-            return false
-        }
-    }
-}
-
 private final class EDPSpawnedProcess: EDPManagedProcess, @unchecked Sendable {
     private let lock = NSLock()
     private var pid: pid_t
