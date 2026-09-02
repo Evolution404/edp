@@ -1482,6 +1482,7 @@ validate_failure_and_build_contracts() {
     product/EDPMacFUSERuntimePolicy.swift
     product/EDPLifecycleScheduler.swift
     product/EDPLifecycleJournal.swift
+    product/EDPRuntimeMetrics.swift
     product/EDPTransportProvider.swift
     product/EDPTransportRuntimePolicy.swift
     product/EDPFinderVolumeDefaults.swift

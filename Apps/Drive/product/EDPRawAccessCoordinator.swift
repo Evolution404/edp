@@ -8,6 +8,7 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
     private let diskArbitration: any EDPDaemonDiskArbitrating
     private let leaseOpener: EDPRawAccessLeaseOpening
     private let openerRunsOffOwnerQueue: Bool
+    private let metrics: EDPRuntimeMetrics
     private let rawAccessQueue = DispatchQueue(
         label: "com.edp.drive.raw-access",
         qos: .userInitiated
@@ -24,12 +25,14 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
         ownerQueue: DispatchQueue,
         diskArbitration: any EDPDaemonDiskArbitrating,
         leaseOpener: @escaping EDPRawAccessLeaseOpening,
-        openerRunsOffOwnerQueue: Bool
+        openerRunsOffOwnerQueue: Bool,
+        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics()
     ) {
         self.ownerQueue = ownerQueue
         self.diskArbitration = diskArbitration
         self.leaseOpener = leaseOpener
         self.openerRunsOffOwnerQueue = openerRunsOffOwnerQueue
+        self.metrics = metrics
     }
 
     func lease(for disk: PhysicalDisk) -> EDPRawAccessLease? {
@@ -245,7 +248,9 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
                 return
             }
 
+            metrics.increment(.rawBusyRecovery)
             onBusyRecovery(disk)
+            metrics.increment(.forcedWholeUnmount)
             diskArbitration.forceUnmountWholeAsync(
                 disk.bsdName,
                 expectedRegistryEntryID: disk.registryEntryID

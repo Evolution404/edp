@@ -133,23 +133,25 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] macFUSE/App service support 已拆到 `App/Service/EDPAppServiceSupport.swift`；XPC smoke helper 已拆到 `App/Service/EDPXPCSmokeSupport.swift`，CLI smoke 与页面实现边界清晰。
 - [x] `EDPUSBVaultApp.swift` 已由约 3810 行降至约 476 行，只保留 App/CLI entrypoint 与 raw-FD broker dispatch；system ratchet 禁止 ViewModel/pages/sidebar/menu/support 实现回流。
 - [x] Liquid Glass、菜单层级、仅退出界面/完全退出语义未改变；本机 Swift6 typecheck、system、fast、virtual、S01-S35/320000-step property、production installer、`git diff --check` 全部 PASS。
-- [ ] GitHub Actions UI gate 在 Phase C exact-head 上 PASS；本机继续不执行 UI performance/xctrace。run `33624947444` / `bcd012c` 已通过全部 preview/page/20-toggle automation，但拆分后的 accessibility 静态检查仍错误指向旧主文件；`90055cf` 已修正。run `33625217603` / `90055cf` 随后通过 automation + accessibility，但 60s record watchdog 早于 Xcode 26 正常 Instruments 冷启动完成而超时；历史 PASS run `33598617878` / `33595043724` 从 perf marker 到首个 trace export 分别约 71.4s / 75.1s，因此 record watchdog 调整为 90s、list/export 保持 30s，并新增各 xctrace 阶段 BEGIN/END marker；8s trace、20 toggles、33ms 阈值不变。
+- [x] GitHub Actions UI gate 已在 Phase C exact-head `b6015ff` / run `33625866975` PASS；preview/page/20-toggle/accessibility 全绿，`UI_HITCH_COUNT_GT33MS=0`、`RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`。xctrace record 实测约 65.99s，因此 record watchdog 90s 有 exact-head 数据依据；8s trace、20 toggles、33ms 阈值不变。本机继续不执行 UI performance/xctrace。
+- [ ] Phase C exact-head storage 最终复核：run `33625866975` 的 M01、M02/M04-M09 和 dead-owner tombstone retirement 均通过，但 `m02-remount` adapter 忽略 TERM 后，旧 harness 在 SIGKILL 后无界 `wait`，最终触发 30 分钟 job cancel。`f1f1b55` 已改为 bounded child reap，并在 TERM 失败时先走 exact macFUSE Local bridge recovery；待新 fixed HEAD storage M01-M14 全绿后 Phase C 转 DONE。
 - [x] Phase C 已提交并 push：`0f4a017` `refactor(drive): split app ui responsibilities`；等待固定 HEAD CI 复核后转 DONE。
 
 ## Phase D — 发布可靠性与 recovery 可观测性
 
-状态：TODO
+状态：IN PROGRESS
 
 ### D1 Counters
 
-- [ ] `rawBusyRecoveryCount`
-- [ ] `forcedWholeUnmountCount`
-- [ ] `fskitAgentRecoveryCount`
-- [ ] `diskImagesAttachRecoveryCount`
-- [ ] `diskImagesDetachRecoveryCount`
-- [ ] `mountRetryCount`
-- [ ] `ejectAlreadyAbsentSuccessCount`
-- [ ] diagnostics redaction/system ratchet/tests。
+- [x] `rawBusyRecoveryCount`
+- [x] `forcedWholeUnmountCount`
+- [x] `fskitAgentRecoveryCount`
+- [x] `diskImagesAttachRecoveryCount`
+- [x] `diskImagesDetachRecoveryCount`
+- [x] `mountRetryCount`
+- [x] `ejectAlreadyAbsentSuccessCount`
+- [x] diagnostics 仅输出 7 个 UInt64；schema 禁止 deviceID/path/password/credential/secret/key 字段；system ratchet + 1000-way concurrent metrics contract test PASS。
+- [ ] D1 fixed-head GitHub Actions native/fast/virtual/system/storage 复核后关闭。
 
 ### D2 外部/私有依赖
 

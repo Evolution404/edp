@@ -25,6 +25,7 @@ PRODUCT_SOURCES=(
   product/EDPMacFUSERuntimePolicy.swift
   product/EDPLifecycleScheduler.swift
   product/EDPLifecycleJournal.swift
+  product/EDPRuntimeMetrics.swift
   product/EDPTransportProvider.swift
   product/EDPTransportRuntimePolicy.swift
   product/EDPFinderVolumeDefaults.swift

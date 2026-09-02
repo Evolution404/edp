@@ -4,6 +4,7 @@ final class EDPEjectCoordinator: @unchecked Sendable {
     private let ownerQueue: DispatchQueue
     private let diskArbitration: any EDPDaemonDiskArbitrating
     private let mediaProvider: any EDPWholeUSBMediaProviding
+    private let metrics: EDPRuntimeMetrics
 
     // Owner-queue confined. The active registry map is intentionally separate
     // from completion waiters because the physical USB generation can disappear
@@ -14,11 +15,13 @@ final class EDPEjectCoordinator: @unchecked Sendable {
     init(
         ownerQueue: DispatchQueue,
         diskArbitration: any EDPDaemonDiskArbitrating,
-        mediaProvider: any EDPWholeUSBMediaProviding
+        mediaProvider: any EDPWholeUSBMediaProviding,
+        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics()
     ) {
         self.ownerQueue = ownerQueue
         self.diskArbitration = diskArbitration
         self.mediaProvider = mediaProvider
+        self.metrics = metrics
     }
 
     func isEjecting(deviceID: String) -> Bool {
@@ -90,6 +93,7 @@ final class EDPEjectCoordinator: @unchecked Sendable {
             // USB disappearance is already the desired terminal state. Never
             // send Disk Arbitration work to a stale/reused BSD name.
             guard originalGenerationPresent() else {
+                self.metrics.increment(.ejectAlreadyAbsentSuccess)
                 completion(nil)
                 return
             }
@@ -100,6 +104,7 @@ final class EDPEjectCoordinator: @unchecked Sendable {
                 guard let self else { return }
                 self.ownerQueue.async {
                     if error != nil, !originalGenerationPresent() {
+                        self.metrics.increment(.ejectAlreadyAbsentSuccess)
                         completion(nil)
                     } else {
                         completion(error.map { String(describing: $0) })
@@ -109,6 +114,7 @@ final class EDPEjectCoordinator: @unchecked Sendable {
         }
 
         guard originalGenerationPresent() else {
+            metrics.increment(.ejectAlreadyAbsentSuccess)
             completion(nil)
             return
         }

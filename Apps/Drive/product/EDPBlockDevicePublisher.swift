@@ -606,12 +606,18 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
     private let helperPath: String
     private let consoleLauncherPath: String
     private let diskArbitration: any EDPDaemonDiskArbitrating
+    private let metrics: EDPRuntimeMetrics
     private let operationQueue = DispatchQueue(label: "com.edp.drive.block-publication")
 
-    init(binaryRoot: String, diskArbitration: any EDPDaemonDiskArbitrating) {
+    init(
+        binaryRoot: String,
+        diskArbitration: any EDPDaemonDiskArbitrating,
+        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics()
+    ) {
         helperPath = binaryRoot + "/diskimages2-attach"
         consoleLauncherPath = binaryRoot + "/edp-console-exec"
         self.diskArbitration = diskArbitration
+        self.metrics = metrics
     }
 
     @discardableResult
@@ -891,6 +897,7 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         backingPath: String,
         completion: @escaping EDPBooleanCompletion
     ) {
+        metrics.increment(.diskImagesDetachRecovery)
         guard geteuid() == 0 else {
             completion(false)
             return

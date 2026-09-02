@@ -104,6 +104,7 @@ PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPMacFUSERuntimePolicy.swift"
   "${REPO_ROOT}/product/EDPLifecycleScheduler.swift"
   "${REPO_ROOT}/product/EDPLifecycleJournal.swift"
+  "${REPO_ROOT}/product/EDPRuntimeMetrics.swift"
   "${REPO_ROOT}/product/EDPTransportProvider.swift"
   "${REPO_ROOT}/product/EDPTransportRuntimePolicy.swift"
   "${REPO_ROOT}/product/EDPFinderVolumeDefaults.swift"

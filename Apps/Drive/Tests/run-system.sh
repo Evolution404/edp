@@ -34,6 +34,7 @@ MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 MOUNT_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPMountSupport.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
 JOURNAL_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleJournal.swift"
+RUNTIME_METRICS_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeMetrics.swift"
 NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
 MACFUSE_POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPMacFUSERuntimePolicy.swift"
 PUBLISHER_SOURCE="${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
@@ -129,6 +130,10 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 /usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'command" == "/usr/libexec/fskit_agent"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_FSKIT_HOST_RETRY=' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'wait_for_child_exit_bounded()' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'STORAGE_CHILD_EXIT_TIMEOUT=' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'STORAGE_ADAPTER_BRIDGE_RECOVERY=' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 30 "m12-crash-kill"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--mountpoint-for-source' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--assert-readonly' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--assert-writable' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
@@ -683,6 +688,32 @@ if /usr/bin/grep -Ei 'password|credential|plaintext|stderr|rawPath|secret|keyDat
   exit 1
 fi
 echo 'RESULT=DRIVE_SYSTEM_LIFECYCLE_JOURNAL_OK'
+
+# Recovery observability is a fixed numeric schema. Counters record only event
+# totals and must never grow device identity, paths, credentials, or secret data.
+for key in \
+  rawBusyRecoveryCount \
+  forcedWholeUnmountCount \
+  fskitAgentRecoveryCount \
+  diskImagesAttachRecoveryCount \
+  diskImagesDetachRecoveryCount \
+  mountRetryCount \
+  ejectAlreadyAbsentSuccessCount; do
+  /usr/bin/grep -Fq "\"${key}\"" "${RUNTIME_METRICS_SOURCE}"
+done
+/usr/bin/grep -Fq '"runtimeMetrics": metrics.snapshot().jsonObject' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.rawBusyRecovery)' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.forcedWholeUnmount)' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.fskitAgentRecovery)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.diskImagesAttachRecovery)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.diskImagesDetachRecovery)' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.mountRetry)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.ejectAlreadyAbsentSuccess)' "${EJECT_COORDINATOR_SOURCE}"
+if /usr/bin/grep -Ei 'deviceID|rawPath|mountPoint|password|credential|secret|keyData|keyBytes' "${RUNTIME_METRICS_SOURCE}"; then
+  echo 'sensitive field leaked into runtime metrics schema' >&2
+  exit 1
+fi
+echo 'RESULT=DRIVE_SYSTEM_RUNTIME_METRICS_OK'
 
 # Explicitly reopening the foreground App must restore discovery-service intent.
 # A prior Stop/Complete Quit may stop the daemon for that UI session, but must

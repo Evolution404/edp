@@ -83,6 +83,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
     private let blockPublisher: any EDPBlockDevicePublisher
     private let scheduler: any EDPLifecycleScheduling
     private let journal: EDPLifecycleJournal
+    private let metrics: EDPRuntimeMetrics
     private let remountQuiescenceSeconds: TimeInterval
     private let lifecycleQueue = DispatchQueue(label: "com.edp.drive.mount-lifecycle", qos: .userInitiated)
     private let filesystemOperationQueue = DispatchQueue(
@@ -106,10 +107,12 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
     init(
         scheduler: any EDPLifecycleScheduling = EDPDispatchLifecycleScheduler.shared,
         journal: EDPLifecycleJournal = EDPLifecycleJournal(),
+        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics(),
         remountQuiescenceSeconds: TimeInterval = 3.0
     ) throws {
         self.scheduler = scheduler
         self.journal = journal
+        self.metrics = metrics
         self.remountQuiescenceSeconds = max(0, remountQuiescenceSeconds)
         if let configuredRoot = ProcessInfo.processInfo.environment["EDP_RUNTIME_BIN_ROOT"], !configuredRoot.isEmpty {
             binaryRoot = configuredRoot
@@ -120,7 +123,8 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         diskArbitration = try EDPDiskArbitrationController()
         blockPublisher = EDPDiskImages2Publisher(
             binaryRoot: binaryRoot,
-            diskArbitration: diskArbitration
+            diskArbitration: diskArbitration,
+            metrics: metrics
         )
         lifecycleQueue.setSpecific(key: lifecycleQueueKey, value: 1)
     }
@@ -543,6 +547,11 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         )
     }
 
+    private func recoverFSKitHostIfSafe() -> Bool {
+        metrics.increment(.fskitAgentRecovery)
+        return EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
+    }
+
     private func cancelMountOperation(_ sessionKey: String) {
         cancelledMountOperations.insert(sessionKey)
         if let operation = activeMountOperationBoxes[sessionKey] {
@@ -582,6 +591,9 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         _ operation: EDPFSKitMountOperationBox,
         attempt: Int
     ) {
+        if attempt > 0 {
+            metrics.increment(.mountRetry)
+        }
         recordMountJournal(operation, event: "launchAttempt")
         if cancelledMountOperations.contains(operation.sessionKey) {
             executeMountAction(operation.machine.cancel(), operation: operation)
@@ -1438,7 +1450,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                     event: "hostRecoveryStarted",
                     ownedResources: ["transport"]
                 )
-                let recovered = EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
+                let recovered = self.recoverFSKitHostIfSafe()
                 self.recordMountJournal(
                     operation,
                     event: recovered ? "hostRecoveryComplete" : "hostRecoveryFailure",
@@ -1477,6 +1489,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 }
             }
             if runtimeStatus.backend == .macFUSELocal {
+                self.metrics.increment(.diskImagesAttachRecovery)
                 EDPMacFUSEScratchImageCleanup.cleanupNewOrphansAsync(
                     since: scratchBaseline,
                     completion: finishCleanup
@@ -1584,7 +1597,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         )
         if case .restartHost = action {
             recordMountJournal(operation, event: "hostRecoveryStarted")
-            let recovered = EDPFSKitHostRecovery.restartConsoleAgentIfSafe()
+            let recovered = recoverFSKitHostIfSafe()
                 && !transportSession.isRunning
             recordMountJournal(
                 operation,
@@ -2028,7 +2041,9 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
             on: lifecycleQueue,
             unmount: { try EDPNativeMountTable.unmountPath($0, force: true) },
             isMounted: { EDPNativeMountTable.isMountpoint($0) },
-            recoverStuckProcess: { EDPFSKitHostRecovery.restartConsoleAgentIfSafe() }
+            recoverStuckProcess: { [weak self] in
+                self?.recoverFSKitHostIfSafe() ?? false
+            }
         ) { [weak self] _, _, errorMessage in
             guard let self else { return }
             if let errorMessage {
@@ -2430,6 +2445,7 @@ final class EDPServiceController: @unchecked Sendable {
     private let eject: EDPEjectCoordinator
     private let recovery: EDPRecoveryCoordinator
     private let credentialVerifier: EDPCredentialVerifying
+    private let metrics: EDPRuntimeMetrics
     private let automation = EDPAutomationState()
     private let serviceLifecycle = EDPServiceLifecycleState()
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
@@ -2447,9 +2463,11 @@ final class EDPServiceController: @unchecked Sendable {
         metadataReader: any EDPRawMetadataReading = EDPPrivilegedRawMetadataReader(),
         rawAccessLeaseOpener: EDPRawAccessLeaseOpening? = nil,
         credentialVerifier: EDPCredentialVerifying? = nil,
+        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics(),
         performLegacyRuntimeMigration: Bool = true
     ) throws {
         self.mediaProvider = mediaProvider
+        self.metrics = metrics
         queue.setSpecific(key: queueKey, value: 1)
         self.discovery = EDPDeviceDiscoveryController(
             mediaProvider: mediaProvider,
@@ -2479,19 +2497,21 @@ final class EDPServiceController: @unchecked Sendable {
         }
         self.store = try store ?? makeCredentialStore()
         self.policies = try policies ?? makePolicyStore()
-        self.manager = try manager ?? EDPMountCoordinator()
+        self.manager = try manager ?? EDPMountCoordinator(metrics: metrics)
         let effectiveDiskArbitration = try diskArbitration ?? EDPDiskArbitrationController()
         self.diskArbitration = effectiveDiskArbitration
         self.rawAccess = EDPRawAccessCoordinator(
             ownerQueue: queue,
             diskArbitration: effectiveDiskArbitration,
             leaseOpener: effectiveRawAccessLeaseOpener,
-            openerRunsOffOwnerQueue: rawAccessOpenerRunsOffControllerQueue
+            openerRunsOffOwnerQueue: rawAccessOpenerRunsOffControllerQueue,
+            metrics: metrics
         )
         let effectiveEjectCoordinator = EDPEjectCoordinator(
             ownerQueue: queue,
             diskArbitration: effectiveDiskArbitration,
-            mediaProvider: mediaProvider
+            mediaProvider: mediaProvider,
+            metrics: metrics
         )
         self.eject = effectiveEjectCoordinator
         self.recovery = EDPRecoveryCoordinator(
@@ -3578,6 +3598,7 @@ final class EDPServiceController: @unchecked Sendable {
                     + discovery.diagnostics,
                 "discoveryScanCount": discovery.scanCount,
                 "lastDiscoveryTimestamp": discovery.lastScanTimestamp,
+                "runtimeMetrics": metrics.snapshot().jsonObject,
             ]
             return (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         }
