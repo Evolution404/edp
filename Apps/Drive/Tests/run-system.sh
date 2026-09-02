@@ -15,6 +15,7 @@ RAW_ACCESS_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccessCoordinato
 AUTOMATION_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPAutomationState.swift"
 EJECT_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPEjectCoordinator.swift"
 SERVICE_LIFECYCLE_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPServiceLifecycleState.swift"
+RECOVERY_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRecoveryCoordinator.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 MOUNT_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPMountSupport.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -468,6 +469,17 @@ echo 'RESULT=DRIVE_SYSTEM_AUTOMATION_STATE_SPLIT_OK'
 ! /usr/bin/grep -Fq 'private var shutdownInProgress' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'private var shutdownTeardownStarted' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_SERVICE_LIFECYCLE_STATE_SPLIT_OK'
+
+# Failed-eject recovery is a separate orchestration boundary: it releases eject
+# suppression, revalidates the original whole-USB generation, reacquires raw
+# access once, restores boot policy, and then reports the original failure.
+/usr/bin/grep -Fq 'final class EDPRecoveryCoordinator' "${RECOVERY_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'func recoverFailedEject(' "${RECOVERY_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'wholeUSBMediaStillMatches(' "${RECOVERY_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'ejectCoordinator.releaseActive(deviceID:' "${RECOVERY_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'recovery.recoverFailedEject(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'wholeUSBMediaStillMatches(disk, mediaProvider: mediaProvider)' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_RECOVERY_COORDINATOR_SPLIT_OK'
 
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery

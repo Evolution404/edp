@@ -186,6 +186,7 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   "${REPO_ROOT}/product/EDPAutomationState.swift" \
   "${REPO_ROOT}/product/EDPEjectCoordinator.swift" \
   "${REPO_ROOT}/product/EDPServiceLifecycleState.swift" \
+  "${REPO_ROOT}/product/EDPRecoveryCoordinator.swift" \
   "${REPO_ROOT}/product/EDPMountLifecycle.swift" \
   "${REPO_ROOT}/product/EDPMountSupport.swift" \
   "${REPO_ROOT}/product/EDPVaultRuntime.swift" \

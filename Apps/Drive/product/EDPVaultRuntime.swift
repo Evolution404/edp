@@ -2413,6 +2413,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private let metadataReader: any EDPRawMetadataReading
     private let rawAccess: EDPRawAccessCoordinator
     private let eject: EDPEjectCoordinator
+    private let recovery: EDPRecoveryCoordinator
     private let credentialVerifier: EDPCredentialVerifying
     private let automation = EDPAutomationState()
     private let serviceLifecycle = EDPServiceLifecycleState()
@@ -2472,10 +2473,15 @@ final class EDPDaemonController: @unchecked Sendable {
             leaseOpener: effectiveRawAccessLeaseOpener,
             openerRunsOffOwnerQueue: rawAccessOpenerRunsOffControllerQueue
         )
-        self.eject = EDPEjectCoordinator(
+        let effectiveEjectCoordinator = EDPEjectCoordinator(
             ownerQueue: queue,
             diskArbitration: effectiveDiskArbitration,
             mediaProvider: mediaProvider
+        )
+        self.eject = effectiveEjectCoordinator
+        self.recovery = EDPRecoveryCoordinator(
+            mediaProvider: mediaProvider,
+            ejectCoordinator: effectiveEjectCoordinator
         )
         _ = try self.store.load()
         _ = try self.policies.load()
@@ -3525,31 +3531,29 @@ final class EDPDaemonController: @unchecked Sendable {
         errorMessage: String,
         completion: @escaping EDPDaemonMountCompletion
     ) {
-        eject.releaseActive(deviceID: disk.deviceID)
-
-        let finish: @Sendable () -> Void = { [weak self] in
-            guard let self else { return }
-            self.onControllerQueue {
-                self.addActivity(
-                    "设备安全推出失败：\(errorMessage)",
-                    level: "error",
-                    deviceID: disk.deviceID
+        recovery.recoverFailedEject(
+            disk: disk,
+            errorMessage: errorMessage,
+            probeRawAccess: { [weak self] candidate, callback in
+                guard let self else { return }
+                self.rawAccessProbeAsyncLocked(
+                    for: candidate,
+                    temporarilyUnmount: true,
+                    completion: callback
                 )
-                completion(errorMessage)
-            }
-        }
-
-        guard (try? wholeUSBMediaStillMatches(disk, mediaProvider: mediaProvider)) == true else {
-            finish()
-            return
-        }
-        rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, _ in
-            guard let self else { return }
-            self.onControllerQueue {
-                self.restoreBootPolicyAsyncLocked(disk: disk)
-                finish()
-            }
-        }
+            },
+            restoreBootPolicy: { [weak self] candidate in
+                self?.restoreBootPolicyAsyncLocked(disk: candidate)
+            },
+            recordFailure: { [weak self] candidate, message in
+                self?.addActivity(
+                    "设备安全推出失败：\(message)",
+                    level: "error",
+                    deviceID: candidate.deviceID
+                )
+            },
+            completion: completion
+        )
     }
 
     func diagnosticsData() -> Data {
