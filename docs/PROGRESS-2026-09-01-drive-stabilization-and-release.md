@@ -133,8 +133,8 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] macFUSE/App service support 已拆到 `App/Service/EDPAppServiceSupport.swift`；XPC smoke helper 已拆到 `App/Service/EDPXPCSmokeSupport.swift`，CLI smoke 与页面实现边界清晰。
 - [x] `EDPUSBVaultApp.swift` 已由约 3810 行降至约 476 行，只保留 App/CLI entrypoint 与 raw-FD broker dispatch；system ratchet 禁止 ViewModel/pages/sidebar/menu/support 实现回流。
 - [x] Liquid Glass、菜单层级、仅退出界面/完全退出语义未改变；本机 Swift6 typecheck、system、fast、virtual、S01-S35/320000-step property、production installer、`git diff --check` 全部 PASS。
-- [x] GitHub Actions UI gate 已在 Phase C exact-head `b6015ff` / run `33625866975` PASS；preview/page/20-toggle/accessibility 全绿，`UI_HITCH_COUNT_GT33MS=0`、`RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`。xctrace record 实测约 65.99s，因此 record watchdog 90s 有 exact-head 数据依据；8s trace、20 toggles、33ms 阈值不变。本机继续不执行 UI performance/xctrace。
-- [ ] Phase C exact-head storage 最终复核：run `33625866975` 的旧 harness 在 M02 remount teardown 触发 DiskImages2 stable-dead-owner tombstone 后又挂到 30 分钟上限；日志已确认 tombstone 在 11:45:24 成功 retire，而后续 adapter teardown 未返回。`f1f1b55`/`5e79a68` 已先消除普通 adapter 无界 wait并对齐 production TERM→KILL→host recovery；当前补丁进一步只收窄 tombstone 异常分支：DiskImages2 owner 已被 SIGKILL 且 native filesystem 已卸载时，不再让 adapter 进入正常同步 unmount，而是直接结束 exact test adapter，再用 identity-checked macFUSE Local crash cleanup 回收该 bridge。普通 teardown 顺序不变；待新 fixed HEAD M01-M14 全绿后 Phase C 转 DONE。
+- [x] GitHub Actions UI gate 已在 Phase C `b6015ff` / run `33625866975` PASS；preview/page/20-toggle/accessibility 全绿，`UI_HITCH_COUNT_GT33MS=0`、`RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`。后续 `f4862b3` / run `33635957296` 的 UI 仍在 `xctrace record` 阶段被 90s watchdog 截断，尚未进入 hitch 解析；该失败不是 33ms 回归。历史正常 record 约 66–75s，而该次超过 90s，故 CI-only record watchdog 调整为 bounded 120s；8s trace、20 toggles、33ms 阈值不变。本机继续不执行 UI performance/xctrace。
+- [x] Phase C exact-head storage 最终复核：`f4862b3` / run `33635957296` 的 storage job `100266771918` 完整 PASS：M01、M02/M04-M09、M03、M10 5/5、M12、M14、failure contracts、production Swift6/C17 strict 均绿，最终 `RESULT=DRIVE_STORAGE_E2E_OK`。stable-dead-owner tombstone 后专用 adapter/bridge recovery 已消除 30 分钟挂死，普通 teardown 顺序未改变。
 - [x] Phase C 已提交并 push：`0f4a017` `refactor(drive): split app ui responsibilities`；等待固定 HEAD CI 复核后转 DONE。
 
 ## Phase D — 发布可靠性与 recovery 可观测性
@@ -151,7 +151,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] `mountRetryCount`
 - [x] `ejectAlreadyAbsentSuccessCount`
 - [x] diagnostics 仅输出 7 个 UInt64；schema 禁止 deviceID/path/password/credential/secret/key 字段；system ratchet + 1000-way concurrent metrics contract test PASS。
-- [ ] D1 fixed-head 复核：`cb321cb` 后 native/fast/virtual/UI/system 均已 PASS；当前阻塞仅为 storage harness teardown 的 macOS 26 DiskImages2/macFUSE race，不是 metrics contract failure。待 storage M01-M14 全绿后关闭 D1。
+- [x] D1 storage/功能复核：`f4862b3` / run `33635957296` 上 native、fast、virtual、storage M01-M14 全部 PASS；metrics contract 本身无回退。该 run 唯一失败为 CI `xctrace record` 90s watchdog，在 hitch 解析前退出，与 metrics 无关。等待 120s bounded watchdog 的下一 fixed-head UI 复核后将整体 run 作为 Phase C/D1 最终绿色基线。
 
 ### D2 外部/私有依赖
 
