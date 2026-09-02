@@ -1,0 +1,812 @@
+import AppKit
+import Foundation
+import ServiceManagement
+import SwiftUI
+
+private enum EDPServiceLifecycleState {
+    case stopped
+    case starting(id: UUID)
+    case running
+    case stopping(id: UUID, restartAfterStop: Bool, completion: (() -> Void)?)
+    case failed(message: String)
+
+    var operationID: UUID? {
+        switch self {
+        case .starting(let id), .stopping(let id, _, _): return id
+        case .stopped, .running, .failed: return nil
+        }
+    }
+
+    var restartAfterStop: Bool {
+        if case .stopping(_, let restartAfterStop, _) = self { return restartAfterStop }
+        return false
+    }
+}
+
+@MainActor
+final class EDPVaultViewModel: ObservableObject {
+    @Published var snapshot = EDPXPCSnapshot(devices: [], serviceVersion: "-", timestamp: "-")
+    @Published var serviceStatus = "检查中…"
+    @Published var lastError: String?
+    @Published var diagnostics = ""
+    @Published var isBusy = false
+    @Published var transportRuntimeReady: Bool?
+    @Published private(set) var serviceDesiredRunning = true
+
+    private let serviceMode: String
+    private let daemonService: SMAppService?
+#if EDP_UI_PREVIEW
+    private let previewConfiguration: EDPPreviewConfiguration
+#endif
+    private let daemonPlistName = "com.edp.drive.service.plist"
+    private let legacyPlistURL = URL(fileURLWithPath: "/Library/LaunchDaemons/com.edp.drive.service.plist")
+    private let servicePreferenceKey = "com.edp.drive.service.desired-running"
+    private var connection: NSXPCConnection?
+    private var connectionGeneration: UUID?
+    private var serviceLifecycle: EDPServiceLifecycleState = .running
+
+    var needsFullDiskAccess: Bool {
+        snapshot.devices.contains { $0.connected && !$0.privilegedAccessReady }
+    }
+
+    var rawAccessHelperInstalled: Bool {
+#if EDP_UI_PREVIEW
+        previewConfiguration.rawAccessHelperInstalled
+#else
+        FileManager.default.isExecutableFile(atPath: edpDriveServicePath)
+#endif
+    }
+
+    var rawAccessStatusText: String {
+        guard rawAccessHelperInstalled else { return "组件未安装" }
+        if needsFullDiskAccess { return "需要完全磁盘访问" }
+        if snapshot.devices.contains(where: { $0.connected && $0.privilegedAccessReady }) {
+            return "已验证"
+        }
+        return "待连接 EDP U 盘验证"
+    }
+
+    var setupReady: Bool {
+        serviceStatus == "运行中"
+            && transportRuntimeReady == true
+            && rawAccessHelperInstalled
+            && snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
+    }
+
+    init() {
+#if EDP_UI_PREVIEW
+        let configuration = EDPPreviewScenarioFactory.configuration(
+            for: EDPPreviewScenario.fromCommandLine()
+        )
+        previewConfiguration = configuration
+        serviceMode = "preview"
+        daemonService = nil
+        snapshot = configuration.snapshot
+        serviceStatus = configuration.serviceStatus
+        transportRuntimeReady = configuration.transportRuntimeReady
+        serviceDesiredRunning = configuration.serviceDesiredRunning
+        return
+#else
+        serviceMode = Bundle.main.object(forInfoDictionaryKey: "EDPServiceMode") as? String ?? "legacy"
+        daemonService = serviceMode == "smappservice"
+            ? SMAppService.daemon(plistName: daemonPlistName)
+            : nil
+        // Explicitly opening EDP Drive always restores the discovery daemon.
+        // A prior in-app Stop/Complete Quit applies to that running UI session;
+        // it must not leave the next app launch looking healthy while the
+        // Disk Arbitration/IOKit discovery service remains intentionally off.
+        serviceDesiredRunning = true
+        persistServicePreference()
+        ensureServiceRegistration()
+        refreshTransportRuntimeState()
+        refresh()
+        Task { [weak self] in
+            let enablement = await Task.detached(priority: .utility) { () async -> (restartedAgents: Bool, error: String?) in
+                var restartedAgents = false
+                var lastError: String?
+
+                for attempt in 1...edpMacFUSEEnablementMaxAttempts {
+                    do {
+                        restartedAgents = try ensureMacFUSELocalEnablement() || restartedAgents
+                        if macFUSELocalEnablementReady() {
+                            // Require the user FSKit state to remain stable for one
+                            // observation interval. A clean macFUSE install can
+                            // rewrite enabledModules shortly after the App starts.
+                            try? await Task.sleep(for: .seconds(1))
+                            if macFUSELocalEnablementReady() {
+                                return (restartedAgents, nil)
+                            }
+                            lastError = "macFUSE FSKit 启用状态未保持稳定（\(attempt)/\(edpMacFUSEEnablementMaxAttempts)）"
+                        } else {
+                            lastError = "macFUSE FSKit 启用状态尚未就绪（\(attempt)/\(edpMacFUSEEnablementMaxAttempts)）"
+                        }
+                    } catch {
+                        lastError = error.localizedDescription
+                    }
+
+                    if attempt < edpMacFUSEEnablementMaxAttempts {
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                }
+                return (restartedAgents, lastError ?? "macFUSE FSKit 启用状态未就绪")
+            }.value
+            guard let self else { return }
+            if let error = enablement.error {
+                self.lastError = "macFUSE Local 启用失败：\(error)"
+            }
+            if enablement.restartedAgents {
+                try? await Task.sleep(for: .seconds(3))
+            }
+            self.refreshTransportRuntimeState()
+            if self.transportRuntimeReady == true {
+                self.retryTransientAutomaticMounts()
+            }
+            self.refresh()
+        }
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                self?.refresh()
+            }
+        }
+#endif
+    }
+
+#if EDP_UI_PREVIEW
+    init(previewConfiguration configuration: EDPPreviewConfiguration) {
+        previewConfiguration = configuration
+        serviceMode = "preview"
+        daemonService = nil
+        snapshot = configuration.snapshot
+        serviceStatus = configuration.serviceStatus
+        transportRuntimeReady = configuration.transportRuntimeReady
+        serviceDesiredRunning = configuration.serviceDesiredRunning
+    }
+#endif
+
+    private func currentServiceStatus() -> SMAppService.Status {
+        if let daemonService { return daemonService.status }
+        return SMAppService.statusForLegacyPlist(at: legacyPlistURL)
+    }
+
+    private func connectIfNeeded() -> NSXPCConnection? {
+        guard serviceDesiredRunning, currentServiceStatus() == .enabled else { return nil }
+        if let connection { return connection }
+        let newConnection = NSXPCConnection(machServiceName: edpVaultMachServiceName, options: .privileged)
+        let generation = UUID()
+        newConnection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+        newConnection.interruptionHandler = { @Sendable [weak self] in
+            Task { @MainActor in
+                guard let self, self.connectionGeneration == generation else { return }
+                self.serviceConnectionEnded()
+            }
+        }
+        newConnection.invalidationHandler = { @Sendable [weak self] in
+            Task { @MainActor in
+                guard let self, self.connectionGeneration == generation else { return }
+                self.serviceConnectionEnded()
+            }
+        }
+        newConnection.resume()
+        connection = newConnection
+        connectionGeneration = generation
+        return newConnection
+    }
+
+    private func proxy() -> EDPVaultXPCProtocol? {
+        guard let connection = connectIfNeeded() else { return nil }
+        return connection.remoteObjectProxyWithErrorHandler { @Sendable [weak self] error in
+            Task { @MainActor in self?.lastError = error.localizedDescription }
+        } as? EDPVaultXPCProtocol
+    }
+
+    func ensureServiceRegistration() {
+        if let daemonService,
+           daemonService.status != .enabled,
+           daemonService.status != .requiresApproval {
+            do {
+                try daemonService.register()
+            } catch {
+                lastError = "后台服务注册失败：\(error.localizedDescription)"
+            }
+        }
+        refreshServiceStatus()
+    }
+
+    func refreshServiceStatus() {
+        switch currentServiceStatus() {
+        case .enabled:
+            switch serviceLifecycle {
+            case .stopping(_, let restartAfterStop, _):
+                serviceStatus = restartAfterStop ? "正在重启…" : "正在停止…"
+            case .starting:
+                serviceStatus = "正在启动…"
+            case .running:
+                if connection != nil {
+                    serviceStatus = "运行中"
+                } else {
+                    serviceStatus = serviceDesiredRunning ? "等待按需启动" : "已停止"
+                }
+            case .stopped:
+                serviceStatus = serviceDesiredRunning ? "等待按需启动" : "已停止"
+            case .failed:
+                serviceStatus = serviceDesiredRunning ? "状态异常" : "已停止"
+            }
+        case .requiresApproval: serviceStatus = "需要系统批准"
+        case .notRegistered: serviceStatus = "未注册"
+        case .notFound: serviceStatus = "未安装"
+        @unknown default: serviceStatus = "未知"
+        }
+    }
+
+    private func persistServicePreference() {
+        UserDefaults.standard.set(serviceDesiredRunning, forKey: servicePreferenceKey)
+    }
+
+    private func armServiceTimeout(id: UUID, operation: String, seconds: Double = 12) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.serviceLifecycle.operationID == id else { return }
+            self.serviceLifecycle = .failed(message: "后台服务\(operation)超时")
+            self.serviceDesiredRunning = true
+            self.persistServicePreference()
+            self.isBusy = false
+            self.lastError = "后台服务\(operation)超时"
+            self.serviceStatus = "状态未知（\(operation)超时）"
+        }
+    }
+
+    private func serviceConnectionEnded() {
+        connection = nil
+        connectionGeneration = nil
+        let priorState = serviceLifecycle
+
+        switch priorState {
+        case .stopping(_, let restartAfterStop, let completion):
+            serviceLifecycle = .stopped
+            serviceDesiredRunning = false
+            persistServicePreference()
+            isBusy = false
+            serviceStatus = "已停止"
+            if restartAfterStop {
+                startService()
+            } else {
+                completion?()
+            }
+        case .starting:
+            serviceLifecycle = .failed(message: "后台服务启动期间连接中断")
+            isBusy = false
+            serviceStatus = "启动失败"
+            lastError = "后台服务启动期间连接中断"
+        case .running:
+            serviceLifecycle = .failed(message: "后台服务连接已中断")
+            isBusy = false
+            serviceStatus = "连接已中断"
+        case .stopped, .failed:
+            isBusy = false
+            serviceStatus = "已停止"
+        }
+    }
+
+    func startService() {
+        switch serviceLifecycle {
+        case .running, .starting:
+            serviceDesiredRunning = true
+            persistServicePreference()
+            return
+        case .stopping(let id, _, _):
+            serviceLifecycle = .stopping(id: id, restartAfterStop: true, completion: nil)
+            return
+        case .stopped, .failed:
+            break
+        }
+
+        serviceDesiredRunning = true
+        persistServicePreference()
+        ensureServiceRegistration()
+        guard currentServiceStatus() == .enabled else {
+            let message = "后台服务尚未注册、启用或批准"
+            serviceLifecycle = .failed(message: message)
+            lastError = message
+            return
+        }
+
+        connection?.invalidate()
+        connection = nil
+        connectionGeneration = nil
+        isBusy = true
+        serviceStatus = "正在启动…"
+        lastError = nil
+        let operationID = UUID()
+        serviceLifecycle = .starting(id: operationID)
+        armServiceTimeout(id: operationID, operation: "启动")
+
+        guard let connection = connectIfNeeded(),
+              let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
+                  Task { @MainActor in
+                      guard let self,
+                            case .starting(let currentID) = self.serviceLifecycle,
+                            currentID == operationID else { return }
+                      let message = "后台服务启动失败：\(error.localizedDescription)"
+                      self.serviceLifecycle = .failed(message: message)
+                      self.isBusy = false
+                      self.lastError = message
+                      self.refreshServiceStatus()
+                  }
+              }) as? EDPVaultXPCProtocol else {
+            let message = "无法建立后台服务连接"
+            serviceLifecycle = .failed(message: message)
+            isBusy = false
+            lastError = message
+            return
+        }
+
+        proxy.healthCheck { @Sendable [weak self] response in
+            Task { @MainActor in
+                guard let self,
+                      case .starting(let currentID) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                guard response == "com.edp.drive.service:running" else {
+                    let message = "后台服务返回了无效健康状态"
+                    self.serviceLifecycle = .failed(message: message)
+                    self.lastError = message
+                    self.isBusy = false
+                    return
+                }
+                self.serviceLifecycle = .running
+                self.isBusy = false
+                self.serviceStatus = "运行中"
+                self.retryTransientAutomaticMounts()
+                self.refresh()
+            }
+        }
+    }
+
+    func stopService(restart: Bool = false, completion: (() -> Void)? = nil) {
+        switch serviceLifecycle {
+        case .stopped:
+            serviceDesiredRunning = false
+            persistServicePreference()
+            if restart { startService() } else { completion?() }
+            return
+        case .stopping(let id, _, let existingCompletion):
+            serviceLifecycle = .stopping(
+                id: id,
+                restartAfterStop: restart,
+                completion: restart ? nil : (completion ?? existingCompletion)
+            )
+            return
+        case .running, .starting, .failed:
+            break
+        }
+
+        let activeConnection = connection ?? connectIfNeeded()
+        guard let activeConnection,
+              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
+                  Task { @MainActor in
+                      guard let self,
+                            case .stopping = self.serviceLifecycle else { return }
+                      let message = "后台服务停止失败：\(error.localizedDescription)"
+                      self.serviceLifecycle = .failed(message: message)
+                      self.serviceDesiredRunning = true
+                      self.persistServicePreference()
+                      self.isBusy = false
+                      self.lastError = message
+                      self.refreshServiceStatus()
+                  }
+              }) as? EDPVaultXPCProtocol else {
+            if currentServiceStatus() == .enabled {
+                let message = "后台服务已启用，但无法建立安全 XPC 连接；未执行强制终止。"
+                serviceLifecycle = .failed(message: message)
+                serviceDesiredRunning = true
+                persistServicePreference()
+                serviceStatus = "状态异常"
+                lastError = message
+                return
+            }
+            serviceLifecycle = .stopped
+            serviceDesiredRunning = false
+            persistServicePreference()
+            serviceStatus = "已停止"
+            if restart { startService() } else { completion?() }
+            return
+        }
+
+        serviceDesiredRunning = false
+        persistServicePreference()
+        isBusy = true
+        serviceStatus = restart ? "正在重启…" : "正在停止…"
+        lastError = nil
+        let operationID = UUID()
+        serviceLifecycle = .stopping(
+            id: operationID,
+            restartAfterStop: restart,
+            completion: restart ? nil : completion
+        )
+        armServiceTimeout(id: operationID, operation: restart ? "重启" : "停止")
+
+        proxy.requestGracefulShutdown { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self,
+                      case .stopping(let currentID, _, _) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                if let errorMessage {
+                    let message = "后台服务停止失败：\(errorMessage)"
+                    self.serviceLifecycle = .failed(message: message)
+                    self.serviceDesiredRunning = true
+                    self.persistServicePreference()
+                    self.isBusy = false
+                    self.lastError = message
+                    self.refreshServiceStatus()
+                }
+            }
+        }
+    }
+
+    func restartService() {
+        stopService(restart: true)
+    }
+
+    func openServiceSettings() {
+        SMAppService.openSystemSettingsLoginItems()
+    }
+
+    func refreshTransportRuntimeState() {
+        let root = "/Library/Filesystems/macfuse.fs/Contents"
+        let hostApp = root + "/Resources/macfuse.app"
+        let genericModule = hostApp
+            + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
+        let localModule = hostApp
+            + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
+        let framework = root + "/Frameworks/MFMount.framework"
+        transportRuntimeReady = FileManager.default.fileExists(atPath: hostApp)
+            && FileManager.default.fileExists(atPath: genericModule)
+            && FileManager.default.fileExists(atPath: localModule)
+            && FileManager.default.fileExists(atPath: framework)
+            && macFUSEModulesEnabledInSettings()
+    }
+
+    private func requireTransportRuntime() -> Bool {
+        guard transportRuntimeReady == true else {
+            lastError = "macFUSE Local 运行组件未安装或尚未启用，请重新打开 EDP Drive 或运行安装器。"
+            return false
+        }
+        return true
+    }
+
+    func refresh() {
+        refreshServiceStatus()
+        refreshTransportRuntimeState()
+        guard let proxy = proxy() else {
+            let status = currentServiceStatus()
+            if status == .requiresApproval {
+                lastError = nil
+            } else if status != .enabled {
+                lastError = serviceMode == "smappservice"
+                    ? "后台服务尚未启用"
+                    : "后台服务尚未安装或启动"
+            }
+            return
+        }
+        proxy.snapshot { @Sendable [weak self] data in
+            Task { @MainActor in
+                guard let self else { return }
+                do {
+                    self.snapshot = try JSONDecoder().decode(EDPXPCSnapshot.self, from: data)
+                    self.serviceStatus = "运行中"
+                } catch {
+                    self.lastError = String(data: data, encoding: .utf8) ?? error.localizedDescription
+                }
+                self.refreshServiceStatus()
+            }
+        }
+    }
+
+    func openFullDiskAccessSettings() {
+        guard FileManager.default.isExecutableFile(atPath: edpDriveServicePath) else {
+            lastError = "磁盘访问组件尚未安装，请重新运行 EDP Drive 安装器。"
+            return
+        }
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else {
+            lastError = "无法打开完全磁盘访问设置。"
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func revealRawAccessHelper() {
+        guard FileManager.default.isExecutableFile(atPath: edpDriveServicePath) else {
+            lastError = "磁盘访问组件尚未安装，请重新运行 EDP Drive 安装器。"
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([
+            URL(fileURLWithPath: edpDriveAppPath)
+        ])
+    }
+
+    func refreshRawAccess() {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.refreshRawAccess { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    private func retryTransientAutomaticMounts() {
+        guard let proxy = proxy() else { return }
+        proxy.retryTransientAutomaticMounts { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                if let errorMessage { self.lastError = errorMessage }
+                self.refresh()
+            }
+        }
+    }
+
+    func saveCredential(deviceID: String, partitionType: UInt32, password: String) {
+        guard requireTransportRuntime(), !password.isEmpty, let proxy = proxy() else { return }
+        isBusy = true
+        proxy.saveCredential(
+            deviceID: deviceID,
+            partitionType: partitionType,
+            password: Data(password.utf8)
+        ) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func mountPartition(deviceID: String, partitionType: UInt32) {
+        guard requireTransportRuntime(), let proxy = proxy() else { return }
+        isBusy = true
+        proxy.mountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func mountAllAvailablePartitions(_ device: EDPXPCDevice) {
+        guard requireTransportRuntime() else { return }
+        let partitionTypes = device.partitions.compactMap { partition -> UInt32? in
+            guard partition.mountState != .mounted,
+                  !partition.encrypted || partition.credentialStatus == .saved else {
+                return nil
+            }
+            return partition.partitionType
+        }
+        guard !partitionTypes.isEmpty else { return }
+        isBusy = true
+        mountNextPartition(deviceID: device.deviceID, remaining: partitionTypes)
+    }
+
+    private func mountNextPartition(deviceID: String, remaining: [UInt32]) {
+        guard let partitionType = remaining.first else {
+            isBusy = false
+            refresh()
+            return
+        }
+        guard let proxy = proxy() else {
+            isBusy = false
+            return
+        }
+        proxy.mountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                if let errorMessage {
+                    self.isBusy = false
+                    self.lastError = errorMessage
+                    self.refresh()
+                    return
+                }
+                self.mountNextPartition(deviceID: deviceID, remaining: Array(remaining.dropFirst()))
+            }
+        }
+    }
+
+    func unmountAllMountedPartitions(_ device: EDPXPCDevice) {
+        let partitionTypes = device.partitions.compactMap { partition in
+            partition.mountState == .mounted ? partition.partitionType : nil
+        }
+        guard !partitionTypes.isEmpty else { return }
+        isBusy = true
+        unmountNextPartition(deviceID: device.deviceID, remaining: partitionTypes)
+    }
+
+    private func unmountNextPartition(deviceID: String, remaining: [UInt32]) {
+        guard let partitionType = remaining.first else {
+            isBusy = false
+            refresh()
+            return
+        }
+        guard let proxy = proxy() else {
+            isBusy = false
+            return
+        }
+        proxy.unmountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                if let errorMessage {
+                    self.isBusy = false
+                    self.lastError = errorMessage
+                    self.refresh()
+                    return
+                }
+                self.unmountNextPartition(deviceID: deviceID, remaining: Array(remaining.dropFirst()))
+            }
+        }
+    }
+
+    func unmountPartition(deviceID: String, partitionType: UInt32) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.unmountPartition(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func deleteCredential(deviceID: String, partitionType: UInt32) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.deleteCredential(deviceID: deviceID, partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func deleteDeviceRecord(deviceID: String) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.deleteDeviceRecord(deviceID: deviceID) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func setAutoMount(deviceID: String, partitionType: UInt32, enabled: Bool) {
+        guard let proxy = proxy() else { return }
+        proxy.setPartitionAutoMount(
+            deviceID: deviceID,
+            partitionType: partitionType,
+            enabled: enabled
+        ) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func setDefaultAutoMount(partitionType: UInt32, enabled: Bool) {
+        guard let proxy = proxy() else { return }
+        proxy.setDefaultPartitionAutoMount(
+            partitionType: partitionType,
+            enabled: enabled
+        ) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func setDefaultAutoProbePassword(partitionType: UInt32, enabled: Bool) {
+        guard let proxy = proxy() else { return }
+        proxy.setDefaultPartitionAutoProbePassword(
+            partitionType: partitionType,
+            enabled: enabled
+        ) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func setDefaultProbePassword(partitionType: UInt32, password: String) {
+        guard !password.isEmpty, let proxy = proxy() else { return }
+        isBusy = true
+        proxy.setDefaultProbePassword(
+            partitionType: partitionType,
+            password: Data(password.utf8)
+        ) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func resetDefaultProbePassword(partitionType: UInt32) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.resetDefaultProbePassword(partitionType: partitionType) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func setGlobalAutoMount(_ enabled: Bool) {
+        guard let proxy = proxy() else { return }
+        proxy.setGlobalAutoMount(enabled: enabled) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func rename(deviceID: String, displayName: String) {
+        guard let proxy = proxy() else { return }
+        proxy.setDeviceDisplayName(deviceID: deviceID, displayName: displayName) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                self?.lastError = errorMessage
+                self?.refresh()
+            }
+        }
+    }
+
+    func openInFinder(_ partition: EDPXPCPartition) {
+        guard let mountPoint = partition.mountPoint, !mountPoint.isEmpty else { return }
+        let url = URL(fileURLWithPath: mountPoint, isDirectory: true)
+        guard NSWorkspace.shared.open(url) else {
+            lastError = "Finder 无法打开挂载目录：\(mountPoint)"
+            return
+        }
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder")
+            .first?
+            .activate(options: [.activateAllWindows])
+    }
+
+    func eject(deviceID: String) {
+        guard let proxy = proxy() else { return }
+        isBusy = true
+        proxy.eject(deviceID: deviceID) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBusy = false
+                self.lastError = errorMessage
+                self.refresh()
+            }
+        }
+    }
+
+    func loadDiagnostics() {
+        guard let proxy = proxy() else { return }
+        proxy.diagnostics { @Sendable [weak self] data in
+            Task { @MainActor in
+                self?.diagnostics = String(decoding: data, as: UTF8.self)
+            }
+        }
+    }
+}

@@ -49,6 +49,16 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   "${REPO_ROOT}/Shared/UI/EDPDesignSystem.swift" \
   "${REPO_ROOT}/Apps/Drive/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Service/EDPAppServiceSupport.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Service/EDPXPCSmokeSupport.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Model/EDPVaultViewModel.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Sidebar/EDPSidebarView.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Shell/EDPMainWindow.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Pages/EDPOverviewView.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Pages/EDPDevicesView.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Pages/EDPActivityView.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/Pages/EDPSettingsView.swift" \
+  "${REPO_ROOT}/Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift" \
   "${RAW_VALIDATION_OBJ}" "${RAW_BROKER_OBJ}" \
   -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
 

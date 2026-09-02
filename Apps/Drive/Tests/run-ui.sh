@@ -11,7 +11,8 @@ TOC_XML="${BUILD_ROOT}/trace-toc.xml"
 HITCH_XML="${BUILD_ROOT}/hitches.xml"
 HITCH_EVENT_XML="${BUILD_ROOT}/hitch-events.xml"
 UI_BOUNDED="${ROOT}/Apps/Drive/Tests/Storage/RunBounded.py"
-UI_XCTRACE_TIMEOUT_SECONDS=20
+UI_XCTRACE_RECORD_TIMEOUT_SECONDS=60
+UI_XCTRACE_EXPORT_TIMEOUT_SECONDS=30
 mkdir -p "${BUILD_ROOT}"
 cleanup() {
   if [[ -n "${HITCH_PID:-}" ]] && kill -0 "${HITCH_PID}" 2>/dev/null; then
@@ -34,6 +35,16 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   "${ROOT}/Apps/Drive/product/EDPXPCProtocol.swift" \
   "${ROOT}/Apps/Drive/Tests/UI/EDPPreviewScenarios.swift" \
   "${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift" \
+  "${ROOT}/Apps/Drive/product/App/Service/EDPAppServiceSupport.swift" \
+  "${ROOT}/Apps/Drive/product/App/Service/EDPXPCSmokeSupport.swift" \
+  "${ROOT}/Apps/Drive/product/App/Model/EDPVaultViewModel.swift" \
+  "${ROOT}/Apps/Drive/product/App/Sidebar/EDPSidebarView.swift" \
+  "${ROOT}/Apps/Drive/product/App/Shell/EDPMainWindow.swift" \
+  "${ROOT}/Apps/Drive/product/App/Pages/EDPOverviewView.swift" \
+  "${ROOT}/Apps/Drive/product/App/Pages/EDPDevicesView.swift" \
+  "${ROOT}/Apps/Drive/product/App/Pages/EDPActivityView.swift" \
+  "${ROOT}/Apps/Drive/product/App/Pages/EDPSettingsView.swift" \
+  "${ROOT}/Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift" \
   "${ROOT}/Apps/Drive/Tests/UI/ValidateUIAutomation.swift" \
   -o "${BIN}"
 
@@ -45,14 +56,15 @@ grep -Fq 'RESULT=DRIVE_UI_AUTOMATION_OK' "${UI_LOG}"
 [[ "$(grep -Fc 'SCENARIO=UI_SIDEBAR_TOGGLE_' "${UI_LOG}")" -eq 20 ]]
 
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
+SHELL_SOURCE="${ROOT}/Apps/Drive/product/App/Shell/EDPMainWindow.swift"
 DESIGN_SOURCE="${ROOT}/Shared/UI/EDPDesignSystem.swift"
-grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' "${APP_SOURCE}"
-grep -Fq 'sidebarItem.canCollapseFromWindowResize = false' "${APP_SOURCE}"
-grep -Fq 'sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView' "${APP_SOURCE}"
-grep -Fq 'sidebarHost.sizingOptions = []' "${APP_SOURCE}"
-grep -Fq 'detailHost.sizingOptions = []' "${APP_SOURCE}"
-grep -Fq '.focusEffectDisabled()' "${APP_SOURCE}"
-! grep -Fq 'NavigationSplitView {' "${APP_SOURCE}"
+grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' "${SHELL_SOURCE}"
+grep -Fq 'sidebarItem.canCollapseFromWindowResize = false' "${SHELL_SOURCE}"
+grep -Fq 'sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView' "${SHELL_SOURCE}"
+grep -Fq 'sidebarHost.sizingOptions = []' "${SHELL_SOURCE}"
+grep -Fq 'detailHost.sizingOptions = []' "${SHELL_SOURCE}"
+grep -Fq '.focusEffectDisabled()' "${SHELL_SOURCE}"
+! grep -Fq 'NavigationSplitView {' "${SHELL_SOURCE}"
 grep -Fq '.menuBarExtraStyle(.window)' "${APP_SOURCE}"
 grep -Fq '@Environment(\.accessibilityReduceMotion)' "${APP_SOURCE}"
 grep -Fq '@Environment(\.accessibilityReduceTransparency)' "${DESIGN_SOURCE}"
@@ -60,8 +72,8 @@ grep -Fq '@Environment(\.colorSchemeContrast)' "${DESIGN_SOURCE}"
 grep -Fq '.accessibilityLabel("切换设备")' "${APP_SOURCE}"
 grep -Fq '.accessibilityLabel("设备页面")' "${APP_SOURCE}"
 grep -Fq '.accessibilityLabel("活动筛选")' "${APP_SOURCE}"
-grep -Fq '.accessibilityLabel("显示或隐藏侧栏")' "${APP_SOURCE}"
-! grep -Fq '»' "${APP_SOURCE}"
+grep -Fq '.accessibilityLabel("显示或隐藏侧栏")' "${SHELL_SOURCE}"
+! grep -Fq '»' "${APP_SOURCE}" "${SHELL_SOURCE}"
 
 echo 'RESULT=DRIVE_UI_ACCESSIBILITY_STRUCTURE_OK'
 
@@ -77,8 +89,9 @@ fi
 
 echo 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT'
 command -v xcrun >/dev/null
-xcrun xctrace list templates | grep -Fx 'Animation Hitches' >/dev/null
-python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_TIMEOUT_SECONDS}" \
+python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
+  xcrun xctrace list templates | grep -Fx 'Animation Hitches' >/dev/null
+python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}" \
   xcrun xctrace record --quiet \
     --template 'Animation Hitches' \
     --output "${TRACE}" \
@@ -90,17 +103,17 @@ python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_TIMEOUT_SECONDS}" \
 grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"
 grep -Fq 'RESULT=DRIVE_UI_HITCH_AUTOMATION_OK' "${HITCH_LOG}"
 
-python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_TIMEOUT_SECONDS}" \
+python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace export --input "${TRACE}" --toc --output "${TOC_XML}"
 echo 'UI_HITCH_TRACE_TIMEBASE:'
 /usr/bin/grep -E '<start-date>|UI_HITCH_TOGGLES_(BEGIN|END)_EPOCH=' "${TOC_XML}" "${HITCH_LOG}" || true
 echo 'UI_HITCH_TRACE_SCHEMAS:'
 /usr/bin/grep -oE 'schema="[^"]+"' "${TOC_XML}" | /usr/bin/sort -u || true
-python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_TIMEOUT_SECONDS}" \
+python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace export --input "${TRACE}" \
     --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches-frame-lifetimes"]' \
     --output "${HITCH_XML}"
-python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_TIMEOUT_SECONDS}" \
+python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace export --input "${TRACE}" \
     --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches"]' \
     --output "${HITCH_EVENT_XML}"

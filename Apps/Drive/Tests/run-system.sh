@@ -6,6 +6,16 @@ TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
+APP_SERVICE_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/App/Service/EDPAppServiceSupport.swift"
+APP_SMOKE_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/App/Service/EDPXPCSmokeSupport.swift"
+APP_VIEW_MODEL_SOURCE="${ROOT}/Apps/Drive/product/App/Model/EDPVaultViewModel.swift"
+APP_SIDEBAR_SOURCE="${ROOT}/Apps/Drive/product/App/Sidebar/EDPSidebarView.swift"
+APP_SHELL_SOURCE="${ROOT}/Apps/Drive/product/App/Shell/EDPMainWindow.swift"
+APP_OVERVIEW_SOURCE="${ROOT}/Apps/Drive/product/App/Pages/EDPOverviewView.swift"
+APP_DEVICES_SOURCE="${ROOT}/Apps/Drive/product/App/Pages/EDPDevicesView.swift"
+APP_ACTIVITY_SOURCE="${ROOT}/Apps/Drive/product/App/Pages/EDPActivityView.swift"
+APP_SETTINGS_SOURCE="${ROOT}/Apps/Drive/product/App/Pages/EDPSettingsView.swift"
+APP_MENU_BAR_SOURCE="${ROOT}/Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift"
 RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 RUNTIME_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeSupport.swift"
 RUNTIME_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeState.swift"
@@ -169,8 +179,10 @@ echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'GITHUB_ACTIONS:-false' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
-/usr/bin/grep -Fq 'UI_XCTRACE_TIMEOUT_SECONDS=20' "${UI_RUNNER}"
-[[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 4 ]]
+/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_TIMEOUT_SECONDS=60' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'UI_XCTRACE_EXPORT_TIMEOUT_SECONDS=30' "${UI_RUNNER}"
+[[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 1 ]]
+[[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 4 ]]
 /usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches-frame-lifetimes"]' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches"]' "${UI_RUNNER}"
@@ -185,8 +197,40 @@ echo 'RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK'
 ! /usr/bin/grep -Fq 'migrateDeviceID' "${RUNTIME_SOURCE}" \
   "${ROOT}/Apps/Drive/product/EDPDevicePolicyStore.swift" \
   "${ROOT}/Apps/Drive/product/EDPCredentialStore.swift"
-/usr/bin/grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' "${APP_SOURCE}"
-! /usr/bin/grep -Fq 'NavigationSplitView {' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' "${APP_SHELL_SOURCE}"
+! /usr/bin/grep -Fq 'NavigationSplitView {' "${APP_SOURCE}" "${APP_SHELL_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPMainView: View' "${APP_SHELL_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPMainView: View' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_UI_SHELL_SPLIT_OK'
+/usr/bin/grep -Fq 'struct EDPOverviewView: View' "${APP_OVERVIEW_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPDevicesView: View' "${APP_DEVICES_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPDeviceDetailView: View' "${APP_DEVICES_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPActivityView: View' "${APP_ACTIVITY_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPSettingsView: View' "${APP_SETTINGS_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPMenuBarView: View' "${APP_MENU_BAR_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPOverviewView: View' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPMenuBarView: View' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPDevicesView: View' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPDeviceDetailView: View' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPActivityView: View' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPSettingsView: View' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_UI_PAGE_SPLIT_OK'
+/usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() throws -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'let edpDriveServicePath = edpDriveAppPath' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() throws -> Bool' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_UI_SERVICE_SUPPORT_SPLIT_OK'
+/usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'final class EDPXPCSmokeResult: @unchecked Sendable' "${APP_SMOKE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'enum EDPXPCPolicySmokeRunner' "${APP_SMOKE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'final class EDPXPCSmokeResult: @unchecked Sendable' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_UI_VIEW_MODEL_SPLIT_OK'
+/usr/bin/grep -Fq 'enum EDPMainSection: String, CaseIterable, Identifiable' "${APP_SIDEBAR_SOURCE}"
+/usr/bin/grep -Fq 'struct EDPNativeSidebarView: View' "${APP_SIDEBAR_SOURCE}"
+! /usr/bin/grep -Fq 'struct EDPNativeSidebarView: View' "${APP_SHELL_SOURCE}"
+! /usr/bin/grep -Fq 'enum EDPMainSection: String, CaseIterable, Identifiable' "${APP_SHELL_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_UI_SIDEBAR_SPLIT_OK'
 /usr/bin/grep -Fq '.menuBarExtraStyle(.window)' "${APP_SOURCE}"
 
 # New-device policy is explicitly opt-in. Password probing and mounting are
@@ -197,8 +241,8 @@ echo 'RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK'
 /usr/bin/grep -Fq 'autoProbePassword: false' "${POLICY_SOURCE}"
 /usr/bin/grep -Fq 'builtInDefaultProbePassword = Array("0000aaaa".utf8)' "${CREDENTIAL_SOURCE}"
 /usr/bin/grep -Fq 'default-probe-password.v1' "${CREDENTIAL_SOURCE}"
-/usr/bin/grep -Fq '点击钥匙设置密码' "${APP_SOURCE}"
-! /usr/bin/grep -Fq '请先在主界面保存密码' "${APP_SOURCE}"
+/usr/bin/grep -Fq '点击钥匙设置密码' "${APP_MENU_BAR_SOURCE}"
+! /usr/bin/grep -Fq '请先在主界面保存密码' "${APP_MENU_BAR_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_DEFAULT_POLICY_RATCHETS_OK'
 
 # Full in-place upgrades must terminate the old foreground UI before replacing
@@ -639,25 +683,25 @@ echo 'RESULT=DRIVE_SYSTEM_LIFECYCLE_JOURNAL_OK'
 # Explicitly reopening the foreground App must restore discovery-service intent.
 # A prior Stop/Complete Quit may stop the daemon for that UI session, but must
 # never make the next visible app launch silently unable to discover USB media.
-/usr/bin/grep -Fq 'Explicitly opening EDP Drive always restores the discovery daemon.' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'Explicitly opening EDP Drive always restores the discovery daemon.' "${APP_VIEW_MODEL_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 
 # Normal product lifecycle must not fall back to shell-side process inspection
 # or codesign/umount helpers. Runtime signature validation is Security.framework,
 # service liveness is SMAppService + XPC, and VFS teardown is unmount(2).
-! /usr/bin/grep -Fq '/bin/launchctl' "${APP_SOURCE}"
+! /usr/bin/grep -Fq '/bin/launchctl' "${APP_SOURCE}" "${APP_VIEW_MODEL_SOURCE}" "${APP_SERVICE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/codesign' "${MACFUSE_POLICY_SOURCE}"
 /usr/bin/grep -Fq 'SecStaticCodeCheckValidity' "${MACFUSE_POLICY_SOURCE}"
 /usr/bin/grep -Fq 'kSecCodeInfoTeamIdentifier' "${MACFUSE_POLICY_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${MACFUSE_POLICY_SOURCE}"
 ! /usr/bin/grep -Fq '/sbin/umount' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'Darwin.unmount(path, flags)' "${NATIVE_SYSTEM_SOURCE}"
-/usr/bin/grep -Fq 'Task.detached(priority: .utility)' "${APP_SOURCE}"
-/usr/bin/grep -Fq 'edpMacFUSEEnablementMaxAttempts = 5' "${APP_SOURCE}"
-/usr/bin/grep -Fq 'for attempt in 1...edpMacFUSEEnablementMaxAttempts' "${APP_SOURCE}"
-/usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_SOURCE}"
-/usr/bin/grep -Fq 'Require the user FSKit state to remain stable for one' "${APP_SOURCE}"
-! /usr/bin/grep -Fq 'while !macFUSELocalEnablementReady()' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'Task.detached(priority: .utility)' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'let edpMacFUSEEnablementMaxAttempts = 5' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'for attempt in 1...edpMacFUSEEnablementMaxAttempts' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'Require the user FSKit state to remain stable for one' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'while !macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_BOUNDED_RETRY_OK'
 echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 

@@ -51,7 +51,17 @@ drive-check:
 		-framework AppKit -framework FSKit -framework SwiftUI -framework ServiceManagement \
 		"$(ROOT)/Shared/UI/EDPDesignSystem.swift" \
 		"$(ROOT)/Apps/Drive/product/EDPXPCProtocol.swift" \
-		"$(ROOT)/Apps/Drive/product/App/EDPUSBVaultApp.swift"
+		"$(ROOT)/Apps/Drive/product/App/EDPUSBVaultApp.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Service/EDPAppServiceSupport.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Service/EDPXPCSmokeSupport.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Model/EDPVaultViewModel.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Sidebar/EDPSidebarView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Shell/EDPMainWindow.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPOverviewView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPDevicesView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPActivityView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPSettingsView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift"
 
 check: core-test drive-check
 
@@ -93,6 +103,16 @@ drive-build:
 		"$(ROOT)/Shared/UI/EDPDesignSystem.swift" \
 		"$(ROOT)/Apps/Drive/product/EDPXPCProtocol.swift" \
 		"$(ROOT)/Apps/Drive/product/App/EDPUSBVaultApp.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Service/EDPAppServiceSupport.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Service/EDPXPCSmokeSupport.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Model/EDPVaultViewModel.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Sidebar/EDPSidebarView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Shell/EDPMainWindow.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPOverviewView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPDevicesView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPActivityView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/Pages/EDPSettingsView.swift" \
+		"$(ROOT)/Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift" \
 		"$(ARTIFACTS)/EDPRawValidation.o" "$(ARTIFACTS)/EDPRawFDBroker.o" \
 		-o "$(DRIVE_UI_BINARY)"
 	@echo "OUTPUT=$(DRIVE_UI_BINARY)"

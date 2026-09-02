@@ -248,6 +248,16 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   "${REPO_ROOT}/../../Shared/UI/EDPDesignSystem.swift" \
   "${REPO_ROOT}/product/EDPXPCProtocol.swift" \
   "${REPO_ROOT}/product/App/EDPUSBVaultApp.swift" \
+  "${REPO_ROOT}/product/App/Service/EDPAppServiceSupport.swift" \
+  "${REPO_ROOT}/product/App/Service/EDPXPCSmokeSupport.swift" \
+  "${REPO_ROOT}/product/App/Model/EDPVaultViewModel.swift" \
+  "${REPO_ROOT}/product/App/Sidebar/EDPSidebarView.swift" \
+  "${REPO_ROOT}/product/App/Shell/EDPMainWindow.swift" \
+  "${REPO_ROOT}/product/App/Pages/EDPOverviewView.swift" \
+  "${REPO_ROOT}/product/App/Pages/EDPDevicesView.swift" \
+  "${REPO_ROOT}/product/App/Pages/EDPActivityView.swift" \
+  "${REPO_ROOT}/product/App/Pages/EDPSettingsView.swift" \
+  "${REPO_ROOT}/product/App/MenuBar/EDPMenuBarView.swift" \
   "${RAW_VALIDATION_OBJ}" "${RAW_BROKER_OBJ}" \
   -o "${APP_STAGE}/Contents/MacOS/EDP Drive"
 cp "${SERVICE_STAGE}" \

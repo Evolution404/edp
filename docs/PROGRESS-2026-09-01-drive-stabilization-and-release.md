@@ -119,20 +119,21 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] GitHub macOS runner 实证 `hitches-frame-lifetimes` schema 存在但 raw rows=0；UI gate 现优先使用完整 frame-lifetime 表，空表时回退同一 Animation Hitches trace 的稀疏 `hitches` 事件表，并继续显式按 `33_000_000ns` 过滤；本机仍不执行 UI 性能段。
 - [x] run `33595043724` 进一步实证 `unmount(2, MNT_FORCE)` 在 dead transport + live ExFAT mount 下进入内核后超过 26 分钟不返回，直到 30 分钟 CI 上限取消；该危险 helper 模式已彻底删除。生产 `EDPTransportSession` 和 `EDPMountCoordinator` 均新增 transport-liveness fail-closed gate：transport 已退出且 VFS/user filesystem 仍 mounted 时禁止进入同步 unmount syscall，并保留 teardown failure/session 诊断。
 - [x] deterministic transport lifecycle 新增 exited-transport + mounted-VFS 用例，锁定“不调用 unmount、不 SIGTERM/SIGKILL、不 host reset”；storage M12 改为真实验证可安全边界：先正常卸载并 quiesce upper filesystem，再 crash lower transport，随后 exact bridge cleanup → DiskImages2 publication teardown → remount/persistence 验证。
-- [x] Phase B commits 已分步完成；最终 mount/service boundary + CI watchdog 收尾待本轮 commit/push 后以固定 HEAD 跑完整 CI。
+- [x] Phase B commits 已分步完成；run `33613200810` / HEAD `65cca1a` 上 native/fast/virtual 全部 PASS，storage M01-M14 主步骤完整 PASS；该 run 的唯一失败是首版 xctrace watchdog 20s 误杀 GitHub runner 的正常 Instruments 冷启动，不是 33 ms hitch 回归。watchdog 已收紧为 record 60s / list+export 30s，8s trace window、20 toggles、33 ms 阈值均未改变，等待下一固定 HEAD CI 复核。
 
 ## Phase C — App/UI 文件职责拆分
 
-状态：TODO
+状态：IMPLEMENTATION DONE（等待固定 HEAD CI 复核）
 
-- [ ] App shell / native split controller 独立文件。
-- [ ] ViewModel 独立文件。
-- [ ] Sidebar 独立文件。
-- [ ] Overview / Devices / Activity / Settings 页面拆分。
-- [ ] Menu bar / Service controls 拆分。
-- [ ] CLI smoke/UI automation helper 与页面实现边界清晰。
-- [ ] Liquid Glass、菜单层级、仅退出界面/完全退出语义不变。
-- [ ] UI gate 保持连续 PASS。
+- [x] App shell / native split controller 已独立到 `App/Shell/EDPMainWindow.swift`，保持原 `NSSplitViewController`、sidebar collapse behavior、geometry/accessibility 合同。
+- [x] ViewModel 已独立到 `App/Model/EDPVaultViewModel.swift`；XPC connection generation、service start/stop/restart single-flight、snapshot、mount/eject/credential/default-policy orchestration 原样保留。
+- [x] Sidebar 已独立到 `App/Sidebar/EDPSidebarView.swift`；section enum/list selection 不再与 split controller 混在同一文件。
+- [x] Overview / Devices / Activity / Settings 已分别拆到 `App/Pages/EDPOverviewView.swift`、`EDPDevicesView.swift`、`EDPActivityView.swift`、`EDPSettingsView.swift`。
+- [x] Menu bar 已拆到 `App/MenuBar/EDPMenuBarView.swift`；service controls、partition rows、仅退出界面/完全退出仍使用原交互语义。
+- [x] macFUSE/App service support 已拆到 `App/Service/EDPAppServiceSupport.swift`；XPC smoke helper 已拆到 `App/Service/EDPXPCSmokeSupport.swift`，CLI smoke 与页面实现边界清晰。
+- [x] `EDPUSBVaultApp.swift` 已由约 3810 行降至约 476 行，只保留 App/CLI entrypoint 与 raw-FD broker dispatch；system ratchet 禁止 ViewModel/pages/sidebar/menu/support 实现回流。
+- [x] Liquid Glass、菜单层级、仅退出界面/完全退出语义未改变；本机 Swift6 typecheck、system、fast、virtual、S01-S35/320000-step property、production installer、`git diff --check` 全部 PASS。
+- [ ] GitHub Actions UI gate 在 Phase C exact-head 上 PASS；本机继续不执行 UI performance/xctrace。
 - [ ] Phase C commits/push。
 
 ## Phase D — 发布可靠性与 recovery 可观测性

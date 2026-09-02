@@ -49,37 +49,49 @@ jobs:
           grep -Fq 'retryTransientAutomaticMounts' Apps/Drive/product/EDPXPCProtocol.swift
           grep -Fq 'automation.failureCode(for: partitionKey) == .bridgeExtensionUnavailable' Apps/Drive/product/EDPVaultRuntime.swift
           ! grep -Fq 'failure.contains("File system extension' Apps/Drive/product/EDPVaultRuntime.swift
-          grep -Fq 'retryTransientAutomaticMounts()' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          test "$(grep -Fc 'retryTransientAutomaticMounts()' Apps/Drive/product/App/EDPUSBVaultApp.swift)" -ge 3
-          grep -Fq 'remoteObjectProxyWithErrorHandler { @Sendable [weak self] error in' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'proxy.requestGracefulShutdown { @Sendable [weak self] errorMessage in' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'retryTransientAutomaticMounts()' Apps/Drive/product/App/Model/EDPVaultViewModel.swift
+          test "$(grep -Fc 'retryTransientAutomaticMounts()' Apps/Drive/product/App/Model/EDPVaultViewModel.swift)" -ge 3
+          grep -Fq 'remoteObjectProxyWithErrorHandler { @Sendable [weak self] error in' Apps/Drive/product/App/Model/EDPVaultViewModel.swift
+          grep -Fq 'proxy.requestGracefulShutdown { @Sendable [weak self] errorMessage in' Apps/Drive/product/App/Model/EDPVaultViewModel.swift
           grep -Fq 'connection.interruptionHandler = { @Sendable in disconnectSemaphore.signal() }' Apps/Drive/product/App/EDPUSBVaultApp.swift
           grep -Fq 'proxy.requestGracefulShutdown { @Sendable errorMessage in' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq 'remoteObjectProxyWithErrorHandler({ error in' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'Button("启动")' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'Button("停止")' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'Button("重启")' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'EDPMenuCompactButton(title: "仅退出界面"' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'title: "完全退出"' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq '仅退出界面（' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq '完全退出（' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq 'Menu(' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq 'remoteObjectProxyWithErrorHandler({ error in' Apps/Drive/product/App/Model/EDPVaultViewModel.swift Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'Button("启动")' Apps/Drive/product/App/Pages/EDPSettingsView.swift
+          grep -Fq 'Button("停止")' Apps/Drive/product/App/Pages/EDPSettingsView.swift
+          grep -Fq 'Button("重启")' Apps/Drive/product/App/Pages/EDPSettingsView.swift
+          grep -Fq 'EDPMenuCompactButton(title: "仅退出界面"' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq 'title: "完全退出"' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          ! grep -Fq '仅退出界面（' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          ! grep -Fq '完全退出（' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          ! grep -Fq 'Menu(' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
           grep -Fq '.menuBarExtraStyle(.window)' Apps/Drive/product/App/EDPUSBVaultApp.swift
           ! grep -Fq '.menuBarExtraStyle(.menu)' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'private func serviceIconButton(' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'systemImage: "play.fill"' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'systemImage: "stop.fill"' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'partitionRow(device: device, partition: partition)' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq '.frame(width: 390)' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'EDPMenuNavigationRow' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq 'HSplitView {' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'Picker("切换设备", selection: deviceSelection)' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          grep -Fq 'sidebarItem.canCollapseFromWindowResize = false' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq 'NavigationSplitView {' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq '.navigationSplitViewStyle(.prominentDetail)' Apps/Drive/product/App/EDPUSBVaultApp.swift
-          ! grep -Fq '.frame(width: 180)' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'private func serviceIconButton(' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq 'systemImage: "play.fill"' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq 'systemImage: "stop.fill"' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq 'partitionRow(device: device, partition: partition)' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq '.frame(width: 390)' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq 'EDPMenuNavigationRow' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          ! grep -Fq 'HSplitView {' Apps/Drive/product/App/Shell/EDPMainWindow.swift Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq 'Picker("切换设备", selection: deviceSelection)' Apps/Drive/product/App/Pages/EDPDevicesView.swift
+          grep -Fq 'struct EDPDevicesView: View' Apps/Drive/product/App/Pages/EDPDevicesView.swift
+          grep -Fq 'struct EDPActivityView: View' Apps/Drive/product/App/Pages/EDPActivityView.swift
+          grep -Fq 'struct EDPSettingsView: View' Apps/Drive/product/App/Pages/EDPSettingsView.swift
+          grep -Fq 'struct EDPMenuBarView: View' Apps/Drive/product/App/MenuBar/EDPMenuBarView.swift
+          grep -Fq 'struct EDPNativeSidebarView: View' Apps/Drive/product/App/Sidebar/EDPSidebarView.swift
+          ! grep -Fq 'struct EDPNativeSidebarView: View' Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          ! grep -Fq 'struct EDPDevicesView: View' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq 'struct EDPMenuBarView: View' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq 'struct EDPActivityView: View' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          ! grep -Fq 'struct EDPSettingsView: View' Apps/Drive/product/App/EDPUSBVaultApp.swift
+          grep -Fq 'EDPNativeSplitViewController: NSSplitViewController' Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          grep -Fq 'sidebarItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView' Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          grep -Fq 'sidebarItem.canCollapseFromWindowResize = false' Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          ! grep -Fq 'NavigationSplitView {' Apps/Drive/product/App/EDPUSBVaultApp.swift Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          ! grep -Fq '.navigationSplitViewStyle(.prominentDetail)' Apps/Drive/product/App/EDPUSBVaultApp.swift Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          ! grep -Fq '.frame(width: 180)' Apps/Drive/product/App/EDPUSBVaultApp.swift Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          grep -Fq 'struct EDPMainView: View' Apps/Drive/product/App/Shell/EDPMainWindow.swift
+          ! grep -Fq 'struct EDPMainView: View' Apps/Drive/product/App/EDPUSBVaultApp.swift
           test -x Tools/build-drive-ui-update.sh
           test -x Tools/install-drive-ui-update.sh
           test -x Tools/manage-drive-ui.sh
@@ -276,6 +288,16 @@ jobs:
             -framework CoreFoundation -framework IOKit \
             ../../Shared/UI/EDPDesignSystem.swift \
             product/EDPXPCProtocol.swift product/App/EDPUSBVaultApp.swift \
+            product/App/Service/EDPAppServiceSupport.swift \
+            product/App/Service/EDPXPCSmokeSupport.swift \
+            product/App/Model/EDPVaultViewModel.swift \
+            product/App/Sidebar/EDPSidebarView.swift \
+            product/App/Shell/EDPMainWindow.swift \
+            product/App/Pages/EDPOverviewView.swift \
+            product/App/Pages/EDPDevicesView.swift \
+            product/App/Pages/EDPActivityView.swift \
+            product/App/Pages/EDPSettingsView.swift \
+            product/App/MenuBar/EDPMenuBarView.swift \
             "${RUNNER_TEMP}/EDPRawValidation.o" "${RUNNER_TEMP}/EDPRawFDBroker.o" \
             -o "${RUNNER_TEMP}/edp-drive-app"
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
