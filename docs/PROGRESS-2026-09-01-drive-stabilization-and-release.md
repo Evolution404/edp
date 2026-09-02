@@ -41,7 +41,7 @@
 - [x] page rendering PASS。
 - [x] 900×680 sidebar 20 toggles geometry PASS。
 - [x] accessibility structure PASS。
-- [ ] GitHub Actions Animation Hitches 33 ms gate PASS。
+- [x] GitHub Actions Animation Hitches 33 ms gate PASS；run `33595043724` 已给出 `UI_HITCH_COUNT_GT33MS=0`，后续 run `33598617878` 同样 PASS。
 - [x] CI-only xctrace 改为 `--launch`，消除 attach PID 竞态；当前剩余问题是 trace timebase 与 app epoch 对齐，33 ms 判定本身未放宽。
 
 2026-09-01 19:29 基线：
@@ -80,7 +80,7 @@ UI_HITCH_COUNT_GT33MS=1
 
 ## Phase B — Runtime 职责拆分
 
-状态：IN PROGRESS
+状态：IMPLEMENTATION DONE（等待最终 exact-head CI 复核）
 
 - [x] 第一阶段纯 lifecycle model 抽取：`EDPLifecycleFailure*`、FSKit recovery policy、mount lifecycle state machine 移至 `EDPMountLifecycle.swift`；runtime 减少 302 行，行为不变。
 - [x] 通用 runtime support 抽取：`RuntimeError/fail/secureZero/run/plist/atomicWrite` 移至 `EDPRuntimeSupport.swift`；runtime 再减少 101 行，并由 system ratchet 禁止回流。
@@ -100,14 +100,14 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] XPC adapter 已抽至 `EDPXPCService.swift`：reply boxing、trusted peer acceptance、XPC protocol→controller 调用转换不再属于 runtime；service regression 直接实例化场景及 S01-S35/property/fast/system/virtual 全绿。
 - [x] bounded activity retention 已抽至 `EDPActivityStore.swift`：200 条 activity ring buffer 不再是 controller 内嵌可变数组；snapshot 仅消费 store snapshot，system/virtual/fast 全绿。
 - [x] daemon/doctor/CLI `@main` 已抽至 `EDPServiceMain.swift`：listener bootstrap、signal handler、doctor/status/list/authorize/revoke/cleanup/daemon 入口与 mount/runtime orchestration 分离；主 runtime 降至 3688 行，system/virtual/fast 与 diff-check 全绿。
-- [ ] 继续抽纯 model/key/helper。
+- [x] 纯 model/key/helper 抽取已按小步完成：lifecycle model、runtime support/state、mount support、raw primitives、activity/service lifecycle state 均已独立，未保留双路径 fallback。
 - [x] 抽 `EDPRawAccessController` orchestration（single-flight + EBUSY exact-generation recovery + lease state）。
 - [x] 抽 auto-mount policy/manual suppression。
 - [x] 抽 shutdown/recovery orchestration：startup/shutdown state 由 `EDPServiceLifecycleState` 管理，eject wait 与 teardown gate 保持 owner-queue 语义。
 - [x] 抽 recovery orchestration：failed-eject generation revalidation/raw reacquire/boot-policy restore 已进入 `EDPRecoveryCoordinator`。
-- [x] 收窄 service-facing controller：discovery/activity/XPC adapter/service entrypoint 已分别拆至 `EDPDeviceDiscoveryController`、`EDPActivityStore`、`EDPXPCService`、`EDPServiceMain`；`EDPVaultRuntime.swift` 仅保留 mount/session 核心与 daemon orchestration，已从约 5462 行降至约 3700 行。
+- [x] 收窄 service-facing controller：discovery/activity/XPC adapter/service entrypoint 已分别拆至 `EDPDeviceDiscoveryController`、`EDPActivityStore`、`EDPXPCService`、`EDPServiceMain`；顶层 orchestration 已正式收口为 `EDPServiceController`，mount/session ownership 收口为 `EDPMountCoordinator`，旧 `EDPDaemonController` / `MountManager` 命名由 system ratchet 禁止回流；`EDPVaultRuntime.swift` 约 3709 行。
 - [x] 每步 S01-S35/property/fast/system/virtual 不回退；最新本机 fast/system/virtual 与 320000-step property 全绿。
-- [ ] Phase B storage smoke PASS。
+- [x] Phase B storage smoke/release PASS：GitHub Actions run `33609861193` / job `100182211669` 在 `7b42c99` 上完整通过 M01、M02/M04-M09、M03、M10 5/5、M12、M14、production Swift6/C17 strict，最终 `RESULT=DRIVE_STORAGE_E2E_OK`。
 - [x] run `33598075171` 在 `f29e710` 上证明 crashed-transport D-state 已消失：storage 不再触发 30 分钟不可中断挂死，而是在约 3 分钟内正常 bounded failure；native/fast/virtual 均 PASS。剩余失败前移到普通 M02 remount publication teardown。
 - [x] run `33598617878` 在 `44304f3` 上确认 M02 post-KILL 真实状态：原 `diskimagesiod` PID 7065 已不存在，但 `hdiutil info -plist` 仍持续返回同一 exact backing、同一 PID、`devices=none` 的 owner record；没有 owner respawn，也不是 SIGKILL 失败，属于 macOS 26 DiskImages2 metadata-only stale tombstone。UI/native/fast/virtual 同轮全部 PASS。
 - [x] dead-owner tombstone retirement 已按最窄条件实现：仅 `devicePaths.isEmpty`、exact owner snapshot 二次采样完全相同、记录 PID 两次均无 executable process 时允许视为已退役；任何 PID/UID/entity 变化或 live owner 均 fail-closed。生产 `EDPDiskImages2Publisher` 与 storage harness 同步该合同，并新增 deterministic negative matrix（PID/UID/entity/live-owner 变化均拒绝）。
@@ -117,9 +117,9 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] M12 transport-crash 多轮 CI 已证明 live upper filesystem + dead lower transport 不能在 macOS 26 上走同步 teardown：ordinary DA unmount 会 callback timeout，`unmount(2, MNT_FORCE)` 可直接进入不可中断 D-state；因此该组合不再尝试“强行恢复”，产品必须 fail-closed。
 - [x] CI native monorepo ratchet 已随 automation state 抽取更新；native/fast/virtual 在 run `33591256755` 已 PASS。
 - [x] GitHub macOS runner 实证 `hitches-frame-lifetimes` schema 存在但 raw rows=0；UI gate 现优先使用完整 frame-lifetime 表，空表时回退同一 Animation Hitches trace 的稀疏 `hitches` 事件表，并继续显式按 `33_000_000ns` 过滤；本机仍不执行 UI 性能段。
-- [x] run `33595043724` 进一步实证 `unmount(2, MNT_FORCE)` 在 dead transport + live ExFAT mount 下进入内核后超过 26 分钟不返回，直到 30 分钟 CI 上限取消；该危险 helper 模式已彻底删除。生产 `EDPTransportSession` 和 `MountManager` 均新增 transport-liveness fail-closed gate：transport 已退出且 VFS/user filesystem 仍 mounted 时禁止进入同步 unmount syscall，并保留 teardown failure/session 诊断。
+- [x] run `33595043724` 进一步实证 `unmount(2, MNT_FORCE)` 在 dead transport + live ExFAT mount 下进入内核后超过 26 分钟不返回，直到 30 分钟 CI 上限取消；该危险 helper 模式已彻底删除。生产 `EDPTransportSession` 和 `EDPMountCoordinator` 均新增 transport-liveness fail-closed gate：transport 已退出且 VFS/user filesystem 仍 mounted 时禁止进入同步 unmount syscall，并保留 teardown failure/session 诊断。
 - [x] deterministic transport lifecycle 新增 exited-transport + mounted-VFS 用例，锁定“不调用 unmount、不 SIGTERM/SIGKILL、不 host reset”；storage M12 改为真实验证可安全边界：先正常卸载并 quiesce upper filesystem，再 crash lower transport，随后 exact bridge cleanup → DiskImages2 publication teardown → remount/persistence 验证。
-- [ ] Phase B commits/push。
+- [x] Phase B commits 已分步完成；最终 mount/service boundary + CI watchdog 收尾待本轮 commit/push 后以固定 HEAD 跑完整 CI。
 
 ## Phase C — App/UI 文件职责拆分
 

@@ -4,7 +4,7 @@ final class EDPDeviceDiscoveryController: @unchecked Sendable {
     private let mediaProvider: any EDPWholeUSBMediaProviding
     private let metadataReader: any EDPRawMetadataReading
 
-    // Owner-queue confined by EDPDaemonController.
+    // Owner-queue confined by EDPServiceController.
     private(set) var diagnostics = ["discovery_not_started"]
     private(set) var scanCount: UInt64 = 0
     private(set) var lastScanTimestamp = ""

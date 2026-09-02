@@ -308,6 +308,8 @@ TRANSPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPTransportProvider.swift"
 ! /usr/bin/grep -Fq 'manager.unmount(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'manager.eject(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'manager.unmountAll(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'private final class EDPMountCoordinator: EDPDaemonMountManaging' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private final class MountManager' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func mountAsync(' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func unmountAsync(' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func ejectAsync(' "${RUNTIME_SOURCE}"
@@ -523,6 +525,15 @@ echo 'RESULT=DRIVE_SYSTEM_SERVICE_LIFECYCLE_STATE_SPLIT_OK'
 /usr/bin/grep -Fq 'recovery.recoverFailedEject(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'wholeUSBMediaStillMatches(disk, mediaProvider: mediaProvider)' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RECOVERY_COORDINATOR_SPLIT_OK'
+
+# The top-level owner-queue orchestration type is the service controller. It
+# coordinates already-extracted discovery/raw/automation/eject/recovery state
+# and must not drift back to the old catch-all daemon-controller identity.
+/usr/bin/grep -Fq 'final class EDPServiceController' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'final class EDPDaemonController' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'let controller = try EDPServiceController()' "${SERVICE_MAIN_SOURCE}"
+/usr/bin/grep -Fq 'private let controller: EDPServiceController' "${XPC_SERVICE_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_SERVICE_CONTROLLER_BOUNDARY_OK'
 
 # XPC protocol adaptation and reply fanout belong in the service adapter, not
 # in the daemon orchestration file. Regression tests instantiate this adapter

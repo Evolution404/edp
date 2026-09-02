@@ -1,7 +1,7 @@
 import Foundation
 
 final class EDPAutomationState: @unchecked Sendable {
-    // Owner-confined by EDPDaemonController.queue. This type centralizes the
+    // Owner-confined by EDPServiceController.queue. This type centralizes the
     // insertion-scoped automation memory without creating a second lock domain.
     private var failedMounts = [String: String]()
     private var failedMountCodes = [String: EDPLifecycleFailureCode]()

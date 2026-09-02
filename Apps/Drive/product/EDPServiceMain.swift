@@ -8,7 +8,7 @@ private final class EDPXPCListenerBox: @unchecked Sendable {
 
 private func daemon() throws -> Never {
     try requireRoot()
-    let controller = try EDPDaemonController()
+    let controller = try EDPServiceController()
     let monitor = try EDPDiskEventMonitor()
     let stopped = DispatchSemaphore(value: 0)
     let listener = NSXPCListener(machServiceName: edpVaultMachServiceName)

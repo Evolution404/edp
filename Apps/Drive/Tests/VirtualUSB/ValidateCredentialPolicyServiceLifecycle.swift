@@ -704,7 +704,7 @@ private struct ControllerEnvironment {
     let policies: EDPDevicePolicyStore
     let manager: FakeMountManager
     let diskArbitration: FakeDiskArbitration
-    let controller: EDPDaemonController
+    let controller: EDPServiceController
     let fixture: EDPVirtualMediaDevice
     let correctPassword: [UInt8]
 
@@ -731,7 +731,7 @@ private struct ControllerEnvironment {
         let policies = try security.policyStore()
         let correctPassword = Array("0000aaaa".utf8)
         let verifierMetadata = fixture.metadata
-        let controller = try EDPDaemonController(
+        let controller = try EDPServiceController(
             store: credentials,
             policies: policies,
             manager: manager,
@@ -2627,8 +2627,8 @@ struct ValidateCredentialPolicyServiceLifecycle {
         manager: FakeMountManager,
         correctPassword: [UInt8],
         verifierMetadata: EDPRawMetadataSnapshot
-    ) throws -> EDPDaemonController {
-        try EDPDaemonController(
+    ) throws -> EDPServiceController {
+        try EDPServiceController(
             store: credentials,
             policies: policies,
             manager: manager,

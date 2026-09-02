@@ -7,12 +7,12 @@ private final class EDPSendableStringReply: @unchecked Sendable {
 }
 
 final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol, @unchecked Sendable {
-    private let controller: EDPDaemonController
+    private let controller: EDPServiceController
     private let didRequestShutdown: @Sendable () -> Void
     private let shutdownLock = NSLock()
     private var shutdownSignaled = false
 
-    init(controller: EDPDaemonController, didRequestShutdown: @escaping @Sendable () -> Void) {
+    init(controller: EDPServiceController, didRequestShutdown: @escaping @Sendable () -> Void) {
         self.controller = controller
         self.didRequestShutdown = didRequestShutdown
     }

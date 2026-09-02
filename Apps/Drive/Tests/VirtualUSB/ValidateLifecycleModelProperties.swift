@@ -186,7 +186,7 @@ enum EDPLifecycleModelProperties {
                     publicationInFlight = false
                     publicationOwned = false
                 case .fail:
-                    // MountManager cancels an in-flight publication token before
+                    // EDPMountCoordinator cancels an in-flight publication token before
                     // delivering terminal failure. A concrete published device,
                     // however, must only disappear through cleanup.
                     publicationInFlight = false

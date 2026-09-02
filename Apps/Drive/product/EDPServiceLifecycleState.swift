@@ -1,7 +1,7 @@
 import Foundation
 
 final class EDPServiceLifecycleState: @unchecked Sendable {
-    // All state is confined to EDPDaemonController's owner queue. This type is
+    // All state is confined to EDPServiceController's owner queue. This type is
     // deliberately lock-free so lifecycle ordering remains identical to the
     // pre-extraction controller implementation.
     private(set) var startupRecoveryComplete = false

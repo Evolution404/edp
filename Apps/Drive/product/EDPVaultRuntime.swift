@@ -75,7 +75,7 @@ extension EDPDaemonMountManaging {
     func recordShutdownCoalesced() {}
 }
 
-private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
+private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Sendable {
     private var sessions = [String: MountSession]()
     private var missingSince = [String: Date]()
     private let binaryRoot: String
@@ -2391,7 +2391,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
 func recoverPersistedMountSessionsForServiceCleanup(
     completion: @escaping EDPDaemonMountCompletion
 ) throws {
-    let manager = try MountManager()
+    let manager = try EDPMountCoordinator()
     manager.recoverPersistedSessionsAsync(completion: completion)
 }
 
@@ -2419,7 +2419,7 @@ private final class EDPSensitiveBytesBox: @unchecked Sendable {
     }
 }
 
-final class EDPDaemonController: @unchecked Sendable {
+final class EDPServiceController: @unchecked Sendable {
     private let store: EDPCredentialStore
     private let policies: EDPDevicePolicyStore
     private let manager: any EDPDaemonMountManaging
@@ -2479,7 +2479,7 @@ final class EDPDaemonController: @unchecked Sendable {
         }
         self.store = try store ?? makeCredentialStore()
         self.policies = try policies ?? makePolicyStore()
-        self.manager = try manager ?? MountManager()
+        self.manager = try manager ?? EDPMountCoordinator()
         let effectiveDiskArbitration = try diskArbitration ?? EDPDiskArbitrationController()
         self.diskArbitration = effectiveDiskArbitration
         self.rawAccess = EDPRawAccessCoordinator(
