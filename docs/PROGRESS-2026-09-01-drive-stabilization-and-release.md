@@ -107,7 +107,9 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] M12 后续 CI 暴露 `ps command=` 进程身份判断不等价于生产 executable-path 校验；storage helper 已改用 `proc_pidpath()`，TERM/KILL 前均重新验证 exact `diskimagesiod` PID/path。
 - [x] 进一步定位 owner recovery：DA eject 后 exact DiskImages2 owner 可继续存在且 `system-entities` 可能为空、只剩 partition 子实体或保持原 synthetic entity；storage test 已同步生产 `parsePublication` 合同，只允许 entity 全部匹配 synthetic `/dev/diskN[sM...]`，并在 TERM 后要求 exact PID + entity snapshot 不变才允许 KILL；任何 owner/entity identity 漂移仍 fail-closed。
 - [x] M12 transport-crash teardown 顺序已修正为与已建立生产会话一致：先 bounded native user filesystem unmount + quiescence，再 unpublish DiskImages2，最后清理 crashed transport bridge；禁止在 upper filesystem 仍持有 synthetic device 时直接杀 owner。
-- [x] CI native monorepo ratchet 已随 automation state 抽取更新；UI frame-lifetime parser 在 0 可解析样本时输出 raw row typed-column 诊断，仍 fail-closed 且 33 ms 阈值不变。
+- [x] CI native monorepo ratchet 已随 automation state 抽取更新；native/fast/virtual 在 run `33591256755` 已 PASS。
+- [x] GitHub macOS runner 实证 `hitches-frame-lifetimes` schema 存在但 raw rows=0；UI gate 现优先使用完整 frame-lifetime 表，空表时回退同一 Animation Hitches trace 的稀疏 `hitches` 事件表，并继续显式按 `33_000_000ns` 过滤；本机仍不执行 UI 性能段。
+- [x] M12 实证 transport crash 后 ordinary DA unmount callback 会 20s timeout；crash-only synthetic fixture path 改为先证明 exact DiskImages2 identity，再通过既有 helper 执行 bounded `unmount(2, MNT_FORCE)`，随后 publication eject → crashed bridge cleanup，避免把正常 teardown 的优雅 unmount 语义错误套到 lower transport 已死亡场景。
 - [ ] Phase B commits/push。
 
 ## Phase C — App/UI 文件职责拆分

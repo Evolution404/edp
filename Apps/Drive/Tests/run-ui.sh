@@ -9,6 +9,7 @@ HITCH_LOG="${BUILD_ROOT}/hitch.log"
 TRACE="${BUILD_ROOT}/sidebar-hitches.trace"
 TOC_XML="${BUILD_ROOT}/trace-toc.xml"
 HITCH_XML="${BUILD_ROOT}/hitches.xml"
+HITCH_EVENT_XML="${BUILD_ROOT}/hitch-events.xml"
 mkdir -p "${BUILD_ROOT}"
 cleanup() {
   if [[ -n "${HITCH_PID:-}" ]] && kill -0 "${HITCH_PID}" 2>/dev/null; then
@@ -94,9 +95,13 @@ echo 'UI_HITCH_TRACE_SCHEMAS:'
 xcrun xctrace export --input "${TRACE}" \
   --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches-frame-lifetimes"]' \
   --output "${HITCH_XML}"
+xcrun xctrace export --input "${TRACE}" \
+  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches"]' \
+  --output "${HITCH_EVENT_XML}"
 python3 "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py" \
   --toc "${TOC_XML}" \
   --hitches "${HITCH_XML}" \
+  --events "${HITCH_EVENT_XML}" \
   --log "${HITCH_LOG}"
 
 echo 'RESULT=DRIVE_UI_OK'

@@ -88,9 +88,10 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 /usr/bin/grep -Fq 'if (( iteration < LOOP_COUNT )); then' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'DADiskEject(disk, kDADiskEjectOptionDefault' "${DA_MOUNT_SOURCE}"
 M12_SECTION="$(/usr/bin/awk '/^run_m12\(\)/,/^run_m14\(\)/' "${STORAGE_RUNNER}")"
-/usr/bin/grep -Fq 'unmount_path "$mountpoint"' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'force_unmount_synthetic_path "$mountpoint" "$bsd" "$bridge/volume.raw"' <<<"${M12_SECTION}"
 /usr/bin/grep -Fq 'eject_image "$bsd" "$bridge/volume.raw"' <<<"${M12_SECTION}"
 /usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'force_unmount_synthetic_path() {' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_DA_EJECT_OWNER_RECOVERY_OK'
@@ -100,6 +101,7 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_DA_EJECT_OWNER_RECOVERY_OK'
 # any FSKit volume is active, and never grow into an unbounded retry loop.
 FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c"
 /usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${FSKIT_GUARD_SOURCE}"
+/usr/bin/grep -Fq 'int result = unmount(argv[1], MNT_FORCE);' "${FSKIT_GUARD_SOURCE}"
 /usr/bin/grep -Fq -- '--assert-no-fskit-mounts' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'command" == "/usr/libexec/fskit_agent"' "${STORAGE_RUNNER}"
@@ -156,9 +158,9 @@ echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
 /usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches-frame-lifetimes"]' "${UI_RUNNER}"
-/usr/bin/grep -Fq 'children = list(row)' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
-/usr/bin/grep -Fq 'is_duration=False' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
-/usr/bin/grep -Fq 'is_duration=True' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
+/usr/bin/grep -Fq 'table[@schema="hitches"]' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'UI_HITCH_SAMPLE_SOURCE=' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
+/usr/bin/grep -Fq 'source = "hitch-events"' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
 /usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
 echo 'RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK'
 

@@ -978,6 +978,29 @@ unmount_path() {
   wait_for_native_filesystem_quiescence
 }
 
+force_unmount_synthetic_path() {
+  local mountpoint="$1"
+  local bsd="$2"
+  local backing="$3"
+  [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
+  assert_synthetic_device "$bsd" "$backing"
+  if is_mounted "$mountpoint"; then
+    local source
+    source="$("$FSKIT_GUARD_BIN" --mount-source "$mountpoint")"
+    [[ "$source" == "/dev/$bsd" ]] || {
+      echo "refusing forced unmount for mismatched synthetic source: $mountpoint source=$source expected=/dev/$bsd" >&2
+      return 1
+    }
+    # Transport-crash recovery cannot wait on the ordinary DA callback path:
+    # the dead lower transport can leave that callback blocked. The helper uses
+    # unmount(2, MNT_FORCE), but only after the exact DiskImages2 fixture identity
+    # above has been proven.
+    bounded 12 "$FSKIT_GUARD_BIN" "$mountpoint" >/dev/null
+  fi
+  ! is_mounted "$mountpoint" || return 1
+  wait_for_native_filesystem_quiescence
+}
+
 assert_no_test_artifacts() {
   local label="$1"
   if ! "$FSKIT_GUARD_BIN" --assert-no-mount-prefix "$WORK_DIR/"; then
@@ -1310,7 +1333,7 @@ run_m12() {
   # only then recover the crashed transport bridge. Killing diskimagesiod while
   # the upper filesystem still owns the synthetic device can strand the owner
   # in an uninterruptible teardown state.
-  unmount_path "$mountpoint"
+  force_unmount_synthetic_path "$mountpoint" "$bsd" "$bridge/volume.raw"
   eject_image "$bsd" "$bridge/volume.raw"
   cleanup_crashed_local_mount "$bridge"
   assert_no_test_artifacts M12-crash
