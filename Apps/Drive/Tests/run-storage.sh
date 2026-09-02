@@ -899,6 +899,26 @@ format_raw_filesystem() {
   return 1
 }
 
+wait_for_child_exit_bounded() {
+  local pid="$1"
+  local timeout_tenths="$2"
+  local label="$3"
+  local state=""
+  for _ in $(/usr/bin/seq 1 "$timeout_tenths"); do
+    if ! /bin/kill -0 "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    state="$(/bin/ps -p "$pid" -o state= 2>/dev/null | /usr/bin/xargs || true)"
+    if [[ "$state" == Z* ]]; then
+      return 0
+    fi
+    /bin/sleep 0.1
+  done
+  state="$(/bin/ps -p "$pid" -o state=,stat=,command= 2>/dev/null | /usr/bin/xargs || true)"
+  echo "STORAGE_CHILD_EXIT_TIMEOUT=$label pid=$pid state=${state:-unknown}" >&2
+  return 1
+}
+
 start_adapter() {
   local partition="$1"
   local bridge="$2"
@@ -931,12 +951,10 @@ start_adapter() {
 
     if /bin/kill -0 "$adapter_pid" >/dev/null 2>&1; then
       /bin/kill -TERM "$adapter_pid" >/dev/null 2>&1 || true
-      for _ in $(/usr/bin/seq 1 50); do
-        /bin/kill -0 "$adapter_pid" >/dev/null 2>&1 || break
-        /bin/sleep 0.05
-      done
-      /bin/kill -0 "$adapter_pid" >/dev/null 2>&1 \
-        && /bin/kill -KILL "$adapter_pid" >/dev/null 2>&1 || true
+      if ! wait_for_child_exit_bounded "$adapter_pid" 25 "adapter-start-term-$tag"; then
+        /bin/kill -KILL "$adapter_pid" >/dev/null 2>&1 || true
+        wait_for_child_exit_bounded "$adapter_pid" 30 "adapter-start-kill-$tag" || return 1
+      fi
     fi
     wait "$adapter_pid" >/dev/null 2>&1 || true
 
@@ -961,15 +979,18 @@ stop_adapter() {
   if /bin/kill -0 "$pid" >/dev/null 2>&1; then
     /bin/kill -TERM "$pid"
   fi
-  for _ in $(/usr/bin/seq 1 450); do
-    /bin/kill -0 "$pid" >/dev/null 2>&1 || break
-    /bin/sleep 0.1
-  done
-  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
+  if ! wait_for_child_exit_bounded "$pid" 450 "adapter-term-$tag"; then
     echo "adapter ignored bounded SIGTERM teardown: $tag" >&2
+    if is_mounted "$bridge"; then
+      log "STORAGE_ADAPTER_BRIDGE_RECOVERY=$tag"
+      cleanup_crashed_local_mount "$bridge" || true
+      if wait_for_child_exit_bounded "$pid" 100 "adapter-post-bridge-recovery-$tag"; then
+        wait "$pid" >/dev/null 2>&1 || true
+        return 0
+      fi
+    fi
     /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-    wait "$pid" >/dev/null 2>&1 || true
-    return 1
+    wait_for_child_exit_bounded "$pid" 30 "adapter-kill-$tag" || return 1
   fi
   wait "$pid" || {
     echo "adapter returned failure during teardown: $tag" >&2
@@ -1366,6 +1387,7 @@ run_m12() {
   # lower transport and prove exact bridge/publication cleanup plus remount.
   unmount_path "$mountpoint"
   /bin/kill -KILL "$pid"
+  wait_for_child_exit_bounded "$pid" 30 "m12-crash-kill" || return 1
   wait "$pid" >/dev/null 2>&1 || true
   cleanup_crashed_local_mount "$bridge"
   eject_image "$bsd" "$bridge/volume.raw"
