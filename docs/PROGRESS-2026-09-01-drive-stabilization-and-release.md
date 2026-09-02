@@ -91,8 +91,9 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] persistent runtime state 已抽至 `EDPRuntimeState.swift`：state roots、legacy migration、credential/policy store factory 不再属于 daemon orchestration；runtime 降至 4697 行。
 - [x] device operations 已抽至 `EDPDeviceOperations.swift`：discovery、filesystem probe、credential verify、CLI authorize 不再属于 daemon orchestration；runtime 降至 4548 行。
 - [x] mount support 已抽至 `EDPMountSupport.swift`：transport spawn、raw-fd child inheritance、session model、mount operation box 不再属于主 runtime；runtime 降至 4361 行。
+- [x] raw-access orchestration 已抽至 `EDPRawAccessCoordinator.swift`：retained lease、single-flight waiters、ready/error state、raw worker queue、temporary whole-unmount、EBUSY exact-generation force-whole + single retry 全部移出 daemon controller；controller 仅提供当前 generation predicate 与 activity 回调。S31-S35/property/fast/system/virtual 全绿；runtime 降至 4202 行。
 - [ ] 继续抽纯 model/key/helper。
-- [ ] 抽 `EDPRawAccessController` orchestration（single-flight + EBUSY exact-generation recovery + lease state）。
+- [x] 抽 `EDPRawAccessController` orchestration（single-flight + EBUSY exact-generation recovery + lease state）。
 - [ ] 抽 auto-mount policy/manual suppression。
 - [ ] 抽 eject/shutdown orchestration。
 - [ ] 抽 recovery orchestration。

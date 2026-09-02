@@ -2380,9 +2380,7 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
     }
 }
 
-typealias EDPRawAccessLeaseOpening = @Sendable (PhysicalDisk) throws -> EDPRawAccessLease
 typealias EDPCredentialVerifying = @Sendable (PhysicalDisk, UInt32, [UInt8], Int32) throws -> Void
-typealias EDPRawAccessLeaseCompletion = @Sendable (EDPRawAccessLease?, EDPLifecycleFailure?) -> Void
 
 private final class EDPSensitiveBytesBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -2413,11 +2411,9 @@ final class EDPDaemonController: @unchecked Sendable {
     private let diskArbitration: any EDPDaemonDiskArbitrating
     private let mediaProvider: any EDPWholeUSBMediaProviding
     private let metadataReader: any EDPRawMetadataReading
-    private let rawAccessLeaseOpener: EDPRawAccessLeaseOpening
-    private let rawAccessOpenerRunsOffControllerQueue: Bool
+    private let rawAccess: EDPRawAccessCoordinator
     private let credentialVerifier: EDPCredentialVerifying
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
-    private let rawAccessQueue = DispatchQueue(label: "com.edp.drive.raw-access", qos: .userInitiated)
     private let queueKey = DispatchSpecificKey<UInt8>()
     private var failedMounts = [String: String]()
     private var failedMountCodes = [String: EDPLifecycleFailureCode]()
@@ -2426,12 +2422,8 @@ final class EDPDaemonController: @unchecked Sendable {
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
-    private var rawAccessLeases = [String: EDPRawAccessLease]()
-    private var rawAccessProbeWaiters = [String: [EDPRawAccessLeaseCompletion]]()
     private var ejectingUSBRegistryIDs = [String: UInt64]()
     private var ejectCompletionWaiters = [String: [EDPDaemonMountCompletion]]()
-    private var rawAccessReadyByDeviceID = [String: Bool]()
-    private var rawAccessErrorsByDeviceID = [String: String]()
     private var lastDiscoveryDiagnostics = ["discovery_not_started"]
     private var discoveryScanCount: UInt64 = 0
     private var lastDiscoveryTimestamp = ""
@@ -2456,14 +2448,16 @@ final class EDPDaemonController: @unchecked Sendable {
         self.mediaProvider = mediaProvider
         queue.setSpecific(key: queueKey, value: 1)
         self.metadataReader = metadataReader
+        let effectiveRawAccessLeaseOpener: EDPRawAccessLeaseOpening
+        let rawAccessOpenerRunsOffControllerQueue: Bool
         if let rawAccessLeaseOpener {
-            self.rawAccessLeaseOpener = rawAccessLeaseOpener
-            self.rawAccessOpenerRunsOffControllerQueue = false
+            effectiveRawAccessLeaseOpener = rawAccessLeaseOpener
+            rawAccessOpenerRunsOffControllerQueue = false
         } else {
-            self.rawAccessLeaseOpener = { disk in
+            effectiveRawAccessLeaseOpener = { disk in
                 try openPersistentRawAccess(for: disk, mediaProvider: mediaProvider)
             }
-            self.rawAccessOpenerRunsOffControllerQueue = true
+            rawAccessOpenerRunsOffControllerQueue = true
         }
         self.credentialVerifier = credentialVerifier ?? { disk, partitionType, password, rawFD in
             try verifyPartitionType(
@@ -2479,7 +2473,14 @@ final class EDPDaemonController: @unchecked Sendable {
         self.store = try store ?? makeCredentialStore()
         self.policies = try policies ?? makePolicyStore()
         self.manager = try manager ?? MountManager()
-        self.diskArbitration = try diskArbitration ?? EDPDiskArbitrationController()
+        let effectiveDiskArbitration = try diskArbitration ?? EDPDiskArbitrationController()
+        self.diskArbitration = effectiveDiskArbitration
+        self.rawAccess = EDPRawAccessCoordinator(
+            ownerQueue: queue,
+            diskArbitration: effectiveDiskArbitration,
+            leaseOpener: effectiveRawAccessLeaseOpener,
+            openerRunsOffOwnerQueue: rawAccessOpenerRunsOffControllerQueue
+        )
         _ = try self.store.load()
         _ = try self.policies.load()
         if performLegacyRuntimeMigration {
@@ -2585,8 +2586,10 @@ final class EDPDaemonController: @unchecked Sendable {
                     )
                 } catch {
                     if let rawFailure = EDPLifecycleFailure.recognizedRawAccessFailure(error) {
-                        rawAccessReadyByDeviceID[disk.deviceID] = false
-                        rawAccessErrorsByDeviceID[disk.deviceID] = rawFailure.description
+                        rawAccess.markFailure(
+                            deviceID: disk.deviceID,
+                            detail: rawFailure.description
+                        )
                         continue
                     }
                     defaultProbeSuppressions.insert(partitionKey)
@@ -2601,12 +2604,7 @@ final class EDPDaemonController: @unchecked Sendable {
     }
 
     private func rawAccessLeaseLocked(for disk: PhysicalDisk) -> EDPRawAccessLease? {
-        guard let lease = rawAccessLeases[disk.deviceID],
-              lease.registryEntryID == disk.registryEntryID,
-              lease.rawPath == disk.rawPath else {
-            return nil
-        }
-        return lease
+        rawAccess.lease(for: disk)
     }
 
     private func rawAccessGenerationMatchesLocked(_ disk: PhysicalDisk) -> Bool {
@@ -2620,184 +2618,45 @@ final class EDPDaemonController: @unchecked Sendable {
         return true
     }
 
-    private func launchRawAccessOpenAttemptLocked(
-        for disk: PhysicalDisk,
-        allowBusyRecovery: Bool
-    ) {
-        let performOpen: @Sendable () -> Void = { [weak self] in
-            guard let self else { return }
-            let result: Result<EDPRawAccessLease, EDPLifecycleFailure>
-            do {
-                result = .success(try self.rawAccessLeaseOpener(disk))
-            } catch {
-                result = .failure(userFacingRawAccessFailure(error))
-            }
-            self.onControllerQueue {
-                self.handleRawAccessOpenResultLocked(
-                    disk: disk,
-                    result: result,
-                    allowBusyRecovery: allowBusyRecovery
-                )
-            }
-        }
-        if rawAccessOpenerRunsOffControllerQueue {
-            rawAccessQueue.async(execute: performOpen)
-        } else {
-            performOpen()
-        }
-    }
-
-    private func handleRawAccessOpenResultLocked(
-        disk: PhysicalDisk,
-        result: Result<EDPRawAccessLease, EDPLifecycleFailure>,
-        allowBusyRecovery: Bool
-    ) {
-        guard rawAccessGenerationMatchesLocked(disk) else {
-            if case .success(let lease) = result { lease.invalidate() }
-            finishRawAccessProbeLocked(
-                disk: disk,
-                lease: nil,
-                failure: EDPLifecycleFailure(
-                    code: .deviceChanged,
-                    detail: "EDP device changed while raw access was being prepared"
-                )
-            )
-            return
-        }
-
-        switch result {
-        case .success(let lease):
-            finishRawAccessProbeLocked(disk: disk, lease: lease, failure: nil)
-        case .failure(let failure):
-            guard allowBusyRecovery, EDPLifecycleFailure.isRawAccessBusy(failure) else {
-                finishRawAccessProbeLocked(disk: disk, lease: nil, failure: failure)
-                return
-            }
-
-            addActivity(
-                "物理介质被系统占用，执行一次强制整盘卸载后重试",
-                deviceID: disk.deviceID
-            )
-            diskArbitration.forceUnmountWholeAsync(
-                disk.bsdName,
-                expectedRegistryEntryID: disk.registryEntryID
-            ) { [weak self] error in
-                guard let self else { return }
-                self.onControllerQueue {
-                    guard self.rawAccessGenerationMatchesLocked(disk) else {
-                        self.finishRawAccessProbeLocked(
-                            disk: disk,
-                            lease: nil,
-                            failure: EDPLifecycleFailure(
-                                code: .deviceChanged,
-                                detail: "EDP device changed during raw busy recovery"
-                            )
-                        )
-                        return
-                    }
-                    if let error {
-                        self.finishRawAccessProbeLocked(
-                            disk: disk,
-                            lease: nil,
-                            failure: EDPLifecycleFailure(
-                                code: .teardownFailed,
-                                detail: "EDP raw busy recovery failed: \(error)"
-                            )
-                        )
-                        return
-                    }
-                    self.launchRawAccessOpenAttemptLocked(
-                        for: disk,
-                        allowBusyRecovery: false
-                    )
-                }
-            }
-        }
-    }
-
     private func rawAccessProbeAsyncLocked(
         for disk: PhysicalDisk,
         temporarilyUnmount: Bool,
         completion: @escaping EDPRawAccessLeaseCompletion
     ) {
-        if let lease = rawAccessLeaseLocked(for: disk) {
-            rawAccessReadyByDeviceID[disk.deviceID] = true
-            rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
-            completion(lease, nil)
-            return
-        }
-        if rawAccessProbeWaiters[disk.deviceID] != nil {
-            rawAccessProbeWaiters[disk.deviceID, default: []].append(completion)
-            return
-        }
-        rawAccessProbeWaiters[disk.deviceID] = [completion]
-
-        let openLease: @Sendable () -> Void = { [weak self] in
-            guard let self else { return }
-            self.launchRawAccessOpenAttemptLocked(for: disk, allowBusyRecovery: true)
-        }
-
-        guard temporarilyUnmount,
-              EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) else {
-            openLease()
-            return
-        }
-        diskArbitration.unmountWholeAsync(
-            disk.bsdName,
-            expectedRegistryEntryID: disk.registryEntryID
-        ) { [weak self] error in
-            guard let self else { return }
-            self.onControllerQueue {
-                if let error {
-                    self.finishRawAccessProbeLocked(
-                        disk: disk,
-                        lease: nil,
-                        failure: EDPLifecycleFailure(
-                            code: .teardownFailed,
-                            detail: String(describing: error)
-                        )
-                    )
-                    return
-                }
-                openLease()
-            }
-        }
-    }
-
-    private func finishRawAccessProbeLocked(
-        disk: PhysicalDisk,
-        lease: EDPRawAccessLease?,
-        failure: EDPLifecycleFailure?
-    ) {
-        if let lease {
-            rawAccessLeases[disk.deviceID] = lease
-            rawAccessReadyByDeviceID[disk.deviceID] = true
-            rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
-        } else {
-            rawAccessLeases.removeValue(forKey: disk.deviceID)
-            rawAccessReadyByDeviceID[disk.deviceID] = false
-            rawAccessErrorsByDeviceID[disk.deviceID] = failure?.description ?? "raw access probe failed"
-        }
-        let callbacks = rawAccessProbeWaiters.removeValue(forKey: disk.deviceID) ?? []
-        for callback in callbacks { callback(lease, failure) }
+        rawAccess.probeAsync(
+            for: disk,
+            temporarilyUnmount: temporarilyUnmount,
+            generationMatches: { [weak self] candidate in
+                self?.rawAccessGenerationMatchesLocked(candidate) == true
+            },
+            onBusyRecovery: { [weak self] candidate in
+                self?.addActivity(
+                    "物理介质被系统占用，执行一次强制整盘卸载后重试",
+                    deviceID: candidate.deviceID
+                )
+            },
+            completion: completion
+        )
     }
 
     private func requireRawAccessLeaseAsyncLocked(
         for disk: PhysicalDisk,
         completion: @escaping EDPRawAccessLeaseCompletion
     ) {
-        guard ejectingUSBRegistryIDs[disk.deviceID] == nil else {
-            completion(nil, EDPLifecycleFailure(
-                code: .deviceChanged,
-                detail: "EDP device was safely ejected; physically reinsert it before mounting"
-            ))
-            return
-        }
-        if let lease = rawAccessLeaseLocked(for: disk) {
-            completion(lease, nil)
-            return
-        }
-        rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true, completion: completion)
+        rawAccess.requireLeaseAsync(
+            for: disk,
+            isEjecting: ejectingUSBRegistryIDs[disk.deviceID] != nil,
+            generationMatches: { [weak self] candidate in
+                self?.rawAccessGenerationMatchesLocked(candidate) == true
+            },
+            onBusyRecovery: { [weak self] candidate in
+                self?.addActivity(
+                    "物理介质被系统占用，执行一次强制整盘卸载后重试",
+                    deviceID: candidate.deviceID
+                )
+            },
+            completion: completion
+        )
     }
 
     private func mountBootAsyncLocked(
@@ -2888,13 +2747,9 @@ final class EDPDaemonController: @unchecked Sendable {
                     ejectingUSBRegistryIDs.removeValue(forKey: deviceID)
                     diskArbitration.allowAutomount(usbRegistryEntryID: usbRegistryEntryID)
                 }
-                let currentByDeviceID = Dictionary(uniqueKeysWithValues: disks.map { ($0.deviceID, $0) })
-                rawAccessLeases = rawAccessLeases.filter { deviceID, lease in
-                    guard let disk = currentByDeviceID[deviceID] else { return false }
-                    return lease.registryEntryID == disk.registryEntryID && lease.rawPath == disk.rawPath
-                }
+                rawAccess.prune(to: disks)
                 for disk in disks where ejectingUSBRegistryIDs[disk.deviceID] == nil
-                    && (rawAccessReadyByDeviceID[disk.deviceID] == nil
+                    && (rawAccess.readiness(deviceID: disk.deviceID) == nil
                         || rawAccessLeaseLocked(for: disk) == nil) {
                     rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, failure in
                         guard let self else { return }
@@ -2926,12 +2781,6 @@ final class EDPDaemonController: @unchecked Sendable {
                         self.missingCleanupScheduled = false
                         self.reconcileLocked()
                     }
-                }
-                rawAccessReadyByDeviceID = rawAccessReadyByDeviceID.filter {
-                    connectedDeviceIDs.contains($0.key)
-                }
-                rawAccessErrorsByDeviceID = rawAccessErrorsByDeviceID.filter {
-                    connectedDeviceIDs.contains($0.key)
                 }
                 failedMounts = failedMounts.filter { item in
                     guard let separator = item.key.lastIndex(of: ":") else { return false }
@@ -3114,7 +2963,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         sizeBytes: disk?.sizeBytes ?? policy?.lastSizeBytes ?? 0,
                         connected: disk != nil,
                         privilegedAccessReady: disk.map {
-                            rawAccessReadyByDeviceID[$0.deviceID] == true
+                            rawAccess.readiness(deviceID: $0.deviceID) == true
                         } ?? false,
                         partitions: partitions
                     )
@@ -3335,14 +3184,15 @@ final class EDPDaemonController: @unchecked Sendable {
                                 partitionType: partitionType
                             ) ?? .unknown
                             if code == .rawAccessPermission || code == .rawAccessUnavailable {
-                                self.rawAccessReadyByDeviceID[disk.deviceID] = false
-                                self.rawAccessErrorsByDeviceID[disk.deviceID] = errorMessage
+                                self.rawAccess.markFailure(
+                                    deviceID: disk.deviceID,
+                                    detail: errorMessage
+                                )
                             }
                             self.failedMounts[partitionKey] = errorMessage
                             self.failedMountCodes[partitionKey] = code
                         } else {
-                            self.rawAccessReadyByDeviceID[disk.deviceID] = true
-                            self.rawAccessErrorsByDeviceID.removeValue(forKey: disk.deviceID)
+                            self.rawAccess.markReady(deviceID: disk.deviceID)
                             self.failedMounts.removeValue(forKey: partitionKey)
                             self.failedMountCodes.removeValue(forKey: partitionKey)
                         }
@@ -3659,11 +3509,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         return
                     }
 
-                    if let lease = self.rawAccessLeases.removeValue(forKey: deviceID) {
-                        lease.invalidate()
-                    }
-                    self.rawAccessReadyByDeviceID[deviceID] = false
-                    self.rawAccessErrorsByDeviceID.removeValue(forKey: deviceID)
+                    self.rawAccess.prepareForPhysicalEject(deviceID: deviceID)
 
                     self.performPhysicalEjectAsyncLocked(disk: disk) { [weak self] errorMessage in
                         guard let self else { return }
@@ -3692,8 +3538,7 @@ final class EDPDaemonController: @unchecked Sendable {
                                 )
                             }
                             self.connectedDisks.removeAll { $0.deviceID == deviceID }
-                            self.rawAccessReadyByDeviceID.removeValue(forKey: deviceID)
-                            self.rawAccessErrorsByDeviceID.removeValue(forKey: deviceID)
+                            self.rawAccess.removeDevice(deviceID: deviceID)
                             self.addActivity("设备已安全推出", deviceID: deviceID)
                             finishRequest(nil)
                         }
@@ -3815,9 +3660,8 @@ final class EDPDaemonController: @unchecked Sendable {
                 "manualUnmountSuppressions": manualUnmountSuppressions.sorted(),
                 "rawAccessMode": "single EDP Drive Full Disk Access identity broker + retained raw fd + inherited transport fd",
                 "rawAccessDaemon": rawAccessDaemonPath(),
-                "rawAccessReadyDeviceIDs": rawAccessReadyByDeviceID
-                    .filter { $0.value }.map(\.key).sorted(),
-                "rawAccessErrors": rawAccessErrorsByDeviceID,
+                "rawAccessReadyDeviceIDs": rawAccess.readyDeviceIDs(),
+                "rawAccessErrors": rawAccess.errorsSnapshot(),
                 "nativeMountCount": EDPNativeMountTable.entries().count,
                 "legacyDiscoveryCLI": false,
                 "legacyMountCLI": false,
@@ -3866,10 +3710,7 @@ final class EDPDaemonController: @unchecked Sendable {
                     finalError = "one or more EDP sessions could not be safely unmounted"
                 }
                 if finalError == nil {
-                    for lease in self.rawAccessLeases.values { lease.invalidate() }
-                    self.rawAccessLeases.removeAll()
-                    self.rawAccessReadyByDeviceID.removeAll()
-                    self.rawAccessErrorsByDeviceID.removeAll()
+                    self.rawAccess.invalidateAll()
                     self.connectedDisks.removeAll()
                     self.addActivity("后台服务已安全停止")
                 } else {

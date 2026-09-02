@@ -1,0 +1,306 @@
+import Foundation
+
+typealias EDPRawAccessLeaseOpening = @Sendable (PhysicalDisk) throws -> EDPRawAccessLease
+typealias EDPRawAccessLeaseCompletion = @Sendable (EDPRawAccessLease?, EDPLifecycleFailure?) -> Void
+
+final class EDPRawAccessCoordinator: @unchecked Sendable {
+    private let ownerQueue: DispatchQueue
+    private let diskArbitration: any EDPDaemonDiskArbitrating
+    private let leaseOpener: EDPRawAccessLeaseOpening
+    private let openerRunsOffOwnerQueue: Bool
+    private let rawAccessQueue = DispatchQueue(
+        label: "com.edp.drive.raw-access",
+        qos: .userInitiated
+    )
+
+    // These collections are ownerQueue-confined. The coordinator deliberately
+    // does not add a second locking domain around controller lifecycle state.
+    private var leases = [String: EDPRawAccessLease]()
+    private var probeWaiters = [String: [EDPRawAccessLeaseCompletion]]()
+    private var readyByDeviceID = [String: Bool]()
+    private var errorsByDeviceID = [String: String]()
+
+    init(
+        ownerQueue: DispatchQueue,
+        diskArbitration: any EDPDaemonDiskArbitrating,
+        leaseOpener: @escaping EDPRawAccessLeaseOpening,
+        openerRunsOffOwnerQueue: Bool
+    ) {
+        self.ownerQueue = ownerQueue
+        self.diskArbitration = diskArbitration
+        self.leaseOpener = leaseOpener
+        self.openerRunsOffOwnerQueue = openerRunsOffOwnerQueue
+    }
+
+    func lease(for disk: PhysicalDisk) -> EDPRawAccessLease? {
+        guard let lease = leases[disk.deviceID],
+              lease.registryEntryID == disk.registryEntryID,
+              lease.rawPath == disk.rawPath else {
+            return nil
+        }
+        return lease
+    }
+
+    func readiness(deviceID: String) -> Bool? {
+        readyByDeviceID[deviceID]
+    }
+
+    func markReady(deviceID: String) {
+        readyByDeviceID[deviceID] = true
+        errorsByDeviceID.removeValue(forKey: deviceID)
+    }
+
+    func markFailure(deviceID: String, detail: String) {
+        readyByDeviceID[deviceID] = false
+        errorsByDeviceID[deviceID] = detail
+    }
+
+    func prune(to disks: [PhysicalDisk]) {
+        let currentByDeviceID = Dictionary(uniqueKeysWithValues: disks.map { ($0.deviceID, $0) })
+        leases = leases.filter { deviceID, lease in
+            guard let disk = currentByDeviceID[deviceID] else { return false }
+            return lease.registryEntryID == disk.registryEntryID && lease.rawPath == disk.rawPath
+        }
+        let connectedDeviceIDs = Set(currentByDeviceID.keys)
+        readyByDeviceID = readyByDeviceID.filter { connectedDeviceIDs.contains($0.key) }
+        errorsByDeviceID = errorsByDeviceID.filter { connectedDeviceIDs.contains($0.key) }
+    }
+
+    func prepareForPhysicalEject(deviceID: String) {
+        if let lease = leases.removeValue(forKey: deviceID) {
+            lease.invalidate()
+        }
+        readyByDeviceID[deviceID] = false
+        errorsByDeviceID.removeValue(forKey: deviceID)
+    }
+
+    func removeDevice(deviceID: String) {
+        if let lease = leases.removeValue(forKey: deviceID) {
+            lease.invalidate()
+        }
+        readyByDeviceID.removeValue(forKey: deviceID)
+        errorsByDeviceID.removeValue(forKey: deviceID)
+    }
+
+    func invalidateAll() {
+        for lease in leases.values { lease.invalidate() }
+        leases.removeAll()
+        readyByDeviceID.removeAll()
+        errorsByDeviceID.removeAll()
+    }
+
+    func readyDeviceIDs() -> [String] {
+        readyByDeviceID.filter { $0.value }.map(\.key).sorted()
+    }
+
+    func errorsSnapshot() -> [String: String] {
+        errorsByDeviceID
+    }
+
+    func probeAsync(
+        for disk: PhysicalDisk,
+        temporarilyUnmount: Bool,
+        generationMatches: @escaping @Sendable (PhysicalDisk) -> Bool,
+        onBusyRecovery: @escaping @Sendable (PhysicalDisk) -> Void,
+        completion: @escaping EDPRawAccessLeaseCompletion
+    ) {
+        if let retained = lease(for: disk) {
+            markReady(deviceID: disk.deviceID)
+            completion(retained, nil)
+            return
+        }
+        if probeWaiters[disk.deviceID] != nil {
+            probeWaiters[disk.deviceID, default: []].append(completion)
+            return
+        }
+        probeWaiters[disk.deviceID] = [completion]
+
+        let openLease: @Sendable () -> Void = { [weak self] in
+            self?.launchOpenAttempt(
+                for: disk,
+                allowBusyRecovery: true,
+                generationMatches: generationMatches,
+                onBusyRecovery: onBusyRecovery
+            )
+        }
+
+        guard temporarilyUnmount,
+              EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) else {
+            openLease()
+            return
+        }
+        diskArbitration.unmountWholeAsync(
+            disk.bsdName,
+            expectedRegistryEntryID: disk.registryEntryID
+        ) { [weak self] error in
+            guard let self else { return }
+            self.ownerQueue.async {
+                if let error {
+                    self.finishProbe(
+                        disk: disk,
+                        lease: nil,
+                        failure: EDPLifecycleFailure(
+                            code: .teardownFailed,
+                            detail: String(describing: error)
+                        )
+                    )
+                    return
+                }
+                openLease()
+            }
+        }
+    }
+
+    func requireLeaseAsync(
+        for disk: PhysicalDisk,
+        isEjecting: Bool,
+        generationMatches: @escaping @Sendable (PhysicalDisk) -> Bool,
+        onBusyRecovery: @escaping @Sendable (PhysicalDisk) -> Void,
+        completion: @escaping EDPRawAccessLeaseCompletion
+    ) {
+        guard !isEjecting else {
+            completion(nil, EDPLifecycleFailure(
+                code: .deviceChanged,
+                detail: "EDP device was safely ejected; physically reinsert it before mounting"
+            ))
+            return
+        }
+        if let retained = lease(for: disk) {
+            completion(retained, nil)
+            return
+        }
+        probeAsync(
+            for: disk,
+            temporarilyUnmount: true,
+            generationMatches: generationMatches,
+            onBusyRecovery: onBusyRecovery,
+            completion: completion
+        )
+    }
+
+    private func launchOpenAttempt(
+        for disk: PhysicalDisk,
+        allowBusyRecovery: Bool,
+        generationMatches: @escaping @Sendable (PhysicalDisk) -> Bool,
+        onBusyRecovery: @escaping @Sendable (PhysicalDisk) -> Void
+    ) {
+        let performOpen: @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            let result: Result<EDPRawAccessLease, EDPLifecycleFailure>
+            do {
+                result = .success(try self.leaseOpener(disk))
+            } catch {
+                result = .failure(userFacingRawAccessFailure(error))
+            }
+            let handle: @Sendable () -> Void = { [weak self] in
+                self?.handleOpenResult(
+                    disk: disk,
+                    result: result,
+                    allowBusyRecovery: allowBusyRecovery,
+                    generationMatches: generationMatches,
+                    onBusyRecovery: onBusyRecovery
+                )
+            }
+            if self.openerRunsOffOwnerQueue {
+                self.ownerQueue.async(execute: handle)
+            } else {
+                // Injected regression openers historically execute synchronously
+                // on the controller queue; preserve that deterministic contract.
+                handle()
+            }
+        }
+        if openerRunsOffOwnerQueue {
+            rawAccessQueue.async(execute: performOpen)
+        } else {
+            performOpen()
+        }
+    }
+
+    private func handleOpenResult(
+        disk: PhysicalDisk,
+        result: Result<EDPRawAccessLease, EDPLifecycleFailure>,
+        allowBusyRecovery: Bool,
+        generationMatches: @escaping @Sendable (PhysicalDisk) -> Bool,
+        onBusyRecovery: @escaping @Sendable (PhysicalDisk) -> Void
+    ) {
+        guard generationMatches(disk) else {
+            if case .success(let lease) = result { lease.invalidate() }
+            finishProbe(
+                disk: disk,
+                lease: nil,
+                failure: EDPLifecycleFailure(
+                    code: .deviceChanged,
+                    detail: "EDP device changed while raw access was being prepared"
+                )
+            )
+            return
+        }
+
+        switch result {
+        case .success(let lease):
+            finishProbe(disk: disk, lease: lease, failure: nil)
+        case .failure(let failure):
+            guard allowBusyRecovery, EDPLifecycleFailure.isRawAccessBusy(failure) else {
+                finishProbe(disk: disk, lease: nil, failure: failure)
+                return
+            }
+
+            onBusyRecovery(disk)
+            diskArbitration.forceUnmountWholeAsync(
+                disk.bsdName,
+                expectedRegistryEntryID: disk.registryEntryID
+            ) { [weak self] error in
+                guard let self else { return }
+                self.ownerQueue.async {
+                    guard generationMatches(disk) else {
+                        self.finishProbe(
+                            disk: disk,
+                            lease: nil,
+                            failure: EDPLifecycleFailure(
+                                code: .deviceChanged,
+                                detail: "EDP device changed during raw busy recovery"
+                            )
+                        )
+                        return
+                    }
+                    if let error {
+                        self.finishProbe(
+                            disk: disk,
+                            lease: nil,
+                            failure: EDPLifecycleFailure(
+                                code: .teardownFailed,
+                                detail: "EDP raw busy recovery failed: \(error)"
+                            )
+                        )
+                        return
+                    }
+                    self.launchOpenAttempt(
+                        for: disk,
+                        allowBusyRecovery: false,
+                        generationMatches: generationMatches,
+                        onBusyRecovery: onBusyRecovery
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishProbe(
+        disk: PhysicalDisk,
+        lease: EDPRawAccessLease?,
+        failure: EDPLifecycleFailure?
+    ) {
+        if let lease {
+            leases[disk.deviceID] = lease
+            markReady(deviceID: disk.deviceID)
+        } else {
+            leases.removeValue(forKey: disk.deviceID)
+            markFailure(
+                deviceID: disk.deviceID,
+                detail: failure?.description ?? "raw access probe failed"
+            )
+        }
+        let callbacks = probeWaiters.removeValue(forKey: disk.deviceID) ?? []
+        for callback in callbacks { callback(lease, failure) }
+    }
+}

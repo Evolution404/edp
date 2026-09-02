@@ -11,6 +11,7 @@ RUNTIME_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeSupport.swift"
 RUNTIME_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeState.swift"
 DEVICE_OPERATIONS_SOURCE="${ROOT}/Apps/Drive/product/EDPDeviceOperations.swift"
 RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
+RAW_ACCESS_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccessCoordinator.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 MOUNT_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPMountSupport.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -409,15 +410,21 @@ echo 'RESULT=DRIVE_SYSTEM_MOUNT_SUPPORT_SPLIT_OK'
 ! /usr/bin/grep -Fq 'private func verifyPartitionType(' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_DEVICE_OPERATIONS_SPLIT_OK'
 
-# Raw lease ownership and raw metadata adapter live outside the daemon controller.
-# The orchestration layer may retain leases and own EBUSY recovery, but it must
-# not grow back direct broker/open/pread validation primitives.
+# Raw primitives and raw lifecycle orchestration both live outside the daemon
+# controller. The coordinator owns retained leases, single-flight waiters,
+# readiness/error state, raw worker scheduling, and the one-shot exact-generation
+# EBUSY recovery; controller code only supplies its current generation predicate.
 /usr/bin/grep -Fq 'final class EDPRawAccessLease' "${RAW_ACCESS_SOURCE}"
 /usr/bin/grep -Fq 'func openPersistentRawAccess(' "${RAW_ACCESS_SOURCE}"
 /usr/bin/grep -Fq 'struct EDPPrivilegedRawMetadataReader' "${RAW_ACCESS_SOURCE}"
 /usr/bin/grep -Fq 'EDPPhysicalDeviceRevalidation.metadataStillMatches' "${RAW_ACCESS_SOURCE}"
+/usr/bin/grep -Fq 'final class EDPRawAccessCoordinator' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'private var leases = [String: EDPRawAccessLease]()' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'private var probeWaiters = [String: [EDPRawAccessLeaseCompletion]]()' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'func requireLeaseAsync(' "${RAW_ACCESS_COORDINATOR_SOURCE}"
 ! /usr/bin/grep -Fq 'final class EDPRawAccessLease' "${RUNTIME_SOURCE}"
-! /usr/bin/grep -Fq 'private func openPersistentRawAccess(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'rawAccessLeases' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'rawAccessProbeWaiters' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RAW_ACCESS_SPLIT_OK'
 
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
@@ -454,9 +461,10 @@ echo 'RESULT=DRIVE_SYSTEM_RAW_VALIDATION_DIAGNOSTICS_OK'
 # EPERM/metadata failures or a replacement disk reusing the BSD name.
 /usr/bin/grep -Fq 'func forceUnmountWholeAsync(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'kDADiskUnmountOptionWhole | kDADiskUnmountOptionForce' "${NATIVE_SYSTEM_SOURCE}"
-/usr/bin/grep -Fq 'EDPLifecycleFailure.isRawAccessBusy(failure)' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'allowBusyRecovery: false' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'expectedRegistryEntryID: disk.registryEntryID' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'EDPLifecycleFailure.isRawAccessBusy(failure)' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'allowBusyRecovery: false' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'expectedRegistryEntryID: disk.registryEntryID' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'rawAccessGenerationMatchesLocked(candidate)' "${RUNTIME_SOURCE}"
 for scenario in S31 S32 S33 S34 S35; do
   /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
 done
