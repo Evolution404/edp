@@ -8,6 +8,55 @@ DRIVE_UI_EXECUTABLE="/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"
 SERVICE_UCOMM="edp-drive-servic"
 TRANSPORT_UCOMM="edp-mfmount-loca"
 
+run_bounded() {
+  local timeout_seconds="$1"
+  shift
+  local timeout_tenths=$((timeout_seconds * 10))
+  local pid state status i
+
+  "$@" &
+  pid=$!
+  for ((i = 0; i < timeout_tenths; i++)); do
+    if ! /bin/kill -0 "${pid}" >/dev/null 2>&1; then
+      status=0
+      wait "${pid}" || status=$?
+      return "${status}"
+    fi
+    state="$(/bin/ps -p "${pid}" -o state= 2>/dev/null | /usr/bin/xargs || true)"
+    if [[ "${state}" == Z* ]]; then
+      status=0
+      wait "${pid}" || status=$?
+      return "${status}"
+    fi
+    /bin/sleep 0.1
+  done
+
+  /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
+  for ((i = 0; i < 10; i++)); do
+    state="$(/bin/ps -p "${pid}" -o state= 2>/dev/null | /usr/bin/xargs || true)"
+    if ! /bin/kill -0 "${pid}" >/dev/null 2>&1 || [[ "${state}" == Z* ]]; then
+      wait "${pid}" >/dev/null 2>&1 || true
+      echo "EDP Drive upgrade bounded command timed out: $*" >&2
+      return 124
+    fi
+    /bin/sleep 0.1
+  done
+
+  /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
+  for ((i = 0; i < 20; i++)); do
+    state="$(/bin/ps -p "${pid}" -o state= 2>/dev/null | /usr/bin/xargs || true)"
+    if ! /bin/kill -0 "${pid}" >/dev/null 2>&1 || [[ "${state}" == Z* ]]; then
+      wait "${pid}" >/dev/null 2>&1 || true
+      echo "EDP Drive upgrade bounded command timed out: $*" >&2
+      return 124
+    fi
+    /bin/sleep 0.1
+  done
+
+  echo "EDP Drive upgrade bounded command remained after SIGKILL: $*" >&2
+  return 124
+}
+
 pids_for_ucomm() {
   local process_name="$1"
   /bin/ps -axo pid=,ucomm= \
@@ -283,7 +332,7 @@ recover_edp_storage_test_diskimages2_orphans() {
 
   info="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/edp-preinstall-test-hdi.XXXXXX")"
   trap '/bin/rm -f "'"${info}"'"' EXIT
-  /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
+  run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
 
   image_index=0
   while /usr/bin/plutil -type "images.${image_index}" "${info}" >/dev/null 2>&1; do
@@ -298,7 +347,7 @@ recover_edp_storage_test_diskimages2_orphans() {
       if [[ -n "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
         # Refresh immediately before signalling so a recycled PID/backing tuple
         # can never inherit authority from the earlier enumeration.
-        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
         refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
         if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
           echo "EDP Drive upgrade recovering storage-test DiskImages2 orphan (${pid})."
@@ -306,14 +355,14 @@ recover_edp_storage_test_diskimages2_orphans() {
           /bin/sleep 0.5
         fi
 
-        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
         refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
         if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
           /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
           /bin/sleep 0.5
         fi
 
-        /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
         refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
         if [[ -n "${refreshed_pid}" ]]; then
           echo "EDP Drive upgrade could not recover storage-test DiskImages2 orphan; restart macOS and retry." >&2
@@ -411,7 +460,7 @@ recover_macfuse_scratch_orphans() {
 
   local image_index image_path device pid refreshed_pid
   while true; do
-    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
+    run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
     image_index=0
     image_path=""
     device=""
@@ -435,7 +484,7 @@ recover_macfuse_scratch_orphans() {
     # Re-enumerate immediately before every destructive action. The hdiutil
     # images array is mutable after a detach, so exact backing + device identity
     # is the only stable authority; array indices and historical diskN are not.
-    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+    run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
     refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
     if [[ "${refreshed_pid}" != "${pid}" ]]; then
       continue
@@ -449,16 +498,16 @@ recover_macfuse_scratch_orphans() {
     # any FSKit mount is active.
     if validate_diskimages_helper_pid "${pid}"; then
       echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
-      /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
+      run_bounded 12 /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
 
-      /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+      run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
       refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
       if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
         /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
         /bin/sleep 0.2
       fi
 
-      /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+      run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
       refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
       if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
         /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
@@ -472,7 +521,7 @@ recover_macfuse_scratch_orphans() {
     # exited, leaving hdiutil's hdid-pid field stale. In the exact no-mount
     # state, recycle only the console user's fskit_agent and then re-prove the
     # same backing + device tuple. Never act on the recorded PID by itself.
-    /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+    run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
     refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
     if [[ -z "${refreshed_pid}" ]]; then
       continue
@@ -488,7 +537,7 @@ recover_macfuse_scratch_orphans() {
       if recover_stale_console_fskit_agent; then
         wait_for_device_to_disappear "${device#/dev/}" 100 || true
       fi
-      /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+      run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
       refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
       if [[ -z "${refreshed_pid}" ]]; then
         continue
@@ -507,7 +556,7 @@ recover_legacy_root_diskimages2_orphans() {
   local info
   info="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/edp-preinstall-hdi.XXXXXX")"
   trap '/bin/rm -f "'"${info}"'"' EXIT
-  /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
+  run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || return 0
 
   local index=0
   local bridge exposed backing pid refreshed_pid
@@ -521,7 +570,7 @@ recover_legacy_root_diskimages2_orphans() {
         echo "EDP Drive upgrade recovering legacy DiskImages2 orphan ${exposed} (${pid})."
         /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
         if ! wait_for_device_to_disappear "${exposed}" 20; then
-          /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+          run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
           refreshed_pid="$(legacy_orphan_pid_for_backing "${info}" "${backing}")"
           if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
             /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true

@@ -107,13 +107,13 @@ final class EDPVaultViewModel: ObservableObject {
 
                 for attempt in 1...edpMacFUSEEnablementMaxAttempts {
                     do {
-                        restartedAgents = try ensureMacFUSELocalEnablement() || restartedAgents
-                        if macFUSELocalEnablementReady() {
+                        restartedAgents = try await ensureMacFUSELocalEnablement() || restartedAgents
+                        if await macFUSELocalEnablementReady() {
                             // Require the user FSKit state to remain stable for one
                             // observation interval. A clean macFUSE install can
                             // rewrite enabledModules shortly after the App starts.
                             try? await Task.sleep(for: .seconds(1))
-                            if macFUSELocalEnablementReady() {
+                            if await macFUSELocalEnablementReady() {
                                 return (restartedAgents, nil)
                             }
                             lastError = "macFUSE FSKit 启用状态未保持稳定（\(attempt)/\(edpMacFUSEEnablementMaxAttempts)）"

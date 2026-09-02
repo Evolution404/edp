@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 UI_RUNNER="${TEST_ROOT}/run-ui.sh"
+APP_SERVICE_SUPPORT_RUNNER="${TEST_ROOT}/run-app-service-support.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 APP_SERVICE_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/App/Service/EDPAppServiceSupport.swift"
 APP_SMOKE_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/App/Service/EDPXPCSmokeSupport.swift"
@@ -180,7 +181,10 @@ echo 'RESULT=DRIVE_SYSTEM_FACTORY_CLEAN_INSTALLER_BUILD_OK'
 # which is easy to miss in ordinary smoke testing.
 /usr/bin/grep -Fq 'edp-mfmount-local-readwrite' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 /usr/bin/grep -Fq 'edp-mfmount-local-readonly' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
+/usr/bin/grep -Fq '"/Library/Application Support/EDP Drive/bin/diskimages2-attach"' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
+[[ "$(/usr/bin/grep -Fc 'diskimages2-attach' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c")" -eq 1 ]]
 echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
+echo 'RESULT=DRIVE_SYSTEM_DISKIMAGES_HELPER_ALLOWLIST_OK'
 
 # The Animation Hitches performance gate is compositor-sensitive and therefore
 # release-authoritative only on the GitHub Actions runner. Local runs may still
@@ -229,9 +233,9 @@ echo 'RESULT=DRIVE_SYSTEM_UI_SHELL_SPLIT_OK'
 ! /usr/bin/grep -Fq 'struct EDPActivityView: View' "${APP_SOURCE}"
 ! /usr/bin/grep -Fq 'struct EDPSettingsView: View' "${APP_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UI_PAGE_SPLIT_OK'
-/usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() throws -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() async throws -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'let edpDriveServicePath = edpDriveAppPath' "${APP_SERVICE_SUPPORT_SOURCE}"
-! /usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() throws -> Bool' "${APP_SOURCE}"
+! /usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() async throws -> Bool' "${APP_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UI_SERVICE_SUPPORT_SPLIT_OK'
 /usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_SOURCE}"
@@ -285,6 +289,14 @@ STALE_RECOVERY_LINE="$(/usr/bin/grep -nF 'if recover_stale_console_fskit_agent; 
 [[ "${DIRECT_DETACH_LINE}" =~ ^[0-9]+$ && "${STALE_RECOVERY_LINE}" =~ ^[0-9]+$ && "${DIRECT_DETACH_LINE}" -lt "${STALE_RECOVERY_LINE}" ]]
 ! /usr/bin/grep -Fq 'refused to recover macFUSE scratch while an FSKit filesystem is mounted' "${PREINSTALL_SOURCE}"
 ! /usr/bin/grep -Fq 'refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'run_bounded() {' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'run_bounded 8 /usr/bin/hdiutil info -plist' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'run_bounded 12 /usr/bin/hdiutil detach "${device}" -force' "${PREINSTALL_SOURCE}"
+if /usr/bin/grep -Eq '^[[:space:]]*/usr/bin/hdiutil[[:space:]]' "${PREINSTALL_SOURCE}"; then
+  echo 'unbounded hdiutil call in production preinstall' >&2
+  exit 1
+fi
+echo 'RESULT=DRIVE_SYSTEM_INSTALLER_HDIUTIL_BOUNDED_OK'
 echo 'RESULT=DRIVE_SYSTEM_UPGRADE_UI_HANDOFF_OK'
 echo 'RESULT=DRIVE_SYSTEM_INSTALLER_TEST_ORPHAN_REVALIDATION_OK'
 echo 'RESULT=DRIVE_SYSTEM_INSTALLER_UNRELATED_FSKIT_MOUNT_OK'
@@ -730,6 +742,29 @@ echo 'RESULT=DRIVE_SYSTEM_RUNTIME_METRICS_OK'
 /usr/bin/grep -Fq 'Explicitly opening EDP Drive always restores the discovery daemon.' "${APP_VIEW_MODEL_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 
+# External/private production dependencies are explicit and bounded. The normal
+# DiskImages2 publish path uses the exact signed helper; hdiutil detach belongs
+# only to orphan scratch recovery. PluginKit stays in foreground App enablement,
+# never daemon mount/eject hot paths. User tools are typed, timeout-bounded, and
+# Task-cancellable, while every agent reset is fail-closed on active FSKit mounts.
+/usr/bin/grep -Fq 'enum EDPUserToolError: Error, LocalizedError, Sendable' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'timeout: Duration = .seconds(8)' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'try Task.checkCancellation()' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'Darwin.kill(process.processIdentifier, SIGKILL)' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'waitUntilExit()' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'try await ensureMacFUSELocalEnablement()' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'await macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${RUNTIME_SOURCE}" "${MOUNT_LIFECYCLE_SOURCE}" "${PUBLISHER_SOURCE}"
+DISKIMAGES_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPDiskImages2Publisher/{found=1} found {print}' "${PUBLISHER_SOURCE}")"
+/usr/bin/grep -Fq 'helperPath = binaryRoot + "/diskimages2-attach"' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'helperPath, "--writable-noautomount", path' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'arguments: ["info", "-plist"]' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
+! /usr/bin/grep -Fq 'hdiutil attach' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
+! /usr/bin/grep -Fq 'hdiutil detach' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'runHdiutilAsync(["detach", device, "-force"])' "${PUBLISHER_SOURCE}"
+"${APP_SERVICE_SUPPORT_RUNNER}" | /usr/bin/grep -Fq 'RESULT=DRIVE_APP_USER_TOOL_BOUNDED_TYPED_CANCELLABLE_OK'
+echo 'RESULT=DRIVE_SYSTEM_EXTERNAL_DEPENDENCY_BOUNDARIES_OK'
+
 # Normal product lifecycle must not fall back to shell-side process inspection
 # or codesign/umount helpers. Runtime signature validation is Security.framework,
 # service liveness is SMAppService + XPC, and VFS teardown is unmount(2).
@@ -746,6 +781,13 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 /usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 /usr/bin/grep -Fq 'Require the user FSKit state to remain stable for one' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'while !macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'func noActiveFSKitMountsForAgentReset() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'guard noActiveFSKitMountsForAgentReset() else {' "${APP_SERVICE_SUPPORT_SOURCE}"
+FSKIT_APP_RESET_GUARD_LINE="$(/usr/bin/grep -nF 'guard noActiveFSKitMountsForAgentReset() else {' "${APP_SERVICE_SUPPORT_SOURCE}" | /usr/bin/cut -d: -f1)"
+FSKIT_APP_KILLALL_LINE="$(/usr/bin/grep -nF 'runUserTool("/usr/bin/killall", ["-9", "fskit_agent", "extensionkitservice"])' "${APP_SERVICE_SUPPORT_SOURCE}" | /usr/bin/cut -d: -f1)"
+[[ -n "${FSKIT_APP_RESET_GUARD_LINE}" && -n "${FSKIT_APP_KILLALL_LINE}" && "${FSKIT_APP_RESET_GUARD_LINE}" -lt "${FSKIT_APP_KILLALL_LINE}" ]]
+echo 'RESULT=DRIVE_SYSTEM_FSKIT_APP_RESET_FAIL_CLOSED_OK'
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_BOUNDED_RETRY_OK'
 echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 

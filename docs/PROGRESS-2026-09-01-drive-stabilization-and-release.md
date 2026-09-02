@@ -123,7 +123,7 @@ UI_HITCH_COUNT_GT33MS=1
 
 ## Phase C — App/UI 文件职责拆分
 
-状态：IMPLEMENTATION DONE（等待固定 HEAD CI 复核）
+状态：DONE
 
 - [x] App shell / native split controller 已独立到 `App/Shell/EDPMainWindow.swift`，保持原 `NSSplitViewController`、sidebar collapse behavior、geometry/accessibility 合同。
 - [x] ViewModel 已独立到 `App/Model/EDPVaultViewModel.swift`；XPC connection generation、service start/stop/restart single-flight、snapshot、mount/eject/credential/default-policy orchestration 原样保留。
@@ -135,7 +135,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] Liquid Glass、菜单层级、仅退出界面/完全退出语义未改变；本机 Swift6 typecheck、system、fast、virtual、S01-S35/320000-step property、production installer、`git diff --check` 全部 PASS。
 - [x] GitHub Actions UI gate 已在 Phase C `b6015ff` / run `33625866975` PASS；preview/page/20-toggle/accessibility 全绿，`UI_HITCH_COUNT_GT33MS=0`、`RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`。后续 `f4862b3` / run `33635957296` 的 UI 仍在 `xctrace record` 阶段被 90s watchdog 截断，尚未进入 hitch 解析；该失败不是 33ms 回归。历史正常 record 约 66–75s，而该次超过 90s，故 CI-only record watchdog 调整为 bounded 120s；8s trace、20 toggles、33ms 阈值不变。本机继续不执行 UI performance/xctrace。
 - [x] Phase C exact-head storage 最终复核：`f4862b3` / run `33635957296` 的 storage job `100266771918` 完整 PASS：M01、M02/M04-M09、M03、M10 5/5、M12、M14、failure contracts、production Swift6/C17 strict 均绿，最终 `RESULT=DRIVE_STORAGE_E2E_OK`。stable-dead-owner tombstone 后专用 adapter/bridge recovery 已消除 30 分钟挂死，普通 teardown 顺序未改变。
-- [x] Phase C 已提交并 push：`0f4a017` `refactor(drive): split app ui responsibilities`；等待固定 HEAD CI 复核后转 DONE。
+- [x] Phase C 最终 fixed-head：`dded9d4` / run `33684536121` 五个核心 jobs 全部 PASS；UI `UI_HITCH_COUNT_GT33MS=0`、storage M01-M14 / production strict 全绿。Phase C 正式关闭。
 
 ## Phase D — 发布可靠性与 recovery 可观测性
 
@@ -151,14 +151,15 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] `mountRetryCount`
 - [x] `ejectAlreadyAbsentSuccessCount`
 - [x] diagnostics 仅输出 7 个 UInt64；schema 禁止 deviceID/path/password/credential/secret/key 字段；system ratchet + 1000-way concurrent metrics contract test PASS。
-- [x] D1 storage/功能复核：`f4862b3` / run `33635957296` 上 native、fast、virtual、storage M01-M14 全部 PASS；metrics contract 本身无回退。该 run 唯一失败为 CI `xctrace record` 90s watchdog，在 hitch 解析前退出，与 metrics 无关。等待 120s bounded watchdog 的下一 fixed-head UI 复核后将整体 run 作为 Phase C/D1 最终绿色基线。
+- [x] D1 最终 fixed-head：`dded9d4` / run `33684536121` native、fast、virtual、UI/system、storage 全部 PASS；UI `>33ms=0`，storage M01-M14 / production strict 全绿。D1 正式关闭。
 
 ### D2 外部/私有依赖
 
-- [ ] `hdiutil` 正常路径/recovery 路径分类。
-- [ ] Private DiskImages2 helper 边界复核。
-- [ ] `pluginkit` 使用边界复核。
-- [ ] agent reset 只允许明确 recovery 条件，保持 global FSKit fail-closed。
+- [x] `hdiutil` 路径已分类：正式 DiskImages2 publish 仅走 exact `diskimages2-attach --writable-noautomount`；`hdiutil info -plist` 仅作 bounded identity/recovery metadata，`hdiutil detach -force` 仅存在 macFUSE scratch-orphan recovery。production preinstall 的全部 hdiutil info/detach 已统一通过 bounded TERM→KILL wrapper，system ratchet 禁止直接 unbounded hdiutil。
+- [x] Private DiskImages2 helper 边界已复核：`EDPConsoleExec.c` 仅精确 allowlist `/Library/Application Support/EDP Drive/bin/diskimages2-attach` 一处；publisher 固定 helper path/arguments，不能执行任意 helper，raw-FD inheritance 仍仅允许两个 mfmount transport。
+- [x] `pluginkit` 使用边界已复核：仅 foreground App 的 macFUSE enablement/support 路径可调用；daemon runtime、mount lifecycle、block publisher 均由 system negative ratchet 禁止 PluginKit。`runUserTool` 已改为 async 8s bounded、typed error、Task cancellation，并以 deterministic success/nonzero/timeout/cancel 测试实证。
+- [x] agent reset fail-closed：App enablement 在任何 FSKit mount 活跃时跳过 `fskit_agent/extensionkitservice` reset；daemon recovery 继续使用 `MNT_EXT_FSKIT` 全局 guard + exact console user；installer stale-agent recovery 继续只允许 no-mount exact process identity。
+- [ ] D2 fixed-head CI：本机 `drive-check`、system、fast、virtual、S01-S35/320000-step property、deterministic external-tool runner、production installer build 均 PASS；待本次 commit 的 GitHub fixed-head native/fast/virtual/UI/storage 复核后关闭 D2。
 
 ### D3 物理发布矩阵
 

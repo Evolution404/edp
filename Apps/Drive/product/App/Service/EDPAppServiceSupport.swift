@@ -19,22 +19,96 @@ var edpFSKitEnabledModulesURL: URL {
         .appendingPathComponent("enabledModules.plist", isDirectory: false)
 }
 
-func runUserTool(_ executable: String, _ arguments: [String]) throws -> String {
+enum EDPUserToolError: Error, LocalizedError, Sendable {
+    case launchFailed(executable: String, detail: String)
+    case timedOut(executable: String)
+    case failed(executable: String, status: Int32, output: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .launchFailed(let executable, let detail):
+            return "\(executable) launch failed: \(detail)"
+        case .timedOut(let executable):
+            return "\(executable) timed out"
+        case .failed(let executable, let status, let output):
+            return "\(executable) failed (\(status)): \(output)"
+        }
+    }
+}
+
+private func stopUserToolProcessBounded(_ process: Process) {
+    guard process.isRunning else { return }
+    process.terminate()
+    for _ in 0..<10 {
+        if !process.isRunning { return }
+        usleep(50_000)
+    }
+    if process.isRunning {
+        _ = Darwin.kill(process.processIdentifier, SIGKILL)
+    }
+    for _ in 0..<20 {
+        if !process.isRunning { return }
+        usleep(50_000)
+    }
+}
+
+func runUserTool(
+    _ executable: String,
+    _ arguments: [String],
+    timeout: Duration = .seconds(8)
+) async throws -> String {
+    let outputURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("edp-user-tool-\(UUID().uuidString).log", isDirectory: false)
+    guard FileManager.default.createFile(atPath: outputURL.path, contents: nil),
+          let output = FileHandle(forWritingAtPath: outputURL.path) else {
+        throw EDPUserToolError.launchFailed(
+            executable: executable,
+            detail: "cannot create bounded output file"
+        )
+    }
+    defer {
+        try? output.close()
+        try? FileManager.default.removeItem(at: outputURL)
+    }
+
     let process = Process()
-    let output = Pipe()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
     process.standardOutput = output
     process.standardError = output
-    try process.run()
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
+    do {
+        try process.run()
+    } catch {
+        throw EDPUserToolError.launchFailed(
+            executable: executable,
+            detail: error.localizedDescription
+        )
+    }
+
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    do {
+        while process.isRunning {
+            try Task.checkCancellation()
+            if clock.now >= deadline {
+                stopUserToolProcessBounded(process)
+                throw EDPUserToolError.timedOut(executable: executable)
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    } catch is CancellationError {
+        stopUserToolProcessBounded(process)
+        throw CancellationError()
+    }
+
+    try? output.synchronize()
+    let data = (try? Data(contentsOf: outputURL)) ?? Data()
     let text = String(decoding: data, as: UTF8.self)
     guard process.terminationStatus == 0 else {
-        throw NSError(
-            domain: "com.edp.drive.fskit",
-            code: Int(process.terminationStatus),
-            userInfo: [NSLocalizedDescriptionKey: "\(executable) \(arguments.joined(separator: " ")) failed: \(text)"]
+        throw EDPUserToolError.failed(
+            executable: executable,
+            status: process.terminationStatus,
+            output: text
         )
     }
     return text
@@ -58,7 +132,21 @@ func macFUSEPluginsEnabled(_ listing: String) -> Bool {
     }
 }
 
-func macFUSELocalEnablementReady() -> Bool {
+func noActiveFSKitMountsForAgentReset() -> Bool {
+    var mounts: UnsafeMutablePointer<statfs>?
+    let count = getmntinfo(&mounts, MNT_NOWAIT)
+    guard count >= 0 else { return false }
+    if count == 0 { return true }
+    guard let mounts else { return false }
+    for index in 0..<Int(count) {
+        if (mounts[index].f_flags_ext & UInt32(MNT_EXT_FSKIT)) != 0 {
+            return false
+        }
+    }
+    return true
+}
+
+func macFUSELocalEnablementReady() async -> Bool {
     let genericModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
     let localModule = edpMacFUSEHostPath
@@ -69,7 +157,7 @@ func macFUSELocalEnablementReady() -> Bool {
           macFUSEModulesEnabledInSettings() else {
         return false
     }
-    guard let listing = try? runUserTool("/usr/bin/pluginkit", ["-m", "-A", "-D"]) else {
+    guard let listing = try? await runUserTool("/usr/bin/pluginkit", ["-m", "-A", "-D"]) else {
         return false
     }
     return macFUSEPluginsEnabled(listing)
@@ -81,7 +169,7 @@ func macFUSELocalEnablementReady() -> Bool {
 /// require a terminal workaround before the first Direct MFMount. The caller
 /// performs a bounded stability retry because installer/FSKit registration can
 /// still be converging during the first foreground launch.
-func ensureMacFUSELocalEnablement() throws -> Bool {
+func ensureMacFUSELocalEnablement() async throws -> Bool {
     let genericModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
     let localModule = edpMacFUSEHostPath
@@ -93,7 +181,7 @@ func ensureMacFUSELocalEnablement() throws -> Bool {
     }
 
     let pluginKit = "/usr/bin/pluginkit"
-    let before = (try? runUserTool(pluginKit, ["-m", "-A", "-D"])) ?? ""
+    let before = (try? await runUserTool(pluginKit, ["-m", "-A", "-D"])) ?? ""
     let pluginsWereEnabled = macFUSEPluginsEnabled(before)
     let settingsWereEnabled = macFUSEModulesEnabledInSettings()
     if pluginsWereEnabled && settingsWereEnabled {
@@ -102,12 +190,12 @@ func ensureMacFUSELocalEnablement() throws -> Bool {
 
     if !pluginsWereEnabled {
         let launchServices = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-        _ = try runUserTool(launchServices, ["-f", "-R", "-trusted", edpMacFUSEHostPath])
+        _ = try await runUserTool(launchServices, ["-f", "-R", "-trusted", edpMacFUSEHostPath])
         for modulePath in [genericModule, localModule] {
-            _ = try runUserTool(pluginKit, ["-a", modulePath])
+            _ = try await runUserTool(pluginKit, ["-a", modulePath])
         }
         for moduleID in edpMacFUSEModuleIDs {
-            _ = try runUserTool(pluginKit, ["-e", "use", "-i", moduleID])
+            _ = try await runUserTool(pluginKit, ["-e", "use", "-i", moduleID])
         }
     }
 
@@ -148,7 +236,7 @@ func ensureMacFUSELocalEnablement() throws -> Bool {
         )
     }
 
-    let after = try runUserTool(pluginKit, ["-m", "-A", "-D"])
+    let after = try await runUserTool(pluginKit, ["-m", "-A", "-D"])
     guard macFUSEPluginsEnabled(after) else {
         throw NSError(
             domain: "com.edp.drive.fskit",
@@ -158,11 +246,18 @@ func ensureMacFUSELocalEnablement() throws -> Bool {
     }
 
     if settingsChanged || !pluginsWereEnabled {
+        // Never recycle FSKit user agents while any FSKit volume is active.
+        // Registration/settings have already been persisted above, so a busy
+        // system can converge naturally without disrupting EDP or unrelated
+        // FSKit mounts. A later launch may perform the reset once mount-free.
+        guard noActiveFSKitMountsForAgentReset() else {
+            return false
+        }
         // Only the current user's agents can be restarted here. The system
         // fskitd observes their new registration without requiring sudo. Agent
         // readiness is awaited asynchronously by the view model; never block
         // the main actor after sending this reset.
-        _ = try? runUserTool("/usr/bin/killall", ["-9", "fskit_agent", "extensionkitservice"])
+        _ = try? await runUserTool("/usr/bin/killall", ["-9", "fskit_agent", "extensionkitservice"])
         return true
     }
     return false
