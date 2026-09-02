@@ -2413,12 +2413,9 @@ final class EDPDaemonController: @unchecked Sendable {
     private let metadataReader: any EDPRawMetadataReading
     private let rawAccess: EDPRawAccessCoordinator
     private let credentialVerifier: EDPCredentialVerifying
+    private let automation = EDPAutomationState()
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private let queueKey = DispatchSpecificKey<UInt8>()
-    private var failedMounts = [String: String]()
-    private var failedMountCodes = [String: EDPLifecycleFailureCode]()
-    private var manualUnmountSuppressions = Set<String>()
-    private var defaultProbeSuppressions = Set<String>()
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
@@ -2557,7 +2554,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 guard devicePolicy.policy(for: partitionType).autoProbePassword,
                       records.first(where: { $0.deviceID == disk.deviceID })?
                         .partitionTypes.contains(partitionType) != true,
-                      !defaultProbeSuppressions.contains(partitionKey) else {
+                      !automation.isDefaultProbeSuppressed(partitionKey) else {
                     continue
                 }
 
@@ -2577,8 +2574,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         password: password
                     )
                     records = try store.load().records
-                    failedMounts.removeValue(forKey: partitionKey)
-                    failedMountCodes.removeValue(forKey: partitionKey)
+                    automation.clearFailure(for: partitionKey)
                     addActivity(
                         "默认密码探测成功并已保存",
                         deviceID: disk.deviceID,
@@ -2592,7 +2588,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         )
                         continue
                     }
-                    defaultProbeSuppressions.insert(partitionKey)
+                    automation.suppressDefaultProbe(partitionKey)
                     addActivity(
                         "默认密码未匹配，本次插盘不再自动探测",
                         deviceID: disk.deviceID,
@@ -2693,7 +2689,7 @@ final class EDPDaemonController: @unchecked Sendable {
               document.globalAutoMountEnabled,
               let policy = document.devices.first(where: { $0.deviceID == disk.deviceID }),
               policy.policy(for: EDPPartitionKind.boot.rawValue).autoMount,
-              !manualUnmountSuppressions.contains(
+              !automation.isManualUnmountSuppressed(
                   key(disk.deviceID, EDPPartitionKind.boot.rawValue)
               ),
               !manager.contains(disk, EDPPartitionKind.boot.rawValue) else { return }
@@ -2701,13 +2697,14 @@ final class EDPDaemonController: @unchecked Sendable {
             guard let self, let errorMessage else { return }
             let partitionType = EDPPartitionKind.boot.rawValue
             let partitionKey = self.key(disk.deviceID, partitionType)
-            self.failedMounts[partitionKey] = errorMessage
-            if let code = self.manager.lastFailureCode(
-                deviceID: disk.deviceID,
-                partitionType: partitionType
-            ) {
-                self.failedMountCodes[partitionKey] = code
-            }
+            self.automation.recordFailure(
+                errorMessage,
+                code: self.manager.lastFailureCode(
+                    deviceID: disk.deviceID,
+                    partitionType: partitionType
+                ),
+                for: partitionKey
+            )
         }
     }
 
@@ -2782,22 +2779,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         self.reconcileLocked()
                     }
                 }
-                failedMounts = failedMounts.filter { item in
-                    guard let separator = item.key.lastIndex(of: ":") else { return false }
-                    return connectedDeviceIDs.contains(String(item.key[..<separator]))
-                }
-                failedMountCodes = failedMountCodes.filter { item in
-                    guard let separator = item.key.lastIndex(of: ":") else { return false }
-                    return connectedDeviceIDs.contains(String(item.key[..<separator]))
-                }
-                manualUnmountSuppressions = manualUnmountSuppressions.filter { item in
-                    guard let separator = item.lastIndex(of: ":") else { return false }
-                    return connectedDeviceIDs.contains(String(item[..<separator]))
-                }
-                defaultProbeSuppressions = defaultProbeSuppressions.filter { item in
-                    guard let separator = item.lastIndex(of: ":") else { return false }
-                    return connectedDeviceIDs.contains(String(item[..<separator]))
-                }
+                automation.prune(connectedDeviceIDs: connectedDeviceIDs)
                 try observe(disks)
                 let policyDocument = try policies.load()
                 try probeDefaultPasswordsLocked(disks: disks, policyDocument: policyDocument)
@@ -2829,18 +2811,19 @@ final class EDPDaemonController: @unchecked Sendable {
                     let bootKey = key(disk.deviceID, EDPPartitionKind.boot.rawValue)
                     if policyDocument.globalAutoMountEnabled,
                        bootAutoMount,
-                       !manualUnmountSuppressions.contains(bootKey),
+                       !automation.isManualUnmountSuppressed(bootKey),
                        !manager.contains(disk, EDPPartitionKind.boot.rawValue) {
                         mountBootAsyncLocked(disk: disk) { [weak self] errorMessage in
                             guard let self else { return }
                             if let errorMessage {
-                                self.failedMounts[bootKey] = errorMessage
-                                if let code = self.manager.lastFailureCode(
-                                    deviceID: disk.deviceID,
-                                    partitionType: EDPPartitionKind.boot.rawValue
-                                ) {
-                                    self.failedMountCodes[bootKey] = code
-                                }
+                                self.automation.recordFailure(
+                                    errorMessage,
+                                    code: self.manager.lastFailureCode(
+                                        deviceID: disk.deviceID,
+                                        partitionType: EDPPartitionKind.boot.rawValue
+                                    ),
+                                    for: bootKey
+                                )
                                 self.addActivity(
                                     "启动区自动挂载失败：\(errorMessage)",
                                     level: "error",
@@ -2848,8 +2831,7 @@ final class EDPDaemonController: @unchecked Sendable {
                                     partitionType: EDPPartitionKind.boot.rawValue
                                 )
                             } else {
-                                self.failedMounts.removeValue(forKey: bootKey)
-                                self.failedMountCodes.removeValue(forKey: bootKey)
+                                self.automation.clearFailure(for: bootKey)
                             }
                         }
                     }
@@ -2865,9 +2847,9 @@ final class EDPDaemonController: @unchecked Sendable {
                     where devicePolicy.policy(for: type).autoMount
                         && record.partitionTypes.contains(type)
                         && !manager.contains(disk, type)
-                        && !manualUnmountSuppressions.contains(key(disk.deviceID, type)) {
+                        && !automation.isManualUnmountSuppressed(key(disk.deviceID, type)) {
                         let key = "\(disk.deviceID):\(type)"
-                        if failedMounts[key] != nil { continue }
+                        if automation.failureMessage(for: key) != nil { continue }
                         mountEncryptedPartitionAsyncLocked(
                             disk: disk,
                             partitionType: type
@@ -2948,7 +2930,7 @@ final class EDPDaemonController: @unchecked Sendable {
                             filesystem: summary?["filesystem"],
                             readOnly: mountpoint.flatMap { EDPNativeMountTable.isReadOnly($0) },
                             mountPoint: mountpoint,
-                            lastError: failedMounts[key(deviceID, kind.rawValue)]
+                            lastError: automation.failureMessage(for: key(deviceID, kind.rawValue))
                         )
                     }
                     return EDPXPCDevice(
@@ -3041,8 +3023,7 @@ final class EDPDaemonController: @unchecked Sendable {
                             password: password
                         )
                         let partitionKey = self.key(deviceID, partitionType)
-                        self.failedMounts.removeValue(forKey: partitionKey)
-                        self.failedMountCodes.removeValue(forKey: partitionKey)
+                        self.automation.clearFailure(for: partitionKey)
                         self.addActivity(
                             "密码验证并保存成功",
                             deviceID: deviceID,
@@ -3073,9 +3054,8 @@ final class EDPDaemonController: @unchecked Sendable {
                 return
             }
             let partitionKey = self.key(deviceID, partitionType)
-            self.failedMounts.removeValue(forKey: partitionKey)
-            self.failedMountCodes.removeValue(forKey: partitionKey)
-            self.manualUnmountSuppressions.remove(partitionKey)
+            self.automation.clearFailure(for: partitionKey)
+            self.automation.clearManualRemountSuppression(partitionKey)
             guard let disk = self.connectedDisks.first(where: { $0.deviceID == deviceID }) else {
                 completion("EDP device is no longer connected")
                 return
@@ -3085,13 +3065,14 @@ final class EDPDaemonController: @unchecked Sendable {
                 self.mountBootAsyncLocked(disk: disk) { [weak self] errorMessage in
                     guard let self else { return }
                     if let errorMessage {
-                        self.failedMounts[partitionKey] = errorMessage
-                        if let code = self.manager.lastFailureCode(
-                            deviceID: disk.deviceID,
-                            partitionType: partitionType
-                        ) {
-                            self.failedMountCodes[partitionKey] = code
-                        }
+                        self.automation.recordFailure(
+                            errorMessage,
+                            code: self.manager.lastFailureCode(
+                                deviceID: disk.deviceID,
+                                partitionType: partitionType
+                            ),
+                            for: partitionKey
+                        )
                         self.addActivity(
                             "手动挂载失败：\(errorMessage)",
                             level: "error",
@@ -3099,8 +3080,7 @@ final class EDPDaemonController: @unchecked Sendable {
                             partitionType: partitionType
                         )
                     } else {
-                        self.failedMounts.removeValue(forKey: partitionKey)
-                        self.failedMountCodes.removeValue(forKey: partitionKey)
+                        self.automation.clearFailure(for: partitionKey)
                         self.addActivity("手动挂载成功", deviceID: deviceID, partitionType: partitionType)
                     }
                     completion(errorMessage)
@@ -3156,15 +3136,21 @@ final class EDPDaemonController: @unchecked Sendable {
             self.onControllerQueue {
                 let partitionKey = self.key(disk.deviceID, partitionType)
                 if let rawError {
-                    self.failedMounts[partitionKey] = rawError.description
-                    self.failedMountCodes[partitionKey] = rawError.code
+                    self.automation.recordFailure(
+                        rawError.description,
+                        code: rawError.code,
+                        for: partitionKey
+                    )
                     completion(rawError.description)
                     return
                 }
                 guard let rawLease else {
                     let detail = "EDP raw access lease was not retained"
-                    self.failedMounts[partitionKey] = detail
-                    self.failedMountCodes[partitionKey] = .rawAccessUnavailable
+                    self.automation.recordFailure(
+                        detail,
+                        code: .rawAccessUnavailable,
+                        for: partitionKey
+                    )
                     completion(detail)
                     return
                 }
@@ -3189,12 +3175,14 @@ final class EDPDaemonController: @unchecked Sendable {
                                     detail: errorMessage
                                 )
                             }
-                            self.failedMounts[partitionKey] = errorMessage
-                            self.failedMountCodes[partitionKey] = code
+                            self.automation.recordFailure(
+                                errorMessage,
+                                code: code,
+                                for: partitionKey
+                            )
                         } else {
                             self.rawAccess.markReady(deviceID: disk.deviceID)
-                            self.failedMounts.removeValue(forKey: partitionKey)
-                            self.failedMountCodes.removeValue(forKey: partitionKey)
+                            self.automation.clearFailure(for: partitionKey)
                         }
                         completion(errorMessage)
                     }
@@ -3221,8 +3209,11 @@ final class EDPDaemonController: @unchecked Sendable {
                 guard let self else { return }
                 self.onControllerQueue {
                     if let errorMessage {
-                        self.failedMounts[partitionKey] = errorMessage
-                        self.failedMountCodes[partitionKey] = .teardownFailed
+                        self.automation.recordFailure(
+                            errorMessage,
+                            code: .teardownFailed,
+                            for: partitionKey
+                        )
                         self.addActivity(
                             "分区卸载失败：\(errorMessage)",
                             level: "error",
@@ -3230,9 +3221,8 @@ final class EDPDaemonController: @unchecked Sendable {
                             partitionType: partitionType
                         )
                     } else {
-                        self.manualUnmountSuppressions.insert(partitionKey)
-                        self.failedMounts.removeValue(forKey: partitionKey)
-                        self.failedMountCodes.removeValue(forKey: partitionKey)
+                        self.automation.suppressManualRemount(partitionKey)
+                        self.automation.clearFailure(for: partitionKey)
                         self.addActivity("分区已卸载", deviceID: deviceID, partitionType: partitionType)
                     }
                     completion(errorMessage)
@@ -3264,10 +3254,9 @@ final class EDPDaemonController: @unchecked Sendable {
                     do {
                         try self.store.remove(deviceID: deviceID, partitionType: partitionType)
                         let partitionKey = self.key(deviceID, partitionType)
-                        self.failedMounts.removeValue(forKey: partitionKey)
-                        self.failedMountCodes.removeValue(forKey: partitionKey)
-                        self.manualUnmountSuppressions.remove(partitionKey)
-                        self.defaultProbeSuppressions.insert(partitionKey)
+                        self.automation.clearFailure(for: partitionKey)
+                        self.automation.clearManualRemountSuppression(partitionKey)
+                        self.automation.suppressDefaultProbe(partitionKey)
                         self.addActivity(
                             "已删除保存的密码",
                             deviceID: deviceID,
@@ -3292,14 +3281,7 @@ final class EDPDaemonController: @unchecked Sendable {
             }
             try store.remove(deviceID: deviceID)
             try policies.remove(deviceID: deviceID)
-            failedMounts = failedMounts.filter { !$0.key.hasPrefix("\(deviceID):") }
-            failedMountCodes = failedMountCodes.filter { !$0.key.hasPrefix("\(deviceID):") }
-            manualUnmountSuppressions = manualUnmountSuppressions.filter {
-                !$0.hasPrefix("\(deviceID):")
-            }
-            defaultProbeSuppressions = defaultProbeSuppressions.filter {
-                !$0.hasPrefix("\(deviceID):")
-            }
+            automation.removeDevice(deviceID)
             addActivity("已删除设备记录和保存的密码", deviceID: deviceID)
         }
     }
@@ -3319,7 +3301,7 @@ final class EDPDaemonController: @unchecked Sendable {
             try policies.setDefaultAutoProbePassword(partitionType: partitionType, enabled: enabled)
             if enabled {
                 for disk in connectedDisks {
-                    defaultProbeSuppressions.remove(key(disk.deviceID, partitionType))
+                    automation.clearDefaultProbeSuppression(key(disk.deviceID, partitionType))
                 }
             }
             addActivity(
@@ -3335,7 +3317,7 @@ final class EDPDaemonController: @unchecked Sendable {
         try queue.sync {
             try store.setDefaultProbePassword(partitionType: partitionType, password: password)
             for disk in connectedDisks {
-                defaultProbeSuppressions.remove(key(disk.deviceID, partitionType))
+                automation.clearDefaultProbeSuppression(key(disk.deviceID, partitionType))
             }
             addActivity("已更新默认探测密码", partitionType: partitionType)
         }
@@ -3346,7 +3328,7 @@ final class EDPDaemonController: @unchecked Sendable {
         try queue.sync {
             try store.resetDefaultProbePassword(partitionType: partitionType)
             for disk in connectedDisks {
-                defaultProbeSuppressions.remove(key(disk.deviceID, partitionType))
+                automation.clearDefaultProbeSuppression(key(disk.deviceID, partitionType))
             }
             addActivity("默认探测密码已恢复为 0000aaaa", partitionType: partitionType)
         }
@@ -3360,7 +3342,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 partitionType: partitionType,
                 enabled: enabled
             )
-            manualUnmountSuppressions.remove(key(deviceID, partitionType))
+            automation.clearManualRemountSuppression(key(deviceID, partitionType))
             addActivity(
                 enabled ? "已开启自动挂载" : "已关闭自动挂载",
                 deviceID: deviceID,
@@ -3449,13 +3431,12 @@ final class EDPDaemonController: @unchecked Sendable {
                 for type in [UInt32(2), UInt32(4)]
                 where devicePolicy.policy(for: type).autoMount {
                     let partitionKey = key(disk.deviceID, type)
-                    guard !manualUnmountSuppressions.contains(partitionKey),
-                          failedMounts[partitionKey] != nil,
-                          failedMountCodes[partitionKey] == .bridgeExtensionUnavailable else {
+                    guard !automation.isManualUnmountSuppressed(partitionKey),
+                          automation.failureMessage(for: partitionKey) != nil,
+                          automation.failureCode(for: partitionKey) == .bridgeExtensionUnavailable else {
                         continue
                     }
-                    failedMounts.removeValue(forKey: partitionKey)
-                    failedMountCodes.removeValue(forKey: partitionKey)
+                    automation.clearFailure(for: partitionKey)
                     clearedAny = true
                     addActivity(
                         "macFUSE FSKit 已恢复，重试自动挂载",
@@ -3656,8 +3637,8 @@ final class EDPDaemonController: @unchecked Sendable {
             let payload: [String: Any] = [
                 "mounts": manager.mountedSummaries(),
                 "lifecycleJournal": manager.lifecycleJournalSnapshot().map(\.jsonObject),
-                "failedMounts": failedMounts,
-                "manualUnmountSuppressions": manualUnmountSuppressions.sorted(),
+                "failedMounts": automation.failedMountsSnapshot(),
+                "manualUnmountSuppressions": automation.manualUnmountSuppressionsSnapshot(),
                 "rawAccessMode": "single EDP Drive Full Disk Access identity broker + retained raw fd + inherited transport fd",
                 "rawAccessDaemon": rawAccessDaemonPath(),
                 "rawAccessReadyDeviceIDs": rawAccess.readyDeviceIDs(),

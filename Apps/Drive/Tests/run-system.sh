@@ -12,6 +12,7 @@ RUNTIME_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeState.swift"
 DEVICE_OPERATIONS_SOURCE="${ROOT}/Apps/Drive/product/EDPDeviceOperations.swift"
 RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 RAW_ACCESS_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccessCoordinator.swift"
+AUTOMATION_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPAutomationState.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 MOUNT_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPMountSupport.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -427,6 +428,20 @@ echo 'RESULT=DRIVE_SYSTEM_DEVICE_OPERATIONS_SPLIT_OK'
 ! /usr/bin/grep -Fq 'rawAccessProbeWaiters' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RAW_ACCESS_SPLIT_OK'
 
+# Insertion-scoped auto-mount failure memory and manual/default-probe
+# suppressions are a single owner-queue-confined state object, not four mutable
+# dictionaries spread across the daemon controller.
+/usr/bin/grep -Fq 'final class EDPAutomationState' "${AUTOMATION_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func recordFailure(' "${AUTOMATION_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func suppressManualRemount(' "${AUTOMATION_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func suppressDefaultProbe(' "${AUTOMATION_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func prune(connectedDeviceIDs:' "${AUTOMATION_STATE_SOURCE}"
+! /usr/bin/grep -Fq 'private var failedMounts =' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private var failedMountCodes =' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private var manualUnmountSuppressions =' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private var defaultProbeSuppressions =' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_AUTOMATION_STATE_SPLIT_OK'
+
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery
 # policy code must never branch on user-facing error text.
@@ -438,7 +453,7 @@ echo 'RESULT=DRIVE_SYSTEM_RAW_ACCESS_SPLIT_OK'
 ! /usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'enum EDPFSKitHostRecovery' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func lastFailureCode(deviceID:' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'failedMountCodes[partitionKey] == .bridgeExtensionUnavailable' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'automation.failureCode(for: partitionKey) == .bridgeExtensionUnavailable' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'failure.contains("File system extension' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'errorMessage.contains("EDP_RAW_' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK'
