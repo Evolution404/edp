@@ -134,7 +134,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] `EDPUSBVaultApp.swift` 已由约 3810 行降至约 476 行，只保留 App/CLI entrypoint 与 raw-FD broker dispatch；system ratchet 禁止 ViewModel/pages/sidebar/menu/support 实现回流。
 - [x] Liquid Glass、菜单层级、仅退出界面/完全退出语义未改变；本机 Swift6 typecheck、system、fast、virtual、S01-S35/320000-step property、production installer、`git diff --check` 全部 PASS。
 - [ ] GitHub Actions UI gate 在 Phase C exact-head 上 PASS；本机继续不执行 UI performance/xctrace。
-- [ ] Phase C commits/push。
+- [x] Phase C 已提交并 push：`0f4a017` `refactor(drive): split app ui responsibilities`；等待固定 HEAD CI 复核后转 DONE。
 
 ## Phase D — 发布可靠性与 recovery 可观测性
 
