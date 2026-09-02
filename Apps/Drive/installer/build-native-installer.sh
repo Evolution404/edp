@@ -114,6 +114,7 @@ PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPRuntimeSupport.swift"
   "${REPO_ROOT}/product/EDPRuntimeState.swift"
   "${REPO_ROOT}/product/EDPDeviceOperations.swift"
+  "${REPO_ROOT}/product/EDPDeviceDiscoveryController.swift"
   "${REPO_ROOT}/product/EDPRawAccess.swift"
   "${REPO_ROOT}/product/EDPRawAccessCoordinator.swift"
   "${REPO_ROOT}/product/EDPAutomationState.swift"

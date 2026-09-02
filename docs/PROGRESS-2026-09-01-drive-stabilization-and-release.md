@@ -96,6 +96,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] eject single-flight / generation state / exact physical DA eject 已抽至 `EDPEjectCoordinator.swift`：duplicate waiter fanout、automount suppression 生命周期、original USB generation disappearance success、exact `registryEntryID` whole-unmount/eject 均不再由 daemon controller 直接持有；S24-S30 及全 S01-S35/property/fast/system/virtual 全绿；runtime 降至 4107 行。
 - [x] startup-recovery / shutdown state 已抽至 `EDPServiceLifecycleState.swift`：startup gate、shutdown requested/in-flight、coalesced completion fanout、等待 active eject 后才允许 teardown 统一由 owner-queue state 管理；实际 `unmountAllAsync` 与资源释放仍由 controller 执行；S18/S29 及全 S01-S35/property/fast/system/virtual 全绿；runtime 降至 4095 行。
 - [x] failed-eject recovery 已抽至 `EDPRecoveryCoordinator.swift`：解除 eject suppression、原 whole-USB generation revalidation、单次 raw reacquire、boot policy restore 与原错误 fanout 形成独立恢复边界；controller 仅提供 probe/restore/activity 回调；全 S01-S35/property/fast/system/virtual 全绿。
+- [x] device discovery 已抽至 `EDPDeviceDiscoveryController.swift`：`discoverEDPDisks` 调用、metadata reader、scan diagnostics/count/timestamp 不再属于 daemon controller；controller 仅保留当前 `connectedDisks` 业务状态。discovery seam、S01-S35/property/fast/system/virtual 全绿；runtime 降至 4086 行。
 - [ ] 继续抽纯 model/key/helper。
 - [x] 抽 `EDPRawAccessController` orchestration（single-flight + EBUSY exact-generation recovery + lease state）。
 - [x] 抽 auto-mount policy/manual suppression。

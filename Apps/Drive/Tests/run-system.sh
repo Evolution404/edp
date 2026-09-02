@@ -10,6 +10,7 @@ RUNTIME_SOURCE="${ROOT}/Apps/Drive/product/EDPVaultRuntime.swift"
 RUNTIME_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeSupport.swift"
 RUNTIME_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeState.swift"
 DEVICE_OPERATIONS_SOURCE="${ROOT}/Apps/Drive/product/EDPDeviceOperations.swift"
+DEVICE_DISCOVERY_CONTROLLER_SOURCE="${ROOT}/Apps/Drive/product/EDPDeviceDiscoveryController.swift"
 RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 RAW_ACCESS_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccessCoordinator.swift"
 AUTOMATION_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPAutomationState.swift"
@@ -426,6 +427,19 @@ echo 'RESULT=DRIVE_SYSTEM_MOUNT_SUPPORT_SPLIT_OK'
 ! /usr/bin/grep -Fq 'private func filesystemMagic(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'private func verifyPartitionType(' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_DEVICE_OPERATIONS_SPLIT_OK'
+
+# Discovery scan execution and scan diagnostics/count/timestamp belong to the
+# dedicated discovery controller. The daemon controller retains only the current
+# connected-device business snapshot.
+/usr/bin/grep -Fq 'final class EDPDeviceDiscoveryController' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
+/usr/bin/grep -Fq 'func scan() throws -> [PhysicalDisk]' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
+/usr/bin/grep -Fq 'private(set) var scanCount: UInt64 = 0' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
+/usr/bin/grep -Fq 'diagnostics = ["discovery_error:' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
+/usr/bin/grep -Fq 'let disks = try discovery.scan()' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private var lastDiscoveryDiagnostics' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private var discoveryScanCount' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private let metadataReader' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_DEVICE_DISCOVERY_CONTROLLER_SPLIT_OK'
 
 # Raw primitives and raw lifecycle orchestration both live outside the daemon
 # controller. The coordinator owns retained leases, single-flight waiters,

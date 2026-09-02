@@ -2410,7 +2410,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private let manager: any EDPDaemonMountManaging
     private let diskArbitration: any EDPDaemonDiskArbitrating
     private let mediaProvider: any EDPWholeUSBMediaProviding
-    private let metadataReader: any EDPRawMetadataReading
+    private let discovery: EDPDeviceDiscoveryController
     private let rawAccess: EDPRawAccessCoordinator
     private let eject: EDPEjectCoordinator
     private let recovery: EDPRecoveryCoordinator
@@ -2422,9 +2422,6 @@ final class EDPDaemonController: @unchecked Sendable {
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
-    private var lastDiscoveryDiagnostics = ["discovery_not_started"]
-    private var discoveryScanCount: UInt64 = 0
-    private var lastDiscoveryTimestamp = ""
 
     init(
         store: EDPCredentialStore? = nil,
@@ -2439,7 +2436,10 @@ final class EDPDaemonController: @unchecked Sendable {
     ) throws {
         self.mediaProvider = mediaProvider
         queue.setSpecific(key: queueKey, value: 1)
-        self.metadataReader = metadataReader
+        self.discovery = EDPDeviceDiscoveryController(
+            mediaProvider: mediaProvider,
+            metadataReader: metadataReader
+        )
         let effectiveRawAccessLeaseOpener: EDPRawAccessLeaseOpening
         let rawAccessOpenerRunsOffControllerQueue: Bool
         if let rawAccessLeaseOpener {
@@ -2731,17 +2731,7 @@ final class EDPDaemonController: @unchecked Sendable {
               !serviceLifecycle.shutdownRequested else { return }
         autoreleasepool {
             do {
-                var scanDiagnostics = [String]()
-                let disks = try discoverEDPDisks(
-                    mediaProvider: mediaProvider,
-                    metadataReader: metadataReader,
-                    diagnostic: { scanDiagnostics.append($0) }
-                )
-                discoveryScanCount &+= 1
-                lastDiscoveryTimestamp = ISO8601DateFormatter().string(from: Date())
-                lastDiscoveryDiagnostics = scanDiagnostics.isEmpty
-                    ? ["no whole USB media scanned"]
-                    : scanDiagnostics
+                let disks = try discovery.scan()
                 connectedDisks = disks
                 let connectedDeviceIDs = Set(disks.map(\.deviceID))
                 eject.releaseDisconnectedGenerations()
@@ -2881,9 +2871,6 @@ final class EDPDaemonController: @unchecked Sendable {
                     }
                 }
             } catch {
-                discoveryScanCount &+= 1
-                lastDiscoveryTimestamp = ISO8601DateFormatter().string(from: Date())
-                lastDiscoveryDiagnostics = ["discovery_error:\(error)"]
                 NSLog("EDP event reconciliation failed: %@", String(describing: error))
             }
         }
@@ -3576,9 +3563,9 @@ final class EDPDaemonController: @unchecked Sendable {
                 "startupRecoveryComplete": serviceLifecycle.startupRecoveryComplete,
                 "startupRecoveryError": serviceLifecycle.startupRecoveryError as Any,
                 "deviceDiscoveryDiagnostics": EDPNativeDeviceDiscovery.diagnosticReport()
-                    + lastDiscoveryDiagnostics,
-                "discoveryScanCount": discoveryScanCount,
-                "lastDiscoveryTimestamp": lastDiscoveryTimestamp,
+                    + discovery.diagnostics,
+                "discoveryScanCount": discovery.scanCount,
+                "lastDiscoveryTimestamp": discovery.lastScanTimestamp,
             ]
             return (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         }
