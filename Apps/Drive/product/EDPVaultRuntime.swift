@@ -1884,6 +1884,20 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
         missingSince.removeValue(forKey: sessionKey)
 
         if let userMount = session.userMount, EDPNativeMountTable.isMountpoint(userMount) {
+            guard session.transport.isRunning else {
+                recordLifecycle(
+                    journalContext,
+                    state: "failed",
+                    event: "transportUnavailableWithMountedFilesystem",
+                    ownedResources: ["filesystem", "publication", "transport"],
+                    diagnosticCode: .teardownFailed
+                )
+                finishUnmount(
+                    sessionKey,
+                    error: "transport exited while user filesystem remains mounted; refusing synchronous VFS unmount"
+                )
+                return
+            }
             recordLifecycle(
                 journalContext,
                 state: "tearingDownFilesystem",
@@ -2372,6 +2386,13 @@ private final class MountManager: EDPDaemonMountManaging, @unchecked Sendable {
             try? atomicWrite(data, to: dataRoot + "/sessions.json", mode: 0o644)
         }
     }
+}
+
+func recoverPersistedMountSessionsForServiceCleanup(
+    completion: @escaping EDPDaemonMountCompletion
+) throws {
+    let manager = try MountManager()
+    manager.recoverPersistedSessionsAsync(completion: completion)
 }
 
 typealias EDPCredentialVerifying = @Sendable (PhysicalDisk, UInt32, [UInt8], Int32) throws -> Void

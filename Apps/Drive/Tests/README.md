@@ -59,8 +59,12 @@ reads only immutable fixture files and never opens `/dev/rdisk*`.
 `drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. Both canonical profiles run 5 complete mount/attach/filesystem/unmount/eject/transport-remount cycles; same-partition remounts preserve real filesystem access but wait through the product-equivalent 3-second generation quiescence after exact teardown. The internal macFUSE Local bridge remains `local,nobrowse`; deadlock prevention comes from exact publication teardown, unique mount generations, and bounded quiescence rather than changing the bridge's established VFS semantics. The release profile keeps the stricter production-build/contract checks while accepting an explicit `EDP_STORAGE_LOOP_COUNT` override from 5–100 for optional soak runs. It verifies boot FAT16 at both
 the native read-only mount and transport `EROFS` layers, encrypted persistence,
 Finder-style operations, large/random I/O, unmount failure propagation,
-transport crash recovery, durability failure propagation, and concurrent
-type 1/2/4 session isolation. No sudo, physical USB, real raw node, or real EDP
+transport crash recovery after the upper filesystem has quiesced, durability
+failure propagation, and concurrent type 1/2/4 session isolation. The virtual
+transport gate separately locks the live-mount crash boundary: if the transport
+has already exited while its VFS mount is still active, teardown must fail closed
+without entering a potentially uninterruptible VFS unmount or host reset. No
+sudo, physical USB, real raw node, or real EDP
 credential is used.
 
 `drive-test-ui` is an independent macOS UI gate. It builds the preview scenario

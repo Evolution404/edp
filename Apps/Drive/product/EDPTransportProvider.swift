@@ -109,6 +109,14 @@ final class EDPTransportSession: @unchecked Sendable {
     ) {
         do {
             if operation.isMounted(mountpoint) {
+                guard process.isRunning else {
+                    finishStop(
+                        operation,
+                        recovered: false,
+                        error: "transport process already exited while VFS mount remains active: \(mountpoint)"
+                    )
+                    return
+                }
                 try operation.unmount(mountpoint)
             }
             guard !operation.isMounted(mountpoint) else {

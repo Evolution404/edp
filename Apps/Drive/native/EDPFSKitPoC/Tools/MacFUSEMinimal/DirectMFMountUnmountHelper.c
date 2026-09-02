@@ -1,9 +1,7 @@
 #include <errno.h>
-#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mount.h>
-#include <unistd.h>
 
 static int enumerate_mounts(struct statfs **mounts_out) {
     errno = 0;
@@ -41,24 +39,6 @@ static const struct statfs *mount_for_source(const char *source) {
         }
     }
     return NULL;
-}
-
-static int copy_mount_source(const char *mountpoint,
-                             char *source,
-                             size_t source_size) {
-    const struct statfs *entry = mount_for_mountpoint(mountpoint);
-    if (entry == NULL) {
-        return ENOENT;
-    }
-    const char *candidate = entry->f_mntfromname;
-    if (strncmp(candidate, "/dev/disk", strlen("/dev/disk")) != 0) {
-        return ENODEV;
-    }
-    int length = snprintf(source, source_size, "%s", candidate);
-    if (length < 0 || (size_t)length >= source_size) {
-        return ENAMETOOLONG;
-    }
-    return 0;
 }
 
 static int assert_no_fskit_mounts(void) {
@@ -170,7 +150,7 @@ static int is_macfuse_mount(const char *mountpoint) {
 
 static int usage(const char *program) {
     fprintf(stderr,
-            "usage: %s <mountpoint>|--assert-no-fskit-mounts|"
+            "usage: %s --assert-no-fskit-mounts|"
             "--is-mounted <mountpoint>|--mount-source <mountpoint>|"
             "--mountpoint-for-source <source>|--assert-readonly <mountpoint>|"
             "--assert-writable <mountpoint>|--is-macfuse-mount <mountpoint>|"
@@ -208,39 +188,5 @@ int main(int argc, char **argv) {
     if (argc == 3 && strcmp(argv[1], "--assert-no-mount-prefix") == 0) {
         return assert_no_mount_prefix(argv[2]);
     }
-    if (argc != 2) {
-        return usage(argv[0]);
-    }
-
-    char source[PATH_MAX];
-    int source_result = copy_mount_source(argv[1], source, sizeof(source));
-    if (source_result != 0) {
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_PRIVILEGED_SOURCE_FAILED=%d mountpoint=%s\n",
-                source_result,
-                argv[1]);
-        return 1;
-    }
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_PRIVILEGED_SOURCE=%s mountpoint=%s euid=%u\n",
-            source,
-            argv[1],
-            (unsigned int)geteuid());
-
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_CALL=1 source=%s mountpoint=%s\n",
-            source,
-            argv[1]);
-    fflush(stderr);
-    errno = 0;
-    int result = unmount(argv[1], MNT_FORCE);
-    int saved_errno = errno;
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_RESULT=%d errno=%d "
-            "source=%s mountpoint=%s\n",
-            result,
-            saved_errno,
-            source,
-            argv[1]);
-    return result == 0 ? 0 : 1;
+    return usage(argv[0]);
 }

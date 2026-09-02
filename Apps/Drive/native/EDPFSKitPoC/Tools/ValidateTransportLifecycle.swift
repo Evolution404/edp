@@ -181,6 +181,7 @@ private enum ValidateTransportLifecycle {
         try validateRecoverySuccessClaimWithoutExitStillFailsClosed()
         try validateNoRecoveryCallbackStillFailsClosed()
         try validateMountedTransportIsNeverKilled()
+        try validateExitedTransportWithMountedVFSFailsClosed()
         try validateRemountQuiescenceGenerationGate()
         print("RESULT=REMOUNT_QUIESCENCE_GENERATION_OK")
         print("RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK")
@@ -341,6 +342,32 @@ private enum ValidateTransportLifecycle {
         try require(process.terminateCount == 0, "mounted transport incorrectly received SIGTERM")
         try require(process.forceTerminateCount == 0, "mounted transport incorrectly received SIGKILL")
         try require(!recoveryAttempted, "mounted transport incorrectly attempted FSKit host recovery")
+    }
+
+    private static func validateExitedTransportWithMountedVFSFailsClosed() throws {
+        let process = FakeManagedProcess(.alreadyExited)
+        let session = makeSession(process)
+        var unmountAttempted = false
+        var recoveryAttempted = false
+        var rejected = false
+        do {
+            try session.stop(
+                unmount: { _ in unmountAttempted = true },
+                isMounted: { _ in true },
+                gracefulExitSeconds: 0,
+                recoverStuckProcess: {
+                    recoveryAttempted = true
+                    return true
+                }
+            )
+        } catch {
+            rejected = true
+        }
+        try require(rejected, "exited transport with live VFS mount incorrectly succeeded")
+        try require(!unmountAttempted, "exited transport entered a potentially blocking VFS unmount")
+        try require(process.terminateCount == 0, "exited transport incorrectly received SIGTERM")
+        try require(process.forceTerminateCount == 0, "exited transport incorrectly received SIGKILL")
+        try require(!recoveryAttempted, "exited transport with live VFS mount attempted unsafe host recovery")
     }
 
     private static func validateRemountQuiescenceGenerationGate() throws {

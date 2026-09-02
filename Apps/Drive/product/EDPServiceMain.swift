@@ -123,8 +123,7 @@ private enum EDPVaultMain {
                 try makeCredentialStore().remove(deviceID: CommandLine.arguments[2])
             case "cleanup":
                 try requireRoot()
-                let manager = try MountManager()
-                manager.recoverPersistedSessionsAsync { errorMessage in
+                try recoverPersistedMountSessionsForServiceCleanup { errorMessage in
                     if let errorMessage {
                         FileHandle.standardError.write(Data("ERROR=\(errorMessage)\n".utf8))
                         exit(1)

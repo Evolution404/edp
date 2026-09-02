@@ -32,7 +32,7 @@
 
 ## Phase A — Sidebar 33 ms 性能收口
 
-状态：CI VERIFY
+状态：DONE（CI-only gate PASS）
 
 ### A1 基线
 
@@ -74,9 +74,9 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] Phase A CI-only policy commit/push：`2945d54`。
 - [x] macOS 26 runner geometry contract 已修正为 900 px 宽 + split usable height ≥620；不把 toolbar 后 content height 锁死为 680。
 - [x] xctrace runner race 已定位：先启动 preview 再 `--attach PID` 时，GitHub runner 的 xctrace 启动可能晚于 preview 生命周期；已改为 Instruments 原生 `--launch -- ${BIN} --hitch-only`。
-- [x] Xcode 26 TOC 已确认完整帧表为 `hitches-frame-lifetimes`；旧 `hitches` 表只包含已判定 hitch 事件。33 ms gate 已切换到完整 frame lifetime 表，阈值仍为 `33_000_000ns`。
-- [x] Xcode 26 raw export 规则已核实：frame lifetime 的 start/duration 是 row 第 1/2 列匿名 typed element，不是 `<start-time>/<duration>` 标签；parser 已按 schema 列序读取，并兼容 raw ns、s/ms/µs/ns fmt 与 ref 复用。
-- [ ] GitHub Actions `make drive-test-ui` 33 ms gate PASS。
+- [x] Xcode 26 TOC 已确认 `hitches-frame-lifetimes` schema 存在，但 GitHub macOS 26 runner 在本 workload 中导出 0 row；最终 gate 保持历史语义：读取同一 Animation Hitches trace 的稀疏 `hitches` 事件，显式按 `THRESHOLD_NS = 33_000_000` 判定，0 row 表示 Instruments 未记录到超过 hitch 条件的事件，不提高阈值。
+- [x] parser 保留 frame-lifetime 兼容路径，并兼容 raw ns、s/ms/µs/ns fmt 与 ref 复用；frame-lifetime 为空时回退 `hitches` event schema，仍只接受 `duration > 33_000_000ns` 为失败。
+- [x] GitHub Actions run `33595043724` / `regression-ui-system` PASS：`UI_HITCH_COUNT_GT33MS=0`、`RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`、`RESULT=DRIVE_UI_OK`；本机未执行 UI 性能段。
 
 ## Phase B — Runtime 职责拆分
 
@@ -103,18 +103,19 @@ UI_HITCH_COUNT_GT33MS=1
 - [ ] 继续抽纯 model/key/helper。
 - [x] 抽 `EDPRawAccessController` orchestration（single-flight + EBUSY exact-generation recovery + lease state）。
 - [x] 抽 auto-mount policy/manual suppression。
-- [ ] 抽 shutdown/recovery orchestration。
-- [ ] 抽 recovery orchestration。
-- [ ] 收窄 service-facing controller。
-- [ ] 每步 S01-S35/property/fast/system/virtual 不回退。
+- [x] 抽 shutdown/recovery orchestration：startup/shutdown state 由 `EDPServiceLifecycleState` 管理，eject wait 与 teardown gate 保持 owner-queue 语义。
+- [x] 抽 recovery orchestration：failed-eject generation revalidation/raw reacquire/boot-policy restore 已进入 `EDPRecoveryCoordinator`。
+- [x] 收窄 service-facing controller：discovery/activity/XPC adapter/service entrypoint 已分别拆至 `EDPDeviceDiscoveryController`、`EDPActivityStore`、`EDPXPCService`、`EDPServiceMain`；`EDPVaultRuntime.swift` 仅保留 mount/session 核心与 daemon orchestration，已从约 5462 行降至约 3700 行。
+- [x] 每步 S01-S35/property/fast/system/virtual 不回退；最新本机 fast/system/virtual 与 320000-step property 全绿。
 - [ ] Phase B storage smoke PASS。
 - [x] 连续两轮 CI M14 暴露旧 storage teardown 与生产不一致：测试曾使用 `hdiutil detach → diskutil eject`；已改为 DA eject + exact current-user `diskimagesiod` owner recovery，保持 exact backing / residue=0 fail-closed。
 - [x] M12 后续 CI 暴露 `ps command=` 进程身份判断不等价于生产 executable-path 校验；storage helper 已改用 `proc_pidpath()`，TERM/KILL 前均重新验证 exact `diskimagesiod` PID/path。
 - [x] 进一步定位 owner recovery：DA eject 后 exact DiskImages2 owner 可继续存在且 `system-entities` 可能为空、只剩 partition 子实体或保持原 synthetic entity；storage test 已同步生产 `parsePublication` 合同，只允许 entity 全部匹配 synthetic `/dev/diskN[sM...]`，并在 TERM 后要求 exact PID + entity snapshot 不变才允许 KILL；任何 owner/entity identity 漂移仍 fail-closed。
-- [x] M12 transport-crash teardown 顺序已修正为与已建立生产会话一致：先 bounded native user filesystem unmount + quiescence，再 unpublish DiskImages2，最后清理 crashed transport bridge；禁止在 upper filesystem 仍持有 synthetic device 时直接杀 owner。
+- [x] M12 transport-crash 多轮 CI 已证明 live upper filesystem + dead lower transport 不能在 macOS 26 上走同步 teardown：ordinary DA unmount 会 callback timeout，`unmount(2, MNT_FORCE)` 可直接进入不可中断 D-state；因此该组合不再尝试“强行恢复”，产品必须 fail-closed。
 - [x] CI native monorepo ratchet 已随 automation state 抽取更新；native/fast/virtual 在 run `33591256755` 已 PASS。
 - [x] GitHub macOS runner 实证 `hitches-frame-lifetimes` schema 存在但 raw rows=0；UI gate 现优先使用完整 frame-lifetime 表，空表时回退同一 Animation Hitches trace 的稀疏 `hitches` 事件表，并继续显式按 `33_000_000ns` 过滤；本机仍不执行 UI 性能段。
-- [x] M12 实证 transport crash 后 ordinary DA unmount callback 会 20s timeout；crash-only synthetic fixture path 改为先证明 exact DiskImages2 identity，再通过既有 helper 执行 bounded `unmount(2, MNT_FORCE)`，随后 publication eject → crashed bridge cleanup，避免把正常 teardown 的优雅 unmount 语义错误套到 lower transport 已死亡场景。
+- [x] run `33595043724` 进一步实证 `unmount(2, MNT_FORCE)` 在 dead transport + live ExFAT mount 下进入内核后超过 26 分钟不返回，直到 30 分钟 CI 上限取消；该危险 helper 模式已彻底删除。生产 `EDPTransportSession` 和 `MountManager` 均新增 transport-liveness fail-closed gate：transport 已退出且 VFS/user filesystem 仍 mounted 时禁止进入同步 unmount syscall，并保留 teardown failure/session 诊断。
+- [x] deterministic transport lifecycle 新增 exited-transport + mounted-VFS 用例，锁定“不调用 unmount、不 SIGTERM/SIGKILL、不 host reset”；storage M12 改为真实验证可安全边界：先正常卸载并 quiesce upper filesystem，再 crash lower transport，随后 exact bridge cleanup → DiskImages2 publication teardown → remount/persistence 验证。
 - [ ] Phase B commits/push。
 
 ## Phase C — App/UI 文件职责拆分

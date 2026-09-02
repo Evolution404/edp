@@ -978,29 +978,6 @@ unmount_path() {
   wait_for_native_filesystem_quiescence
 }
 
-force_unmount_synthetic_path() {
-  local mountpoint="$1"
-  local bsd="$2"
-  local backing="$3"
-  [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
-  assert_synthetic_device "$bsd" "$backing"
-  if is_mounted "$mountpoint"; then
-    local source
-    source="$("$FSKIT_GUARD_BIN" --mount-source "$mountpoint")"
-    [[ "$source" == "/dev/$bsd" ]] || {
-      echo "refusing forced unmount for mismatched synthetic source: $mountpoint source=$source expected=/dev/$bsd" >&2
-      return 1
-    }
-    # Transport-crash recovery cannot wait on the ordinary DA callback path:
-    # the dead lower transport can leave that callback blocked. The helper uses
-    # unmount(2, MNT_FORCE), but only after the exact DiskImages2 fixture identity
-    # above has been proven.
-    bounded 12 "$FSKIT_GUARD_BIN" "$mountpoint" >/dev/null
-  fi
-  ! is_mounted "$mountpoint" || return 1
-  wait_for_native_filesystem_quiescence
-}
-
 assert_no_test_artifacts() {
   local label="$1"
   if ! "$FSKIT_GUARD_BIN" --assert-no-mount-prefix "$WORK_DIR/"; then
@@ -1320,22 +1297,24 @@ run_m10() {
 }
 
 run_m12() {
-  log "=== M12 transport crash and bounded recovery ==="
+  log "=== M12 post-filesystem transport crash and bounded recovery ==="
   local bridge="$MOUNT_ROOT/m12-crash-bridge"
   local pid="" bsd="" mountpoint=""
   start_adapter 2 "$bridge" m12-crash pid
   attach_image "$bridge/volume.raw" bsd m12-crash
   mount_native "$bsd" mountpoint
+  [[ -f "$mountpoint/m02-exchange-proof.bin" ]]
+  # macOS 26 can block both DA unmount and unmount(2, MNT_FORCE) indefinitely
+  # if the lower transport is killed while the upper native filesystem is still
+  # mounted. Product code therefore fails closed before entering that syscall
+  # when transport liveness is already lost. This real storage leg validates the
+  # recoverable boundary: quiesce the upper filesystem first, then crash the
+  # lower transport and prove exact bridge/publication cleanup plus remount.
+  unmount_path "$mountpoint"
   /bin/kill -KILL "$pid"
   wait "$pid" >/dev/null 2>&1 || true
-  # Established-session recovery must preserve the production teardown order:
-  # release the native user filesystem before the DiskImages2 publication and
-  # only then recover the crashed transport bridge. Killing diskimagesiod while
-  # the upper filesystem still owns the synthetic device can strand the owner
-  # in an uninterruptible teardown state.
-  force_unmount_synthetic_path "$mountpoint" "$bsd" "$bridge/volume.raw"
-  eject_image "$bsd" "$bridge/volume.raw"
   cleanup_crashed_local_mount "$bridge"
+  eject_image "$bsd" "$bridge/volume.raw"
   assert_no_test_artifacts M12-crash
   wait_for_remount_quiescence
 

@@ -93,10 +93,11 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 /usr/bin/grep -Fq 'if (( iteration < LOOP_COUNT )); then' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'DADiskEject(disk, kDADiskEjectOptionDefault' "${DA_MOUNT_SOURCE}"
 M12_SECTION="$(/usr/bin/awk '/^run_m12\(\)/,/^run_m14\(\)/' "${STORAGE_RUNNER}")"
-/usr/bin/grep -Fq 'force_unmount_synthetic_path "$mountpoint" "$bsd" "$bridge/volume.raw"' <<<"${M12_SECTION}"
-/usr/bin/grep -Fq 'eject_image "$bsd" "$bridge/volume.raw"' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'unmount_path "$mountpoint"' <<<"${M12_SECTION}"
 /usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' <<<"${M12_SECTION}"
-/usr/bin/grep -Fq 'force_unmount_synthetic_path() {' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'eject_image "$bsd" "$bridge/volume.raw"' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'Product code therefore fails closed before entering that syscall' <<<"${M12_SECTION}"
+! /usr/bin/grep -Fq 'force_unmount_synthetic_path' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_DA_EJECT_OWNER_RECOVERY_OK'
@@ -106,7 +107,8 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_DA_EJECT_OWNER_RECOVERY_OK'
 # any FSKit volume is active, and never grow into an unbounded retry loop.
 FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c"
 /usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${FSKIT_GUARD_SOURCE}"
-/usr/bin/grep -Fq 'int result = unmount(argv[1], MNT_FORCE);' "${FSKIT_GUARD_SOURCE}"
+! /usr/bin/grep -Fq 'MNT_FORCE' "${FSKIT_GUARD_SOURCE}"
+! /usr/bin/grep -Fq 'DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_CALL' "${FSKIT_GUARD_SOURCE}"
 /usr/bin/grep -Fq -- '--assert-no-fskit-mounts' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'command" == "/usr/libexec/fskit_agent"' "${STORAGE_RUNNER}"
@@ -286,6 +288,9 @@ TRANSPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPTransportProvider.swift"
 ! /usr/bin/grep -Fq 'usleep(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'com.edp.drive.transport-stop-sync' "${TRANSPORT_SOURCE}"
 ! /usr/bin/grep -Fq 'func stop(' "${TRANSPORT_SOURCE}"
+/usr/bin/grep -Fq 'transport process already exited while VFS mount remains active' "${TRANSPORT_SOURCE}"
+/usr/bin/grep -Fq 'transport exited while user filesystem remains mounted; refusing synchronous VFS unmount' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'transportUnavailableWithMountedFilesystem' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'manager.mount(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'manager.unmount(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'manager.eject(' "${RUNTIME_SOURCE}"
@@ -523,6 +528,9 @@ echo 'RESULT=DRIVE_SYSTEM_XPC_SERVICE_SPLIT_OK'
 /usr/bin/grep -Fq 'private enum EDPVaultMain' "${SERVICE_MAIN_SOURCE}"
 ! /usr/bin/grep -Fq 'private func daemon() throws -> Never' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'private enum EDPVaultMain' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'recoverPersistedMountSessionsForServiceCleanup' "${SERVICE_MAIN_SOURCE}"
+/usr/bin/grep -Fq 'func recoverPersistedMountSessionsForServiceCleanup(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'MountManager()' "${SERVICE_MAIN_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_SERVICE_MAIN_SPLIT_OK'
 
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
