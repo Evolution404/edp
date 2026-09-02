@@ -11,7 +11,7 @@ TOC_XML="${BUILD_ROOT}/trace-toc.xml"
 HITCH_XML="${BUILD_ROOT}/hitches.xml"
 HITCH_EVENT_XML="${BUILD_ROOT}/hitch-events.xml"
 UI_BOUNDED="${ROOT}/Apps/Drive/Tests/Storage/RunBounded.py"
-UI_XCTRACE_RECORD_TIMEOUT_SECONDS=60
+UI_XCTRACE_RECORD_TIMEOUT_SECONDS=90
 UI_XCTRACE_EXPORT_TIMEOUT_SECONDS=30
 mkdir -p "${BUILD_ROOT}"
 cleanup() {
@@ -95,8 +95,11 @@ fi
 
 echo 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT'
 command -v xcrun >/dev/null
+echo 'UI_XCTRACE_LIST_BEGIN'
 python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace list templates | grep -Fx 'Animation Hitches' >/dev/null
+echo 'UI_XCTRACE_LIST_END'
+echo 'UI_XCTRACE_RECORD_BEGIN'
 python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}" \
   xcrun xctrace record --quiet \
     --template 'Animation Hitches' \
@@ -105,24 +108,31 @@ python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}" \
     --no-prompt \
     --target-stdout "${HITCH_LOG}" \
     --launch -- "${BIN}" --hitch-only
+echo 'UI_XCTRACE_RECORD_END'
 
 grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"
 grep -Fq 'RESULT=DRIVE_UI_HITCH_AUTOMATION_OK' "${HITCH_LOG}"
 
+echo 'UI_XCTRACE_TOC_EXPORT_BEGIN'
 python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace export --input "${TRACE}" --toc --output "${TOC_XML}"
+echo 'UI_XCTRACE_TOC_EXPORT_END'
 echo 'UI_HITCH_TRACE_TIMEBASE:'
 /usr/bin/grep -E '<start-date>|UI_HITCH_TOGGLES_(BEGIN|END)_EPOCH=' "${TOC_XML}" "${HITCH_LOG}" || true
 echo 'UI_HITCH_TRACE_SCHEMAS:'
 /usr/bin/grep -oE 'schema="[^"]+"' "${TOC_XML}" | /usr/bin/sort -u || true
+echo 'UI_XCTRACE_FRAME_EXPORT_BEGIN'
 python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace export --input "${TRACE}" \
     --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches-frame-lifetimes"]' \
     --output "${HITCH_XML}"
+echo 'UI_XCTRACE_FRAME_EXPORT_END'
+echo 'UI_XCTRACE_EVENT_EXPORT_BEGIN'
 python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace export --input "${TRACE}" \
     --xpath '/trace-toc/run[@number="1"]/data/table[@schema="hitches"]' \
     --output "${HITCH_EVENT_XML}"
+echo 'UI_XCTRACE_EVENT_EXPORT_END'
 python3 "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py" \
   --toc "${TOC_XML}" \
   --hitches "${HITCH_XML}" \

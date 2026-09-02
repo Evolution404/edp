@@ -179,10 +179,14 @@ echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'GITHUB_ACTIONS:-false' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
-/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_TIMEOUT_SECONDS=60' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_TIMEOUT_SECONDS=90' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'UI_XCTRACE_EXPORT_TIMEOUT_SECONDS=30' "${UI_RUNNER}"
 [[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 1 ]]
 [[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 4 ]]
+for marker in LIST RECORD TOC_EXPORT FRAME_EXPORT EVENT_EXPORT; do
+  /usr/bin/grep -Fq "UI_XCTRACE_${marker}_BEGIN" "${UI_RUNNER}"
+  /usr/bin/grep -Fq "UI_XCTRACE_${marker}_END" "${UI_RUNNER}"
+done
 /usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches-frame-lifetimes"]' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches"]' "${UI_RUNNER}"

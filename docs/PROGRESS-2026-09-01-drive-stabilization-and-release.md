@@ -133,7 +133,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] macFUSE/App service support 已拆到 `App/Service/EDPAppServiceSupport.swift`；XPC smoke helper 已拆到 `App/Service/EDPXPCSmokeSupport.swift`，CLI smoke 与页面实现边界清晰。
 - [x] `EDPUSBVaultApp.swift` 已由约 3810 行降至约 476 行，只保留 App/CLI entrypoint 与 raw-FD broker dispatch；system ratchet 禁止 ViewModel/pages/sidebar/menu/support 实现回流。
 - [x] Liquid Glass、菜单层级、仅退出界面/完全退出语义未改变；本机 Swift6 typecheck、system、fast、virtual、S01-S35/320000-step property、production installer、`git diff --check` 全部 PASS。
-- [ ] GitHub Actions UI gate 在 Phase C exact-head 上 PASS；本机继续不执行 UI performance/xctrace。
+- [ ] GitHub Actions UI gate 在 Phase C exact-head 上 PASS；本机继续不执行 UI performance/xctrace。run `33624947444` / `bcd012c` 已通过全部 preview/page/20-toggle automation，但拆分后的 accessibility 静态检查仍错误指向旧主文件；`90055cf` 已修正。run `33625217603` / `90055cf` 随后通过 automation + accessibility，但 60s record watchdog 早于 Xcode 26 正常 Instruments 冷启动完成而超时；历史 PASS run `33598617878` / `33595043724` 从 perf marker 到首个 trace export 分别约 71.4s / 75.1s，因此 record watchdog 调整为 90s、list/export 保持 30s，并新增各 xctrace 阶段 BEGIN/END marker；8s trace、20 toggles、33ms 阈值不变。
 - [x] Phase C 已提交并 push：`0f4a017` `refactor(drive): split app ui responsibilities`；等待固定 HEAD CI 复核后转 DONE。
 
 ## Phase D — 发布可靠性与 recovery 可观测性
