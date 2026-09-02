@@ -175,6 +175,67 @@ private enum ValidateMacFUSEScratchCleanup {
         try require(try EDPMacFUSEScratchImageCleanup.parseInfoPlist(empty).isEmpty,
                     "empty hdiutil image list must remain empty")
 
+        try require(
+            EDPDiskImages2Publisher.regressionStableDeadOwnerOnlyRetirement(
+                originalPID: 7065,
+                originalOwnerUID: 501,
+                originalDevices: [],
+                revalidatedPID: 7065,
+                revalidatedOwnerUID: 501,
+                revalidatedDevices: [],
+                revalidatedOwnerExecutablePath: nil
+            ),
+            "stable dead owner-only DiskImages2 tombstone must be retireable"
+        )
+        try require(
+            !EDPDiskImages2Publisher.regressionStableDeadOwnerOnlyRetirement(
+                originalPID: 7065,
+                originalOwnerUID: 501,
+                originalDevices: [],
+                revalidatedPID: 7066,
+                revalidatedOwnerUID: 501,
+                revalidatedDevices: [],
+                revalidatedOwnerExecutablePath: nil
+            ),
+            "DiskImages2 owner PID change must fail closed"
+        )
+        try require(
+            !EDPDiskImages2Publisher.regressionStableDeadOwnerOnlyRetirement(
+                originalPID: 7065,
+                originalOwnerUID: 501,
+                originalDevices: [],
+                revalidatedPID: 7065,
+                revalidatedOwnerUID: 502,
+                revalidatedDevices: [],
+                revalidatedOwnerExecutablePath: nil
+            ),
+            "DiskImages2 owner UID change must fail closed"
+        )
+        try require(
+            !EDPDiskImages2Publisher.regressionStableDeadOwnerOnlyRetirement(
+                originalPID: 7065,
+                originalOwnerUID: 501,
+                originalDevices: [],
+                revalidatedPID: 7065,
+                revalidatedOwnerUID: 501,
+                revalidatedDevices: ["/dev/disk35"],
+                revalidatedOwnerExecutablePath: nil
+            ),
+            "DiskImages2 tombstone with live entity metadata must fail closed"
+        )
+        try require(
+            !EDPDiskImages2Publisher.regressionStableDeadOwnerOnlyRetirement(
+                originalPID: 7065,
+                originalOwnerUID: 501,
+                originalDevices: [],
+                revalidatedPID: 7065,
+                revalidatedOwnerUID: 501,
+                revalidatedDevices: [],
+                revalidatedOwnerExecutablePath: "/usr/libexec/diskimagesiod"
+            ),
+            "live DiskImages2 owner must not be mistaken for a stale tombstone"
+        )
+        print("RESULT=DISKIMAGES2_DEAD_OWNER_TOMBSTONE_CONTRACT_OK")
         print("RESULT=MACFUSE_SCRATCH_CLEANUP_CONTRACT_OK")
     }
 }

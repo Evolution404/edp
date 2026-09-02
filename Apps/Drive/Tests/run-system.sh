@@ -88,6 +88,9 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 /usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_POSTKILL_SNAPSHOT=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_POSTKILL_GENERATION=' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '[[ -z "$devices" && "$final_snapshot" == "$owner_snapshot" ]]' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '! /bin/kill -0 "$pid"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'proc_pidpath(' "${DA_MOUNT_SOURCE}"
 /usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS=3' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
@@ -272,6 +275,11 @@ PUBLISH_PARSE_SECTION="$(/usr/bin/awk '
 /usr/bin/printf '%s\n' "${PUBLISH_PARSE_SECTION}" | /usr/bin/grep -Fq 'Self.isSyntheticBSDDevicePath'
 ! /usr/bin/printf '%s\n' "${PUBLISH_PARSE_SECTION}" | /usr/bin/grep -Fq 'stat(expected'
 ! /usr/bin/printf '%s\n' "${PUBLISH_PARSE_SECTION}" | /usr/bin/grep -Fq 'return stat(path'
+/usr/bin/grep -Fq 'isStableDeadOwnerOnlyRetirement' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'original.devicePaths.isEmpty' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'revalidated == original' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'revalidatedOwnerExecutablePath == nil' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'confirmDeadOwnerOnlyRetirementAsync' "${PUBLISHER_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK'
 
 # The storage regression harness must obey the same teardown rule as product

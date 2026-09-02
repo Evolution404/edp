@@ -786,11 +786,64 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         }
     }
 
-    private struct DiskImagesPublication {
+    private struct DiskImagesPublication: Equatable {
         let pid: pid_t
         let imagePath: String
         let ownerUID: uid_t
         let devicePaths: [String]
+    }
+
+    private static func isStableDeadOwnerOnlyRetirement(
+        original: DiskImagesPublication,
+        revalidated: DiskImagesPublication,
+        revalidatedOwnerExecutablePath: String?
+    ) -> Bool {
+        original.devicePaths.isEmpty
+            && revalidated == original
+            && revalidatedOwnerExecutablePath == nil
+    }
+
+    private func confirmDeadOwnerOnlyRetirementAsync(
+        _ original: DiskImagesPublication,
+        backingPath: String,
+        completion: @escaping EDPBooleanCompletion
+    ) {
+        guard geteuid() == 0,
+              original.devicePaths.isEmpty,
+              processExecutablePath(original.pid) == nil else {
+            completion(false)
+            return
+        }
+
+        // macOS 26 DiskImages2 can retain an hdiutil owner record after the
+        // exact diskimagesiod process has exited and all system entities have
+        // disappeared. Treat that metadata-only tombstone as retired only when
+        // the exact owner-only snapshot remains stable across a bounded delay
+        // and the recorded PID is still absent. Any PID/entity/owner change is
+        // a new or ambiguous generation and remains fail-closed.
+        operationQueue.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self] in
+            guard let self else {
+                completion(false)
+                return
+            }
+            self.publicationAsync(backingPath: backingPath) { revalidated, errorMessage in
+                guard errorMessage == nil else {
+                    completion(false)
+                    return
+                }
+                guard let revalidated else {
+                    completion(true)
+                    return
+                }
+                completion(
+                    Self.isStableDeadOwnerOnlyRetirement(
+                        original: original,
+                        revalidated: revalidated,
+                        revalidatedOwnerExecutablePath: processExecutablePath(revalidated.pid)
+                    )
+                )
+            }
+        }
     }
 
     private func ensurePublicationGoneAsync(
@@ -838,8 +891,21 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         backingPath: String,
         completion: @escaping EDPBooleanCompletion
     ) {
-        guard geteuid() == 0,
-              processExecutablePath(candidate.pid) == "/usr/libexec/diskimagesiod" else {
+        guard geteuid() == 0 else {
+            completion(false)
+            return
+        }
+
+        let ownerExecutablePath = processExecutablePath(candidate.pid)
+        if ownerExecutablePath == nil, candidate.devicePaths.isEmpty {
+            confirmDeadOwnerOnlyRetirementAsync(
+                candidate,
+                backingPath: backingPath,
+                completion: completion
+            )
+            return
+        }
+        guard ownerExecutablePath == "/usr/libexec/diskimagesiod" else {
             completion(false)
             return
         }
@@ -867,9 +933,30 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
                 _ = Darwin.kill(revalidated.pid, SIGKILL)
                 self.waitForPublicationToDisappearAsync(
                     backingPath,
-                    timeout: 2.0,
-                    completion: completion
-                )
+                    timeout: 2.0
+                ) { [weak self] disappearedAfterKill in
+                    guard let self else {
+                        completion(false)
+                        return
+                    }
+                    if disappearedAfterKill {
+                        completion(true)
+                        return
+                    }
+                    self.publicationAsync(backingPath: backingPath) { postKill, postKillError in
+                        guard postKillError == nil,
+                              let postKill,
+                              postKill == revalidated else {
+                            completion(false)
+                            return
+                        }
+                        self.confirmDeadOwnerOnlyRetirementAsync(
+                            postKill,
+                            backingPath: backingPath,
+                            completion: completion
+                        )
+                    }
+                }
             }
         }
     }
@@ -1009,6 +1096,35 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
 }
 
 #if EDP_REGRESSION_TESTS
+extension EDPDiskImages2Publisher {
+    static func regressionStableDeadOwnerOnlyRetirement(
+        originalPID: Int32,
+        originalOwnerUID: UInt32,
+        originalDevices: [String],
+        revalidatedPID: Int32,
+        revalidatedOwnerUID: UInt32,
+        revalidatedDevices: [String],
+        revalidatedOwnerExecutablePath: String?
+    ) -> Bool {
+        let imagePath = "/Volumes/.edp-block-regression/volume.raw"
+        return isStableDeadOwnerOnlyRetirement(
+            original: DiskImagesPublication(
+                pid: pid_t(originalPID),
+                imagePath: imagePath,
+                ownerUID: uid_t(originalOwnerUID),
+                devicePaths: originalDevices
+            ),
+            revalidated: DiskImagesPublication(
+                pid: pid_t(revalidatedPID),
+                imagePath: imagePath,
+                ownerUID: uid_t(revalidatedOwnerUID),
+                devicePaths: revalidatedDevices
+            ),
+            revalidatedOwnerExecutablePath: revalidatedOwnerExecutablePath
+        )
+    }
+}
+
 private let edpPublisherRegressionQueue = DispatchQueue(
     label: "com.edp.drive.block-publication-regression"
 )

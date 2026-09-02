@@ -400,6 +400,33 @@ recover_synthetic_publication() {
   else
     echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_SNAPSHOT=unavailable' >&2
   fi
+
+  # macOS 26 can retain a metadata-only hdiutil tombstone after the exact
+  # diskimagesiod owner is gone. Accept it only for an owner-only snapshot:
+  # no system entities, identical exact owner metadata, original PID absent,
+  # and the same state after a second bounded stabilization sample. A changed
+  # PID/entity generation remains fail-closed.
+  if [[ -z "$devices" && "$final_snapshot" == "$owner_snapshot" ]] \
+    && ! /bin/kill -0 "$pid" >/dev/null 2>&1; then
+    /bin/sleep 0.5
+    if /bin/kill -0 "$pid" >/dev/null 2>&1; then
+      echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-reused' >&2
+      return 1
+    fi
+    local stable_snapshot=""
+    stable_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
+    if [[ -z "$stable_snapshot" ]]; then
+      echo 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=metadata-disappeared' >&2
+      return 0
+    fi
+    if [[ "$stable_snapshot" == "$owner_snapshot" ]]; then
+      echo "STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner pid=$pid" >&2
+      return 0
+    fi
+    echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=generation-changed snapshot=$stable_snapshot" >&2
+    return 1
+  fi
+
   echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=owner-remained' >&2
   return 1
 }

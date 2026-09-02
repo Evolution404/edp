@@ -10,7 +10,7 @@ BUILD_DIR="${TMPDIR:-/tmp}/edp-drive-block-publisher-${USER:-user}"
 mkdir -p "$BUILD_DIR"
 BINARY="$BUILD_DIR/validate-macfuse-scratch-cleanup"
 
-xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+xcrun swiftc -O -swift-version 6 -warnings-as-errors -D EDP_REGRESSION_TESTS \
   product/EDPBlockDevicePublisher.swift \
   product/Tests/ValidateMacFUSEScratchCleanup.swift \
   -o "$BINARY"
