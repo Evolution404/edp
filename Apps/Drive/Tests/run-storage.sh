@@ -373,6 +373,33 @@ recover_synthetic_publication() {
     echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=kill' >&2
     return 0
   fi
+
+  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
+    local process_state
+    process_state="$(/bin/ps -p "$pid" -o state=,stat=,command= 2>/dev/null | /usr/bin/xargs || true)"
+    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=alive pid=$pid state=${process_state:-unknown}" >&2
+    if "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null 2>&1; then
+      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_PATH=diskimagesiod' >&2
+    else
+      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_PATH=changed-or-unavailable' >&2
+    fi
+  else
+    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=gone pid=$pid" >&2
+  fi
+
+  local final_snapshot="" final_pid="" final_devices=""
+  final_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
+  if [[ -n "$final_snapshot" ]]; then
+    IFS='|' read -r final_pid final_devices <<<"$final_snapshot"
+    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_SNAPSHOT=pid=$final_pid devices=${final_devices:-none}" >&2
+    if [[ "$final_pid" == "$pid" ]]; then
+      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_GENERATION=same' >&2
+    else
+      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_GENERATION=changed' >&2
+    fi
+  else
+    echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_SNAPSHOT=unavailable' >&2
+  fi
   echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=owner-remained' >&2
   return 1
 }
