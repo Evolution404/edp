@@ -979,18 +979,22 @@ stop_adapter() {
   if /bin/kill -0 "$pid" >/dev/null 2>&1; then
     /bin/kill -TERM "$pid"
   fi
-  if ! wait_for_child_exit_bounded "$pid" 450 "adapter-term-$tag"; then
+  if ! wait_for_child_exit_bounded "$pid" 50 "adapter-term-$tag"; then
     echo "adapter ignored bounded SIGTERM teardown: $tag" >&2
     if is_mounted "$bridge"; then
       log "STORAGE_ADAPTER_BRIDGE_RECOVERY=$tag"
       cleanup_crashed_local_mount "$bridge" || true
-      if wait_for_child_exit_bounded "$pid" 100 "adapter-post-bridge-recovery-$tag"; then
+      if wait_for_child_exit_bounded "$pid" 20 "adapter-post-bridge-recovery-$tag"; then
         wait "$pid" >/dev/null 2>&1 || true
         return 0
       fi
     fi
     /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-    wait_for_child_exit_bounded "$pid" 30 "adapter-kill-$tag" || return 1
+    if ! wait_for_child_exit_bounded "$pid" 10 "adapter-kill-$tag"; then
+      log "STORAGE_ADAPTER_HOST_RECOVERY=$tag"
+      restart_console_fskit_agent_if_safe || return 1
+      wait_for_child_exit_bounded "$pid" 20 "adapter-post-host-recovery-$tag" || return 1
+    fi
   fi
   wait "$pid" || {
     echo "adapter returned failure during teardown: $tag" >&2

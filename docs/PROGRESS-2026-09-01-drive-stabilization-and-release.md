@@ -134,7 +134,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] `EDPUSBVaultApp.swift` 已由约 3810 行降至约 476 行，只保留 App/CLI entrypoint 与 raw-FD broker dispatch；system ratchet 禁止 ViewModel/pages/sidebar/menu/support 实现回流。
 - [x] Liquid Glass、菜单层级、仅退出界面/完全退出语义未改变；本机 Swift6 typecheck、system、fast、virtual、S01-S35/320000-step property、production installer、`git diff --check` 全部 PASS。
 - [x] GitHub Actions UI gate 已在 Phase C exact-head `b6015ff` / run `33625866975` PASS；preview/page/20-toggle/accessibility 全绿，`UI_HITCH_COUNT_GT33MS=0`、`RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`。xctrace record 实测约 65.99s，因此 record watchdog 90s 有 exact-head 数据依据；8s trace、20 toggles、33ms 阈值不变。本机继续不执行 UI performance/xctrace。
-- [ ] Phase C exact-head storage 最终复核：run `33625866975` 的 M01、M02/M04-M09 和 dead-owner tombstone retirement 均通过，但 `m02-remount` adapter 忽略 TERM 后，旧 harness 在 SIGKILL 后无界 `wait`，最终触发 30 分钟 job cancel。`f1f1b55` 已改为 bounded child reap，并在 TERM 失败时先走 exact macFUSE Local bridge recovery；待新 fixed HEAD storage M01-M14 全绿后 Phase C 转 DONE。
+- [ ] Phase C exact-head storage 最终复核：run `33625866975` 的旧 harness 因 SIGKILL 后无界 `wait` 触发 30 分钟 cancel，`f1f1b55` 已消除无界 wait。随后 run `33634311895` / `cb321cb` 已进一步通过 M01、M02/M04-M09、M03，并在约 6 分钟内 bounded fail 于 M10 cycle 2：bridge 已消失但 adapter 处于 `U<`/`?<E` stuck state。storage harness 现对齐 production `EDPTransportSession.stopAsync`：TERM 5s → SIGKILL 1s → mount-free 时单次 console-user `fskit_agent` recovery → 2s final wait；待新 fixed HEAD M01-M14 全绿后 Phase C 转 DONE。
 - [x] Phase C 已提交并 push：`0f4a017` `refactor(drive): split app ui responsibilities`；等待固定 HEAD CI 复核后转 DONE。
 
 ## Phase D — 发布可靠性与 recovery 可观测性
@@ -151,7 +151,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] `mountRetryCount`
 - [x] `ejectAlreadyAbsentSuccessCount`
 - [x] diagnostics 仅输出 7 个 UInt64；schema 禁止 deviceID/path/password/credential/secret/key 字段；system ratchet + 1000-way concurrent metrics contract test PASS。
-- [ ] D1 fixed-head GitHub Actions native/fast/virtual/system/storage 复核后关闭。
+- [ ] D1 fixed-head 复核：run `33634311895` / `cb321cb` 的 native、fast、virtual、UI/system 均 PASS，storage 已越过 M03 但因 M10 transport teardown harness 缺少 production-equivalent host recovery 而失败；待 storage M01-M14 全绿后关闭 D1。
 
 ### D2 外部/私有依赖
 
