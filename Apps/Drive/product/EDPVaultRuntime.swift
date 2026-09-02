@@ -2412,6 +2412,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private let mediaProvider: any EDPWholeUSBMediaProviding
     private let metadataReader: any EDPRawMetadataReading
     private let rawAccess: EDPRawAccessCoordinator
+    private let eject: EDPEjectCoordinator
     private let credentialVerifier: EDPCredentialVerifying
     private let automation = EDPAutomationState()
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
@@ -2419,8 +2420,6 @@ final class EDPDaemonController: @unchecked Sendable {
     private var activities = [EDPXPCActivity]()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
-    private var ejectingUSBRegistryIDs = [String: UInt64]()
-    private var ejectCompletionWaiters = [String: [EDPDaemonMountCompletion]]()
     private var lastDiscoveryDiagnostics = ["discovery_not_started"]
     private var discoveryScanCount: UInt64 = 0
     private var lastDiscoveryTimestamp = ""
@@ -2477,6 +2476,11 @@ final class EDPDaemonController: @unchecked Sendable {
             diskArbitration: effectiveDiskArbitration,
             leaseOpener: effectiveRawAccessLeaseOpener,
             openerRunsOffOwnerQueue: rawAccessOpenerRunsOffControllerQueue
+        )
+        self.eject = EDPEjectCoordinator(
+            ownerQueue: queue,
+            diskArbitration: effectiveDiskArbitration,
+            mediaProvider: mediaProvider
         )
         _ = try self.store.load()
         _ = try self.policies.load()
@@ -2544,7 +2548,7 @@ final class EDPDaemonController: @unchecked Sendable {
         policyDocument: EDPPolicyDocument
     ) throws {
         var records = try store.load().records
-        for disk in disks where ejectingUSBRegistryIDs[disk.deviceID] == nil {
+        for disk in disks where !eject.isEjecting(deviceID: disk.deviceID) {
             guard let devicePolicy = policyDocument.devices.first(
                 where: { $0.deviceID == disk.deviceID }
             ) else { continue }
@@ -2604,7 +2608,7 @@ final class EDPDaemonController: @unchecked Sendable {
     }
 
     private func rawAccessGenerationMatchesLocked(_ disk: PhysicalDisk) -> Bool {
-        guard ejectingUSBRegistryIDs[disk.deviceID] == nil,
+        guard !eject.isEjecting(deviceID: disk.deviceID),
               let current = connectedDisks.first(where: { $0.deviceID == disk.deviceID }),
               current.registryEntryID == disk.registryEntryID,
               current.rawPath == disk.rawPath,
@@ -2641,7 +2645,7 @@ final class EDPDaemonController: @unchecked Sendable {
     ) {
         rawAccess.requireLeaseAsync(
             for: disk,
-            isEjecting: ejectingUSBRegistryIDs[disk.deviceID] != nil,
+            isEjecting: eject.isEjecting(deviceID: disk.deviceID),
             generationMatches: { [weak self] candidate in
                 self?.rawAccessGenerationMatchesLocked(candidate) == true
             },
@@ -2739,13 +2743,9 @@ final class EDPDaemonController: @unchecked Sendable {
                     : scanDiagnostics
                 connectedDisks = disks
                 let connectedDeviceIDs = Set(disks.map(\.deviceID))
-                for (deviceID, usbRegistryEntryID) in ejectingUSBRegistryIDs
-                where !mediaProvider.registryEntryExists(usbRegistryEntryID) {
-                    ejectingUSBRegistryIDs.removeValue(forKey: deviceID)
-                    diskArbitration.allowAutomount(usbRegistryEntryID: usbRegistryEntryID)
-                }
+                eject.releaseDisconnectedGenerations()
                 rawAccess.prune(to: disks)
-                for disk in disks where ejectingUSBRegistryIDs[disk.deviceID] == nil
+                for disk in disks where !eject.isEjecting(deviceID: disk.deviceID)
                     && (rawAccess.readiness(deviceID: disk.deviceID) == nil
                         || rawAccessLeaseLocked(for: disk) == nil) {
                     rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, failure in
@@ -2785,7 +2785,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 try probeDefaultPasswordsLocked(disks: disks, policyDocument: policyDocument)
                 let records = try store.load().records
                 for disk in disks {
-                    if ejectingUSBRegistryIDs[disk.deviceID] != nil {
+                    if eject.isEjecting(deviceID: disk.deviceID) {
                         if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
                             diskArbitration.unmountWholeAsync(
                                 disk.bsdName,
@@ -2901,7 +2901,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 let records = try store.load().records
                 let policyDocument = try policies.load()
                 let connectedByID = Dictionary(uniqueKeysWithValues: disks
-                    .filter { ejectingUSBRegistryIDs[$0.deviceID] == nil }
+                    .filter { !eject.isEjecting(deviceID: $0.deviceID) }
                     .map { ($0.deviceID, $0) })
                 let deviceIDs = Set(policyDocument.devices.map(\.deviceID))
                     .union(records.map(\.deviceID))
@@ -3371,7 +3371,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 return
             }
             let disks = self.connectedDisks.filter {
-                self.ejectingUSBRegistryIDs[$0.deviceID] == nil
+                !self.eject.isEjecting(deviceID: $0.deviceID)
             }
             self.refreshRawAccessNextLocked(
                 disks,
@@ -3423,7 +3423,7 @@ final class EDPDaemonController: @unchecked Sendable {
             guard policyDocument.globalAutoMountEnabled else { return false }
 
             var clearedAny = false
-            for disk in connectedDisks where ejectingUSBRegistryIDs[disk.deviceID] == nil {
+            for disk in connectedDisks where !eject.isEjecting(deviceID: disk.deviceID) {
                 guard let devicePolicy = policyDocument.devices.first(
                     where: { $0.deviceID == disk.deviceID }
                 ) else { continue }
@@ -3460,8 +3460,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 completion("EDP service is shutting down")
                 return
             }
-            if self.ejectingUSBRegistryIDs[deviceID] != nil {
-                self.ejectCompletionWaiters[deviceID, default: []].append(completion)
+            if self.eject.joinIfActive(deviceID: deviceID, completion: completion) {
                 return
             }
             guard let disk = self.connectedDisks.first(where: { $0.deviceID == deviceID }) else {
@@ -3469,15 +3468,13 @@ final class EDPDaemonController: @unchecked Sendable {
                 return
             }
 
-            self.ejectingUSBRegistryIDs[deviceID] = disk.usbRegistryEntryID
-            self.ejectCompletionWaiters[deviceID] = [completion]
+            guard self.eject.begin(disk: disk, completion: completion) else { return }
             let finishRequest: EDPDaemonMountCompletion = { [weak self] errorMessage in
                 guard let self else { return }
                 self.onControllerQueue {
                     self.finishEjectWaitersLocked(deviceID: deviceID, errorMessage: errorMessage)
                 }
             }
-            self.diskArbitration.suppressAutomount(usbRegistryEntryID: disk.usbRegistryEntryID)
             self.manager.ejectAsync(deviceID: deviceID) { [weak self] teardownError in
                 guard let self else { return }
                 self.onControllerQueue {
@@ -3492,7 +3489,7 @@ final class EDPDaemonController: @unchecked Sendable {
 
                     self.rawAccess.prepareForPhysicalEject(deviceID: deviceID)
 
-                    self.performPhysicalEjectAsyncLocked(disk: disk) { [weak self] errorMessage in
+                    self.eject.performPhysicalEjectAsync(disk: disk) { [weak self] errorMessage in
                         guard let self else { return }
                         self.onControllerQueue {
                             if let errorMessage {
@@ -3511,13 +3508,6 @@ final class EDPDaemonController: @unchecked Sendable {
                                 deviceID: deviceID,
                                 failureCode: nil
                             )
-                            if let usbRegistryEntryID = self.ejectingUSBRegistryIDs.removeValue(
-                                forKey: deviceID
-                            ) {
-                                self.diskArbitration.allowAutomount(
-                                    usbRegistryEntryID: usbRegistryEntryID
-                                )
-                            }
                             self.connectedDisks.removeAll { $0.deviceID == deviceID }
                             self.rawAccess.removeDevice(deviceID: deviceID)
                             self.addActivity("设备已安全推出", deviceID: deviceID)
@@ -3530,73 +3520,8 @@ final class EDPDaemonController: @unchecked Sendable {
     }
 
     private func finishEjectWaitersLocked(deviceID: String, errorMessage: String?) {
-        let waiters = ejectCompletionWaiters.removeValue(forKey: deviceID) ?? []
-        for waiter in waiters {
-            waiter(errorMessage)
-        }
+        eject.finishWaiters(deviceID: deviceID, errorMessage: errorMessage)
         beginShutdownTeardownIfReadyLocked()
-    }
-
-    private func performPhysicalEjectAsyncLocked(
-        disk: PhysicalDisk,
-        completion: @escaping EDPDaemonMountCompletion
-    ) {
-        let originalGenerationPresent: @Sendable () -> Bool = { [mediaProvider] in
-            mediaProvider.registryEntryExists(disk.usbRegistryEntryID)
-        }
-        let ejectNow: @Sendable () -> Void = { [weak self] in
-            guard let self else {
-                completion("EDP service controller was released")
-                return
-            }
-            // The original USB generation may disappear while synthetic
-            // publications are being torn down. Its disappearance is already
-            // the desired physical-eject terminal state; never issue DA work
-            // against a stale or reused BSD name.
-            guard originalGenerationPresent() else {
-                completion(nil)
-                return
-            }
-            self.diskArbitration.ejectAsync(
-                disk.bsdName,
-                expectedRegistryEntryID: disk.registryEntryID
-            ) { [weak self] error in
-                guard let self else { return }
-                self.onControllerQueue {
-                    if error != nil, !originalGenerationPresent() {
-                        completion(nil)
-                    } else {
-                        completion(error.map { String(describing: $0) })
-                    }
-                }
-            }
-        }
-
-        guard originalGenerationPresent() else {
-            completion(nil)
-            return
-        }
-        guard EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) else {
-            ejectNow()
-            return
-        }
-        diskArbitration.unmountWholeAsync(
-            disk.bsdName,
-            expectedRegistryEntryID: disk.registryEntryID
-        ) { [weak self] error in
-            guard let self else { return }
-            self.onControllerQueue {
-                if let error {
-                    if originalGenerationPresent() {
-                        completion(String(describing: error))
-                    } else {
-                        completion(nil)
-                    }
-                    return
-                }
-                ejectNow()
-            }
-        }
     }
 
     private func recoverFailedEjectLocked(
@@ -3604,8 +3529,7 @@ final class EDPDaemonController: @unchecked Sendable {
         errorMessage: String,
         completion: @escaping EDPDaemonMountCompletion
     ) {
-        ejectingUSBRegistryIDs.removeValue(forKey: disk.deviceID)
-        diskArbitration.allowAutomount(usbRegistryEntryID: disk.usbRegistryEntryID)
+        eject.releaseActive(deviceID: disk.deviceID)
 
         let finish: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
@@ -3681,7 +3605,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private func beginShutdownTeardownIfReadyLocked() {
         guard shutdownInProgress,
               !shutdownTeardownStarted,
-              ejectingUSBRegistryIDs.isEmpty else { return }
+              !eject.hasActiveEjects else { return }
         shutdownTeardownStarted = true
         manager.unmountAllAsync { [weak self] errorMessage in
             guard let self else { return }

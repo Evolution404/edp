@@ -38,6 +38,7 @@ PRODUCT_SOURCES=(
   product/EDPRawAccess.swift
   product/EDPRawAccessCoordinator.swift
   product/EDPAutomationState.swift
+  product/EDPEjectCoordinator.swift
   product/EDPMountLifecycle.swift
   product/EDPMountSupport.swift
   product/EDPVaultRuntime.swift
