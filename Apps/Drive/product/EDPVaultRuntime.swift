@@ -2415,6 +2415,7 @@ final class EDPDaemonController: @unchecked Sendable {
     private let eject: EDPEjectCoordinator
     private let credentialVerifier: EDPCredentialVerifying
     private let automation = EDPAutomationState()
+    private let serviceLifecycle = EDPServiceLifecycleState()
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private let queueKey = DispatchSpecificKey<UInt8>()
     private var activities = [EDPXPCActivity]()
@@ -2423,12 +2424,6 @@ final class EDPDaemonController: @unchecked Sendable {
     private var lastDiscoveryDiagnostics = ["discovery_not_started"]
     private var discoveryScanCount: UInt64 = 0
     private var lastDiscoveryTimestamp = ""
-    private var startupRecoveryComplete = false
-    private var startupRecoveryError: String?
-    private var shutdownRequested = false
-    private var shutdownInProgress = false
-    private var shutdownTeardownStarted = false
-    private var shutdownCompletions = [EDPDaemonMountCompletion]()
 
     init(
         store: EDPCredentialStore? = nil,
@@ -2490,8 +2485,7 @@ final class EDPDaemonController: @unchecked Sendable {
         self.manager.recoverPersistedSessionsAsync { [weak self] errorMessage in
             guard let self else { return }
             self.onControllerQueue {
-                self.startupRecoveryError = errorMessage
-                self.startupRecoveryComplete = true
+                self.serviceLifecycle.completeStartupRecovery(errorMessage: errorMessage)
                 if let errorMessage {
                     self.addActivity(
                         "启动时残留会话恢复失败：\(errorMessage)",
@@ -2727,7 +2721,8 @@ final class EDPDaemonController: @unchecked Sendable {
 #endif
 
     private func reconcileLocked() {
-        guard startupRecoveryComplete, !shutdownRequested else { return }
+        guard serviceLifecycle.startupRecoveryComplete,
+              !serviceLifecycle.shutdownRequested else { return }
         autoreleasepool {
             do {
                 var scanDiagnostics = [String]()
@@ -2987,8 +2982,9 @@ final class EDPDaemonController: @unchecked Sendable {
                 completion("EDP service controller was released")
                 return
             }
-            guard self.startupRecoveryComplete, !self.shutdownRequested else {
-                completion(self.shutdownRequested
+            guard self.serviceLifecycle.startupRecoveryComplete,
+                  !self.serviceLifecycle.shutdownRequested else {
+                completion(self.serviceLifecycle.shutdownRequested
                     ? "EDP service is shutting down"
                     : "EDP service startup recovery is still in progress")
                 return
@@ -3049,7 +3045,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 completion("EDP service controller was released")
                 return
             }
-            guard !self.shutdownRequested else {
+            guard !self.serviceLifecycle.shutdownRequested else {
                 completion("EDP service is shutting down")
                 return
             }
@@ -3456,7 +3452,7 @@ final class EDPDaemonController: @unchecked Sendable {
                 completion("EDP service controller was released")
                 return
             }
-            guard !self.shutdownRequested else {
+            guard !self.serviceLifecycle.shutdownRequested else {
                 completion("EDP service is shutting down")
                 return
             }
@@ -3573,8 +3569,8 @@ final class EDPDaemonController: @unchecked Sendable {
                 "eventDrivenDiscovery": true,
                 "automaticMountRetry": false,
                 "credentialStore": "System Keychain",
-                "startupRecoveryComplete": startupRecoveryComplete,
-                "startupRecoveryError": startupRecoveryError as Any,
+                "startupRecoveryComplete": serviceLifecycle.startupRecoveryComplete,
+                "startupRecoveryError": serviceLifecycle.startupRecoveryError as Any,
                 "deviceDiscoveryDiagnostics": EDPNativeDeviceDiscovery.diagnosticReport()
                     + lastDiscoveryDiagnostics,
                 "discoveryScanCount": discoveryScanCount,
@@ -3590,23 +3586,18 @@ final class EDPDaemonController: @unchecked Sendable {
                 completion("EDP service controller was released")
                 return
             }
-            self.shutdownCompletions.append(completion)
-            guard !self.shutdownInProgress else {
+            guard self.serviceLifecycle.beginShutdown(completion: completion) else {
                 self.manager.recordShutdownCoalesced()
                 return
             }
-
-            self.shutdownRequested = true
-            self.shutdownInProgress = true
             self.beginShutdownTeardownIfReadyLocked()
         }
     }
 
     private func beginShutdownTeardownIfReadyLocked() {
-        guard shutdownInProgress,
-              !shutdownTeardownStarted,
-              !eject.hasActiveEjects else { return }
-        shutdownTeardownStarted = true
+        guard serviceLifecycle.beginTeardownIfReady(
+            hasActiveEjects: eject.hasActiveEjects
+        ) else { return }
         manager.unmountAllAsync { [weak self] errorMessage in
             guard let self else { return }
             self.onControllerQueue {
@@ -3627,10 +3618,7 @@ final class EDPDaemonController: @unchecked Sendable {
                         level: "error"
                     )
                 }
-                self.shutdownTeardownStarted = false
-                self.shutdownInProgress = false
-                let completions = self.shutdownCompletions
-                self.shutdownCompletions.removeAll()
+                let completions = self.serviceLifecycle.finishShutdown()
                 for callback in completions { callback(finalError) }
             }
         }

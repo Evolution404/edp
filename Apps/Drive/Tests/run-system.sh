@@ -14,6 +14,7 @@ RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 RAW_ACCESS_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccessCoordinator.swift"
 AUTOMATION_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPAutomationState.swift"
 EJECT_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPEjectCoordinator.swift"
+SERVICE_LIFECYCLE_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPServiceLifecycleState.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 MOUNT_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPMountSupport.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -453,6 +454,18 @@ echo 'RESULT=DRIVE_SYSTEM_RAW_ACCESS_SPLIT_OK'
 ! /usr/bin/grep -Fq 'private var manualUnmountSuppressions =' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'private var defaultProbeSuppressions =' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_AUTOMATION_STATE_SPLIT_OK'
+
+# Startup-recovery and shutdown single-flight state belong to one owner-queue
+# lifecycle state object. The controller owns actual teardown actions only.
+/usr/bin/grep -Fq 'final class EDPServiceLifecycleState' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func completeStartupRecovery(errorMessage:' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func beginShutdown(completion:' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func beginTeardownIfReady(hasActiveEjects:' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
+/usr/bin/grep -Fq 'func finishShutdown()' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
+! /usr/bin/grep -Fq 'private var shutdownCompletions' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private var shutdownInProgress' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private var shutdownTeardownStarted' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_SERVICE_LIFECYCLE_STATE_SPLIT_OK'
 
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery
