@@ -293,28 +293,33 @@ wait_for_synthetic_publication_gone() {
   return 1
 }
 
-synthetic_publication_owner_pid() {
+synthetic_publication_owner_snapshot() {
   local bsd="$1"
   local backing="$2"
   local info="$WORK_DIR/hdiutil-synthetic-owner.plist"
   [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
   [[ "$backing" == "$WORK_DIR"/* || "$backing" == "$MOUNT_ROOT"/* ]] || return 1
   capture_hdiutil_info "$info" 10 >/dev/null 2>&1 || return 1
-  /usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
+  /usr/bin/python3 - "$info" "$backing" <<'PY'
 import os
 import plistlib
+import re
 import sys
 with open(sys.argv[1], "rb") as handle:
     root = plistlib.load(handle)
-expected_device = "/dev/" + sys.argv[2]
-expected_path = os.path.abspath(os.path.normpath(sys.argv[3]))
+expected_path = os.path.abspath(os.path.normpath(sys.argv[2]))
 for image in root.get("images", []):
     if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected_path:
         continue
     devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
     pid = image.get("hdid-pid")
+    synthetic_devices = all(
+        isinstance(device, str)
+        and re.fullmatch(r"/dev/disk\d+(?:s\d+)*", device) is not None
+        for device in devices
+    )
     valid = (
-        (not devices or expected_device in devices)
+        synthetic_devices
         and image.get("diskimages2") is True
         and image.get("autodiskmount") is False
         and image.get("image-encrypted") is False
@@ -325,7 +330,7 @@ for image in root.get("images", []):
     )
     if not valid:
         raise SystemExit(1)
-    print(pid)
+    print(f"{pid}|{','.join(devices)}")
     raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -334,22 +339,42 @@ PY
 recover_synthetic_publication() {
   local bsd="$1"
   local backing="$2"
-  local pid=""
-  pid="$(synthetic_publication_owner_pid "$bsd" "$backing")" || return 1
+  local owner_snapshot="" pid="" devices=""
+  owner_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing")" || return 1
+  IFS='|' read -r pid devices <<<"$owner_snapshot"
+  echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_BEGIN=pid=$pid devices=${devices:-none}" >&2
 
-  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || return 1
+  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || {
+    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=process-path" >&2
+    return 1
+  }
 
   /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
   if wait_for_synthetic_publication_gone "$backing" 15; then
+    echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=term' >&2
     return 0
   fi
 
-  local revalidated_pid=""
-  revalidated_pid="$(synthetic_publication_owner_pid "$bsd" "$backing")" || return 1
-  [[ "$revalidated_pid" == "$pid" ]] || return 1
-  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || return 1
+  local revalidated_snapshot=""
+  revalidated_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing")" || {
+    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=revalidation-missing" >&2
+    return 1
+  }
+  [[ "$revalidated_snapshot" == "$owner_snapshot" ]] || {
+    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=identity-changed" >&2
+    return 1
+  }
+  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || {
+    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=process-path-changed" >&2
+    return 1
+  }
   /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-  wait_for_synthetic_publication_gone "$backing" 20
+  if wait_for_synthetic_publication_gone "$backing" 20; then
+    echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=kill' >&2
+    return 0
+  fi
+  echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=owner-remained' >&2
+  return 1
 }
 
 fixture_publication_exists() {
