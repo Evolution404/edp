@@ -72,6 +72,7 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 ! /usr/bin/grep -Fq 'diskutil unmountDisk' <<<"${EJECT_IMAGE_SECTION}"
 /usr/bin/grep -Fq 'image.get("diskimages2") is True' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'image.get("owner-uid") == os.getuid()' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '(not devices or expected_device in devices)' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--assert-process-path "$pid" /usr/libexec/diskimagesiod' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'proc_pidpath(' "${DA_MOUNT_SOURCE}"
 /usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS=3' "${STORAGE_RUNNER}"
@@ -145,6 +146,9 @@ echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
 /usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches-frame-lifetimes"]' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'children = list(row)' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
+/usr/bin/grep -Fq 'is_duration=False' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
+/usr/bin/grep -Fq 'is_duration=True' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
 /usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
 echo 'RESULT=DRIVE_SYSTEM_UI_PERF_CI_ONLY_OK'
 

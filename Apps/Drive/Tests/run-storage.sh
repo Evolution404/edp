@@ -314,7 +314,7 @@ for image in root.get("images", []):
     devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
     pid = image.get("hdid-pid")
     valid = (
-        expected_device in devices
+        (not devices or expected_device in devices)
         and image.get("diskimages2") is True
         and image.get("autodiskmount") is False
         and image.get("image-encrypted") is False

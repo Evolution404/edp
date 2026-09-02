@@ -75,6 +75,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] macOS 26 runner geometry contract 已修正为 900 px 宽 + split usable height ≥620；不把 toolbar 后 content height 锁死为 680。
 - [x] xctrace runner race 已定位：先启动 preview 再 `--attach PID` 时，GitHub runner 的 xctrace 启动可能晚于 preview 生命周期；已改为 Instruments 原生 `--launch -- ${BIN} --hitch-only`。
 - [x] Xcode 26 TOC 已确认完整帧表为 `hitches-frame-lifetimes`；旧 `hitches` 表只包含已判定 hitch 事件。33 ms gate 已切换到完整 frame lifetime 表，阈值仍为 `33_000_000ns`。
+- [x] Xcode 26 raw export 规则已核实：frame lifetime 的 start/duration 是 row 第 1/2 列匿名 typed element，不是 `<start-time>/<duration>` 标签；parser 已按 schema 列序读取，并兼容 raw ns、s/ms/µs/ns fmt 与 ref 复用。
 - [ ] GitHub Actions `make drive-test-ui` 33 ms gate PASS。
 
 ## Phase B — Runtime 职责拆分
@@ -100,6 +101,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [ ] Phase B storage smoke PASS。
 - [x] 连续两轮 CI M14 暴露旧 storage teardown 与生产不一致：测试曾使用 `hdiutil detach → diskutil eject`；已改为 DA eject + exact current-user `diskimagesiod` owner recovery，保持 exact backing / residue=0 fail-closed。
 - [x] M12 后续 CI 暴露 `ps command=` 进程身份判断不等价于生产 executable-path 校验；storage helper 已改用 `proc_pidpath()`，TERM/KILL 前均重新验证 exact `diskimagesiod` PID/path。
+- [x] 进一步定位 owner recovery：DA eject 后 exact DiskImages2 owner 可继续存在但 `system-entities` 为空；生产代码允许该 owner-only 终态进入 exact PID recovery，storage test 已同步为“entities 为空或仍含原 BSD”才允许，任何新的非空 BSD identity 仍 fail-closed。
 - [ ] Phase B commits/push。
 
 ## Phase C — App/UI 文件职责拆分

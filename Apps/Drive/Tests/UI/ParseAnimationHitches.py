@@ -36,18 +36,54 @@ def parse_trace_start(toc_path: Path) -> float:
     return dt.datetime.fromisoformat(node.text).timestamp()
 
 
-def resolve_numeric(element: ET.Element | None, cache: dict[str, int]) -> int | None:
+def resolve_numeric(
+    element: ET.Element | None,
+    cache: dict[str, int],
+    *,
+    is_duration: bool,
+) -> int | None:
     if element is None:
         return None
     ref = element.attrib.get("ref")
     if ref is not None:
         return cache.get(ref)
-    if element.text is None:
-        return None
-    value = int(element.text)
-    identifier = element.attrib.get("id")
-    if identifier is not None:
-        cache[identifier] = value
+
+    raw = (element.text or "").strip()
+    value: int | None = None
+    if raw.isdigit():
+        value = int(raw)
+    else:
+        formatted = element.attrib.get("fmt", raw).strip()
+        if formatted:
+            if is_duration:
+                parts = formatted.split()
+                if len(parts) >= 2:
+                    try:
+                        scalar = float(parts[0])
+                    except ValueError:
+                        scalar = -1
+                    unit = parts[1].lower()
+                    multipliers = {
+                        "ns": 1,
+                        "µs": 1_000,
+                        "us": 1_000,
+                        "ms": 1_000_000,
+                        "s": 1_000_000_000,
+                    }
+                    if scalar >= 0 and unit in multipliers:
+                        value = int(scalar * multipliers[unit])
+            else:
+                try:
+                    # Instruments formats frame starts as seconds relative to
+                    # trace start when the raw nanosecond value is absent.
+                    value = int(float(formatted) * 1_000_000_000)
+                except ValueError:
+                    value = None
+
+    if value is not None:
+        identifier = element.attrib.get("id")
+        if identifier is not None:
+            cache[identifier] = value
     return value
 
 
@@ -59,8 +95,14 @@ def parse_hitches(hitches_path: Path, trace_start: float, begin: float, end: flo
     observed_starts: list[int] = []
 
     for row in root.iter("row"):
-        start_ns = resolve_numeric(row.find("start-time"), start_cache)
-        duration_ns = resolve_numeric(row.find("duration"), duration_cache)
+        # Xcode 26's hitches-frame-lifetimes schema exports anonymous typed
+        # columns rather than semantic <start-time>/<duration> tags. The first
+        # two columns are frame start and total lifetime respectively.
+        children = list(row)
+        if len(children) < 2:
+            continue
+        start_ns = resolve_numeric(children[0], start_cache, is_duration=False)
+        duration_ns = resolve_numeric(children[1], duration_cache, is_duration=True)
         if start_ns is None or duration_ns is None:
             continue
         observed_starts.append(start_ns)
