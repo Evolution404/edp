@@ -1305,8 +1305,14 @@ run_m12() {
   mount_native "$bsd" mountpoint
   /bin/kill -KILL "$pid"
   wait "$pid" >/dev/null 2>&1 || true
-  cleanup_crashed_local_mount "$bridge"
+  # Established-session recovery must preserve the production teardown order:
+  # release the native user filesystem before the DiskImages2 publication and
+  # only then recover the crashed transport bridge. Killing diskimagesiod while
+  # the upper filesystem still owns the synthetic device can strand the owner
+  # in an uninterruptible teardown state.
+  unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
+  cleanup_crashed_local_mount "$bridge"
   assert_no_test_artifacts M12-crash
   wait_for_remount_quiescence
 

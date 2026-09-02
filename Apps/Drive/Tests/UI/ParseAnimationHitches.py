@@ -93,16 +93,37 @@ def parse_hitches(hitches_path: Path, trace_start: float, begin: float, end: flo
     duration_cache: dict[str, int] = {}
     in_window: list[int] = []
     observed_starts: list[int] = []
+    raw_row_count = 0
+    raw_row_samples: list[str] = []
 
     for row in root.iter("row"):
+        raw_row_count += 1
         # Xcode 26's hitches-frame-lifetimes schema exports anonymous typed
         # columns rather than semantic <start-time>/<duration> tags. The first
         # two columns are frame start and total lifetime respectively.
         children = list(row)
+        if len(raw_row_samples) < 3:
+            raw_row_samples.append(" | ".join(
+                f"{child.tag}:text={(child.text or '').strip()!r}:fmt={child.attrib.get('fmt')!r}:ref={child.attrib.get('ref')!r}"
+                for child in children[:8]
+            ))
         if len(children) < 2:
             continue
         start_ns = resolve_numeric(children[0], start_cache, is_duration=False)
         duration_ns = resolve_numeric(children[1], duration_cache, is_duration=True)
+        if start_ns is None or duration_ns is None:
+            start_element = next(
+                (child for child in children if "start" in child.tag.lower()),
+                None,
+            )
+            duration_element = next(
+                (child for child in children if "duration" in child.tag.lower()),
+                None,
+            )
+            if start_ns is None:
+                start_ns = resolve_numeric(start_element, start_cache, is_duration=False)
+            if duration_ns is None:
+                duration_ns = resolve_numeric(duration_element, duration_cache, is_duration=True)
         if start_ns is None or duration_ns is None:
             continue
         observed_starts.append(start_ns)
@@ -111,6 +132,9 @@ def parse_hitches(hitches_path: Path, trace_start: float, begin: float, end: flo
         if begin - 0.010 <= row_epoch <= end + 0.010:
             in_window.append(duration_ns)
 
+    print(f"UI_HITCH_FRAME_LIFETIME_RAW_ROWS={raw_row_count}")
+    for index, sample in enumerate(raw_row_samples, start=1):
+        print(f"UI_HITCH_FRAME_LIFETIME_ROW_{index}={sample}")
     print(f"UI_HITCH_TRACE_START_EPOCH={trace_start:.6f}")
     print(f"UI_HITCH_TOGGLE_BEGIN_EPOCH={begin:.6f}")
     print(f"UI_HITCH_TOGGLE_END_EPOCH={end:.6f}")

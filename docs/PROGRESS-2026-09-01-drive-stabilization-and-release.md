@@ -105,6 +105,8 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] 连续两轮 CI M14 暴露旧 storage teardown 与生产不一致：测试曾使用 `hdiutil detach → diskutil eject`；已改为 DA eject + exact current-user `diskimagesiod` owner recovery，保持 exact backing / residue=0 fail-closed。
 - [x] M12 后续 CI 暴露 `ps command=` 进程身份判断不等价于生产 executable-path 校验；storage helper 已改用 `proc_pidpath()`，TERM/KILL 前均重新验证 exact `diskimagesiod` PID/path。
 - [x] 进一步定位 owner recovery：DA eject 后 exact DiskImages2 owner 可继续存在且 `system-entities` 可能为空、只剩 partition 子实体或保持原 synthetic entity；storage test 已同步生产 `parsePublication` 合同，只允许 entity 全部匹配 synthetic `/dev/diskN[sM...]`，并在 TERM 后要求 exact PID + entity snapshot 不变才允许 KILL；任何 owner/entity identity 漂移仍 fail-closed。
+- [x] M12 transport-crash teardown 顺序已修正为与已建立生产会话一致：先 bounded native user filesystem unmount + quiescence，再 unpublish DiskImages2，最后清理 crashed transport bridge；禁止在 upper filesystem 仍持有 synthetic device 时直接杀 owner。
+- [x] CI native monorepo ratchet 已随 automation state 抽取更新；UI frame-lifetime parser 在 0 可解析样本时输出 raw row typed-column 诊断，仍 fail-closed 且 33 ms 阈值不变。
 - [ ] Phase B commits/push。
 
 ## Phase C — App/UI 文件职责拆分

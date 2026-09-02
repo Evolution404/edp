@@ -86,6 +86,10 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 /usr/bin/grep -Fq 'wait_for_remount_quiescence' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'if (( iteration < LOOP_COUNT )); then' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'DADiskEject(disk, kDADiskEjectOptionDefault' "${DA_MOUNT_SOURCE}"
+M12_SECTION="$(/usr/bin/awk '/^run_m12\(\)/,/^run_m14\(\)/' "${STORAGE_RUNNER}")"
+/usr/bin/grep -Fq 'unmount_path "$mountpoint"' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'eject_image "$bsd" "$bridge/volume.raw"' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' <<<"${M12_SECTION}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_DA_EJECT_OWNER_RECOVERY_OK'
