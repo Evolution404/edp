@@ -14,9 +14,12 @@ DEVICE_DISCOVERY_CONTROLLER_SOURCE="${ROOT}/Apps/Drive/product/EDPDeviceDiscover
 RAW_ACCESS_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccess.swift"
 RAW_ACCESS_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRawAccessCoordinator.swift"
 AUTOMATION_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPAutomationState.swift"
+ACTIVITY_STORE_SOURCE="${ROOT}/Apps/Drive/product/EDPActivityStore.swift"
 EJECT_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPEjectCoordinator.swift"
 SERVICE_LIFECYCLE_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPServiceLifecycleState.swift"
 RECOVERY_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRecoveryCoordinator.swift"
+XPC_SERVICE_SOURCE="${ROOT}/Apps/Drive/product/EDPXPCService.swift"
+SERVICE_MAIN_SOURCE="${ROOT}/Apps/Drive/product/EDPServiceMain.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
 MOUNT_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/EDPMountSupport.swift"
 SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
@@ -472,6 +475,14 @@ echo 'RESULT=DRIVE_SYSTEM_RAW_ACCESS_SPLIT_OK'
 ! /usr/bin/grep -Fq 'private var defaultProbeSuppressions =' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_AUTOMATION_STATE_SPLIT_OK'
 
+# Activity retention is a bounded owner-queue ring buffer, not another mutable
+# collection embedded in the daemon controller.
+/usr/bin/grep -Fq 'final class EDPActivityStore' "${ACTIVITY_STORE_SOURCE}"
+/usr/bin/grep -Fq 'private var activities = [EDPXPCActivity]()' "${ACTIVITY_STORE_SOURCE}"
+/usr/bin/grep -Fq 'activities.removeLast(activities.count - capacity)' "${ACTIVITY_STORE_SOURCE}"
+! /usr/bin/grep -Fq 'private var activities = [EDPXPCActivity]()' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_ACTIVITY_STORE_SPLIT_OK'
+
 # Startup-recovery and shutdown single-flight state belong to one owner-queue
 # lifecycle state object. The controller owns actual teardown actions only.
 /usr/bin/grep -Fq 'final class EDPServiceLifecycleState' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
@@ -494,6 +505,25 @@ echo 'RESULT=DRIVE_SYSTEM_SERVICE_LIFECYCLE_STATE_SPLIT_OK'
 /usr/bin/grep -Fq 'recovery.recoverFailedEject(' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'wholeUSBMediaStillMatches(disk, mediaProvider: mediaProvider)' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_RECOVERY_COORDINATOR_SPLIT_OK'
+
+# XPC protocol adaptation and reply fanout belong in the service adapter, not
+# in the daemon orchestration file. Regression tests instantiate this adapter
+# directly, so keep it in every native/service compile source list.
+/usr/bin/grep -Fq 'final class EDPXPCService' "${XPC_SERVICE_SOURCE}"
+/usr/bin/grep -Fq 'private final class EDPSendableStringReply' "${XPC_SERVICE_SOURCE}"
+/usr/bin/grep -Fq 'controller.shutdownGracefullyAsync' "${XPC_SERVICE_SOURCE}"
+! /usr/bin/grep -Fq 'final class EDPXPCService' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'EDPSendableStringReply' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_XPC_SERVICE_SPLIT_OK'
+
+# Daemon listener wiring, doctor/CLI commands, and the service @main entrypoint
+# are process bootstrap concerns, not mount/runtime orchestration.
+/usr/bin/grep -Fq 'private func daemon() throws -> Never' "${SERVICE_MAIN_SOURCE}"
+/usr/bin/grep -Fq 'private func doctor() -> Int32' "${SERVICE_MAIN_SOURCE}"
+/usr/bin/grep -Fq 'private enum EDPVaultMain' "${SERVICE_MAIN_SOURCE}"
+! /usr/bin/grep -Fq 'private func daemon() throws -> Never' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'private enum EDPVaultMain' "${RUNTIME_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_SERVICE_MAIN_SPLIT_OK'
 
 # Lifecycle recovery decisions use typed failure categories. Stable helper/log
 # strings may be parsed once at their adapter boundary, but controller/recovery

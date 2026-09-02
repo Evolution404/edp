@@ -1441,11 +1441,14 @@ validate_failure_and_build_contracts() {
     product/EDPRawAccess.swift
     product/EDPRawAccessCoordinator.swift
     product/EDPAutomationState.swift
+    product/EDPActivityStore.swift
     product/EDPEjectCoordinator.swift
     product/EDPServiceLifecycleState.swift
     product/EDPRecoveryCoordinator.swift
     product/EDPMountLifecycle.swift
     product/EDPMountSupport.swift
+    product/EDPXPCService.swift
+    product/EDPServiceMain.swift
     product/EDPVaultRuntime.swift
   )
   local raw_validation_obj="$production_bin/EDPRawValidation.o"

@@ -252,11 +252,14 @@ jobs:
             product/EDPRawAccess.swift
             product/EDPRawAccessCoordinator.swift
             product/EDPAutomationState.swift
+            product/EDPActivityStore.swift
             product/EDPEjectCoordinator.swift
             product/EDPServiceLifecycleState.swift
             product/EDPRecoveryCoordinator.swift
             product/EDPMountLifecycle.swift
             product/EDPMountSupport.swift
+            product/EDPXPCService.swift
+            product/EDPServiceMain.swift
             product/EDPVaultRuntime.swift
           )
           /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "${RUNNER_TEMP}/EDPRawValidation.o"

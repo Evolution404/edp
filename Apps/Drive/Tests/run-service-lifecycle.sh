@@ -39,11 +39,14 @@ PRODUCT_SOURCES=(
   product/EDPRawAccess.swift
   product/EDPRawAccessCoordinator.swift
   product/EDPAutomationState.swift
+  product/EDPActivityStore.swift
   product/EDPEjectCoordinator.swift
   product/EDPServiceLifecycleState.swift
   product/EDPRecoveryCoordinator.swift
   product/EDPMountLifecycle.swift
   product/EDPMountSupport.swift
+  product/EDPXPCService.swift
+  product/EDPServiceMain.swift
   product/EDPVaultRuntime.swift
 )
 
