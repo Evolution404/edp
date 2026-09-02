@@ -336,10 +336,13 @@ raise SystemExit(1)
 PY
 }
 
+STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
+
 recover_synthetic_publication() {
   local bsd="$1"
   local backing="$2"
   local owner_snapshot="" pid="" devices=""
+  STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
   owner_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing")" || return 1
   IFS='|' read -r pid devices <<<"$owner_snapshot"
   echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_BEGIN=pid=$pid devices=${devices:-none}" >&2
@@ -416,10 +419,12 @@ recover_synthetic_publication() {
     local stable_snapshot=""
     stable_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
     if [[ -z "$stable_snapshot" ]]; then
+      STORAGE_LAST_PUBLICATION_RECOVERY_MODE="dead-owner-metadata-disappeared"
       echo 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=metadata-disappeared' >&2
       return 0
     fi
     if [[ "$stable_snapshot" == "$owner_snapshot" ]]; then
+      STORAGE_LAST_PUBLICATION_RECOVERY_MODE="stable-dead-owner"
       echo "STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner pid=$pid" >&2
       return 0
     fi
@@ -699,6 +704,7 @@ attach_image() {
 eject_image() {
   local bsd="$1"
   local backing="$2"
+  STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
   [[ "$bsd" =~ ^disk[0-9]+$ ]] || {
     echo "unsafe synthetic BSD name during eject: $bsd" >&2
     return 1
@@ -976,6 +982,32 @@ stop_adapter() {
   local pid="$1"
   local bridge="$2"
   local tag="$3"
+
+  # If exact DiskImages2 recovery had to retire a stable dead-owner tombstone,
+  # the publication owner has already been killed. Do not ask the still-live
+  # adapter to enter its normal synchronous unmount path afterward: on macOS 26
+  # that ordering can leave the adapter blocked in an uninterruptible VFS wait.
+  # The native filesystem is already unmounted before eject_image() is called,
+  # so it is safe to terminate the exact test adapter first and then let the
+  # identity-checked macFUSE Local crash cleanup release only this test bridge.
+  if [[ "$STORAGE_LAST_PUBLICATION_RECOVERY_MODE" == "stable-dead-owner" ]]; then
+    log "STORAGE_ADAPTER_DEAD_OWNER_RECOVERY_BEGIN=$tag"
+    if /bin/kill -0 "$pid" >/dev/null 2>&1; then
+      /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
+    fi
+    if ! wait_for_child_exit_bounded "$pid" 100 "adapter-dead-owner-kill-$tag"; then
+      echo "adapter remained alive after dead-owner publication recovery: $tag" >&2
+      return 1
+    fi
+    wait "$pid" >/dev/null 2>&1 || true
+    if is_mounted "$bridge"; then
+      cleanup_crashed_local_mount "$bridge"
+    fi
+    log "STORAGE_ADAPTER_DEAD_OWNER_RECOVERY_END=$tag"
+    STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
+    return 0
+  fi
+
   if /bin/kill -0 "$pid" >/dev/null 2>&1; then
     /bin/kill -TERM "$pid"
   fi

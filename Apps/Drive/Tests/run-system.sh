@@ -348,6 +348,11 @@ echo 'RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK'
 ! /usr/bin/grep -Fq 'os.path.realpath(' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Eq '\[\[[^]]*(-e|! -e)[[:space:]]+"/dev/\$bsd"' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_METADATA_ONLY_TEARDOWN_OK'
+/usr/bin/grep -Fq 'STORAGE_LAST_PUBLICATION_RECOVERY_MODE="stable-dead-owner"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'STORAGE_ADAPTER_DEAD_OWNER_RECOVERY_BEGIN=' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'adapter-dead-owner-kill-' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_DEAD_OWNER_ADAPTER_RECOVERY_OK'
 
 # Mount/unmount/eject/shutdown lifecycle is intentionally single-path and
 # asynchronous. Never reintroduce polling sleeps or synchronous manager
