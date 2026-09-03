@@ -105,10 +105,12 @@ The service never treats a persisted BSD name as authority. Teardown and eject d
 EDP Drive does not implement FAT, ExFAT, APFS or NTFS filesystem semantics.
 
 - FAT / ExFAT capability comes from Apple native filesystem stacks.
-- NTFS follows the capability macOS provides. The current product does not restore `ntfs-3g` or another third-party write fallback.
-- The product does not expose destructive format controls as part of normal EDP lifecycle management.
+- Existing NTFS is supported as Apple-native read-only compatibility when macOS mounts it read-only.
+- Writable cross-platform EDP data volumes use ExFAT as the preferred filesystem policy.
+- The product does not restore `ntfs-3g`, use undocumented NTFS write switches, or add an in-product NTFS writer.
+- The product does not silently format or migrate NTFS as part of normal mount/recovery lifecycle management.
 
-A separate NTFS RW architecture decision remains pending; see Phase F in the stabilization tracker.
+The accepted decision is `ADR-2026-09-03-ntfs-rw.md`: A + C — native NTFS RO compatibility plus ExFAT for writable cross-platform data. A separate NTFS RW provider is out of scope unless preserving NTFS-on-disk while writing becomes a hard product requirement.
 
 ## 6. Raw access and FDA model
 
@@ -358,7 +360,7 @@ Current source-of-truth documentation is being consolidated into:
 
 ### Phase F
 
-NTFS RW remains an explicit ADR decision. No implementation should restore `ntfs-3g` while that ADR is pending.
+DONE. `ADR-2026-09-03-ntfs-rw.md` accepts A + C: Apple-native NTFS read-only compatibility plus ExFAT as the preferred writable cross-platform data format. Option B, an independent NTFS RW provider, is not part of the current release architecture and may only be reopened as a separate project for a hard NTFS-preservation requirement.
 
 ## 15. Current entry points
 
@@ -368,7 +370,8 @@ For current product facts, read in this order:
 2. `Apps/Drive/docs/ARCHITECTURE.md`;
 3. `Apps/Drive/docs/TESTING.md`;
 4. `Apps/Drive/docs/RELEASE-CHECKLIST.md`;
-5. `docs/PROGRESS-2026-09-01-drive-stabilization-and-release.md` for active execution history.
+5. `Apps/Drive/docs/ADR-2026-09-03-ntfs-rw.md` for the accepted filesystem write policy;
+6. `docs/PROGRESS-2026-09-01-drive-stabilization-and-release.md` for active execution history.
 
 `Apps/Drive/docs/FIRST-INSTALL-ACCEPTANCE.md` remains the detailed machine acceptance procedure.
 

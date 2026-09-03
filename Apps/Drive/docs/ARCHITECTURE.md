@@ -398,7 +398,21 @@ The service maintains:
 
 Observability cannot change lifecycle decisions and cannot contain credentials, secret key material or device-path identifiers in the metrics schema.
 
-## 21. Deliberately unsupported architectures
+## 21. Filesystem write policy
+
+`ADR-2026-09-03-ntfs-rw.md` is accepted and is part of the current architecture contract.
+
+The decision is A + C:
+
+- existing NTFS media remains Apple-native read-only compatibility when macOS reports it read-only;
+- writable cross-platform EDP data volumes use ExFAT as the preferred filesystem policy;
+- Drive never silently reformats or migrates NTFS in ordinary mount/recovery flows;
+- Drive does not restore `ntfs-3g`, use undocumented native NTFS write switches, or embed an NTFS filesystem writer;
+- a separate NTFS RW provider may only be reopened as an independent project if preserving NTFS-on-disk while writing becomes a hard product requirement.
+
+This keeps filesystem semantics owned by the Apple-native filesystem layer and prevents an unrelated NTFS implementation lifecycle from entering the current release architecture.
+
+## 22. Deliberately unsupported architectures
 
 Do not reintroduce:
 
@@ -416,9 +430,10 @@ cached diskN as durable identity
 sync force-unmount after lower transport death
 ```
 
-## 22. Related current documents
+## 23. Related current documents
 
 - `STATUS.md` — current product status and evidence;
 - `TESTING.md` — test layers and authority;
 - `RELEASE-CHECKLIST.md` — release-candidate gate;
+- `ADR-2026-09-03-ntfs-rw.md` — accepted filesystem write policy;
 - `FIRST-INSTALL-ACCEPTANCE.md` — detailed machine acceptance procedure.

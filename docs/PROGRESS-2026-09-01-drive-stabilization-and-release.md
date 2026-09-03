@@ -16,7 +16,7 @@
 | C | App/UI 文件职责拆分 | DONE |
 | D | 发布可靠性与 recovery 可观测性 | IN PROGRESS（D1/D2 DONE；D3/D4 pending） |
 | E | 文档、测试矩阵、Release Checklist 收口 | DONE |
-| F | NTFS RW 产品/架构 ADR | TODO |
+| F | NTFS RW 产品/架构 ADR | DONE |
 
 ## 当前不可回退基线
 
@@ -193,13 +193,14 @@ UI_HITCH_COUNT_GT33MS=1
 
 ## Phase F — NTFS RW ADR
 
-状态：TODO
+状态：DONE
 
-- [ ] 收集真实介质 RW 需求。
-- [ ] 明确 Apple native NTFS RO 是否可接受。
-- [ ] 如不可接受，研究独立 NTFS RW provider 约束，不恢复 ntfs-3g 旧路径。
-- [ ] 输出 ADR：A native RO / B 独立 RW provider / C 介质格式规范化。
-- [ ] 若选择 B，另建独立实施计划，本计划不直接实现。
+- [x] 真实需求已拆分：当前必须保证的是 type2/type4 正常 create/edit/delete/remount persistence；该需求不等价于必须保持 NTFS on-disk 格式。
+- [x] Apple native NTFS RO 被接受为现有 NTFS 介质的兼容模式；UI/XPC 继续按真实 `readOnly` capability 展示，不做 write probe。
+- [x] 独立 NTFS RW provider 的技术/分发约束已审查：若未来自研 FSKit filesystem，需要独立 app extension、`com.apple.developer.fskit.fsmodule` entitlement、完整 NTFS 一致性/恢复/Windows interoperability 测试面；本稳定化分支不引入该生命周期。
+- [x] 已输出 `Apps/Drive/docs/ADR-2026-09-03-ntfs-rw.md`，正式选择 A+C：现有 NTFS 走 Apple-native RO；需要跨平台可写的数据卷优先使用 ExFAT；禁止自动格式化/迁移。
+- [x] `ntfs-3g` 与 undocumented Apple NTFS write path 均保持禁止；Option B 只有出现“必须保持 NTFS 且必须写入”的硬产品需求时才能作为独立项目重新立项。
+- [x] Apple 当前官方文档复核：Disk Utility 将 FAT/ExFAT列为 Windows-compatible 格式，>32GB 推荐 ExFAT；FSKit filesystem 通过 app extension 提供，当前文档仍要求 filesystem module entitlement。
 
 ## 变更日志
 

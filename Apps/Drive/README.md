@@ -101,7 +101,7 @@ designated requirement 的 certificate root 为
 统一使用这张证书；本地 self-signed 包必须通过
 `./installer/build-self-signed-installer.sh` 构建，该入口会校验证书 fingerprint
 和私钥匹配关系，不再使用 Apple Development identity。
-当前产品真源依次见 `docs/STATUS.md`、`docs/ARCHITECTURE.md`、`docs/TESTING.md`、`docs/RELEASE-CHECKLIST.md`。`docs/PLAN-2026-08-29-fda-raw-access.md` 仅保留为历史设计证据。
+当前产品真源依次见 `docs/STATUS.md`、`docs/ARCHITECTURE.md`、`docs/TESTING.md`、`docs/RELEASE-CHECKLIST.md`；文件系统写入策略见已接受的 `docs/ADR-2026-09-03-ntfs-rw.md`。`docs/PLAN-2026-08-29-fda-raw-access.md` 仅保留为历史设计证据。
 
 首次安装/完全清理/重启/三分区能力验证/策略 round-trip/安全推出的标准化验收流程见
 `docs/FIRST-INSTALL-ACCEPTANCE.md`，可执行入口为：
@@ -121,7 +121,7 @@ decrypted block device
   -> Finder
 ```
 
-ExFAT/FAT 等由系统按原生能力挂载；NTFS 仅按 macOS 当前提供的能力挂载，产品不再提供第三方 NTFS 写入层。若用户需要写入，可在 Finder/磁盘工具中将对应虚拟介质抹掉为系统原生可写格式（例如 ExFAT）。
+已接受的 NTFS ADR 采用 A+C：ExFAT/FAT 等由系统按原生能力挂载；现有 NTFS 仅按 macOS 当前提供的能力作为只读兼容介质；需要跨平台正常写入的数据卷优先使用 ExFAT。产品不恢复第三方 NTFS 写入层，也不会在普通挂载/恢复流程中自动格式化或迁移 NTFS。
 
 ## 唯一架构
 

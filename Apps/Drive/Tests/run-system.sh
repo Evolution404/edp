@@ -797,8 +797,9 @@ STATUS_DOC="${ROOT}/Apps/Drive/docs/STATUS.md"
 ARCHITECTURE_DOC="${ROOT}/Apps/Drive/docs/ARCHITECTURE.md"
 TESTING_DOC="${ROOT}/Apps/Drive/docs/TESTING.md"
 RELEASE_DOC="${ROOT}/Apps/Drive/docs/RELEASE-CHECKLIST.md"
+NTFS_ADR_DOC="${ROOT}/Apps/Drive/docs/ADR-2026-09-03-ntfs-rw.md"
 HISTORICAL_DOC="${ROOT}/Apps/Drive/docs/HISTORICAL.md"
-for doc in "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}" "${HISTORICAL_DOC}"; do
+for doc in "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}" "${NTFS_ADR_DOC}" "${HISTORICAL_DOC}"; do
   [[ -s "${doc}" ]]
 done
 /usr/bin/grep -Fq 'Current fixed-head CI: GitHub Actions run `' "${STATUS_DOC}"
@@ -816,8 +817,18 @@ done
 /usr/bin/grep -Fq '`regression-ui-system`' "${TESTING_DOC}"
 /usr/bin/grep -Fq '`nightly-storage-stress`' "${TESTING_DOC}"
 /usr/bin/grep -Fq 'BLOCKED_BY_FIXTURE' "${RELEASE_DOC}"
+/usr/bin/grep -Fq 'The accepted decision is `ADR-2026-09-03-ntfs-rw.md`: A + C' "${STATUS_DOC}"
+/usr/bin/grep -Fq 'The decision is A + C:' "${ARCHITECTURE_DOC}"
+/usr/bin/grep -Fq 'Filesystem policy / NTFS ADR test consequences' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'ACCEPTED A+C (native NTFS RO + writable ExFAT)' "${RELEASE_DOC}"
+/usr/bin/grep -Fq 'Status: **ACCEPTED**' "${NTFS_ADR_DOC}"
+/usr/bin/grep -Fq 'EDP Drive adopts an **A + C** strategy:' "${NTFS_ADR_DOC}"
+/usr/bin/grep -Fq 'Do not restore `ntfs-3g`.' "${NTFS_ADR_DOC}"
+/usr/bin/grep -Fq 'NTFS RW is **not a blocker** for the current EDP Drive release candidate.' "${NTFS_ADR_DOC}"
+! /usr/bin/grep -Fq 'NTFS RW ADR                         NOT YET DECIDED' "${RELEASE_DOC}"
 /usr/bin/grep -Fq 'Historical Document Index' "${HISTORICAL_DOC}"
 echo 'RESULT=DRIVE_SYSTEM_CURRENT_DOCS_OK'
+echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 
 # Canonical top-level gates must remain wired and hardware-free by construction.
 /usr/bin/grep -Fq 'drive-test-storage-smoke:' "${ROOT}/Makefile"

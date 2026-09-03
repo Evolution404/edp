@@ -323,8 +323,8 @@ Timeout: 45 minutes.
 Current source-of-truth validation:
 
 ```text
-HEAD: 9fd1d4cd1fd0e671b4cb16f5a9be5ad8b28ddb8d
-Run:  33686611853
+HEAD: b3de7619fee84f4787953269a681aa0a99149263
+Run:  33701172126
 ```
 
 Results:
@@ -337,7 +337,7 @@ regression-ui-system   PASS
 regression-storage     PASS
 ```
 
-The immediately preceding `dded9d4` UI run explicitly recorded zero hitches above the unchanged 33ms threshold.
+The fixed-head `b3de761` UI/system job passed with the unchanged 33ms threshold; its UI evidence recorded `UI_HITCH_COUNT_GT33MS=0` and `RESULT=DRIVE_UI_OK`.
 
 ## 12. Installer/build verification
 
@@ -424,3 +424,14 @@ For a candidate code change:
 8. only when preparing a physical release candidate, execute exact-head installed/reboot/physical gates.
 
 Do not run local UI performance xctrace.
+
+## 17. Filesystem policy / NTFS ADR test consequences
+
+`ADR-2026-09-03-ntfs-rw.md` is accepted and test behavior must follow it:
+
+- Apple-native read-only NTFS is a valid supported compatibility result, not a failed writable test;
+- read-only NTFS receives capability/remount verification only and never a write marker;
+- writable ExFAT/FAT receives the create/fsync/hash/remount/delete persistence path;
+- no test may silently enable an undocumented NTFS write mode or restore `ntfs-3g`;
+- no ordinary regression test may auto-format or migrate an NTFS volume;
+- a future independent NTFS RW provider requires a separate test plan and cannot inherit the current storage PASS claims.

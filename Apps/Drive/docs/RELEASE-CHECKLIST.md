@@ -199,7 +199,7 @@ Depending on the candidate’s configured policy:
 - [ ] policy round-trip PASS.
 - [ ] no hidden transport/session residue after explicit unmount.
 
-NTFS must be reported according to Apple native capability. Do not silently substitute a third-party write path.
+NTFS follows the accepted `ADR-2026-09-03-ntfs-rw.md` policy: Apple-native read-only compatibility is supported; writable cross-platform data should use ExFAT; do not silently substitute a third-party write path or automatically reformat NTFS.
 
 ## 11. Service lifecycle gate
 
@@ -326,7 +326,7 @@ A candidate may be called **release-ready** only when:
 - no new critical fail-closed exception is unresolved;
 - any missing negative physical fixture is explicitly documented as `BLOCKED_BY_FIXTURE`, not silently marked PASS.
 
-NTFS RW is not a prerequisite unless the product decision explicitly changes in the NTFS ADR.
+NTFS RW is not a prerequisite for this release. The accepted NTFS ADR uses native NTFS read-only compatibility plus ExFAT for writable cross-platform data. A separate NTFS RW provider requires a future hard NTFS-preservation requirement and a separate implementation plan.
 
 ## 19. Current known blockers
 
@@ -337,6 +337,6 @@ ordinaryUSB physical negative      BLOCKED_BY_FIXTURE
 legacyNoPassword physical negative BLOCKED_BY_FIXTURE
 currentNoPassword physical negative BLOCKED_BY_FIXTURE
 unrecognizedEDP physical negative  BLOCKED_BY_FIXTURE
-exact-head reboot gate             NOT YET RUN for the next release candidate
-NTFS RW ADR                         NOT YET DECIDED
+exact-head reboot gate             NOT YET RUN for release candidate b3de761
+NTFS RW ADR                         ACCEPTED A+C (native NTFS RO + writable ExFAT)
 ```
