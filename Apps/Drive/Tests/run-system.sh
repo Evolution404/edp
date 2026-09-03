@@ -693,18 +693,19 @@ for scenario in S31 S32 S33 S34 S35; do
 done
 echo 'RESULT=DRIVE_SYSTEM_RAW_EBUSY_RECOVERY_OK'
 
-# A successful safe eject must remain logically suppressed while the same USB
-# generation is still physically inserted. The tombstone is persisted so a
-# foreground App reconnect or privileged-service restart cannot silently
-# reacquire raw access; only physical disappearance/new USB generation releases
-# the suppression.
+# A successful safe eject must remain logically suppressed while the exact
+# persisted USB registry generation is still physically present. Discovery is
+# not authoritative for retirement: transient metadata omission and a concurrent
+# replacement generation both fail closed. Only IOKit-confirmed disappearance
+# of the original registry generation releases the suppression.
 /usr/bin/grep -Fq 'logicalEjectSuppressionPath' "${RUNTIME_STATE_SOURCE}"
 /usr/bin/grep -Fq 'logicallyEjectedUSBRegistryIDs' "${EJECT_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'func armLogicalSuppression(disk:' "${EJECT_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'func reconcileSuppressedGenerations(disks:' "${EJECT_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'if mediaProvider.registryEntryExists(suppressedUSBRegistryEntryID)' "${EJECT_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'try eject.reconcileSuppressedGenerations(disks: disks)' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'try self.eject.armLogicalSuppression(disk: disk)' "${RUNTIME_SOURCE}"
-for scenario in S36 S37 S38; do
+for scenario in S36 S37 S38 S39 S40; do
   /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
 done
 echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
@@ -837,7 +838,9 @@ HISTORICAL_DOC="${ROOT}/Apps/Drive/docs/HISTORICAL.md"
 for doc in "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}" "${NTFS_ADR_DOC}" "${HISTORICAL_DOC}"; do
   [[ -s "${doc}" ]]
 done
-/usr/bin/grep -Fq 'Current fixed-head CI: GitHub Actions run `' "${STATUS_DOC}"
+/usr/bin/grep -Fq 'Current fixed-head CI:' "${STATUS_DOC}"
+/usr/bin/grep -Fq 'exact persisted `usbRegistryEntryID`' "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${RELEASE_DOC}"
+/usr/bin/grep -Fq 'S36–S40' "${STATUS_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}"
 /usr/bin/grep -Fq '— **PASS**' "${STATUS_DOC}"
 /usr/bin/grep -Fq 'autoMount = false' "${STATUS_DOC}"
 /usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${STATUS_DOC}" "${TESTING_DOC}"

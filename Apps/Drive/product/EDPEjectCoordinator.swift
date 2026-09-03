@@ -111,13 +111,12 @@ final class EDPEjectCoordinator: @unchecked Sendable {
         }
     }
 
-    // Reconcile persisted logical eject tombstones against the current IOKit
-    // generations before any raw-access probe runs.
+    // Reconcile persisted logical eject tombstones against IOKit before any
+    // raw-access probe runs. Discovery is intentionally not authoritative for
+    // tombstone retirement: a metadata/read failure can temporarily omit a
+    // still-present USB from `disks`. Only disappearance of the exact persisted
+    // USB registry generation is allowed to release suppression.
     func reconcileSuppressedGenerations(disks: [PhysicalDisk]) throws {
-        let currentByDeviceID = Dictionary(uniqueKeysWithValues: disks.map {
-            ($0.deviceID, $0)
-        })
-
         for (deviceID, usbRegistryEntryID) in Array(activeUSBRegistryIDs)
         where !mediaProvider.registryEntryExists(usbRegistryEntryID) {
             activeUSBRegistryIDs.removeValue(forKey: deviceID)
@@ -127,31 +126,31 @@ final class EDPEjectCoordinator: @unchecked Sendable {
         }
 
         var updated = logicallyEjectedUSBRegistryIDs
-        var registryIDsToAllow = [UInt64]()
-        var registryIDsToSuppress = [UInt64]()
+        var registryIDsToAllow = Set<UInt64>()
+        var registryIDsToSuppress = Set<UInt64>()
 
         for (deviceID, suppressedUSBRegistryEntryID) in logicallyEjectedUSBRegistryIDs {
-            if let current = currentByDeviceID[deviceID] {
-                if current.usbRegistryEntryID == suppressedUSBRegistryEntryID {
-                    // Re-apply the DA callback suppression after a service
-                    // restart; the native Disk Arbitration wrapper owns that
-                    // callback state only in memory.
-                    registryIDsToSuppress.append(current.usbRegistryEntryID)
-                    continue
+            if mediaProvider.registryEntryExists(suppressedUSBRegistryEntryID) {
+                // The exact ejected physical generation is still present. Keep
+                // the tombstone even when discovery omitted it, and fail closed
+                // if a replacement generation with the same stable identity is
+                // observed concurrently. Disk Arbitration callback suppression
+                // is process-local, so re-apply it after every service restart.
+                registryIDsToSuppress.insert(suppressedUSBRegistryEntryID)
+                for current in disks where current.deviceID == deviceID {
+                    registryIDsToSuppress.insert(current.usbRegistryEntryID)
                 }
-
-                // Same stable identity but a different USB registry generation
-                // means the user physically removed/reinserted the device. The
-                // new generation is allowed to enter normal discovery.
-                updated.removeValue(forKey: deviceID)
-                registryIDsToAllow.append(suppressedUSBRegistryEntryID)
                 continue
             }
 
-            // Physical disappearance was observed. Clear the tombstone so the
-            // next insertion can be managed normally.
+            // IOKit has confirmed disappearance of the exact persisted physical
+            // generation. Only now may a currently observed/new generation enter
+            // normal discovery and raw-access acquisition.
             updated.removeValue(forKey: deviceID)
-            registryIDsToAllow.append(suppressedUSBRegistryEntryID)
+            registryIDsToAllow.insert(suppressedUSBRegistryEntryID)
+            for current in disks where current.deviceID == deviceID {
+                registryIDsToAllow.insert(current.usbRegistryEntryID)
+            }
         }
 
         if updated != logicallyEjectedUSBRegistryIDs {

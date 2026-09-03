@@ -243,9 +243,9 @@ With the exact physical generation revalidated immediately before eject:
 - [x] automount/raw reacquisition remains suppressed after logical safe eject.
 - [x] final residue = 0 immediately after final safe eject.
 - [x] final U-state = 0 immediately after final safe eject (`privilegedAccessReady=false`, all partitions unavailable).
-- [!] release blocker found after that clean state: foreground App restart reacquired the still-inserted same USB generation. Replacement S36–S38 fix is implemented locally and requires new signed physical retest.
+- [!] release blocker found after that clean state: foreground App restart reacquired the still-inserted same USB generation. `ddf510b` fixed App/service persistence but follow-up audit found tombstone retirement still too permissive when discovery omitted the device or a replacement generation overlapped the original. The current S36–S40 hardening makes exact original `usbRegistryEntryID` disappearance the sole release authority; new exact-head signed physical retest remains required.
 
-After safe eject, merely restarting the App must not cause re-acquisition of the logically ejected still-inserted device.
+After safe eject, merely restarting the App or service must not cause re-acquisition of the logically ejected still-inserted device. Transient discovery/metadata omission must not clear suppression. If a replacement generation is observed while the persisted original USB registry generation still exists, both remain fail-closed; only confirmed disappearance of the original registry generation may admit the replacement.
 
 ## 13. Physical remove / reinsert gate
 

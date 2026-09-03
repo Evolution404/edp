@@ -59,14 +59,29 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
     }
 
     func prune(to disks: [PhysicalDisk]) {
-        let currentByDeviceID = Dictionary(uniqueKeysWithValues: disks.map { ($0.deviceID, $0) })
+        // A stable device identity must resolve to exactly one live physical
+        // generation before a retained raw lease can remain authoritative. A
+        // transient overlap between old/new USB generations is ambiguous and
+        // therefore fails closed instead of trapping on duplicate dictionary
+        // keys or retaining a lease for either candidate.
+        var currentByDeviceID = [String: PhysicalDisk]()
+        var ambiguousDeviceIDs = Set<String>()
+        for disk in disks {
+            if currentByDeviceID[disk.deviceID] != nil {
+                currentByDeviceID.removeValue(forKey: disk.deviceID)
+                ambiguousDeviceIDs.insert(disk.deviceID)
+            } else if !ambiguousDeviceIDs.contains(disk.deviceID) {
+                currentByDeviceID[disk.deviceID] = disk
+            }
+        }
+
         leases = leases.filter { deviceID, lease in
             guard let disk = currentByDeviceID[deviceID] else { return false }
             return lease.registryEntryID == disk.registryEntryID && lease.rawPath == disk.rawPath
         }
-        let connectedDeviceIDs = Set(currentByDeviceID.keys)
-        readyByDeviceID = readyByDeviceID.filter { connectedDeviceIDs.contains($0.key) }
-        errorsByDeviceID = errorsByDeviceID.filter { connectedDeviceIDs.contains($0.key) }
+        let authoritativeDeviceIDs = Set(currentByDeviceID.keys)
+        readyByDeviceID = readyByDeviceID.filter { authoritativeDeviceIDs.contains($0.key) }
+        errorsByDeviceID = errorsByDeviceID.filter { authoritativeDeviceIDs.contains($0.key) }
     }
 
     func prepareForPhysicalEject(deviceID: String) {

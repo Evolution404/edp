@@ -184,8 +184,9 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] mandatory post-install reboot 已执行：boot time=2026-09-03 14:51:53；物理盘从 reboot 前 `disk26` 变为 reboot 后 `disk6`，stable five-factor ID 不变；FDA retained、credential、policy、type1 RO、type2/type4 RW persistence 全部再次 PASS，无重复授权。
 - [!] final safe eject 当下达到 residue=0 / U-state=0，但随后在 USB 仍物理插入时重启 foreground App，旧 `51a6c9c` service 重新扫描并把同一 generation 恢复为 `privilegedAccessReady=true`。因此 `51a6c9c` / SHA-256 `bf443576...9059b7` 候选**作废**，D4 暂未关闭。
 - [x] 根因与修复：旧 `EDPEjectCoordinator.finishWaiters()` 在 eject success 后立即释放 in-flight suppression；下一次 reconcile 可重新申请 raw lease。现改为 stable device ID + USB registry generation 的持久 logical-eject tombstone `/var/db/com.edp.drive/logical-eject-suppressions.json`；App reconcile/service restart 同 generation 均保持抑制，仅物理 disappearance 或新 USB generation 释放；physical-eject failure 先原子回滚 tombstone 再执行 raw recovery。
-- [x] 新增 S36/S37/S38：App reconcile 不重获、service restart 持久抑制、物理 generation 变化释放抑制；S01-S38、10000 sequences/320000 steps、fast/system/virtual 全绿，新增 `RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK`。
-- [ ] 新 fix exact-head CI → self-signed rebuild/install → focused physical safe-eject/App-restart/service-restart/reinsert retest — PENDING。
+- [x] 第一阶段新增 S36/S37：App reconcile 不重获、service restart 持久抑制；`ddf510b` 五个核心 GitHub Actions jobs 全绿，但后续代码审查发现 tombstone 解除仍错误信任 discovery absence / generation change，`ddf510b` rebuilt package SHA-256 `2bcfff76ee1f17f60e5ce7288b33eaf475f695819afa7145d845118596f4e4a7` 在物理复测前即作废。
+- [x] 第二阶段将 exact persisted `usbRegistryEntryID` 收口为 tombstone 唯一解除 authority：原 generation 仍存在时，即使 discovery/metadata 暂时遗漏设备也继续抑制；若 replacement generation 与原 generation 并存，则 stable identity ambiguity 全路径 fail-closed，不保留 raw lease、不允许 replacement automount/raw reacquire。新增 S38/S39/S40：discovery omission 不解除、replacement overlap fail-closed、仅 original registry disappearance 后放行新 generation；S01-S40、10000 sequences/320000 steps、fast/system/virtual 全绿，`RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK` PASS。
+- [ ] 当前 hardening exact-head CI → self-signed rebuild/install → focused physical safe-eject/App-restart/service-restart/removal/reinsert retest — PENDING。
 
 ## Phase E — 文档、测试矩阵与 Release Checklist
 

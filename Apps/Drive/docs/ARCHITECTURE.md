@@ -341,7 +341,7 @@ Safe eject sequence is generation-aware:
 6. request exact physical DA eject;
 7. retain suppression until actual removal/reinsertion.
 
-The tombstone lives under `/var/db/com.edp.drive/logical-eject-suppressions.json`. Reconcile reloads/reapplies it after privileged-service restart, so neither a foreground App restart nor a service restart may reacquire raw access for the same still-inserted USB generation. Physical disappearance clears the tombstone; observing the same stable device ID with a different USB registry generation also clears it and admits the new insertion. A failed physical eject rolls the tombstone back before raw-access recovery. If persistence cannot be made coherent, the path fails closed.
+The tombstone lives under `/var/db/com.edp.drive/logical-eject-suppressions.json`. Reconcile reloads/reapplies it after privileged-service restart, so neither a foreground App restart nor a service restart may reacquire raw access for the same still-inserted USB generation. Discovery is not authoritative for tombstone retirement: a temporary metadata/discovery omission does not clear suppression, and a replacement generation observed while the persisted original `usbRegistryEntryID` still exists is also suppressed fail-closed. Only IOKit-confirmed disappearance of the exact persisted USB registry generation clears the tombstone and admits a new generation. A failed physical eject rolls the tombstone back before raw-access recovery. If persistence cannot be made coherent, the path fails closed.
 
 If the original device has already disappeared, eject can finish idempotently and retire its tombstone. If the BSD name was reused by a replacement device, the replacement must not be touched.
 

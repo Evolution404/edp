@@ -2794,9 +2794,16 @@ final class EDPServiceController: @unchecked Sendable {
                         }
                     }
                 }
-                let availableDisks = Dictionary(
-                    uniqueKeysWithValues: disks.map { ($0.deviceID, $0.bsdName) }
-                )
+                var availableDisks = [String: String]()
+                var ambiguousAvailableDeviceIDs = Set<String>()
+                for disk in disks {
+                    if availableDisks[disk.deviceID] != nil {
+                        availableDisks.removeValue(forKey: disk.deviceID)
+                        ambiguousAvailableDeviceIDs.insert(disk.deviceID)
+                    } else if !ambiguousAvailableDeviceIDs.contains(disk.deviceID) {
+                        availableDisks[disk.deviceID] = disk.bsdName
+                    }
+                }
                 if manager.removeMissing(availableDisks: availableDisks, graceSeconds: 5),
                    !missingCleanupScheduled {
                     missingCleanupScheduled = true
@@ -2924,9 +2931,16 @@ final class EDPServiceController: @unchecked Sendable {
                 try observe(disks)
                 let records = try store.load().records
                 let policyDocument = try policies.load()
-                let connectedByID = Dictionary(uniqueKeysWithValues: disks
-                    .filter { !eject.isSuppressed(deviceID: $0.deviceID) }
-                    .map { ($0.deviceID, $0) })
+                var connectedByID = [String: PhysicalDisk]()
+                var ambiguousConnectedDeviceIDs = Set<String>()
+                for disk in disks where !eject.isSuppressed(deviceID: disk.deviceID) {
+                    if connectedByID[disk.deviceID] != nil {
+                        connectedByID.removeValue(forKey: disk.deviceID)
+                        ambiguousConnectedDeviceIDs.insert(disk.deviceID)
+                    } else if !ambiguousConnectedDeviceIDs.contains(disk.deviceID) {
+                        connectedByID[disk.deviceID] = disk
+                    }
+                }
                 let deviceIDs = Set(policyDocument.devices.map(\.deviceID))
                     .union(records.map(\.deviceID))
                     .union(disks.map(\.deviceID))

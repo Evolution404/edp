@@ -2623,27 +2623,68 @@ struct ValidateCredentialPolicyServiceLifecycle {
             }
             print("SCENARIO=S37_OK safe_eject_suppression_persists_across_service_restart")
 
-            state.replace(
-                "disk90",
-                with: second.fixture,
+            state.setMetadataFault(
+                .readFailure("EIO: synthetic discovery omission while USB registry remains live"),
+                for: "disk90"
+            )
+            second.controller.reconcileSynchronouslyForTesting()
+            Thread.sleep(forTimeInterval: 0.05)
+            guard state.registryEntryExists(0x9001),
+                  secondOpenScript.count() == 0,
+                  secondDiskArbitration.suppressed.contains(0x9001) else {
+                throw LifecycleValidationError(
+                    "S38 discovery omission incorrectly retired a live physical-generation tombstone"
+                )
+            }
+            state.setMetadataFault(.none, for: "disk90")
+            second.controller.reconcileSynchronouslyForTesting()
+            Thread.sleep(forTimeInterval: 0.05)
+            let afterDiscoveryRecovery = try second.snapshot()
+            guard afterDiscoveryRecovery.devices.first(where: { $0.deviceID == device.deviceID })?.connected == false,
+                  secondOpenScript.count() == 0,
+                  secondDiskArbitration.suppressed.contains(0x9001) else {
+                throw LifecycleValidationError(
+                    "S38 same generation reacquired after transient discovery recovered"
+                )
+            }
+            print("SCENARIO=S38_OK discovery_omission_does_not_release_live_generation")
+
+            state.insert(
+                second.fixture,
+                as: "disk91",
                 registryEntryID: 0x9200,
                 usbRegistryEntryID: 0x9201
             )
             second.controller.reconcileSynchronouslyForTesting()
-            try waitForCondition("S38 new physical generation did not clear logical eject suppression") {
+            Thread.sleep(forTimeInterval: 0.05)
+            guard state.registryEntryExists(0x9001),
+                  state.registryEntryExists(0x9201),
+                  secondOpenScript.count() == 0,
+                  secondDiskArbitration.suppressed.contains(0x9001),
+                  secondDiskArbitration.suppressed.contains(0x9201) else {
+                throw LifecycleValidationError(
+                    "S39 replacement generation bypassed suppression while original generation remained live"
+                )
+            }
+            print("SCENARIO=S39_OK replacement_generation_fails_closed_while_original_exists")
+
+            state.remove("disk90")
+            second.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S40 new physical generation was not admitted after original disappearance") {
                 secondOpenScript.count() == 1
                     && (try? second.connectedDevice().privilegedAccessReady) == true
             }
             let reinserted = try second.connectedDevice()
-            guard reinserted.deviceID == device.deviceID,
-                  reinserted.bsdName == "disk90",
+            guard !state.registryEntryExists(0x9001),
+                  reinserted.deviceID == device.deviceID,
+                  reinserted.bsdName == "disk91",
                   reinserted.privilegedAccessReady,
                   !secondDiskArbitration.suppressed.contains(0x9201) else {
                 throw LifecycleValidationError(
-                    "S38 physical generation change did not restore normal managed discovery"
+                    "S40 exact original disappearance did not release the replacement generation"
                 )
             }
-            print("SCENARIO=S38_OK physical_generation_change_releases_safe_eject_suppression")
+            print("SCENARIO=S40_OK original_registry_disappearance_releases_new_generation")
         }
 
         do {
