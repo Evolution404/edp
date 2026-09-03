@@ -830,11 +830,13 @@ done
 echo 'RESULT=DRIVE_SYSTEM_CURRENT_DOCS_OK'
 echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 
-# GitHub deprecated Node.js 20 for JavaScript actions. Drive artifact uploads
-# must stay on the Node24-based upload-artifact v7 line rather than regressing
-# to the old v4 action that the runner has to force-migrate at runtime.
+# GitHub deprecated Node.js 20 for JavaScript actions. Drive workflow actions
+# must stay on the official Node24-based major lines rather than relying on the
+# runner to force-migrate an older JavaScript runtime at execution time.
 DRIVE_WORKFLOW="${ROOT}/.github/workflows/drive.yml"
+[[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
 [[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 5 ]]
+! /usr/bin/grep -Fq 'actions/checkout@v6' "${DRIVE_WORKFLOW}"
 ! /usr/bin/grep -Fq 'actions/upload-artifact@v4' "${DRIVE_WORKFLOW}"
 echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
 
