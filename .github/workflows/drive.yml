@@ -324,7 +324,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/drive-tests
           make drive-test-fast | tee artifacts/drive-tests/fast.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: drive-fast-${{ github.run_id }}-${{ github.run_attempt }}
@@ -341,7 +341,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/drive-tests
           make drive-test-virtual-usb | tee artifacts/drive-tests/virtual-usb.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: drive-virtual-usb-${{ github.run_id }}-${{ github.run_attempt }}
@@ -360,7 +360,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/drive-tests
           make drive-test-storage | tee artifacts/drive-tests/storage.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: drive-storage-${{ github.run_id }}-${{ github.run_attempt }}
@@ -378,7 +378,7 @@ jobs:
           mkdir -p artifacts/drive-tests
           make drive-test-ui | tee artifacts/drive-tests/ui.log
           make drive-test-system | tee artifacts/drive-tests/system.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: drive-ui-system-${{ github.run_id }}-${{ github.run_attempt }}
@@ -400,7 +400,7 @@ jobs:
           mkdir -p artifacts/drive-tests
           make drive-test-storage | tee artifacts/drive-tests/nightly-storage.log
           make drive-test-system | tee artifacts/drive-tests/nightly-system.log
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: drive-nightly-${{ github.run_id }}-${{ github.run_attempt }}

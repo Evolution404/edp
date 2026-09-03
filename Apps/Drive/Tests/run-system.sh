@@ -830,6 +830,14 @@ done
 echo 'RESULT=DRIVE_SYSTEM_CURRENT_DOCS_OK'
 echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 
+# GitHub deprecated Node.js 20 for JavaScript actions. Drive artifact uploads
+# must stay on the Node24-based upload-artifact v7 line rather than regressing
+# to the old v4 action that the runner has to force-migrate at runtime.
+DRIVE_WORKFLOW="${ROOT}/.github/workflows/drive.yml"
+[[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 5 ]]
+! /usr/bin/grep -Fq 'actions/upload-artifact@v4' "${DRIVE_WORKFLOW}"
+echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
+
 # Canonical top-level gates must remain wired and hardware-free by construction.
 /usr/bin/grep -Fq 'drive-test-storage-smoke:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5' "${ROOT}/Makefile"
