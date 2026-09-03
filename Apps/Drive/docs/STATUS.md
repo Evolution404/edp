@@ -2,9 +2,9 @@
 
 Updated: 2026-09-03
 Current validated branch: `codex/ui-macos26-liquid-glass`
-Current validated automated/runtime baseline: `f734f43899e174c5965f32917f6164ccb2994305`
-Current fixed-head CI: GitHub Actions run `33711677562` — **PASS**
-Current physical release candidate: **PENDING certificate-backed rebuild**. The prior SHA-256 `62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda` package is invalidated because it was built through the ad-hoc-capable lower-level builder and failed the privileged XPC signer boundary on clean first install.
+Current validated release baseline: `51a6c9c1e75e3d2dd2695c5c082a7717a010f12d`
+Current fixed-head CI: GitHub Actions run `33717175105` — **PASS**
+Current physical release candidate: certificate-backed self-signed Clean.pkg SHA-256 `bf4435769052ff4a8798a34d50ce406415cc4f69eb0ed6f8965cd340ac9059b7`. Factory-clean, signed install, XPC, single-App FDA, Lexar three-partition capability/persistence, safe-eject/reinsert and service lifecycle gates are PASS; mandatory post-install reboot + final residue/U-state audit remains pending.
 
 > This file is the current product-status source of truth. Historical plans, handoffs, diagnostics and experiment trackers are evidence only. They must not override this file, `ARCHITECTURE.md`, `TESTING.md`, or `RELEASE-CHECKLIST.md`.
 

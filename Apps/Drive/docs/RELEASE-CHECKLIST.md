@@ -9,18 +9,18 @@ Updated: 2026-09-03
 Record before release testing:
 
 ```text
-Status: INVALIDATED — the package below was ad-hoc signed and is not a release candidate
+Status: ACTIVE SIGNED RELEASE CANDIDATE — final reboot gate in progress
 Branch: codex/ui-macos26-liquid-glass
-Previous runtime HEAD: f734f43899e174c5965f32917f6164ccb2994305
+Exact release HEAD: 51a6c9c1e75e3d2dd2695c5c082a7717a010f12d
 Version: 0.6.0
-Invalidated Clean.pkg SHA-256: 62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda
-Previous automated GitHub Actions run: 33711677562
-Replacement signed candidate: PENDING after release-signing gate commit
+Clean.pkg path: Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
+Clean.pkg SHA-256: bf4435769052ff4a8798a34d50ce406415cc4f69eb0ed6f8965cd340ac9059b7
+Fixed-head GitHub Actions run: 33717175105 — PASS
 Date: 2026-09-03
-Tester: automated local + GitHub Actions + macOS first-install acceptance
+Tester: automated local + GitHub Actions + macOS first-install + physical Lexar acceptance
 ```
 
-The invalidated package passed ordinary `codesign --verify` but had a cdhash-only designated requirement. It was rejected by the privileged XPC signer boundary on the clean machine and must never be installed for further physical/FDA acceptance.
+The earlier ad-hoc package (`f734f43`, SHA-256 `62f685f3…dedda`) is invalidated permanently. The active candidate is certificate-backed with the pinned `EDP Project Code Signing` root and installer-managed LaunchDaemon service mode.
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 
@@ -69,14 +69,14 @@ Required release-signing evidence:
 
 - [x] package build succeeds.
 - [x] package verification script succeeds (`RESULT=EDP_CLEAN_INSTALLER_VERIFIED`).
-- [ ] release-signing verifier succeeds with `EDP_REQUIRE_RELEASE_SIGNING=1`.
-- [ ] `RESULT=STABLE_SELF_SIGNED_RELEASE_IDENTITY`.
-- [ ] `RESULT=SELF_SIGNED_RELEASE_SERVICE_MODE_OK`.
+- [x] release-signing verifier succeeds with `EDP_REQUIRE_RELEASE_SIGNING=1`.
+- [x] `RESULT=STABLE_SELF_SIGNED_RELEASE_IDENTITY`.
+- [x] `RESULT=SELF_SIGNED_RELEASE_SERVICE_MODE_OK`.
 - [x] package contains one `EDP Drive.app` and embedded service, not a second Raw Access App.
-- [ ] App and embedded service both resolve to pinned certificate root `040b5488fb2b6c02b0786e76b674cb4460658ca2`.
+- [x] App and embedded service both resolve to pinned certificate root `040b5488fb2b6c02b0786e76b674cb4460658ca2`.
 - [x] package includes the expected official macFUSE 5.3.3 runtime/component.
 - [x] package does not contain ntfs-3g or FUSE-T product payloads.
-- [ ] SHA-256 for the newly rebuilt signed package recorded above.
+- [x] SHA-256 for the signed exact-head package recorded above.
 
 An ad-hoc designated requirement of the form `cdhash H"..."` is a release failure even if ordinary `codesign --verify` succeeds. Never reuse an old package hash for a new exact HEAD.
 
@@ -140,29 +140,30 @@ Apps/Drive/scripts/first-install-acceptance.sh
 
 For a true first-install gate:
 
-- [x] non-destructive `preflight` PASS on 2026-09-03: no external physical disk, no EDP/macFUSE transport mount, login.keychain remains DefaultKeychain; acceptance session `20260903T005258Z-22259` created.
-- [ ] user-context cleanup completed first where required.
-- [ ] installed EDP Drive state removed.
-- [ ] old EDP runtime/service state removed.
-- [ ] old credentials/state removed as specified by the acceptance procedure.
-- [ ] macFUSE baseline handled according to the factory-clean procedure.
-- [ ] only the EDP Drive App FDA entry is reset for the factory-first-install scenario.
-- [ ] `verify-clean` PASS.
-- [ ] reboot.
-- [ ] `verify-clean` PASS again after reboot.
+- [x] non-destructive `preflight` PASS on 2026-09-03: no external physical disk, no EDP/macFUSE transport mount, login.keychain remains DefaultKeychain; acceptance session created.
+- [x] user-context cleanup completed first where required.
+- [x] installed EDP Drive state removed.
+- [x] old EDP runtime/service state removed.
+- [x] old credentials/state removed as specified by the acceptance procedure.
+- [x] macFUSE baseline handled according to the factory-clean procedure.
+- [x] only the EDP Drive App FDA entry was reset for the factory-first-install scenario.
+- [x] `verify-clean` PASS.
+- [x] reboot completed and boot time revalidated.
+- [x] `verify-clean` PASS again after reboot before signed install.
 
 Do not delete user source repositories or unrelated files as part of cleanup.
 
 ## 7. Install and signature gate
 
-- [ ] install the exact recorded Clean.pkg.
-- [ ] installer requires only the expected installation authorization.
-- [ ] `/Applications/EDP Drive.app` exists.
-- [ ] embedded `edp-drive-service` exists in the App bundle.
-- [ ] service registration / Mach service is valid.
-- [ ] strict code-sign verification PASS.
-- [ ] App/service signing roots match the project signing identity.
-- [ ] macFUSE Local runtime is installed/available.
+- [x] install the exact recorded Clean.pkg.
+- [x] installer requires only the expected installation authorization.
+- [x] `/Applications/EDP Drive.app` exists.
+- [x] embedded `edp-drive-service` exists in the App bundle.
+- [x] installer-managed LaunchDaemon / Mach service is valid and running.
+- [x] `verify-installed` + privileged XPC smoke/snapshot PASS.
+- [x] strict code-sign verification PASS.
+- [x] App/service signing roots both equal the pinned project certificate root.
+- [x] macFUSE Local runtime is installed/available.
 
 ## 8. FDA gate
 
@@ -173,11 +174,11 @@ Grant Full Disk Access to EDP Drive only.
 Do not grant separate FDA to edp-drive-service.
 ```
 
-- [ ] FDA settings opened for EDP Drive App.
-- [ ] user grants FDA once.
-- [ ] no second service FDA item is required.
-- [ ] App restart does not request another authorization.
-- [ ] service restart does not request another authorization.
+- [x] FDA settings opened for EDP Drive App.
+- [x] user grants FDA once to EDP Drive only.
+- [x] no second service FDA item is required; service raw access is brokered through the signed App identity.
+- [x] App restart retains `privilegedAccessReady=true` without another authorization.
+- [x] service stop/start/restart retains `privilegedAccessReady=true` without another authorization.
 
 ## 9. Standard encrypted physical EDP gate
 
@@ -185,20 +186,20 @@ Before insertion, enumerate all current physical external disks and note unrelat
 
 Safety:
 
-- [ ] no unrelated external storage is touched.
-- [ ] re-enumerate before every destructive/lifecycle action.
-- [ ] never rely on a remembered `diskN`.
-- [ ] never format/repartition/raw-write the physical EDP USB as a test.
+- [x] no unrelated external storage was present/touched during this first-install physical gate.
+- [x] physical storage was re-enumerated before lifecycle operations; stale `diskN` was not used as identity.
+- [x] the stable device ID / five-factor identity, not BSD name, drove acceptance.
+- [x] the physical EDP USB was never formatted or repartitioned; type1 was never filesystem-written and only capability-aware temporary data markers were used on writable type2/type4.
 
 On insertion:
 
-- [ ] exactly expected standard encrypted device is classified as `standardEncrypted`.
-- [ ] five-factor identity is stable: VID/PID/onlyId/capacity/LBA11 deviceId.
-- [ ] retained raw access becomes ready without a second FDA/admin prompt.
-- [ ] type 1 capability is reported correctly.
-- [ ] type 2 credential can be verified/saved.
-- [ ] type 4 credential can be verified/saved.
-- [ ] mount policy matches saved policy rather than an implicit default.
+- [x] Lexar `21c4:0cd1` standard encrypted EDP entered the managed pipeline; non-managed media rules remain separately fixture-gated.
+- [x] five-factor identity is stable: VID/PID `21c4:0cd1`, onlyID `3164177653`, capacity `124736503808`, metadata deviceID `disk&ven_lexar&prod_usb_flash_drive`, stable ID `disk&ven_lexar&prod_usb_flash_drive#59e8f8ae5883447c198104e7`.
+- [x] retained raw access becomes ready without a second FDA/admin prompt.
+- [x] type 1 capability is FAT16 read-only.
+- [x] type 2 credential verified/saved in App UI without password entering logs/CLI.
+- [x] type 4 credential verified/saved in App UI without password entering logs/CLI.
+- [x] saved policy remains `autoMount=false` for type1/type2/type4 and survives policy round-trip restore.
 
 Do not claim physical raw-EBUSY recovery unless a real physical EBUSY event actually occurred. Deterministic S31–S35 are contract evidence only.
 
@@ -206,25 +207,25 @@ Do not claim physical raw-EBUSY recovery unless a real physical EBUSY event actu
 
 Depending on the candidate’s configured policy:
 
-- [ ] type 1 expected read/write/read-only capability verified.
-- [ ] type 2 expected filesystem capability verified.
-- [ ] type 4 expected filesystem capability verified.
-- [ ] type 2 and type 4 credentials remain isolated.
-- [ ] credential checkpoint PASS.
-- [ ] policy round-trip PASS.
-- [ ] no hidden transport/session residue after explicit unmount.
+- [x] type 1 read-only capability verified across mount/unmount/remount; no marker write performed.
+- [x] type 2 writable capability verified with temporary marker persistence across remount and marker deletion afterward.
+- [x] type 4 writable capability verified with temporary marker persistence across remount and marker deletion afterward.
+- [x] type 2 and type 4 credentials remain isolated/saved.
+- [x] credential checkpoint PASS before and after physical reinsert.
+- [x] policy round-trip/restore PASS before and after physical reinsert.
+- [x] all three partitions were explicitly unmounted after capability tests.
 
 NTFS follows the accepted `ADR-2026-09-03-ntfs-rw.md` policy: Apple-native read-only compatibility is supported; writable cross-platform data should use ExFAT; do not silently substitute a third-party write path or automatically reformat NTFS.
 
 ## 11. Service lifecycle gate
 
-- [ ] service health PASS.
-- [ ] graceful Stop PASS.
-- [ ] on-demand Start PASS.
-- [ ] graceful Restart PASS.
-- [ ] repeated start/stop cycles do not progressively slow materially.
-- [ ] stopping the UI only leaves the intended service behavior.
-- [ ] complete quit preserves the defined full-exit semantics.
+- [x] service health PASS.
+- [x] graceful Stop PASS.
+- [x] on-demand Start PASS.
+- [x] graceful Restart PASS.
+- [x] 8-cycle service gate PASS: warmup 74ms; steady starts 1049–1072ms; first steady avg 1064.0ms, last avg 1060.3ms, slope -0.2ms/cycle; one daemon each cycle.
+- [x] foreground UI was isolated for service lifecycle gates and on-demand service behavior remained correct.
+- [ ] complete quit preserves the defined full-exit semantics — still covered by automated contracts, not repeated as a separate physical release action in this session.
 
 Normal service stop must not use kill -9 as the normal product path.
 
@@ -232,16 +233,15 @@ Normal service stop must not use kill -9 as the normal product path.
 
 With the exact physical generation revalidated immediately before eject:
 
-- [ ] XPC safe eject succeeds.
-- [ ] all managed user filesystems are gone.
-- [ ] DiskImages2 publication is gone or satisfies only the exact safe retired-tombstone contract.
-- [ ] hidden macFUSE bridge is gone.
-- [ ] transport process is gone.
-- [ ] retained raw lease is released.
-- [ ] snapshot reflects offline/saved state.
-- [ ] automount/raw reacquisition remains suppressed after logical safe eject.
-- [ ] residue = 0.
-- [ ] U-state = 0.
+- [x] XPC safe eject succeeds.
+- [x] all managed user filesystems are gone after eject.
+- [ ] final DiskImages2 publication/residue audit — repeat after the mandatory post-install reboot.
+- [ ] final hidden macFUSE bridge/transport audit — repeat after the mandatory post-install reboot.
+- [x] retained raw lease is released (`privilegedAccessReady=false`) while the logically ejected device remains physically inserted.
+- [x] snapshot reflects unavailable partitions with saved credential state.
+- [x] automount/raw reacquisition remains suppressed after logical safe eject.
+- [ ] final residue = 0 — pending final reboot/eject audit.
+- [ ] final U-state = 0 — pending final reboot/eject audit.
 
 After safe eject, merely restarting the App must not cause re-acquisition of the logically ejected still-inserted device.
 
@@ -249,12 +249,12 @@ After safe eject, merely restarting the App must not cause re-acquisition of the
 
 After actual removal and reinsertion:
 
-- [ ] Drive rediscovers the device.
-- [ ] stable five-factor device identity remains the same.
-- [ ] current BSD name is re-enumerated; do not assume it matches the prior `diskN`.
-- [ ] retained raw access returns without a new FDA/admin prompt.
-- [ ] saved credential/policy state is available.
-- [ ] configured auto-mount behavior is restored.
+- [x] Drive rediscovers the device after physical removal/reinsert.
+- [x] stable five-factor device identity remains the same.
+- [x] current BSD name was freshly re-enumerated; it happened to remain `disk26`, so no claim of physical `diskN` change is made.
+- [x] retained raw access returns without a new FDA/admin prompt.
+- [x] saved credential/policy state is available.
+- [x] configured auto-mount behavior (`false` on all three partitions) is restored.
 
 If `diskN` happens not to change during the test, do not report “physical diskN change verified.”
 
@@ -352,6 +352,6 @@ ordinaryUSB physical negative      BLOCKED_BY_FIXTURE
 legacyNoPassword physical negative BLOCKED_BY_FIXTURE
 currentNoPassword physical negative BLOCKED_BY_FIXTURE
 unrecognizedEDP physical negative  BLOCKED_BY_FIXTURE
-factory-clean/install/reboot gate NOT YET RUN for release candidate f734f43
+signed candidate 51a6c9c install/FDA/physical/service gates PASS; mandatory post-install reboot/final eject audit PENDING
 NTFS RW ADR                         ACCEPTED A+C (native NTFS RO + writable ExFAT)
 ```

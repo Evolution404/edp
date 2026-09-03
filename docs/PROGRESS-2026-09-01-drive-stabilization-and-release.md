@@ -171,15 +171,17 @@ UI_HITCH_COUNT_GT33MS=1
 
 ### D4 Exact-head reboot
 
-- [!] 原 `f734f43` / SHA-256 `62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda` 候选已**作废**：D4 首次安装后发现该包直接由底层 `build-clean-installer.sh` 默认 ad-hoc `-` 签名生成；普通 `codesign --verify` 虽 PASS，但 designated requirement 仅为 `cdhash H"..."`，`EDPXPCPeerValidator` 按设计拒绝无 TeamIdentifier/leaf certificate 的 ad-hoc App，因此 privileged XPC 无法建立。
-- [x] 发布流程缺口已定位并补门禁：正式候选必须走 `build-self-signed-installer.sh` / `make drive-release-installer`；固定 identity=`EDP Project Code Signing`、certificate root=`040b5488fb2b6c02b0786e76b674cb4460658ca2`、self-signed installer-managed LaunchDaemon mode；`EDP_REQUIRE_RELEASE_SIGNING=1 verify-clean-installer.sh` 会拒绝 ad-hoc 包。旧错误包实测被 strict verifier 以 RC=5 拒绝。
-- [x] 第一次 factory acceptance 已实际执行：preflight、user-cleanup、privileged `factory-first-install`、`verify-clean` PASS；Mac 于 2026-09-03 12:38:06 完成安装前 reboot，reboot 后第二次 `verify-clean` 再次 PASS。
-- [ ] 重新从发布签名门禁后的 final exact HEAD 构建 certificate-backed Clean.pkg，并记录新 SHA-256。
-- [ ] 安装新的 signed candidate。
-- [ ] single-App FDA retained access。
-- [ ] policy/credential persistence。
-- [ ] 第二次 reboot 后 retained access / credential / policy / functional-all。
-- [ ] safe eject residue/U-state=0。
+- [!] 原 `f734f43` / SHA-256 `62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda` 候选已**永久作废**：底层 `build-clean-installer.sh` 默认 ad-hoc `-` 签名虽能通过普通 `codesign --verify`，但 designated requirement 仅为 cdhash，clean first-install 中被 privileged XPC signer boundary 正确拒绝。
+- [x] 发布流程缺口已补门禁：正式候选只能走 `build-self-signed-installer.sh` / `make drive-release-installer`；固定 identity=`EDP Project Code Signing`、certificate root=`040b5488fb2b6c02b0786e76b674cb4460658ca2`、self-signed installer-managed LaunchDaemon mode；`EDP_REQUIRE_RELEASE_SIGNING=1` 会拒绝 ad-hoc 包，system ratchet `DRIVE_SYSTEM_RELEASE_SIGNING_GATE_OK` PASS。
+- [x] final exact release HEAD=`51a6c9c1e75e3d2dd2695c5c082a7717a010f12d`；certificate-backed Clean.pkg SHA-256=`bf4435769052ff4a8798a34d50ce406415cc4f69eb0ed6f8965cd340ac9059b7`；strict verifier 输出 `STABLE_SELF_SIGNED_RELEASE_IDENTITY`、`SELF_SIGNED_RELEASE_SERVICE_MODE_OK`、`EDP_CLEAN_INSTALLER_VERIFIED`。
+- [x] exact-head CI run `33717175105`：native、fast、virtual、UI-system、storage 全部 PASS；storage M01-M14 6m02s，UI 33ms gate 未放宽。
+- [x] factory-first-install：preflight、user-cleanup、privileged factory cleanup、`verify-clean`、安装前 reboot、reboot 后 `verify-clean`、signed install、`verify-installed` / privileged XPC 全部 PASS。
+- [x] single-App FDA：仅 EDP Drive App 授权一次；Lexar `21c4:0cd1` / onlyID `3164177653` / capacity `124736503808` / metadata deviceID `disk&ven_lexar&prod_usb_flash_drive` 随后 `privilegedAccessReady=true`。App restart、service stop/start/restart、物理拔插后均不需要再次管理员/FDA授权。
+- [x] policy/credential persistence：type2/type4 密码仅在 UI 验证保存；credential checkpoint、policy round-trip/restore 在拔插前后 PASS；三分区 autoMount 均保持 false。
+- [x] 实盘三分区：type1 FAT16 RO remount PASS；type2/type4 RW marker persistence/remount/hash/delete PASS；测试后全部显式卸载，无测试 marker 残留。
+- [x] safe eject / physical reinsert：XPC safe eject PASS，逻辑推出后 raw reacquisition 被抑制且分区 unavailable；物理拔插后同一五因素 identity、FDA、凭据、策略均恢复。BSD 名恰好仍为 disk26，因此不宣称 physical diskN change PASS。
+- [x] service lifecycle：health、graceful stop、on-demand start、restart PASS；8-cycle warmup=74ms，稳态 1049–1072ms，first avg=1064.0ms，last avg=1060.3ms，slope=-0.2ms/cycle，每轮只有一个 daemon。
+- [ ] mandatory post-install reboot → retained access / credential / policy / functional-all → final safe eject → residue/U-state=0 — PENDING。
 
 ## Phase E — 文档、测试矩阵与 Release Checklist
 
