@@ -2,8 +2,8 @@
 
 Updated: 2026-09-03
 Current validated branch: `codex/ui-macos26-liquid-glass`
-Current validated HEAD: `9fd1d4cd1fd0e671b4cb16f5a9be5ad8b28ddb8d`
-Current fixed-head CI: GitHub Actions run `33686611853` — **PASS**
+Current validated release-candidate baseline: `b3de7619fee84f4787953269a681aa0a99149263`
+Current fixed-head CI: GitHub Actions run `33701172126` — **PASS**
 
 > This file is the current product-status source of truth. Historical plans, handoffs, diagnostics and experiment trackers are evidence only. They must not override this file, `ARCHITECTURE.md`, `TESTING.md`, or `RELEASE-CHECKLIST.md`.
 
@@ -281,8 +281,8 @@ The threshold/workload/window must not be weakened to manufacture a pass.
 Latest fixed-head run:
 
 ```text
-HEAD  9fd1d4cd1fd0e671b4cb16f5a9be5ad8b28ddb8d
-Run   33686611853
+HEAD  b3de7619fee84f4787953269a681aa0a99149263
+Run   33701172126
 ```
 
 All core jobs passed:

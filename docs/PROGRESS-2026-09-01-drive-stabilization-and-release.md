@@ -15,7 +15,7 @@
 | B | Runtime 职责拆分 | DONE |
 | C | App/UI 文件职责拆分 | DONE |
 | D | 发布可靠性与 recovery 可观测性 | IN PROGRESS（D1/D2 DONE；D3/D4 pending） |
-| E | 文档、测试矩阵、Release Checklist 收口 | IN PROGRESS |
+| E | 文档、测试矩阵、Release Checklist 收口 | DONE |
 | F | NTFS RW 产品/架构 ADR | TODO |
 
 ## 当前不可回退基线
@@ -171,7 +171,7 @@ UI_HITCH_COUNT_GT33MS=1
 
 ### D4 Exact-head reboot
 
-- [ ] exact-head Clean.pkg build/verify。
+- [x] exact-head Clean.pkg build/verify：release-candidate baseline `b3de761`；`/tmp/edp-release-b3de761/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`3417492ab7b1bca4504c8938b2d783f6dcd4630bd6e579ddaa0a052bd5be0787`；`verify-clean-installer.sh` 全部 PASS（single App + embedded service、macFUSE-only、无 ntfs-3g、single-App FDA broker）。
 - [ ] install。
 - [ ] reboot。
 - [ ] single-App FDA retained access。
@@ -180,7 +180,7 @@ UI_HITCH_COUNT_GT33MS=1
 
 ## Phase E — 文档、测试矩阵与 Release Checklist
 
-状态：IMPLEMENTATION DONE（等待 fixed-head CI）
+状态：DONE
 
 - [x] 重写 `Apps/Drive/docs/STATUS.md` 为当前事实真源，纠正旧 `/sbin/umount`、type1 默认自动挂载、production 完全不用 hdiutil 等已失效描述。
 - [x] 新建 `Apps/Drive/docs/ARCHITECTURE.md`，固化 single-App FDA、runtime ownership、raw EBUSY、DiskImages2 tombstone、safe-eject 与 fail-closed 架构。
@@ -189,7 +189,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] 新建 `Apps/Drive/docs/HISTORICAL.md`；旧 2026-08 Drive plans/tracker 与 `HANDOFF-2026-08-29.md`、`HANDOFF-2026-09-01-real-device-ebusy-finalization.md` 已明确标记 HISTORICAL/superseded，不删除历史证据。
 - [x] 旧 tracker 未勾选项不再作为当前技术债入口；当前总览已按 A/B/C DONE、D1/D2 DONE、D3/D4 pending 重写。
 - [x] 文档与 Makefile/CI targets 本机一致性验证完成：新增 `DRIVE_SYSTEM_CURRENT_DOCS_OK` ratchet；`git diff --check`、system、fast、virtual、S01-S35/320000-step property 全部 PASS。
-- [ ] Phase E fixed-head CI：待文档提交后的 native/fast/virtual/UI-system/storage 全绿后正式关闭 Phase E。
+- [x] Phase E fixed-head CI：`b3de761` / run `33701172126` 的 native、fast、virtual、UI-system、storage 全部 PASS；UI `UI_HITCH_COUNT_GT33MS=0` / `UI_HITCH_MAX_MS=0.000`，storage M01-M14 5m53s 正常完成。Phase E 正式关闭。
 
 ## Phase F — NTFS RW ADR
 
