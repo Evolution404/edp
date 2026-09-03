@@ -29,6 +29,7 @@ ACTIVITY_STORE_SOURCE="${ROOT}/Apps/Drive/product/EDPActivityStore.swift"
 EJECT_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPEjectCoordinator.swift"
 SERVICE_LIFECYCLE_STATE_SOURCE="${ROOT}/Apps/Drive/product/EDPServiceLifecycleState.swift"
 RECOVERY_COORDINATOR_SOURCE="${ROOT}/Apps/Drive/product/EDPRecoveryCoordinator.swift"
+XPC_PROTOCOL_SOURCE="${ROOT}/Apps/Drive/product/EDPXPCProtocol.swift"
 XPC_SERVICE_SOURCE="${ROOT}/Apps/Drive/product/EDPXPCService.swift"
 SERVICE_MAIN_SOURCE="${ROOT}/Apps/Drive/product/EDPServiceMain.swift"
 MOUNT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPMountLifecycle.swift"
@@ -723,6 +724,36 @@ echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
 /usr/bin/grep -Fq 'SCENARIO=S41_OK' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
 ! /usr/bin/grep -Ei 'killall.*fskitd|pkill.*fskitd|SIG(KILL|TERM).*fskitd' "${RUNTIME_SOURCE}" "${NATIVE_SYSTEM_SOURCE}" "${RAW_ACCESS_COORDINATOR_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_EARLY_EDP_DISK_CLAIM_OK'
+
+# Routine UI stop/start/restart must not terminate the privileged process while a
+# standard EDP generation is claimed. Pause/resume/restart quiesce mounts and raw
+# leases in-process so the Disk Arbitration session/claim has no gap for fskitd.
+# Only explicit full exit retains the process-level graceful shutdown path.
+/usr/bin/grep -Fq 'func requestRuntimePause(withReply' "${XPC_PROTOCOL_SOURCE}"
+/usr/bin/grep -Fq 'func requestRuntimeResume(withReply' "${XPC_PROTOCOL_SOURCE}"
+/usr/bin/grep -Fq 'func requestRuntimeRestart(withReply' "${XPC_PROTOCOL_SOURCE}"
+/usr/bin/grep -Fq 'func pauseRuntimeAsync(completion:' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func resumeRuntimeAsync(completion:' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func restartRuntimeAsync(completion:' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'proxy.requestRuntimePause' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'proxy.requestRuntimeResume' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'proxy.requestRuntimeRestart' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'func shutdownService(completion:' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'stopService(restart: true)' "${APP_VIEW_MODEL_SOURCE}"
+for scenario in S42 S43; do
+  /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+done
+FULL_EXIT_SECTION="$(/usr/bin/awk '/func shutdownService\(completion:/,/func openServiceSettings\(\)/' "${APP_VIEW_MODEL_SOURCE}")"
+/usr/bin/grep -Fq 'proxy.requestRuntimeResume' <<<"${FULL_EXIT_SECTION}"
+/usr/bin/grep -Fq 'proxy.snapshot' <<<"${FULL_EXIT_SECTION}"
+/usr/bin/grep -Fq 'proxy.eject(deviceID:' <<<"${FULL_EXIT_SECTION}"
+/usr/bin/grep -Fq 'proxy.requestGracefulShutdown' <<<"${FULL_EXIT_SECTION}"
+FULL_EXIT_RESUME_LINE="$(/usr/bin/grep -nF 'proxy.requestRuntimeResume' <<<"${FULL_EXIT_SECTION}" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
+FULL_EXIT_EJECT_LINE="$(/usr/bin/grep -nF 'proxy.eject(deviceID:' <<<"${FULL_EXIT_SECTION}" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
+FULL_EXIT_SHUTDOWN_LINE="$(/usr/bin/grep -nF 'proxy.requestGracefulShutdown' <<<"${FULL_EXIT_SECTION}" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
+[[ "${FULL_EXIT_RESUME_LINE}" -lt "${FULL_EXIT_EJECT_LINE}" && "${FULL_EXIT_EJECT_LINE}" -lt "${FULL_EXIT_SHUTDOWN_LINE}" ]]
+echo 'RESULT=DRIVE_SYSTEM_FULL_EXIT_SAFE_EJECT_ORDER_OK'
+echo 'RESULT=DRIVE_SYSTEM_CLAIM_CONTINUOUS_RUNTIME_CONTROL_OK'
 
 # Lifecycle deadlines are monotonic and scheduler-driven. Bridge activation and
 # mount drain timeouts must not regress to wall-clock Date()/asyncAfter logic.

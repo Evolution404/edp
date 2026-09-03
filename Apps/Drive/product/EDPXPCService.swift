@@ -29,6 +29,27 @@ final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol,
         if shouldSignal { didRequestShutdown() }
     }
 
+    func requestRuntimePause(withReply reply: @escaping (String?) -> Void) {
+        let replyBox = EDPSendableStringReply(reply)
+        controller.pauseRuntimeAsync { errorMessage in
+            replyBox(errorMessage)
+        }
+    }
+
+    func requestRuntimeResume(withReply reply: @escaping (String?) -> Void) {
+        let replyBox = EDPSendableStringReply(reply)
+        controller.resumeRuntimeAsync { errorMessage in
+            replyBox(errorMessage)
+        }
+    }
+
+    func requestRuntimeRestart(withReply reply: @escaping (String?) -> Void) {
+        let replyBox = EDPSendableStringReply(reply)
+        controller.restartRuntimeAsync { errorMessage in
+            replyBox(errorMessage)
+        }
+    }
+
     func requestGracefulShutdown(withReply reply: @escaping (String?) -> Void) {
         let replyBox = EDPSendableStringReply(reply)
         controller.shutdownGracefullyAsync { [weak self] errorMessage in

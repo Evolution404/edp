@@ -375,7 +375,7 @@ struct EDPMenuBarView: View {
                 tint: .red,
                 isEnabled: !model.isBusy
             ) {
-                model.stopService {
+                model.shutdownService {
                     NSApplication.shared.terminate(nil)
                 }
             }

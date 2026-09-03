@@ -2453,6 +2453,8 @@ final class EDPServiceController: @unchecked Sendable {
     private let activityStore = EDPActivityStore()
     private var missingCleanupScheduled = false
     private var connectedDisks = [PhysicalDisk]()
+    private var runtimePaused = false
+    private var runtimeTransitionInProgress = false
 
     init(
         store: EDPCredentialStore? = nil,
@@ -2769,7 +2771,9 @@ final class EDPServiceController: @unchecked Sendable {
 
     private func reconcileLocked() {
         guard serviceLifecycle.startupRecoveryComplete,
-              !serviceLifecycle.shutdownRequested else { return }
+              !serviceLifecycle.shutdownRequested,
+              !runtimePaused,
+              !runtimeTransitionInProgress else { return }
         autoreleasepool {
             do {
                 let disks = try discovery.scan()
@@ -3031,10 +3035,18 @@ final class EDPServiceController: @unchecked Sendable {
                 return
             }
             guard self.serviceLifecycle.startupRecoveryComplete,
-                  !self.serviceLifecycle.shutdownRequested else {
-                completion(self.serviceLifecycle.shutdownRequested
-                    ? "EDP service is shutting down"
-                    : "EDP service startup recovery is still in progress")
+                  !self.serviceLifecycle.shutdownRequested,
+                  !self.runtimePaused,
+                  !self.runtimeTransitionInProgress else {
+                let message: String
+                if self.serviceLifecycle.shutdownRequested {
+                    message = "EDP service is shutting down"
+                } else if self.runtimePaused || self.runtimeTransitionInProgress {
+                    message = "EDP service runtime is paused or transitioning"
+                } else {
+                    message = "EDP service startup recovery is still in progress"
+                }
+                completion(message)
                 return
             }
             guard let disk = self.connectedDisks.first(where: { $0.deviceID == deviceID }) else {
@@ -3093,8 +3105,12 @@ final class EDPServiceController: @unchecked Sendable {
                 completion("EDP service controller was released")
                 return
             }
-            guard !self.serviceLifecycle.shutdownRequested else {
-                completion("EDP service is shutting down")
+            guard !self.serviceLifecycle.shutdownRequested,
+                  !self.runtimePaused,
+                  !self.runtimeTransitionInProgress else {
+                completion(self.serviceLifecycle.shutdownRequested
+                    ? "EDP service is shutting down"
+                    : "EDP service runtime is paused or transitioning")
                 return
             }
             let partitionKey = self.key(deviceID, partitionType)
@@ -3500,8 +3516,12 @@ final class EDPServiceController: @unchecked Sendable {
                 completion("EDP service controller was released")
                 return
             }
-            guard !self.serviceLifecycle.shutdownRequested else {
-                completion("EDP service is shutting down")
+            guard !self.serviceLifecycle.shutdownRequested,
+                  !self.runtimePaused,
+                  !self.runtimeTransitionInProgress else {
+                completion(self.serviceLifecycle.shutdownRequested
+                    ? "EDP service is shutting down"
+                    : "EDP service runtime is paused or transitioning")
                 return
             }
             if self.eject.joinIfActive(deviceID: deviceID, completion: completion) {
@@ -3641,6 +3661,120 @@ final class EDPServiceController: @unchecked Sendable {
         )
     }
 
+    func pauseRuntimeAsync(completion: @escaping EDPDaemonMountCompletion) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion("EDP service controller was released")
+                return
+            }
+            guard self.serviceLifecycle.startupRecoveryComplete,
+                  !self.serviceLifecycle.shutdownRequested else {
+                completion(self.serviceLifecycle.shutdownRequested
+                    ? "EDP service is shutting down"
+                    : "EDP service startup recovery is still in progress")
+                return
+            }
+            if self.runtimePaused {
+                completion(nil)
+                return
+            }
+            guard !self.runtimeTransitionInProgress else {
+                completion("EDP service runtime transition is already in progress")
+                return
+            }
+            self.runtimeTransitionInProgress = true
+            self.manager.unmountAllAsync { [weak self] errorMessage in
+                guard let self else { return }
+                self.onControllerQueue {
+                    var finalError = errorMessage
+                    if finalError == nil, !self.manager.mountedSummaries().isEmpty {
+                        finalError = "one or more EDP sessions could not be safely unmounted"
+                    }
+                    if finalError == nil {
+                        self.rawAccess.invalidateAll()
+                        self.connectedDisks.removeAll()
+                        self.runtimePaused = true
+                        self.addActivity("后台服务运行时已暂停；保留物理盘 Disk Arbitration claim")
+                    }
+                    self.runtimeTransitionInProgress = false
+                    completion(finalError)
+                }
+            }
+        }
+    }
+
+    func resumeRuntimeAsync(completion: @escaping EDPDaemonMountCompletion) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion("EDP service controller was released")
+                return
+            }
+            guard self.serviceLifecycle.startupRecoveryComplete,
+                  !self.serviceLifecycle.shutdownRequested else {
+                completion(self.serviceLifecycle.shutdownRequested
+                    ? "EDP service is shutting down"
+                    : "EDP service startup recovery is still in progress")
+                return
+            }
+            guard !self.runtimeTransitionInProgress else {
+                completion("EDP service runtime transition is already in progress")
+                return
+            }
+            guard self.runtimePaused else {
+                completion(nil)
+                return
+            }
+            self.runtimePaused = false
+            self.addActivity("后台服务运行时已恢复")
+            self.reconcileLocked()
+            completion(nil)
+        }
+    }
+
+    func restartRuntimeAsync(completion: @escaping EDPDaemonMountCompletion) {
+        queue.async { [weak self] in
+            guard let self else {
+                completion("EDP service controller was released")
+                return
+            }
+            guard self.serviceLifecycle.startupRecoveryComplete,
+                  !self.serviceLifecycle.shutdownRequested else {
+                completion(self.serviceLifecycle.shutdownRequested
+                    ? "EDP service is shutting down"
+                    : "EDP service startup recovery is still in progress")
+                return
+            }
+            guard !self.runtimePaused else {
+                completion("EDP service runtime is paused; start it before restarting")
+                return
+            }
+            guard !self.runtimeTransitionInProgress else {
+                completion("EDP service runtime transition is already in progress")
+                return
+            }
+            self.runtimeTransitionInProgress = true
+            self.manager.unmountAllAsync { [weak self] errorMessage in
+                guard let self else { return }
+                self.onControllerQueue {
+                    var finalError = errorMessage
+                    if finalError == nil, !self.manager.mountedSummaries().isEmpty {
+                        finalError = "one or more EDP sessions could not be safely unmounted"
+                    }
+                    if finalError == nil {
+                        self.rawAccess.invalidateAll()
+                        self.connectedDisks.removeAll()
+                        self.addActivity("后台服务运行时已原地重启；Disk Arbitration claim 未断链")
+                    }
+                    self.runtimeTransitionInProgress = false
+                    if finalError == nil {
+                        self.reconcileLocked()
+                    }
+                    completion(finalError)
+                }
+            }
+        }
+    }
+
     func diagnosticsData() -> Data {
         queue.sync {
             let payload: [String: Any] = [
@@ -3660,6 +3794,8 @@ final class EDPServiceController: @unchecked Sendable {
                 "credentialStore": "System Keychain",
                 "startupRecoveryComplete": serviceLifecycle.startupRecoveryComplete,
                 "startupRecoveryError": serviceLifecycle.startupRecoveryError as Any,
+                "runtimePaused": runtimePaused,
+                "runtimeTransitionInProgress": runtimeTransitionInProgress,
                 "deviceDiscoveryDiagnostics": EDPNativeDeviceDiscovery.diagnosticReport()
                     + discovery.diagnostics,
                 "discoveryScanCount": discovery.scanCount,
@@ -3784,6 +3920,24 @@ final class EDPServiceController: @unchecked Sendable {
     func eject(deviceID: String) throws {
         try waitForRegressionOperation {
             ejectAsync(deviceID: deviceID, completion: $0)
+        }
+    }
+
+    func pauseRuntime() throws {
+        try waitForRegressionOperation {
+            pauseRuntimeAsync(completion: $0)
+        }
+    }
+
+    func resumeRuntime() throws {
+        try waitForRegressionOperation {
+            resumeRuntimeAsync(completion: $0)
+        }
+    }
+
+    func restartRuntime() throws {
+        try waitForRegressionOperation {
+            restartRuntimeAsync(completion: $0)
         }
     }
 

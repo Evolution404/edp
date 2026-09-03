@@ -66,7 +66,9 @@ The service owns the managed-device lifecycle:
 - startup recovery and graceful shutdown;
 - structured activity/journal/metrics snapshots.
 
-Normal user-requested service stop is graceful. It is not implemented as an ordinary `kill -9` path.
+Routine UI **Stop / Start / Restart** controls are claim-continuous runtime operations, not privileged-process termination. Stop performs an in-process pause: user filesystems, transports and retained raw leases are torn down, while the existing privileged process keeps its Disk Arbitration session and verified physical-disk claim alive. Start resumes that runtime and reacquires raw access through the same claim owner. Restart performs pause-like teardown and immediate reconcile in the same process. This distinction is required on macOS 26: destroying the DA session while a standard EDP USB remains inserted creates a window in which `fskitd` can open `/dev/rdiskNs1`, after which whole-disk `O_RDWR` can remain `EBUSY`.
+
+**Complete Quit** is the only normal UI action that requests true privileged-process shutdown. Before that shutdown it idempotently resumes the runtime, snapshots currently connected EDP devices, safe-ejects them through the normal generation-aware eject path, and only then requests graceful service termination. Normal product lifecycle control never uses `kill -9`.
 
 ## 4. Device classification boundary
 

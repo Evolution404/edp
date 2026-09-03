@@ -121,6 +121,9 @@ struct EDPXPCSnapshot: Codable, Sendable {
 
 @objc protocol EDPVaultXPCProtocol {
     func healthCheck(withReply reply: @escaping (String) -> Void)
+    func requestRuntimePause(withReply reply: @escaping (String?) -> Void)
+    func requestRuntimeResume(withReply reply: @escaping (String?) -> Void)
+    func requestRuntimeRestart(withReply reply: @escaping (String?) -> Void)
     func requestGracefulShutdown(withReply reply: @escaping (String?) -> Void)
     func snapshot(withReply reply: @escaping (Data) -> Void)
     func refreshRawAccess(withReply reply: @escaping (String?) -> Void)

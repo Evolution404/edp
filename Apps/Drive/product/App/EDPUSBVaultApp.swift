@@ -281,6 +281,53 @@ struct EDPUSBVaultApp: App {
             exit(snapshot.0 ? 0 : 1)
         }
 
+        if let index = CommandLine.arguments.firstIndex(of: "--xpc-runtime-control-smoke"),
+           CommandLine.arguments.count > index + 1 {
+            let action = CommandLine.arguments[index + 1]
+            guard ["pause", "resume", "restart"].contains(action) else {
+                print("RESULT=XPC_RUNTIME_CONTROL_INVALID_ACTION")
+                exit(2)
+            }
+            let result = EDPXPCSmokeResult()
+            let semaphore = DispatchSemaphore(value: 0)
+            let connection = NSXPCConnection(
+                machServiceName: edpVaultMachServiceName,
+                options: .privileged
+            )
+            connection.remoteObjectInterface = NSXPCInterface(with: EDPVaultXPCProtocol.self)
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ @Sendable error in
+                result.set(passed: false, detail: error.localizedDescription)
+                semaphore.signal()
+            }) as? EDPVaultXPCProtocol else {
+                print("RESULT=XPC_RUNTIME_CONTROL_PROXY_UNAVAILABLE")
+                exit(1)
+            }
+            connection.resume()
+            let reply: @Sendable (String?) -> Void = { errorMessage in
+                result.set(
+                    passed: errorMessage == nil,
+                    detail: errorMessage ?? "runtime \(action) completed"
+                )
+                semaphore.signal()
+            }
+            switch action {
+            case "pause": proxy.requestRuntimePause(withReply: reply)
+            case "resume": proxy.requestRuntimeResume(withReply: reply)
+            default: proxy.requestRuntimeRestart(withReply: reply)
+            }
+            guard semaphore.wait(timeout: .now() + 90) == .success else {
+                connection.invalidate()
+                print("RESULT=XPC_RUNTIME_CONTROL_TIMEOUT")
+                exit(1)
+            }
+            connection.invalidate()
+            let snapshot = result.snapshot()
+            print("XPC_RUNTIME_CONTROL_ACTION=\(action)")
+            print("XPC_RUNTIME_CONTROL_DETAIL=\(snapshot.1)")
+            print(snapshot.0 ? "RESULT=EDP_SERVICE_RUNTIME_CONTROL_OK" : "RESULT=EDP_SERVICE_RUNTIME_CONTROL_FAILED")
+            exit(snapshot.0 ? 0 : 1)
+        }
+
         if CommandLine.arguments.contains("--xpc-graceful-stop") {
             let result = EDPXPCSmokeResult()
             let replySemaphore = DispatchSemaphore(value: 0)

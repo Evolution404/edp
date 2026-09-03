@@ -86,16 +86,18 @@ Authoritative for hardware-free lifecycle semantics such as:
 - raw EBUSY exact-generation recovery S31–S35;
 - safe-eject logical suppression S36–S40: App reconcile does not reacquire, service restart preserves the tombstone, discovery omission cannot retire a live generation, replacement generation overlap fails closed, and only exact original USB-registry disappearance releases the new generation;
 - S41 early Disk Arbitration claim classification: verified `standardEncrypted` media is eligible for the pre-FSKit whole-disk claim, while metadata failure/nonstandard media fails open to macOS;
+- S42 claim-continuous runtime pause/resume: pause releases managed raw state without process shutdown, and resume reacquires the same physical generation;
+- S43 in-process runtime restart: teardown/reconcile reuses the same service/DA owner rather than creating a claim gap;
 - fixed-seed lifecycle property model.
 
 Important distinction:
 
-S31–S35 prove the **contract** of raw EBUSY recovery. They do not prove a physical EBUSY event occurred on a real USB device. S36–S40 are deterministic lifecycle evidence for safe-eject suppression and exact-generation retirement. S41 proves the standard-only/fail-open classification contract for the early Disk Arbitration claim, but only a fresh physical reinsert can prove the claim wins the macOS 26 FSKit probe race. The corresponding physical release gate must therefore verify a real safe eject followed by App/service restart while the same USB remains inserted, then physical removal/reinsert with raw access automatically restored and no `fskitd` child-partition holder blocking the whole-device lease.
+S31–S35 prove the **contract** of raw EBUSY recovery. They do not prove a physical EBUSY event occurred on a real USB device. S36–S40 are deterministic lifecycle evidence for safe-eject suppression and exact-generation retirement. S41 proves the standard-only/fail-open classification contract for the early Disk Arbitration claim; fresh `54c048f` physical reinsert additionally proved the claim can win the macOS 26 FSKit probe race with `DA_CLAIMED=true`, no `fskitd` child holder, and zero busy-recovery attempts. That same physical session also proved why S42/S43 are required: a true privileged-process stop/start released the DA session, after which `fskitd` immediately reclaimed `/dev/rdisk6s1` and raw access returned to EBUSY. The next physical release gate must therefore verify routine pause/resume/restart without process replacement, then safe eject, physical removal/reinsert, and Complete Quit ordering.
 
 Expected high-level markers include:
 
 ```text
-SCENARIO=S01_OK ... SCENARIO=S41_OK
+SCENARIO=S01_OK ... SCENARIO=S43_OK
 MODEL_SEQUENCES=10000
 MODEL_STEPS=320000
 RESULT=DRIVE_LIFECYCLE_MODEL_PROPERTIES_OK

@@ -2732,6 +2732,60 @@ struct ValidateCredentialPolicyServiceLifecycle {
         }
 
         do {
+            let openScript = RawAccessOpenScript(["OK", "OK", "OK"])
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                rawAccessLeaseOpener: { try openScript.open($0) }
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S42 initial raw lease did not become ready") {
+                openScript.count() == 1
+                    && (try? env.connectedDevice().privilegedAccessReady) == true
+            }
+            let original = try env.connectedDevice()
+
+            try env.controller.pauseRuntime()
+            let paused = try env.snapshot()
+            guard paused.devices.first(where: { $0.deviceID == original.deviceID })?.connected == false,
+                  paused.devices.first(where: { $0.deviceID == original.deviceID })?.privilegedAccessReady == false,
+                  openScript.count() == 1 else {
+                throw LifecycleValidationError(
+                    "S42 runtime pause did not release raw state while preserving durable device policy"
+                )
+            }
+            try env.controller.resumeRuntime()
+            try waitForCondition("S42 runtime resume did not reacquire the same generation") {
+                openScript.count() == 2
+                    && (try? env.connectedDevice().privilegedAccessReady) == true
+            }
+            let resumed = try env.connectedDevice()
+            guard resumed.deviceID == original.deviceID,
+                  resumed.bsdName == original.bsdName,
+                  resumed.privilegedAccessReady else {
+                throw LifecycleValidationError(
+                    "S42 runtime resume did not restore the same managed generation"
+                )
+            }
+            print("SCENARIO=S42_OK runtime_pause_resume_releases_raw_without_service_shutdown")
+
+            try env.controller.restartRuntime()
+            try waitForCondition("S43 in-process runtime restart did not reacquire raw access") {
+                openScript.count() == 3
+                    && (try? env.connectedDevice().privilegedAccessReady) == true
+            }
+            let restarted = try env.connectedDevice()
+            guard restarted.deviceID == original.deviceID,
+                  restarted.bsdName == original.bsdName,
+                  restarted.privilegedAccessReady else {
+                throw LifecycleValidationError(
+                    "S43 in-process runtime restart lost the managed physical generation"
+                )
+            }
+            print("SCENARIO=S43_OK runtime_restart_reuses_service_and_disk_arbitration_owner")
+        }
+
+        do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
                 insertDevice: true

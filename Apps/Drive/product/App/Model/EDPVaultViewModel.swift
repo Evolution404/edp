@@ -100,6 +100,7 @@ final class EDPVaultViewModel: ObservableObject {
         ensureServiceRegistration()
         refreshTransportRuntimeState()
         refresh()
+        resumeRuntimeForAppLaunch()
         Task { [weak self] in
             let enablement = await Task.detached(priority: .utility) { () async -> (restartedAgents: Bool, error: String?) in
                 var restartedAgents = false
@@ -222,10 +223,12 @@ final class EDPVaultViewModel: ObservableObject {
             case .starting:
                 serviceStatus = "正在启动…"
             case .running:
-                if connection != nil {
+                if !serviceDesiredRunning {
+                    serviceStatus = "已停止"
+                } else if connection != nil {
                     serviceStatus = "运行中"
                 } else {
-                    serviceStatus = serviceDesiredRunning ? "等待按需启动" : "已停止"
+                    serviceStatus = "等待按需启动"
                 }
             case .stopped:
                 serviceStatus = serviceDesiredRunning ? "等待按需启动" : "已停止"
@@ -289,14 +292,27 @@ final class EDPVaultViewModel: ObservableObject {
 
     func startService() {
         switch serviceLifecycle {
-        case .running, .starting:
+        case .running:
+            if !serviceDesiredRunning {
+                resumePausedRuntime()
+                return
+            }
+            serviceDesiredRunning = true
+            persistServicePreference()
+            return
+        case .starting:
             serviceDesiredRunning = true
             persistServicePreference()
             return
         case .stopping(let id, _, _):
             serviceLifecycle = .stopping(id: id, restartAfterStop: true, completion: nil)
             return
-        case .stopped, .failed:
+        case .stopped:
+            if connection != nil {
+                resumePausedRuntime()
+                return
+            }
+        case .failed:
             break
         }
 
@@ -361,26 +377,99 @@ final class EDPVaultViewModel: ObservableObject {
         }
     }
 
-    func stopService(restart: Bool = false, completion: (() -> Void)? = nil) {
+    private func resumeRuntimeForAppLaunch() {
+        guard let activeConnection = connection ?? connectIfNeeded(),
+              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
+                  Task { @MainActor in
+                      self?.lastError = "后台运行时恢复失败：\(error.localizedDescription)"
+                  }
+              }) as? EDPVaultXPCProtocol else { return }
+        proxy.requestRuntimeResume { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self else { return }
+                if let errorMessage {
+                    self.lastError = "后台运行时恢复失败：\(errorMessage)"
+                } else {
+                    self.refresh()
+                }
+            }
+        }
+    }
+
+    private func resumePausedRuntime() {
+        serviceDesiredRunning = true
+        persistServicePreference()
+        isBusy = true
+        serviceStatus = "正在启动…"
+        lastError = nil
+        let operationID = UUID()
+        serviceLifecycle = .starting(id: operationID)
+        armServiceTimeout(id: operationID, operation: "启动")
+
+        guard let activeConnection = connection ?? connectIfNeeded(),
+              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
+                  Task { @MainActor in
+                      guard let self,
+                            case .starting(let currentID) = self.serviceLifecycle,
+                            currentID == operationID else { return }
+                      let message = "后台服务启动失败：\(error.localizedDescription)"
+                      self.serviceLifecycle = .failed(message: message)
+                      self.serviceDesiredRunning = false
+                      self.persistServicePreference()
+                      self.isBusy = false
+                      self.lastError = message
+                      self.serviceStatus = "启动失败"
+                  }
+              }) as? EDPVaultXPCProtocol else {
+            let message = "后台服务已暂停，但无法建立安全 XPC 连接"
+            serviceLifecycle = .failed(message: message)
+            serviceDesiredRunning = false
+            persistServicePreference()
+            isBusy = false
+            lastError = message
+            serviceStatus = "启动失败"
+            return
+        }
+
+        proxy.requestRuntimeResume { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self,
+                      case .starting(let currentID) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                if let errorMessage {
+                    let message = "后台服务启动失败：\(errorMessage)"
+                    self.serviceLifecycle = .failed(message: message)
+                    self.serviceDesiredRunning = false
+                    self.persistServicePreference()
+                    self.isBusy = false
+                    self.lastError = message
+                    self.serviceStatus = "启动失败"
+                    return
+                }
+                self.serviceLifecycle = .running
+                self.serviceDesiredRunning = true
+                self.persistServicePreference()
+                self.isBusy = false
+                self.serviceStatus = "运行中"
+                self.refresh()
+            }
+        }
+    }
+
+    func stopService(completion: (() -> Void)? = nil) {
         switch serviceLifecycle {
         case .stopped:
             serviceDesiredRunning = false
             persistServicePreference()
-            if restart { startService() } else { completion?() }
+            completion?()
             return
-        case .stopping(let id, _, let existingCompletion):
-            serviceLifecycle = .stopping(
-                id: id,
-                restartAfterStop: restart,
-                completion: restart ? nil : (completion ?? existingCompletion)
-            )
+        case .stopping:
             return
         case .running, .starting, .failed:
             break
         }
 
-        let activeConnection = connection ?? connectIfNeeded()
-        guard let activeConnection,
+        guard let activeConnection = connection ?? connectIfNeeded(),
               let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
                   Task { @MainActor in
                       guard let self,
@@ -391,43 +480,35 @@ final class EDPVaultViewModel: ObservableObject {
                       self.persistServicePreference()
                       self.isBusy = false
                       self.lastError = message
-                      self.refreshServiceStatus()
+                      self.serviceStatus = "状态异常"
                   }
               }) as? EDPVaultXPCProtocol else {
-            if currentServiceStatus() == .enabled {
-                let message = "后台服务已启用，但无法建立安全 XPC 连接；未执行强制终止。"
-                serviceLifecycle = .failed(message: message)
-                serviceDesiredRunning = true
-                persistServicePreference()
-                serviceStatus = "状态异常"
-                lastError = message
-                return
-            }
-            serviceLifecycle = .stopped
-            serviceDesiredRunning = false
+            let message = "无法建立安全 XPC 连接，未暂停后台运行时"
+            serviceLifecycle = .failed(message: message)
+            serviceDesiredRunning = true
             persistServicePreference()
-            serviceStatus = "已停止"
-            if restart { startService() } else { completion?() }
+            serviceStatus = "状态异常"
+            lastError = message
             return
         }
 
         serviceDesiredRunning = false
         persistServicePreference()
         isBusy = true
-        serviceStatus = restart ? "正在重启…" : "正在停止…"
+        serviceStatus = "正在停止…"
         lastError = nil
         let operationID = UUID()
         serviceLifecycle = .stopping(
             id: operationID,
-            restartAfterStop: restart,
-            completion: restart ? nil : completion
+            restartAfterStop: false,
+            completion: completion
         )
-        armServiceTimeout(id: operationID, operation: restart ? "重启" : "停止")
+        armServiceTimeout(id: operationID, operation: "停止")
 
-        proxy.requestGracefulShutdown { @Sendable [weak self] errorMessage in
+        proxy.requestRuntimePause { @Sendable [weak self] errorMessage in
             Task { @MainActor in
                 guard let self,
-                      case .stopping(let currentID, _, _) = self.serviceLifecycle,
+                      case .stopping(let currentID, _, let completion) = self.serviceLifecycle,
                       currentID == operationID else { return }
                 if let errorMessage {
                     let message = "后台服务停止失败：\(errorMessage)"
@@ -436,14 +517,205 @@ final class EDPVaultViewModel: ObservableObject {
                     self.persistServicePreference()
                     self.isBusy = false
                     self.lastError = message
-                    self.refreshServiceStatus()
+                    self.serviceStatus = "状态异常"
+                    return
                 }
+                self.serviceLifecycle = .stopped
+                self.serviceDesiredRunning = false
+                self.persistServicePreference()
+                self.isBusy = false
+                self.serviceStatus = "已停止"
+                self.refresh()
+                completion?()
             }
         }
     }
 
     func restartService() {
-        stopService(restart: true)
+        guard case .running = serviceLifecycle else {
+            if case .stopped = serviceLifecycle { startService() }
+            return
+        }
+        guard let activeConnection = connection ?? connectIfNeeded(),
+              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
+                  Task { @MainActor in
+                      guard let self else { return }
+                      let message = "后台服务重启失败：\(error.localizedDescription)"
+                      self.serviceLifecycle = .failed(message: message)
+                      self.isBusy = false
+                      self.lastError = message
+                      self.serviceStatus = "状态异常"
+                  }
+              }) as? EDPVaultXPCProtocol else {
+            let message = "无法建立安全 XPC 连接，未执行后台运行时重启"
+            serviceLifecycle = .failed(message: message)
+            lastError = message
+            serviceStatus = "状态异常"
+            return
+        }
+
+        serviceDesiredRunning = true
+        persistServicePreference()
+        isBusy = true
+        serviceStatus = "正在重启…"
+        lastError = nil
+        let operationID = UUID()
+        serviceLifecycle = .starting(id: operationID)
+        armServiceTimeout(id: operationID, operation: "重启")
+        proxy.requestRuntimeRestart { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self,
+                      case .starting(let currentID) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                if let errorMessage {
+                    let message = "后台服务重启失败：\(errorMessage)"
+                    self.serviceLifecycle = .failed(message: message)
+                    self.isBusy = false
+                    self.lastError = message
+                    self.serviceStatus = "状态异常"
+                    return
+                }
+                self.serviceLifecycle = .running
+                self.isBusy = false
+                self.serviceStatus = "运行中"
+                self.refresh()
+            }
+        }
+    }
+
+    func shutdownService(completion: (() -> Void)? = nil) {
+        guard let activeConnection = connection ?? connectIfNeeded(),
+              let proxy = activeConnection.remoteObjectProxyWithErrorHandler({ @Sendable [weak self] error in
+                  Task { @MainActor in
+                      guard let self else { return }
+                      self.isBusy = false
+                      self.lastError = "后台服务退出失败：\(error.localizedDescription)"
+                  }
+              }) as? EDPVaultXPCProtocol else {
+            completion?()
+            return
+        }
+        isBusy = true
+        serviceStatus = "正在安全推出设备并完全退出…"
+        lastError = nil
+        let operationID = UUID()
+        serviceLifecycle = .stopping(
+            id: operationID,
+            restartAfterStop: false,
+            completion: completion
+        )
+        armServiceTimeout(id: operationID, operation: "完全退出", seconds: 90)
+
+        // A true process exit releases the Disk Arbitration session and every
+        // physical claim. Resume first (idempotent) so a paused runtime refreshes
+        // the current physical-generation list, then safe-eject every connected
+        // EDP device before asking launchd to terminate the privileged process.
+        proxy.requestRuntimeResume { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self,
+                      case .stopping(let currentID, _, _) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                if let errorMessage {
+                    self.failFullExit(operationID: operationID, detail: errorMessage)
+                    return
+                }
+                self.loadFullExitDeviceIDs(operationID: operationID)
+            }
+        }
+    }
+
+    private func loadFullExitDeviceIDs(operationID: UUID) {
+        guard let proxy = proxy() else {
+            failFullExit(operationID: operationID, detail: "无法读取安全推出设备列表")
+            return
+        }
+        proxy.snapshot { @Sendable [weak self] data in
+            Task { @MainActor in
+                guard let self,
+                      case .stopping(let currentID, _, _) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                do {
+                    let current = try JSONDecoder().decode(EDPXPCSnapshot.self, from: data)
+                    let deviceIDs = current.devices.filter(\.connected).map(\.deviceID)
+                    self.ejectNextForFullExit(
+                        deviceIDs: deviceIDs,
+                        index: 0,
+                        operationID: operationID
+                    )
+                } catch {
+                    self.failFullExit(
+                        operationID: operationID,
+                        detail: "无法解析安全推出设备列表：\(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func ejectNextForFullExit(
+        deviceIDs: [String],
+        index: Int,
+        operationID: UUID
+    ) {
+        guard case .stopping(let currentID, _, _) = serviceLifecycle,
+              currentID == operationID else { return }
+        guard index < deviceIDs.count else {
+            requestProcessShutdownForFullExit(operationID: operationID)
+            return
+        }
+        guard let proxy = proxy() else {
+            failFullExit(operationID: operationID, detail: "安全推出期间 XPC 连接不可用")
+            return
+        }
+        proxy.eject(deviceID: deviceIDs[index]) { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self,
+                      case .stopping(let currentID, _, _) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                if let errorMessage {
+                    self.failFullExit(
+                        operationID: operationID,
+                        detail: "设备安全推出失败：\(errorMessage)"
+                    )
+                    return
+                }
+                self.ejectNextForFullExit(
+                    deviceIDs: deviceIDs,
+                    index: index + 1,
+                    operationID: operationID
+                )
+            }
+        }
+    }
+
+    private func requestProcessShutdownForFullExit(operationID: UUID) {
+        guard let proxy = proxy() else {
+            failFullExit(operationID: operationID, detail: "完全退出期间 XPC 连接不可用")
+            return
+        }
+        proxy.requestGracefulShutdown { @Sendable [weak self] errorMessage in
+            Task { @MainActor in
+                guard let self,
+                      case .stopping(let currentID, _, _) = self.serviceLifecycle,
+                      currentID == operationID else { return }
+                if let errorMessage {
+                    self.failFullExit(operationID: operationID, detail: errorMessage)
+                }
+                // Success is completed by serviceConnectionEnded(), after the
+                // privileged process actually exits and the XPC connection ends.
+            }
+        }
+    }
+
+    private func failFullExit(operationID: UUID, detail: String) {
+        guard case .stopping(let currentID, _, _) = serviceLifecycle,
+              currentID == operationID else { return }
+        serviceLifecycle = .failed(message: detail)
+        serviceDesiredRunning = true
+        persistServicePreference()
+        isBusy = false
+        lastError = "后台服务退出失败：\(detail)"
+        serviceStatus = "状态异常"
     }
 
     func openServiceSettings() {
