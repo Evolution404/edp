@@ -9,27 +9,27 @@ Updated: 2026-09-03
 Record before release testing:
 
 ```text
-Branch:
-Exact HEAD:
-Version:
-Clean.pkg path:
-Clean.pkg SHA-256:
-GitHub Actions run:
-Date:
-Tester:
+Branch: codex/ui-macos26-liquid-glass
+Exact HEAD: f734f43899e174c5965f32917f6164ccb2994305
+Version: 0.6.0
+Clean.pkg path: Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
+Clean.pkg SHA-256: 62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda
+GitHub Actions run: 33711677562
+Date: 2026-09-03
+Tester: automated local + GitHub Actions; physical/install/reboot gates pending
 ```
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 
 ## 2. Code / architecture gate
 
-- [ ] `git status` is clean.
-- [ ] exact HEAD matches the intended remote branch.
-- [ ] no uncommitted installer/runtime/UI changes.
-- [ ] no old `MountManager` / `EDPDaemonController` path has returned.
-- [ ] no Tauri/WebView/FUSE-T/ntfs-3g/authopen fallback has returned.
-- [ ] no separate FDA subject for `edp-drive-service` has been introduced.
-- [ ] no cached `diskN` is used as durable identity.
+- [x] `git status` is clean at the recorded candidate build/CI point.
+- [x] exact HEAD matches the intended remote branch.
+- [x] no uncommitted installer/runtime/UI changes at candidate build time.
+- [x] no old `MountManager` / `EDPDaemonController` path has returned.
+- [x] no Tauri/WebView/FUSE-T/ntfs-3g/authopen fallback has returned.
+- [x] no separate FDA subject for `edp-drive-service` has been introduced.
+- [x] no cached `diskN` is used as durable identity.
 
 ## 3. Automated local non-UI gate
 
@@ -43,12 +43,12 @@ make drive-test-virtual-usb
 
 Expected:
 
-- [ ] `RESULT=DRIVE_FAST_OK`
-- [ ] `RESULT=DRIVE_SYSTEM_OK`
-- [ ] `RESULT=DRIVE_VIRTUAL_USB_OK`
-- [ ] S01–S35 present and PASS.
-- [ ] lifecycle model executes 10,000 sequences / 320,000 steps.
-- [ ] `git diff --check` PASS.
+- [x] `RESULT=DRIVE_FAST_OK`
+- [x] `RESULT=DRIVE_SYSTEM_OK`
+- [x] `RESULT=DRIVE_VIRTUAL_USB_OK`
+- [x] S01–S35 present and PASS.
+- [x] lifecycle model executes 10,000 sequences / 320,000 steps.
+- [x] `git diff --check` PASS.
 
 Do **not** use local xctrace timing as release UI evidence.
 
@@ -56,13 +56,13 @@ Do **not** use local xctrace timing as release UI evidence.
 
 Build the exact-head clean combined package using the repository-supported installer path.
 
-- [ ] package build succeeds.
-- [ ] package verification script succeeds.
-- [ ] package contains one `EDP Drive.app` and embedded service, not a second Raw Access App.
-- [ ] App and embedded service share the required stable self-signed certificate root.
-- [ ] package includes the expected official macFUSE runtime/component.
-- [ ] package does not contain ntfs-3g or FUSE-T product payloads.
-- [ ] SHA-256 recorded above.
+- [x] package build succeeds.
+- [x] package verification script succeeds (`RESULT=EDP_CLEAN_INSTALLER_VERIFIED`).
+- [x] package contains one `EDP Drive.app` and embedded service, not a second Raw Access App.
+- [x] App and embedded service share the required stable self-signed certificate root.
+- [x] package includes the expected official macFUSE 5.3.3 runtime/component.
+- [x] package does not contain ntfs-3g or FUSE-T product payloads.
+- [x] SHA-256 recorded above.
 
 Never reuse an old package hash for a new exact HEAD.
 
@@ -72,25 +72,25 @@ Trigger `.github/workflows/drive.yml` on the exact candidate HEAD.
 
 Required jobs:
 
-- [ ] `native` PASS.
-- [ ] `regression-fast` PASS.
-- [ ] `regression-virtual-usb` PASS.
-- [ ] `regression-storage` PASS.
-- [ ] `regression-ui-system` PASS.
+- [x] `native` PASS.
+- [x] `regression-fast` PASS.
+- [x] `regression-virtual-usb` PASS.
+- [x] `regression-storage` PASS.
+- [x] `regression-ui-system` PASS.
 
 ### Storage acceptance
 
 Release storage log must include successful coverage of:
 
-- [ ] M01;
-- [ ] M02 and M04–M09;
-- [ ] M03;
-- [ ] M10 with at least 5 cycles;
-- [ ] M12;
-- [ ] M14;
-- [ ] failure contracts;
-- [ ] production Swift6/C17 strict build;
-- [ ] `RESULT=DRIVE_STORAGE_E2E_OK`.
+- [x] M01;
+- [x] M02 and M04–M09;
+- [x] M03;
+- [x] M10 with 5 cycles;
+- [x] M12;
+- [x] M14;
+- [x] failure contracts;
+- [x] production Swift6/C17 strict build;
+- [x] `RESULT=DRIVE_STORAGE_E2E_OK`.
 
 ### UI acceptance
 
@@ -106,12 +106,12 @@ Required unchanged workload:
 
 Required results:
 
-- [ ] preview/page rendering PASS.
-- [ ] 900×680 sidebar geometry contract PASS.
-- [ ] accessibility structure PASS.
-- [ ] `UI_HITCH_COUNT_GT33MS=0`.
-- [ ] `RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`.
-- [ ] `RESULT=DRIVE_UI_OK`.
+- [x] preview/page rendering PASS.
+- [x] 900×680 sidebar geometry contract PASS (`UI_SIDEBAR_TOGGLE_1...20_OK`, `DRIVE_UI_900X680_SIDEBAR_OK`).
+- [x] accessibility structure PASS.
+- [x] `UI_HITCH_COUNT_GT33MS=0`.
+- [x] `RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO`.
+- [x] `RESULT=DRIVE_UI_OK`.
 
 Do not increase the threshold, reduce toggles, shorten workload, or close unrelated user apps to create a pass.
 
@@ -126,6 +126,7 @@ Apps/Drive/scripts/first-install-acceptance.sh
 
 For a true first-install gate:
 
+- [x] non-destructive `preflight` PASS on 2026-09-03: no external physical disk, no EDP/macFUSE transport mount, login.keychain remains DefaultKeychain; acceptance session `20260903T005258Z-22259` created.
 - [ ] user-context cleanup completed first where required.
 - [ ] installed EDP Drive state removed.
 - [ ] old EDP runtime/service state removed.
@@ -298,22 +299,22 @@ Virtual/synthetic evidence must not be used to check these physical boxes.
 
 Before release, verify no change weakened these contracts:
 
-- [ ] raw EBUSY recovery is exact-generation only and retries raw open exactly once.
-- [ ] non-EBUSY raw errors never force whole-device unmount.
-- [ ] replacement generation remains fail-closed.
-- [ ] dead lower transport + live upper filesystem does not enter sync force-unmount.
-- [ ] DiskImages2 tombstone retirement requires stable dead owner + zero entities.
-- [ ] any changed DiskImages2 generation remains failure.
-- [ ] agent reset is refused while any FSKit mount is active.
-- [ ] PluginKit remains out of daemon mount hot paths.
-- [ ] external recovery tools remain bounded.
+- [x] raw EBUSY recovery is exact-generation only and retries raw open exactly once.
+- [x] non-EBUSY raw errors never force whole-device unmount.
+- [x] replacement generation remains fail-closed.
+- [x] dead lower transport + live upper filesystem does not enter sync force-unmount.
+- [x] DiskImages2 tombstone retirement requires stable dead owner + zero entities.
+- [x] any changed DiskImages2 generation remains failure.
+- [x] agent reset is refused while any FSKit mount is active.
+- [x] PluginKit remains out of daemon mount hot paths.
+- [x] external recovery tools remain bounded.
 
 ## 17. Diagnostics gate
 
-- [ ] runtime metrics snapshot exports only the seven approved UInt64 counters.
-- [ ] no password/credential/secret/key/raw path/deviceID is added to the metrics schema.
-- [ ] lifecycle journal remains bounded/redacted.
-- [ ] failure states preserve useful typed teardown/recovery diagnostics.
+- [x] runtime metrics snapshot exports only the seven approved UInt64 counters.
+- [x] no password/credential/secret/key/raw path/deviceID is added to the metrics schema.
+- [x] lifecycle journal remains bounded/redacted.
+- [x] failure states preserve useful typed teardown/recovery diagnostics.
 
 ## 18. Release decision
 
@@ -337,6 +338,6 @@ ordinaryUSB physical negative      BLOCKED_BY_FIXTURE
 legacyNoPassword physical negative BLOCKED_BY_FIXTURE
 currentNoPassword physical negative BLOCKED_BY_FIXTURE
 unrecognizedEDP physical negative  BLOCKED_BY_FIXTURE
-exact-head reboot gate             NOT YET RUN for release candidate b3de761
+factory-clean/install/reboot gate NOT YET RUN for release candidate f734f43
 NTFS RW ADR                         ACCEPTED A+C (native NTFS RO + writable ExFAT)
 ```

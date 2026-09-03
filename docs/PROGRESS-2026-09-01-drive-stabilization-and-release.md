@@ -171,7 +171,9 @@ UI_HITCH_COUNT_GT33MS=1
 
 ### D4 Exact-head reboot
 
-- [x] exact-head Clean.pkg build/verify：release-candidate baseline `b3de761`；`/tmp/edp-release-b3de761/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`3417492ab7b1bca4504c8938b2d783f6dcd4630bd6e579ddaa0a052bd5be0787`；`verify-clean-installer.sh` 全部 PASS（single App + embedded service、macFUSE-only、无 ntfs-3g、single-App FDA broker）。
+- [x] exact-head Clean.pkg build/verify：最终 release-candidate baseline `f734f43`；在完全 clean worktree 上构建 `Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda`；`verify-clean-installer.sh` 全部 PASS（single App + embedded service、macFUSE-only、无 ntfs-3g、single-App FDA broker）。
+- [x] factory acceptance `preflight` PASS：无外接物理盘、无 EDP/macFUSE transport mount、DefaultKeychain 为 login.keychain；session `20260903T005258Z-22259` 已建立。
+- [ ] factory user-cleanup / privileged clean / install — BLOCKED_BY_INTERACTIVE_ADMIN_AUTH；当前 `sudo -n` 明确返回需要密码，因此未执行半套清理。
 - [ ] install。
 - [ ] reboot。
 - [ ] single-App FDA retained access。
@@ -201,6 +203,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] 已输出 `Apps/Drive/docs/ADR-2026-09-03-ntfs-rw.md`，正式选择 A+C：现有 NTFS 走 Apple-native RO；需要跨平台可写的数据卷优先使用 ExFAT；禁止自动格式化/迁移。
 - [x] `ntfs-3g` 与 undocumented Apple NTFS write path 均保持禁止；Option B 只有出现“必须保持 NTFS 且必须写入”的硬产品需求时才能作为独立项目重新立项。
 - [x] Apple 当前官方文档复核：Disk Utility 将 FAT/ExFAT列为 Windows-compatible 格式，>32GB 推荐 ExFAT；FSKit filesystem 通过 app extension 提供，当前文档仍要求 filesystem module entitlement。
+- [x] Phase F fixed-head CI：`f734f43` / run `33711677562` 的 native、fast、virtual、UI-system、storage 全部 PASS；UI `UI_HITCH_MAX_MS=0.000` / `UI_HITCH_COUNT_GT33MS=0`，storage M01/M02/M03/M10×5/M12/M14/failure-contracts/production strict/`DRIVE_STORAGE_E2E_OK` 全绿。Phase F 正式关闭。
 
 ## 变更日志
 

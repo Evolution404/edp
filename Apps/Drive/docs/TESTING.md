@@ -323,8 +323,8 @@ Timeout: 45 minutes.
 Current source-of-truth validation:
 
 ```text
-HEAD: b3de7619fee84f4787953269a681aa0a99149263
-Run:  33701172126
+HEAD: f734f43899e174c5965f32917f6164ccb2994305
+Run:  33711677562
 ```
 
 Results:
@@ -337,7 +337,7 @@ regression-ui-system   PASS
 regression-storage     PASS
 ```
 
-The fixed-head `b3de761` UI/system job passed with the unchanged 33ms threshold; its UI evidence recorded `UI_HITCH_COUNT_GT33MS=0` and `RESULT=DRIVE_UI_OK`.
+The fixed-head `f734f43` UI/system job passed with the unchanged 33ms threshold; its UI evidence recorded `UI_HITCH_MAX_MS=0.000`, `UI_HITCH_COUNT_GT33MS=0` and `RESULT=DRIVE_UI_OK`.
 
 ## 12. Installer/build verification
 

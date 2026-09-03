@@ -2,8 +2,8 @@
 
 Updated: 2026-09-03
 Current validated branch: `codex/ui-macos26-liquid-glass`
-Current validated release-candidate baseline: `b3de7619fee84f4787953269a681aa0a99149263`
-Current fixed-head CI: GitHub Actions run `33701172126` — **PASS**
+Current validated release-candidate baseline: `f734f43899e174c5965f32917f6164ccb2994305`
+Current fixed-head CI: GitHub Actions run `33711677562` — **PASS**
 
 > This file is the current product-status source of truth. Historical plans, handoffs, diagnostics and experiment trackers are evidence only. They must not override this file, `ARCHITECTURE.md`, `TESTING.md`, or `RELEASE-CHECKLIST.md`.
 
@@ -283,8 +283,8 @@ The threshold/workload/window must not be weakened to manufacture a pass.
 Latest fixed-head run:
 
 ```text
-HEAD  b3de7619fee84f4787953269a681aa0a99149263
-Run   33701172126
+HEAD  f734f43899e174c5965f32917f6164ccb2994305
+Run   33711677562
 ```
 
 All core jobs passed:
@@ -295,9 +295,10 @@ All core jobs passed:
 - UI + system ratchets — PASS;
 - sparse-image storage M01–M14 — PASS.
 
-The immediately preceding UI-specific all-green baseline `dded9d4` / run `33684536121` recorded:
+The same fixed-head run recorded the unchanged UI performance gate as:
 
 ```text
+UI_HITCH_MAX_MS=0.000
 UI_HITCH_COUNT_GT33MS=0
 RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO
 RESULT=DRIVE_UI_OK
@@ -351,12 +352,13 @@ Still required for the eventual release candidate:
 
 ### Phase E
 
-Current source-of-truth documentation is being consolidated into:
+DONE. Current source-of-truth documentation is consolidated into:
 
 - `STATUS.md`;
 - `ARCHITECTURE.md`;
 - `TESTING.md`;
-- `RELEASE-CHECKLIST.md`.
+- `RELEASE-CHECKLIST.md`;
+- `HISTORICAL.md` for superseded-plan indexing.
 
 ### Phase F
 
