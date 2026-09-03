@@ -1,5 +1,7 @@
 # EDP Drive / Studio identity and service migration plan (2026-08-29)
 
+> **HISTORICAL — migration evidence only.** The migration is complete. Current Drive architecture and release authority: `STATUS.md`, `ARCHITECTURE.md`, `TESTING.md`, `RELEASE-CHECKLIST.md`.
+
 This document is the Phase A audit and implementation contract for migrating the
 monorepo from the historical `EDP USB Vault` / `EDPOpen` identities to EDP Drive
 and EDP Studio.  The audited baseline is `56ed5fa0c42dc3a3a0924db487c1a73f2c1c8fbf`.

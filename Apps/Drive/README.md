@@ -34,9 +34,11 @@ Drive 的物理设备身份使用 V3 五因素：**USB VID + USB PID + LBA4 only
 
 每个被 Drive 接管的标准 EDP 设备按三个分区独立管理：
 
-- type 1 启动区：普通分区，无密码，默认自动挂载；
+- type 1 启动区：无密码，独立自动挂载策略；
 - type 2 交换区：独立密码和自动挂载策略；
 - type 4 保密区：独立密码和自动挂载策略。
+
+三类分区当前都采用安全默认：`autoMount=false`、`autoProbePassword=false`；只有用户明确配置后才自动执行对应动作。
 
 交换区和保密区使用各自的 System Keychain 项目。旧版单设备密码会在
 首次启动 0.6 服务时迁移为两个分区级项目。设备名称和挂载策略为全机共享，
@@ -47,7 +49,7 @@ Drive 的物理设备身份使用 V3 五因素：**USB VID + USB PID + LBA4 only
 ```text
 physical EDP USB
   -> FDA daemon retains one validated O_RDWR whole-disk fd
-  -> type 1: plaintext writable MBR/FAT slice
+  -> type 1: constrained plaintext MBR/FAT slice (current acceptance is read-only)
   -> type 2/4: shared EDPCore SM4 block adapter
   -> macFUSE 5.3.3 Local FSKit transport (local,nobrowse)
   -> hidden writable volume.raw
@@ -99,9 +101,9 @@ designated requirement 的 certificate root 为
 统一使用这张证书；本地 self-signed 包必须通过
 `./installer/build-self-signed-installer.sh` 构建，该入口会校验证书 fingerprint
 和私钥匹配关系，不再使用 Apple Development identity。
-详细设计与当前验收状态见 `docs/PLAN-2026-08-29-fda-raw-access.md`。
+当前产品真源依次见 `docs/STATUS.md`、`docs/ARCHITECTURE.md`、`docs/TESTING.md`、`docs/RELEASE-CHECKLIST.md`。`docs/PLAN-2026-08-29-fda-raw-access.md` 仅保留为历史设计证据。
 
-首次安装/完全清理/重启/三分区读写/策略 round-trip/安全推出的标准化验收流程见
+首次安装/完全清理/重启/三分区能力验证/策略 round-trip/安全推出的标准化验收流程见
 `docs/FIRST-INSTALL-ACCEPTANCE.md`，可执行入口为：
 
 ```bash
@@ -138,7 +140,7 @@ real EDP USB
 
 EDP Drive **不自行实现 exFAT/APFS/FAT/NTFS 等任何具体文件系统**。应用只负责 raw-device 生命周期、挂载和系统集成；EDP metadata、身份/密码校验、key derivation 与 SM4 由 monorepo 的 `Packages/EDPCore` 统一提供。
 
-产品 runtime 不使用 `hdiutil`，不使用 DriverKit block-storage entitlement，不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
+产品正常 DiskImages2 attach 不使用 `hdiutil`，而走固定 `diskimages2-attach` helper；`hdiutil info -plist` 仅允许作为 bounded publication identity/recovery metadata，`hdiutil detach -force` 仅允许在窄化的 scratch-orphan recovery 中使用。产品不使用 DriverKit block-storage entitlement、不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
 
 ## 已完成的读写 E2E
 

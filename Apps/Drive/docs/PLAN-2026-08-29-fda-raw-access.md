@@ -1,5 +1,7 @@
 # EDP USB Vault Full Disk Access Raw-Device 权限模型（2026-08-29）
 
+> **HISTORICAL — not a current implementation source.** This plan predates the final single-App FDA broker architecture. Current authority: `STATUS.md`, `ARCHITECTURE.md`, `TESTING.md`, `RELEASE-CHECKLIST.md`.
+
 分支：`test/self-signed-standalone-distribution`
 
 ## 目标

@@ -791,6 +791,34 @@ echo 'RESULT=DRIVE_SYSTEM_FSKIT_APP_RESET_FAIL_CLOSED_OK'
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_BOUNDED_RETRY_OK'
 echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 
+# Current Drive documentation must remain aligned with canonical Makefile/CI
+# entry points and must not send maintainers back to superseded handoffs/plans.
+STATUS_DOC="${ROOT}/Apps/Drive/docs/STATUS.md"
+ARCHITECTURE_DOC="${ROOT}/Apps/Drive/docs/ARCHITECTURE.md"
+TESTING_DOC="${ROOT}/Apps/Drive/docs/TESTING.md"
+RELEASE_DOC="${ROOT}/Apps/Drive/docs/RELEASE-CHECKLIST.md"
+HISTORICAL_DOC="${ROOT}/Apps/Drive/docs/HISTORICAL.md"
+for doc in "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}" "${HISTORICAL_DOC}"; do
+  [[ -s "${doc}" ]]
+done
+/usr/bin/grep -Fq 'Current fixed-head CI: GitHub Actions run `' "${STATUS_DOC}"
+/usr/bin/grep -Fq '— **PASS**' "${STATUS_DOC}"
+/usr/bin/grep -Fq 'autoMount = false' "${STATUS_DOC}"
+/usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${STATUS_DOC}" "${TESTING_DOC}"
+/usr/bin/grep -Fq 'make drive-test-fast' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'make drive-test-virtual-usb' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'make drive-test-storage-smoke' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'make drive-test-storage' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'make drive-test-ui' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'make drive-test-system' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'make drive-test-all' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-storage`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-ui-system`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`nightly-storage-stress`' "${TESTING_DOC}"
+/usr/bin/grep -Fq 'BLOCKED_BY_FIXTURE' "${RELEASE_DOC}"
+/usr/bin/grep -Fq 'Historical Document Index' "${HISTORICAL_DOC}"
+echo 'RESULT=DRIVE_SYSTEM_CURRENT_DOCS_OK'
+
 # Canonical top-level gates must remain wired and hardware-free by construction.
 /usr/bin/grep -Fq 'drive-test-storage-smoke:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5' "${ROOT}/Makefile"

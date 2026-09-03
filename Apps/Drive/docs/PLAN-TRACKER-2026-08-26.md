@@ -1,5 +1,7 @@
 # EDP USB Vault — 计划推进追踪
 
+> **HISTORICAL — superseded tracker.** Do not use unchecked items here as current technical debt. Current execution status is `docs/PROGRESS-2026-09-01-drive-stabilization-and-release.md`; current product authority is `STATUS.md`, `ARCHITECTURE.md`, `TESTING.md`, `RELEASE-CHECKLIST.md`.
+
 日期：2026-08-26  
 目标分支：`feat/macos26-native-fskit`  
 关联计划：`docs/PLAN-2026-08-26-ntfs-readwrite-and-native-refactor.md`

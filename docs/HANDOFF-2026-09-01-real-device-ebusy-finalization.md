@@ -1,5 +1,7 @@
 # EDP Drive 真实盘 EBUSY / Safe Eject 最终收口交接
 
+> **HISTORICAL HANDOFF — real-device evidence only.** The work recorded here is complete and must not be used as the current implementation entry point. Current authority: `Apps/Drive/docs/STATUS.md`, `Apps/Drive/docs/ARCHITECTURE.md`, `Apps/Drive/docs/TESTING.md`, `Apps/Drive/docs/RELEASE-CHECKLIST.md`.
+
 日期：2026-09-01 16:58 +0800
 分支：`codex/ui-macos26-liquid-glass`
 项目：`/Users/zhangyuxi/edp`

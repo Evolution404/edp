@@ -1,5 +1,7 @@
 # EDP Drive — First-Install Full Acceptance
 
+> Current product facts and release criteria are defined by `STATUS.md`, `ARCHITECTURE.md`, `TESTING.md`, and `RELEASE-CHECKLIST.md`. This file is the detailed machine-execution procedure and must remain consistent with those four current sources of truth.
+
 This document defines the repeatable clean-machine acceptance process for the macOS 26+ product. The executable harness is:
 
 ```bash

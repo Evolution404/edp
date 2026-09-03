@@ -1,5 +1,7 @@
 # EDP USB Vault 零 Apple 年费分发验证计划（2026-08-28）
 
+> **HISTORICAL — distribution experiment evidence only.** Current Drive product architecture and release authority: `STATUS.md`, `ARCHITECTURE.md`, `TESTING.md`, `RELEASE-CHECKLIST.md`.
+
 分支：`test/self-signed-standalone-distribution`
 
 > 2026-08-29 更新：本文 E/F 阶段中的 `authopen + sys.openfile.* + AuthorizationExternalForm` raw-device 模型已被实机否定并废弃。当前正式权限模型改为稳定签名的 Full Disk Access Raw Access helper，详见 `docs/PLAN-2026-08-29-fda-raw-access.md`。本文保留为 self-signed 分发和历史实验记录，不再作为 raw 权限实现规范。

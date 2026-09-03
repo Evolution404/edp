@@ -1,293 +1,375 @@
-# EDP Drive — macOS 26 当前状态与唯一实施方案
+# EDP Drive — Current Status
 
-更新时间：2026-08-29
-开发真源：`Evolution404/edp` monorepo，`main`
+Updated: 2026-09-03
+Current validated branch: `codex/ui-macos26-liquid-glass`
+Current validated HEAD: `9fd1d4cd1fd0e671b4cb16f5a9be5ad8b28ddb8d`
+Current fixed-head CI: GitHub Actions run `33686611853` — **PASS**
 
-> 本文件只描述当前仍然有效的生产架构和验收状态。2026-08-26 以前的 FUSE-T、NTFS-3G、authopen、旧 Raw Access App、旧 `com.edp.usbvault.*` 身份等实验结果只保留在 Git 历史中，不再作为实现依据。
+> This file is the current product-status source of truth. Historical plans, handoffs, diagnostics and experiment trackers are evidence only. They must not override this file, `ARCHITECTURE.md`, `TESTING.md`, or `RELEASE-CHECKLIST.md`.
 
-## 1. 当前产品拓扑
+## 1. Product scope
 
-EDP Drive 只保留一个用户 App 和一个嵌入式后台 Service：
+EDP Drive is a native macOS 26+ menu-bar application. The production product is:
+
+- Swift / SwiftUI / AppKit;
+- one foreground App: `com.edp.drive`;
+- one embedded privileged service: `com.edp.drive.service`;
+- XPC + Disk Arbitration + IOKit + Security framework;
+- `Packages/EDPCore` for EDP metadata / identity / crypto;
+- official macFUSE Local FSKit runtime as the only transport backend;
+- Private DiskImages2 publication to Apple native filesystem stacks;
+- no Tauri/WebView, FUSE-T, ntfs-3g, authopen, DriverKit block workaround, or custom filesystem implementation.
+
+Installed topology:
 
 ```text
-/Applications/EDP Drive.app                     com.edp.drive
-├── Contents/MacOS/EDP Drive
-├── Contents/Library/LaunchServices/edp-drive-service
-└── Contents/Library/LaunchDaemons/com.edp.drive.service.plist
+/Applications/EDP Drive.app                         com.edp.drive
+└── Contents/Library/LaunchServices/edp-drive-service
 
-embedded service / LaunchDaemon / Mach service:
-com.edp.drive.service
+LaunchDaemon / Mach service                         com.edp.drive.service
+Runtime root                                         /Library/Application Support/EDP Drive
+Persistent service state                            /var/db/com.edp.drive
 ```
 
-不再存在第二个 Raw Access `.app`，也不引入 `EDP Drive Service.app`。
+The background service is not a second App and must not receive a separate Full Disk Access grant.
 
-后台 Service 负责：
+## 2. USB classification and ownership
 
-- whole USB passive classification 与标准 EDP 加密盘身份验证；
-- Full Disk Access 下的 `/dev/rdiskN` 打开和 retained raw fd 生命周期；
-- EDP metadata / stable device identity / password verification；
-- `Packages/EDPCore`；
-- type 1 / 2 / 4 挂载生命周期；
-- macFUSE Local block transport；
-- DiskImages2；
-- Disk Arbitration / Finder 集成；
-- 自动挂载、卸载、安全推出；
-- App ↔ Service XPC。
-
-App 设置页提供后台 Service 的：
+Drive performs a read-only passive classification from the whole USB metadata shape. The canonical media classes are:
 
 ```text
-启动
-停止
-重启
+standardEncrypted
+legacyNoPassword
+currentNoPassword
+unrecognizedEDP
+ordinaryUSB
 ```
 
-停止必须通过 XPC graceful shutdown，先卸载所有 EDP session、释放 raw fd、停止 disk monitor 后再退出。产品不通过 `kill -9` 实现正常停止。
+Only `standardEncrypted` may enter the managed raw/password/mount lifecycle.
 
-Service plist 不使用 `KeepAlive` 或 `RunAtLoad`，避免用户主动停止后被 launchd 立即重新拉起；Mach service 保持按需激活能力。
+The other four classes must remain owned by macOS / Disk Arbitration / Finder. Drive must not create a retained raw lease, establish an EDP mount session, or unmount their physical volumes.
 
-## 2. USB 分类与唯一数据路径
+A managed physical device uses the V3 five-factor identity:
 
-Drive 对 whole USB 只做一次只读 passive sniff，读取 LBA0/4/7/11/12 后区分：
+1. USB VID;
+2. USB PID;
+3. LBA4 numeric `onlyId`;
+4. whole-device capacity;
+5. LBA11 deviceId.
+
+All five factors must match. `diskN` is never a durable device identity and may be reused by macOS.
+
+## 3. Partition model and defaults
+
+A standard encrypted EDP device exposes three logical partition types:
+
+- type 1 — boot/start partition, no password;
+- type 2 — exchange partition, independent password;
+- type 4 — secure partition, independent password.
+
+Current policy defaults are fail-safe:
 
 ```text
-standardEncrypted   标准 EDP 加密盘
-legacyNoPassword    旧版免密改造盘
-currentNoPassword   最新免密改造盘
-unrecognizedEDP     有 EDP 证据但结构异常/无法可靠识别
-ordinaryUSB         普通 U 盘
+autoMount = false
+autoProbePassword = false
 ```
 
-接管规则是硬约束：**只有 `standardEncrypted` 进入 Drive 的 raw/password/mount pipeline**。旧版免密、最新版免密、异常 EDP 和普通 U 盘都不创建 retained raw lease、不建立 EDP mount session、不卸载系统卷，直接留给 macOS / Disk Arbitration / Finder。
+for all partition types unless explicitly changed by user policy.
 
-标准加密盘当前唯一数据路径：
+Saved per-device policies are not silently changed when global defaults later change. Type 2 and type 4 credentials are isolated from each other.
+
+## 4. Production data path
+
+Canonical managed path:
 
 ```text
-physical standard EDP USB
-  -> retained raw fd
-  -> LBA metadata / password / key derivation
-  -> Packages/EDPCore
-  -> SM4 transparent block translation
-  -> macFUSE 5.3.x Local block transport
+standard EDP physical USB
+  -> foreground-App FDA broker opens exact validated whole raw device
+  -> SCM_RIGHTS passes fd to privileged service
+  -> exact identity / metadata revalidation
+  -> EDPCore block translation
+  -> type 1 plaintext slice OR type 2/4 SM4 transparent block view
+  -> macFUSE Local FSKit transport
   -> hidden volume.raw
-  -> Private DiskImages2
-  -> /dev/diskN / IOMedia
+  -> Private DiskImages2 publication
+  -> synthetic /dev/diskN IOMedia
   -> Disk Arbitration
   -> Apple native filesystem stack
   -> Finder
 ```
 
-职责边界：
+The service never treats a persisted BSD name as authority. Teardown and eject decisions revalidate current generation / backing identity immediately before destructive operations.
 
-1. EDP Drive / EDPCore 只负责 EDP 格式、密码学和块翻译；
-2. macFUSE Local 只暴露 random-access `volume.raw`；
-3. DiskImages2 把该块视图发布为 macOS 磁盘；
-4. 文件系统语义交给 Apple 原生文件系统栈。
+## 5. Filesystem policy
 
-## 3. 明确删除的旧路径
+EDP Drive does not implement FAT, ExFAT, APFS or NTFS filesystem semantics.
 
-当前生产树明确不再包含或调用：
+- FAT / ExFAT capability comes from Apple native filesystem stacks.
+- NTFS follows the capability macOS provides. The current product does not restore `ntfs-3g` or another third-party write fallback.
+- The product does not expose destructive format controls as part of normal EDP lifecycle management.
 
-```text
-Tauri / Rust
-FUSE-T
-ntfs-3g
-NTFS-3G write fallback
-macFUSE kernel backend
-authopen
-sys.openfile.* AuthorizationDB workaround
-DriverKit block-storage workaround
-自研 exFAT / FAT / NTFS 文件系统
-```
+A separate NTFS RW architecture decision remains pending; see Phase F in the stabilization tracker.
 
-NTFS magic / partition type detection仍保留，但只用于识别和状态展示；实际挂载交给 Apple / Disk Arbitration。若 macOS 对 NTFS 仅提供只读能力，Drive 如实显示只读状态，不恢复 `ntfs-3g`。
+## 6. Raw access and FDA model
 
-## 4. EDPCore
-
-共享核心位于：
+The permanent permission model is single-App FDA:
 
 ```text
-Packages/EDPCore
+FDA identity: com.edp.drive
+FDA subject:  /Applications/EDP Drive.app
 ```
 
-Drive 和 Studio 都直接链接这一份原生核心，不再跨仓库 pin revision。
+The embedded service itself is not an FDA subject.
 
-已实现：
+When writable raw access is required, the root service launches the already-signed foreground App executable in hidden raw-broker mode. That broker:
 
-- SM4；
-- CRC32；
-- EDP metadata / identity；
-- LBA11 / LBA12；
-- password validation / key derivation；
-- sector decoding；
-- caller-owned / in-place buffer API；
-- 大块自适应多核 SM4。
+- validates whole-USB / raw character-device shape;
+- validates EDP metadata constraints;
+- opens the raw whole device;
+- transfers the fd only through Unix `SCM_RIGHTS`;
+- does not expose an arbitrary raw-path API.
 
-M1 Pro 实测 crypto 吞吐约：
+The service then revalidates registry generation plus the physical five-factor identity before retaining the lease.
+
+No TCC database modification, AuthorizationDB modification, `/dev` permission weakening, or per-insert administrator authorization is part of the production design.
+
+## 7. Runtime lifecycle architecture
+
+The former monolithic runtime has been split into explicit responsibilities. Important production boundaries include:
+
+- `EDPDeviceDiscoveryController` — physical discovery and scan diagnostics;
+- `EDPRawAccessCoordinator` — retained raw lease and exact-generation EBUSY recovery;
+- `EDPAutomationState` — auto-mount / probe suppression state;
+- `EDPMountCoordinator` — partition session mount/unmount orchestration;
+- `EDPEjectCoordinator` — physical generation quiesce / eject single-flight;
+- `EDPRecoveryCoordinator` — failed-eject recovery orchestration;
+- `EDPServiceLifecycleState` — startup/shutdown state and completion fanout;
+- `EDPActivityStore` — bounded activity retention;
+- `EDPXPCService` — XPC adapter;
+- `EDPServiceController` — top-level XPC-facing service orchestration;
+- `EDPServiceMain` — process/CLI entrypoint.
+
+System ratchets prohibit the old `MountManager` / `EDPDaemonController` architecture from returning.
+
+## 8. Critical teardown and recovery rules
+
+### Raw EBUSY
+
+The only accepted raw-open EBUSY recovery is:
 
 ```text
-64 KiB   ~0.75-0.8 GiB/s
-128 KiB  ~1.1 GiB/s
-1 MiB    ~1.6-1.7 GiB/s
-64 MiB   ~2.0 GiB/s
+exact current registry generation
++ EBUSY only
++ forced whole-device Disk Arbitration unmount
++ exactly one raw-open retry
 ```
 
-真实 USB 性能改造后曾实测：
+No recovery is attempted for non-EBUSY errors, metadata mismatch, replacement generation, or DA failure.
+
+### Dead transport with live upper filesystem
+
+macOS 26 testing proved this state cannot safely use synchronous forced teardown:
+
+- ordinary DA unmount may time out;
+- `unmount(2, MNT_FORCE)` may enter an uninterruptible wait.
+
+Production therefore fails closed when the lower transport has exited while the upper user filesystem remains mounted. It does not enter a synchronous VFS unmount syscall in that state.
+
+### DiskImages2 stale owner tombstone
+
+macOS 26 may retain an `hdiutil` owner record after the exact `diskimagesiod` process has exited. It is treated as retired only when all of the following hold:
+
+- exact expected backing path;
+- owner-only publication (`devicePaths.isEmpty`);
+- exact owner snapshot remains identical across bounded stabilization;
+- recorded owner PID has no executable process;
+- no PID / UID / entity generation change appears.
+
+Any identity or generation change remains fail-closed.
+
+### Safe eject
+
+Whole-device eject is single-flight and generation-aware. After successful safe eject, automatic reacquisition remains suppressed until actual physical removal/reinsertion.
+
+## 9. External and private dependency boundaries
+
+### DiskImages2
+
+Formal attach uses only the fixed private helper:
 
 ```text
-旧路径 1 GiB 冷读   ~46.8 MiB/s
-新路径 1 GiB 冷读   ~158.8 MiB/s
-
-旧路径 1 GiB 写入   ~54 MB/s
-新路径 1 GiB 写入   ~166 MB/s
+/Library/Application Support/EDP Drive/bin/diskimages2-attach
 ```
 
-核心性能优化包括：
+through exact `EDPConsoleExec` allowlisting.
 
-- 去除 `Data -> [UInt8] -> Data` 热路径复制；
-- raw `pread` 直接写 caller-owned/FUSE buffer；
-- SM4 原地解密；
-- 物理 raw 并行读取严格按 sector / 4 KiB 边界切块；
-- 防止真实 `/dev/rdiskN` 非 sector-aligned `pread` 返回 `EIO`。
+### hdiutil
 
-## 5. 权限与安全模型
+Production does **not** use `hdiutil` as the normal DiskImages2 attach path.
 
-长期签名身份固定为：
+Allowed production uses are bounded:
+
+- `hdiutil info -plist` for publication identity/recovery metadata;
+- `hdiutil detach -force` only for the narrowly scoped macFUSE scratch-orphan recovery path in installer cleanup.
+
+The preinstall script routes these calls through bounded TERM/KILL control; system ratchets reject direct unbounded production `hdiutil` calls.
+
+### pluginkit / user FSKit registration
+
+`pluginkit` is restricted to foreground-App macFUSE enablement/support. It is not allowed in daemon mount, block-publication, or runtime hot paths.
+
+Foreground external-tool calls are async, typed, 8-second bounded, and Task-cancellable.
+
+### fskit_agent / extensionkitservice reset
+
+Agent reset is recovery/configuration-only and fail-closed:
+
+- foreground App refuses reset while **any** FSKit mount is active;
+- daemon recovery requires root, exact console user, and no active FSKit mount;
+- installer stale-agent recovery also requires exact process identity and no active FSKit filesystem.
+
+## 10. Recovery diagnostics
+
+Runtime diagnostics expose seven non-sensitive UInt64 counters:
+
+- `rawBusyRecoveryCount`;
+- `forcedWholeUnmountCount`;
+- `fskitAgentRecoveryCount`;
+- `diskImagesAttachRecoveryCount`;
+- `diskImagesDetachRecoveryCount`;
+- `mountRetryCount`;
+- `ejectAlreadyAbsentSuccessCount`.
+
+The metrics schema must not contain passwords, credentials, secret/key material, device IDs, raw paths, or mount paths.
+
+## 11. UI state
+
+The App is fully split into maintainable native modules:
 
 ```text
-Identity: EDP Project Code Signing
-Certificate SHA-256:
-D9142CE44ABCB5DD662DF9621D48A88C88EDBCB0392D3C74EBACBB1292B7B5A7
-
-Certificate leaf/root SHA-1:
-040B5488FB2B6C02B0786E76B674CB4460658CA2
+App/EDPUSBVaultApp.swift                App/CLI entrypoint
+App/Model/EDPVaultViewModel.swift
+App/Shell/EDPMainWindow.swift
+App/Sidebar/EDPSidebarView.swift
+App/Pages/EDPOverviewView.swift
+App/Pages/EDPDevicesView.swift
+App/Pages/EDPActivityView.swift
+App/Pages/EDPSettingsView.swift
+App/MenuBar/EDPMenuBarView.swift
+App/Service/EDPAppServiceSupport.swift
+App/Service/EDPXPCSmokeSupport.swift
 ```
 
-禁止：
+`EDPUSBVaultApp.swift` is approximately 476 lines rather than the previous ~3810-line monolith.
 
-- 使用 Apple Developer 账号替代这张项目专属证书；
-- 修改 DefaultKeychain / SearchList；
-- 把私钥、P12、密码提交到仓库；
-- 修改 TCC 数据库；
-- 修改 AuthorizationDB；
-- 放宽 `/dev` node owner/mode；
-- 对真实 EDP U 盘做 raw-sector destructive write test。
+Current UI contract keeps the native split view / Liquid Glass design and the existing “仅退出界面 / 完全退出” semantics.
 
-Service 打开 raw device 前后继续验证：
+UI performance evidence is **GitHub Actions only**. Local desktop load is not an authoritative benchmark.
 
-- root service 身份；
-- whole USB；
-- character device；
-- `st_rdev` 一致性；
-- VID/PID / 容量 / registry identity；
-- LBA0 / LBA4 / LBA7 / LBA11 / LBA12 metadata 与标准加密盘几何；
-- 每次 discovery/reconcile 都重新读取上述 5 个扇区并重新分类，禁止用缓存设备记录绕过标准盘判定；
-- stable EDP device ID；
-- 只把 raw fd 传给允许的 EDP transport。
-
-App ↔ Service XPC 继续执行固定 App path、code identifier 和固定 EDP signing leaf requirement，不提供 arbitrary raw path open API。
-
-## 6. 新身份与迁移
-
-当前 Drive 正式身份：
+Release UI gate remains:
 
 ```text
-App:       com.edp.drive
-Service:   com.edp.drive.service
-Mach/XPC:  com.edp.drive.service
-Data root: /var/db/com.edp.drive
-Keychain:  com.edp.drive.partition-password.v1
+20 sidebar toggles
+8 s Animation Hitches trace
+THRESHOLD_NS = 33_000_000
 ```
 
-旧身份只允许出现在升级清理 / credential migration 代码中：
+The threshold/workload/window must not be weakened to manufacture a pass.
+
+## 12. Current automated validation baseline
+
+Latest fixed-head run:
 
 ```text
-com.edp.usbvault.*
-/Applications/EDP USB Vault.app
-/Applications/EDP USB Vault Raw Access.app
-/var/db/com.edp.usbvault
+HEAD  9fd1d4cd1fd0e671b4cb16f5a9be5ad8b28ddb8d
+Run   33686611853
 ```
 
-升级迁移必须幂等：新 namespace 写入和验证成功后才能删除旧凭据；不得把密码明文落盘。
+All core jobs passed:
 
-## 7. 当前验证状态
+- native / Swift 6 build — PASS;
+- fast / identity regression — PASS;
+- virtual USB / service lifecycle — PASS;
+- UI + system ratchets — PASS;
+- sparse-image storage M01–M14 — PASS.
 
-已通过：
-
-- Swift 6 `warnings-as-errors`；
-- EDPCore tests、SM4 标准向量、real LBA11/LBA12 golden、两只真实盘共 1024 个随机读 golden；
-- encrypted reader/writer boundary / persistence；
-- 五类 USB classifier 的 golden 与真实 Lexar/SanDisk 标准盘 positive fixtures；每次扫描重新分类，禁止 cached-device 绕过标准盘判定；
-- 单 App + embedded Service installer build / expansion contract，包内无 `ntfs-3g`，固定 App ID `com.edp.drive` / Service ID `com.edp.drive.service`；
-- 固定 `EDP Project Code Signing` 证书 + 一次性 Full Disk Access；未修改 TCC 数据库；
-- cold-start fd3/CLOEXEC 继承修复：真实 Lexar 冷启动后交换区/保密区自动恢复；
-- Swift 6 NSXPC callback `@Sendable` 修复：旧版 MainActor/XPC `SIGTRAP` 不再复现；
-- macFUSE FSKit `not found/not enabled` transient auto-mount recovery；
-- bounded DiskImages2/hdiutil helper；transport hidden mount 未消失时 fail closed，不 kill transport；
-- VFS unmount 已从 privileged Service 的 direct `Darwin.unmount(2)` 移到 bounded `/sbin/umount` 子进程；`ValidateBoundedVFS.swift` timeout probe 约 0.229 s 返回；
-- teardown 严格按 user filesystem -> DiskImages2 BSD -> hidden macFUSE -> transport process，自上而下 fail closed；
-- explicit partition unmount / credential-delete unmount / whole-device eject 均传播 incomplete teardown 错误，session 未清空时不释放 raw lease、不尝试物理 eject；
-- real Lexar 在 bounded-VFS 修复后连续两轮 Stop -> demand Start：两次 Stop 均约 1 s，Service `exit 0`，user/hidden/transport residue 为 0；第二轮 Start 后两区约 8 s 恢复；
-- mounted 状态 App restart：UI PID 变化，Service PID 与 type2/type4 mount 持续不变；
-- `80f1cb6` 安装后 Service 连续稳定运行约 7 小时，两区仍为可写 ExFAT，无新 crash；
-- 产品 XPC whole-device safe eject：约 1 s 完成，type2/type4/hidden/transport 全清空，snapshot 进入 saved/offline 状态；
-- safe eject 后 15 s 不重新接管，App restart 也不重新接管；
-- 用户物理拔出/等待/重新插入后，两区 1 s 内自动恢复，stable device ID/VID:PID 保持一致，`privilegedAccessReady=true`；
-- 重插后未出现可见 SecurityAgent/CoreServicesUIAgent/Installer 授权窗口，未发生第二次管理员/Touch ID 授权；
-- 同一 `.menuBarExtraStyle(.window)` 内多级 `设备 -> 分区 -> 操作` 菜单、`仅退出界面` / `完全退出` 生命周期；禁止恢复 AppKit cascading `Menu(...)`；
-- Drive/Studio 原生 App Icon 与 Finder copyright metadata；EDP Studio inspector 使用真实 `HSplitView`；
-- `80f1cb61b4949d5ccf7d90f2cdb84987c340b9d0` exact-head Drive CI run `33261528346` success；
-- exact-head clean combined installer 已从本地 pinned macFUSE 5.3.3 DMG + pinned license 离线重建并通过 `verify-clean-installer.sh`，SHA-256 `183fc2836aae54979d67526bd81c5b39d1f4af968ae40325bc5025310b34a75f`；
-- 三个旧 GitHub 仓库历史已迁入 monorepo并已删除。
-
-当前仍需补齐的发布验收：
-
-1. 普通 U 盘：物理验证必须完全交给 macOS，Drive 不接管；
-2. 旧版 NoPwd：物理验证 `legacyNoPassword` 且 Drive 不接管；
-3. 最新 NoPwd：物理验证 `currentNoPassword` 且 Drive 不接管；
-4. `unrecognizedEDP` 物理负例：Drive 不建立 raw lease/mount session；
-5. type 1 如当前产品策略需要由 Drive 管理时再补对应实机验收；当前 final trial 的 type 1 autoMount=false；
-6. 最终 physical replug 仍复用了 `disk6`，因此“真实 BSD `diskN` 数字变化”这一子项没有被本次实机强制复现；不得伪称已验证；
-7. `80f1cb6` 安装后的单独一次 Mac reboot 未重新重复；此前多个 acceptance reboot 已证明固定身份/FDA persistence，而 `80f1cb6` 只新增 eject error propagation；如发布流程要求 exact-head reboot gate，可再单独执行；
-8. Drive/Studio 最终视觉验收仍以用户主观确认结果为准。
-
-Finder 复制性能补充：受控 A/B 已证明约 3 秒的“不确定/折返进度”在完全绕过 EDP 的本机 ExFAT DiskImages2 卷上同样存在（约 2.98 s），EDP 交换区约 2.91-3.30 s；实际目标 <1 s 已开始写入。因此该 UI 延迟不再作为 EDP I/O bug。6.5 GiB 真实 Finder 持续写约 92.85 MB/s，SHA-256 一致；短时复制可更高。详见 `docs/diagnostics/2026-08-29-finder-progress-estimation.md`。
-
-EDP 公开资料研究补充：北信源专利/公开产品资料确认加密介质存在启动区、交换/交互区、保密区和密码/标签控制模型，但未找到 type 1/2/4、LBA4/LBA7/LBA11/LBA12、`EDPF`、CRC、SM4 字节级公开格式；这些仍以真实盘 fixture/golden 为权威。详见 `docs/diagnostics/2026-08-29-edp-metadata-public-research.md`。
-
-## 8. 当前开发入口
-
-唯一仓库：
+The immediately preceding UI-specific all-green baseline `dded9d4` / run `33684536121` recorded:
 
 ```text
-https://github.com/Evolution404/edp
+UI_HITCH_COUNT_GT33MS=0
+RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO
+RESULT=DRIVE_UI_OK
 ```
 
-主要目录：
+Storage coverage includes M01, M02/M04–M09, M03, M10 5-cycle teardown, M12 transport-crash recovery boundary, M14 concurrent partition sessions, failure contracts, and production Swift6/C17 strict compilation.
 
-```text
-Apps/Drive
-Apps/Studio
-Packages/EDPCore
-```
+## 13. Physical-device evidence
 
-当前完整交接入口：
+Completed on a standard encrypted SanDisk EDP device:
 
-```text
-docs/HANDOFF-2026-08-29.md
-```
+- standard encrypted classification;
+- five-factor identity;
+- retained single-App FDA raw access across reinsert;
+- type 1 / 2 / 4 capability checks;
+- saved type 2/type 4 credentials;
+- safe eject and suppression;
+- two reinsert cycles;
+- no separate service FDA;
+- unrelated external SN750 storage left untouched.
 
-身份迁移历史计划：
+Important limitation: physical raw EBUSY recovery did not naturally trigger. S31–S35 deterministic tests cover that contract; it must not be reported as a physical EBUSY PASS.
 
-```text
-Apps/Drive/docs/PLAN-2026-08-29-single-app-service-migration.md
-```
+Still `BLOCKED_BY_FIXTURE` for physical negative evidence:
 
-首次安装 / 升级验收：
+- ordinary USB;
+- legacyNoPassword;
+- currentNoPassword;
+- unrecognizedEDP.
 
-```text
-Apps/Drive/docs/FIRST-INSTALL-ACCEPTANCE.md
-Apps/Drive/scripts/first-install-acceptance.sh
-```
+Synthetic/virtual results must not be presented as those physical proofs.
 
-旧分支、旧 handoff、旧 NTFS-3G/FUSE-T 实验仅作为 Git 历史证据，不得作为当前实现入口。
+## 14. Remaining release work
+
+### D3 — physical negative matrix
+
+Blocked only by missing physical fixtures listed above.
+
+### D4 — exact-head reboot gate
+
+Still required for the eventual release candidate:
+
+1. build and verify exact-head Clean.pkg;
+2. install it;
+3. reboot macOS;
+4. verify only `com.edp.drive` FDA is used;
+5. verify retained raw access after reboot;
+6. verify credential/policy persistence;
+7. verify standard EDP mount/capability path;
+8. safe eject and prove residue/U-state = 0.
+
+### Phase E
+
+Current source-of-truth documentation is being consolidated into:
+
+- `STATUS.md`;
+- `ARCHITECTURE.md`;
+- `TESTING.md`;
+- `RELEASE-CHECKLIST.md`.
+
+### Phase F
+
+NTFS RW remains an explicit ADR decision. No implementation should restore `ntfs-3g` while that ADR is pending.
+
+## 15. Current entry points
+
+For current product facts, read in this order:
+
+1. `Apps/Drive/docs/STATUS.md`;
+2. `Apps/Drive/docs/ARCHITECTURE.md`;
+3. `Apps/Drive/docs/TESTING.md`;
+4. `Apps/Drive/docs/RELEASE-CHECKLIST.md`;
+5. `docs/PROGRESS-2026-09-01-drive-stabilization-and-release.md` for active execution history.
+
+`Apps/Drive/docs/FIRST-INSTALL-ACCEPTANCE.md` remains the detailed machine acceptance procedure.
+
+All 2026-08 plan/tracker files and old handoffs are historical evidence unless explicitly referenced by one of the current source-of-truth documents above.

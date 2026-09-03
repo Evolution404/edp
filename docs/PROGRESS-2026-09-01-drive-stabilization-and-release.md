@@ -11,11 +11,11 @@
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| A | Sidebar 33 ms 性能收口 | CI VERIFY |
-| B | Runtime 职责拆分 | IN PROGRESS |
-| C | App/UI 文件职责拆分 | TODO |
-| D | 发布可靠性与 recovery 可观测性 | TODO |
-| E | 文档、测试矩阵、Release Checklist 收口 | TODO |
+| A | Sidebar 33 ms 性能收口 | DONE |
+| B | Runtime 职责拆分 | DONE |
+| C | App/UI 文件职责拆分 | DONE |
+| D | 发布可靠性与 recovery 可观测性 | IN PROGRESS（D1/D2 DONE；D3/D4 pending） |
+| E | 文档、测试矩阵、Release Checklist 收口 | IN PROGRESS |
 | F | NTFS RW 产品/架构 ADR | TODO |
 
 ## 当前不可回退基线
@@ -80,7 +80,7 @@ UI_HITCH_COUNT_GT33MS=1
 
 ## Phase B — Runtime 职责拆分
 
-状态：IMPLEMENTATION DONE（等待最终 exact-head CI 复核）
+状态：DONE
 
 - [x] 第一阶段纯 lifecycle model 抽取：`EDPLifecycleFailure*`、FSKit recovery policy、mount lifecycle state machine 移至 `EDPMountLifecycle.swift`；runtime 减少 302 行，行为不变。
 - [x] 通用 runtime support 抽取：`RuntimeError/fail/secureZero/run/plist/atomicWrite` 移至 `EDPRuntimeSupport.swift`；runtime 再减少 101 行，并由 system ratchet 禁止回流。
@@ -159,7 +159,7 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] Private DiskImages2 helper 边界已复核：`EDPConsoleExec.c` 仅精确 allowlist `/Library/Application Support/EDP Drive/bin/diskimages2-attach` 一处；publisher 固定 helper path/arguments，不能执行任意 helper，raw-FD inheritance 仍仅允许两个 mfmount transport。
 - [x] `pluginkit` 使用边界已复核：仅 foreground App 的 macFUSE enablement/support 路径可调用；daemon runtime、mount lifecycle、block publisher 均由 system negative ratchet 禁止 PluginKit。`runUserTool` 已改为 async 8s bounded、typed error、Task cancellation，并以 deterministic success/nonzero/timeout/cancel 测试实证。
 - [x] agent reset fail-closed：App enablement 在任何 FSKit mount 活跃时跳过 `fskit_agent/extensionkitservice` reset；daemon recovery 继续使用 `MNT_EXT_FSKIT` 全局 guard + exact console user；installer stale-agent recovery 继续只允许 no-mount exact process identity。
-- [ ] D2 fixed-head CI：本机 `drive-check`、system、fast、virtual、S01-S35/320000-step property、deterministic external-tool runner、production installer build 均 PASS；待本次 commit 的 GitHub fixed-head native/fast/virtual/UI/storage 复核后关闭 D2。
+- [x] D2 fixed-head CI：`9fd1d4c` / run `33686611853` 的 native、fast、virtual、UI/system、storage 全部 PASS；storage M01-M14 在 7m38s 内完成，D2 正式关闭。
 
 ### D3 物理发布矩阵
 
@@ -180,15 +180,16 @@ UI_HITCH_COUNT_GT33MS=1
 
 ## Phase E — 文档、测试矩阵与 Release Checklist
 
-状态：TODO
+状态：IMPLEMENTATION DONE（等待 fixed-head CI）
 
-- [ ] 重写 `Apps/Drive/docs/STATUS.md` 为当前事实真源。
-- [ ] 新建 `Apps/Drive/docs/ARCHITECTURE.md`。
-- [ ] 新建 `Apps/Drive/docs/TESTING.md`。
-- [ ] 新建 `Apps/Drive/docs/RELEASE-CHECKLIST.md`。
-- [ ] 标记/归档失效 handoff/tracker 入口。
-- [ ] 清理旧 tracker 中已实现但仍 `[ ]` 的假技术债。
-- [ ] 文档与 Makefile/CI targets 一致。
+- [x] 重写 `Apps/Drive/docs/STATUS.md` 为当前事实真源，纠正旧 `/sbin/umount`、type1 默认自动挂载、production 完全不用 hdiutil 等已失效描述。
+- [x] 新建 `Apps/Drive/docs/ARCHITECTURE.md`，固化 single-App FDA、runtime ownership、raw EBUSY、DiskImages2 tombstone、safe-eject 与 fail-closed 架构。
+- [x] 新建 `Apps/Drive/docs/TESTING.md`，明确 fast/virtual/storage/system/UI/installed/physical 各层证据权限及 GitHub Actions responsibility split。
+- [x] 新建 `Apps/Drive/docs/RELEASE-CHECKLIST.md`，固化 exact-head package/CI/install/FDA/reboot/physical/safe-eject 发布门禁。
+- [x] 新建 `Apps/Drive/docs/HISTORICAL.md`；旧 2026-08 Drive plans/tracker 与 `HANDOFF-2026-08-29.md`、`HANDOFF-2026-09-01-real-device-ebusy-finalization.md` 已明确标记 HISTORICAL/superseded，不删除历史证据。
+- [x] 旧 tracker 未勾选项不再作为当前技术债入口；当前总览已按 A/B/C DONE、D1/D2 DONE、D3/D4 pending 重写。
+- [x] 文档与 Makefile/CI targets 本机一致性验证完成：新增 `DRIVE_SYSTEM_CURRENT_DOCS_OK` ratchet；`git diff --check`、system、fast、virtual、S01-S35/320000-step property 全部 PASS。
+- [ ] Phase E fixed-head CI：待文档提交后的 native/fast/virtual/UI-system/storage 全绿后正式关闭 Phase E。
 
 ## Phase F — NTFS RW ADR
 
