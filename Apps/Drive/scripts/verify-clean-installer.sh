@@ -2,6 +2,12 @@
 set -euo pipefail
 
 PACKAGE="${1:?usage: verify-clean-installer.sh <combined.pkg>}"
+REQUIRE_RELEASE_SIGNING="${EDP_REQUIRE_RELEASE_SIGNING:-0}"
+EXPECTED_RELEASE_CERT_ROOT_SHA1="040b5488fb2b6c02b0786e76b674cb4460658ca2"
+[[ "${REQUIRE_RELEASE_SIGNING}" == "0" || "${REQUIRE_RELEASE_SIGNING}" == "1" ]] || {
+  echo "EDP_REQUIRE_RELEASE_SIGNING must be 0 or 1" >&2
+  exit 2
+}
 [[ -f "${PACKAGE}" ]] || {
   echo "package not found: ${PACKAGE}" >&2
   exit 2
@@ -66,6 +72,20 @@ done
 /usr/bin/codesign --verify --strict "${SERVICE}"
 /usr/bin/codesign -dv --verbose=4 "${SERVICE}" 2>&1 \
   | /usr/bin/grep -F 'Identifier=com.edp.drive.service' >/dev/null
+if [[ "${REQUIRE_RELEASE_SIGNING}" == "1" ]]; then
+  APP_REQUIREMENT="$(/usr/bin/codesign -dr - "${APP}" 2>&1)"
+  SERVICE_REQUIREMENT="$(/usr/bin/codesign -dr - "${SERVICE}" 2>&1)"
+  EXPECTED_REQUIREMENT="certificate root = H\"${EXPECTED_RELEASE_CERT_ROOT_SHA1}\""
+  /usr/bin/grep -Fq "${EXPECTED_REQUIREMENT}" <<<"${APP_REQUIREMENT}" || {
+    echo "release App is not signed by the pinned EDP Project Code Signing certificate" >&2
+    exit 5
+  }
+  /usr/bin/grep -Fq "${EXPECTED_REQUIREMENT}" <<<"${SERVICE_REQUIREMENT}" || {
+    echo "release service is not signed by the pinned EDP Project Code Signing certificate" >&2
+    exit 5
+  }
+  echo "RESULT=STABLE_SELF_SIGNED_RELEASE_IDENTITY"
+fi
 APP_COUNT="$(/usr/bin/find "${PAYLOAD}/Applications" -maxdepth 1 -type d -name '*.app' | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
 [[ "${APP_COUNT}" == "1" ]]
 [[ ! -e "${PAYLOAD}/Applications/EDP USB Vault.app" ]]
@@ -123,6 +143,13 @@ esac
 echo "RESULT=USER_STOPPABLE_ON_DEMAND_SERVICE_PLIST"
 echo "RESULT=SERVICE_RESTART_THROTTLE_1S"
 echo "SERVICE_MODE=${SERVICE_MODE}"
+if [[ "${REQUIRE_RELEASE_SIGNING}" == "1" ]]; then
+  [[ "${SERVICE_MODE}" == "legacy" ]] || {
+    echo "self-signed release requires installer-managed legacy service mode" >&2
+    exit 5
+  }
+  echo "RESULT=SELF_SIGNED_RELEASE_SERVICE_MODE_OK"
+fi
 echo "RESULT=NATIVE_SWIFTUI_XPC_APP_PACKAGED"
 echo "RESULT=DRIVE_APP_ICON_PACKAGED"
 

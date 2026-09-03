@@ -171,13 +171,14 @@ UI_HITCH_COUNT_GT33MS=1
 
 ### D4 Exact-head reboot
 
-- [x] exact-head Clean.pkg build/verify：最终 release-candidate baseline `f734f43`；在完全 clean worktree 上构建 `Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda`；`verify-clean-installer.sh` 全部 PASS（single App + embedded service、macFUSE-only、无 ntfs-3g、single-App FDA broker）。
-- [x] factory acceptance `preflight` PASS：无外接物理盘、无 EDP/macFUSE transport mount、DefaultKeychain 为 login.keychain；session `20260903T005258Z-22259` 已建立。
-- [ ] factory user-cleanup / privileged clean / install — BLOCKED_BY_INTERACTIVE_ADMIN_AUTH；当前 `sudo -n` 明确返回需要密码，因此未执行半套清理。
-- [ ] install。
-- [ ] reboot。
+- [!] 原 `f734f43` / SHA-256 `62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda` 候选已**作废**：D4 首次安装后发现该包直接由底层 `build-clean-installer.sh` 默认 ad-hoc `-` 签名生成；普通 `codesign --verify` 虽 PASS，但 designated requirement 仅为 `cdhash H"..."`，`EDPXPCPeerValidator` 按设计拒绝无 TeamIdentifier/leaf certificate 的 ad-hoc App，因此 privileged XPC 无法建立。
+- [x] 发布流程缺口已定位并补门禁：正式候选必须走 `build-self-signed-installer.sh` / `make drive-release-installer`；固定 identity=`EDP Project Code Signing`、certificate root=`040b5488fb2b6c02b0786e76b674cb4460658ca2`、self-signed installer-managed LaunchDaemon mode；`EDP_REQUIRE_RELEASE_SIGNING=1 verify-clean-installer.sh` 会拒绝 ad-hoc 包。旧错误包实测被 strict verifier 以 RC=5 拒绝。
+- [x] 第一次 factory acceptance 已实际执行：preflight、user-cleanup、privileged `factory-first-install`、`verify-clean` PASS；Mac 于 2026-09-03 12:38:06 完成安装前 reboot，reboot 后第二次 `verify-clean` 再次 PASS。
+- [ ] 重新从发布签名门禁后的 final exact HEAD 构建 certificate-backed Clean.pkg，并记录新 SHA-256。
+- [ ] 安装新的 signed candidate。
 - [ ] single-App FDA retained access。
 - [ ] policy/credential persistence。
+- [ ] 第二次 reboot 后 retained access / credential / policy / functional-all。
 - [ ] safe eject residue/U-state=0。
 
 ## Phase E — 文档、测试矩阵与 Release Checklist

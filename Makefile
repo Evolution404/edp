@@ -12,7 +12,7 @@ STUDIO_DERIVED_DATA := $(ARTIFACTS)/DerivedData/EDPStudio
 STUDIO_PROJECT := $(ROOT)/Apps/Studio/native/EDPStudioNative/EDPStudioNative.xcodeproj
 
 .PHONY: help status check build core-test drive-check drive-build drive-ui-status drive-stop drive-restart \
-	drive-ui-package drive-ui-install drive-ui-deploy drive-installer drive-env-status drive-clean-environment \
+	drive-ui-package drive-ui-install drive-ui-deploy drive-installer drive-release-installer drive-env-status drive-clean-environment \
 	drive-test-fast drive-test-identity drive-test-virtual-usb drive-test-storage-smoke drive-test-storage drive-test-ui drive-test-system drive-test-all \
 	studio-generate studio-build
 
@@ -26,7 +26,8 @@ help:
 	@echo "  make drive-ui-status    List every running Drive foreground UI"
 	@echo "  make drive-stop         Close every Drive foreground UI"
 	@echo "  make drive-restart      Close old UIs and start exactly one official UI"
-	@echo "  make drive-installer    Build the full Drive native installer"
+	@echo "  make drive-installer    Build the native Drive component installer"
+	@echo "  make drive-release-installer  Build + verify the certificate-backed combined release installer"
 	@echo "  make drive-env-status   Read-only EDP Drive/macFUSE environment audit"
 	@echo "  make drive-clean-environment  Remove EDP Drive + old Vault + macFUSE test environment"
 	@echo "  make drive-test-fast    Hardware-free core/classifier regression"
@@ -145,6 +146,15 @@ drive-installer:
 		EDP_SELF_SIGNED_DISTRIBUTION=1 \
 		EDP_SERVICE_MODE=legacy \
 		./installer/build-native-installer.sh "$(ARTIFACTS)"
+
+drive-release-installer:
+	@mkdir -p "$(ARTIFACTS)"
+	@cd "$(ROOT)/Apps/Drive" && \
+		DEVELOPER_DIR="$(DEVELOPER_DIR)" \
+		./installer/build-self-signed-installer.sh "$(ARTIFACTS)"
+	@EDP_REQUIRE_RELEASE_SIGNING=1 \
+		"$(ROOT)/Apps/Drive/scripts/verify-clean-installer.sh" \
+		"$(ARTIFACTS)/EDP-Drive-0.6.0-arm64-Clean.pkg"
 
 drive-env-status:
 	@"$(ROOT)/Tools/drive-environment.sh" status

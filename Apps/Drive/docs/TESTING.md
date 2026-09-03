@@ -347,15 +347,32 @@ Production native installer build entry:
 Apps/Drive/installer/build-native-installer.sh <output-dir>
 ```
 
-Combined clean installer entry:
+Generic combined clean-installer builder (CI/development only):
 
 ```bash
 Apps/Drive/installer/build-clean-installer.sh <output-dir>
 ```
 
+**Do not use that raw builder as the final self-signed release-candidate entry.** It supports ad-hoc/CI configurations by design.
+
+Canonical physical-release entry from the repository root:
+
+```bash
+make drive-release-installer ARTIFACTS="$PWD/Apps/Drive/artifacts"
+```
+
+Equivalent Drive-local entry:
+
+```bash
+Apps/Drive/installer/build-self-signed-installer.sh Apps/Drive/artifacts
+EDP_REQUIRE_RELEASE_SIGNING=1 Apps/Drive/scripts/verify-clean-installer.sh Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
+```
+
+The release entry pins `EDP Project Code Signing`, certificate root `040b5488fb2b6c02b0786e76b674cb4460658ca2`, and the proven self-signed installer-managed service mode. The release-signing verifier rejects ad-hoc App/service signatures even when ordinary `codesign --verify` succeeds.
+
 The combined installer includes the pinned official macFUSE package/runtime material required by the product.
 
-Before physical release acceptance, verify the exact generated package using the repository verification script rather than relying only on filename or prior hashes.
+Before physical release acceptance, verify the exact generated package using the release-signing verifier rather than relying only on filename or prior hashes.
 
 ## 13. First-install / reinstall acceptance
 

@@ -45,6 +45,9 @@ MODEL_PROPERTY_SOURCE="${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateLifecycleMode
 EMBEDDED_SERVICE_PLIST="${ROOT}/Apps/Drive/product/App/com.edp.drive.service.plist"
 LEGACY_SERVICE_PLIST="${ROOT}/Apps/Drive/installer/com.edp.drive.service.plist"
 CLEAN_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
+SELF_SIGNED_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-self-signed-installer.sh"
+INSTALLER_VERIFY_SOURCE="${ROOT}/Apps/Drive/scripts/verify-clean-installer.sh"
+MAKEFILE_SOURCE="${ROOT}/Makefile"
 RAW_VALIDATION_SOURCE="${ROOT}/Apps/Drive/product/EDPRawValidation.c"
 RAW_VALIDATION_HEADER="${ROOT}/Apps/Drive/product/EDPRawValidation.h"
 RAW_BROKER_SOURCE="${ROOT}/Apps/Drive/product/EDPRawFDBroker.c"
@@ -175,6 +178,22 @@ echo 'RESULT=DRIVE_SYSTEM_TRANSPORT_BRIDGE_LOCAL_OK'
 /usr/bin/grep -Fq 'MACFUSE_FRAMEWORKS="${MACFUSE_BUILD_FRAMEWORKS}"' "${CLEAN_INSTALLER_SOURCE}"
 ! /usr/bin/grep -Fq 'MACFUSE_FRAMEWORKS="/Library/Filesystems/macfuse.fs/Contents/Frameworks"' "${CLEAN_INSTALLER_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_FACTORY_CLEAN_INSTALLER_BUILD_OK'
+
+# Physical release candidates must use the pinned certificate-backed wrapper,
+# never the ad-hoc-capable lower-level clean builder. The release verifier has
+# an explicit strict mode that rejects cdhash-only signatures and requires the
+# proven installer-managed service mode for the self-signed distribution.
+/usr/bin/grep -Fq 'UNIFIED_IDENTITY="EDP Project Code Signing"' "${SELF_SIGNED_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'EXPECTED_CERT_ROOT_SHA1="040b5488fb2b6c02b0786e76b674cb4460658ca2"' "${SELF_SIGNED_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'export EDP_SELF_SIGNED_DISTRIBUTION=1' "${SELF_SIGNED_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'export EDP_SERVICE_MODE=legacy' "${SELF_SIGNED_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'drive-release-installer:' "${MAKEFILE_SOURCE}"
+/usr/bin/grep -Fq './installer/build-self-signed-installer.sh "$(ARTIFACTS)"' "${MAKEFILE_SOURCE}"
+/usr/bin/grep -Fq 'EDP_REQUIRE_RELEASE_SIGNING=1' "${MAKEFILE_SOURCE}"
+/usr/bin/grep -Fq 'EXPECTED_RELEASE_CERT_ROOT_SHA1="040b5488fb2b6c02b0786e76b674cb4460658ca2"' "${INSTALLER_VERIFY_SOURCE}"
+/usr/bin/grep -Fq 'RESULT=STABLE_SELF_SIGNED_RELEASE_IDENTITY' "${INSTALLER_VERIFY_SOURCE}"
+/usr/bin/grep -Fq 'RESULT=SELF_SIGNED_RELEASE_SERVICE_MODE_OK' "${INSTALLER_VERIFY_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_RELEASE_SIGNING_GATE_OK'
 
 # The console launcher must allow both transport modes.  A missing read-only
 # target breaks the boot FAT16 path while leaving encrypted partitions healthy,

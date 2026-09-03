@@ -67,11 +67,14 @@ ExFAT 由 Apple 原生读写。NTFS 可以按系统能力只读挂载，但虚�
 同时存在，且仍由同一会话生命周期统一卸载和安全推出。
 
 产品 transport 只支持 macFUSE Local，不存在可切换的备用 transport backend。
-组合安装包包含并校验官方 macFUSE 5.3.3 安装组件：
+正式组合安装包包含并校验官方 macFUSE 5.3.3 安装组件；release candidate 必须走固定 self-signed 发布入口，不能直接调用底层 ad-hoc-capable builder：
 
 ```bash
-./installer/build-clean-installer.sh artifacts
+./installer/build-self-signed-installer.sh artifacts
+EDP_REQUIRE_RELEASE_SIGNING=1 ./scripts/verify-clean-installer.sh artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
 ```
+
+从仓库根目录也可使用 `make drive-release-installer ARTIFACTS="$PWD/Apps/Drive/artifacts"` 完成同一构建 + release-signing verifier 门禁。
 
 运行时严格校验 `/Library/Filesystems/macfuse.fs` 中的签名、TeamIdentifier、
 MFMount.framework 和 Local FSKit module；前台 App 只负责当前控制台用户的

@@ -9,15 +9,18 @@ Updated: 2026-09-03
 Record before release testing:
 
 ```text
+Status: INVALIDATED — the package below was ad-hoc signed and is not a release candidate
 Branch: codex/ui-macos26-liquid-glass
-Exact HEAD: f734f43899e174c5965f32917f6164ccb2994305
+Previous runtime HEAD: f734f43899e174c5965f32917f6164ccb2994305
 Version: 0.6.0
-Clean.pkg path: Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
-Clean.pkg SHA-256: 62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda
-GitHub Actions run: 33711677562
+Invalidated Clean.pkg SHA-256: 62f685f3fe69006f165cf649e49acb8d2bb9dc7e31e85033e01bf5416e7dedda
+Previous automated GitHub Actions run: 33711677562
+Replacement signed candidate: PENDING after release-signing gate commit
 Date: 2026-09-03
-Tester: automated local + GitHub Actions; physical/install/reboot gates pending
+Tester: automated local + GitHub Actions + macOS first-install acceptance
 ```
+
+The invalidated package passed ordinary `codesign --verify` but had a cdhash-only designated requirement. It was rejected by the privileged XPC signer boundary on the clean machine and must never be installed for further physical/FDA acceptance.
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 
@@ -54,17 +57,28 @@ Do **not** use local xctrace timing as release UI evidence.
 
 ## 4. Production package build
 
-Build the exact-head clean combined package using the repository-supported installer path.
+Build the exact-head clean combined release package using the certificate-backed release entry only:
+
+```bash
+make drive-release-installer ARTIFACTS="$PWD/Apps/Drive/artifacts"
+```
+
+Do **not** use `build-clean-installer.sh` directly as a physical release-candidate entry. That lower-level builder intentionally supports ad-hoc/CI configurations.
+
+Required release-signing evidence:
 
 - [x] package build succeeds.
 - [x] package verification script succeeds (`RESULT=EDP_CLEAN_INSTALLER_VERIFIED`).
+- [ ] release-signing verifier succeeds with `EDP_REQUIRE_RELEASE_SIGNING=1`.
+- [ ] `RESULT=STABLE_SELF_SIGNED_RELEASE_IDENTITY`.
+- [ ] `RESULT=SELF_SIGNED_RELEASE_SERVICE_MODE_OK`.
 - [x] package contains one `EDP Drive.app` and embedded service, not a second Raw Access App.
-- [x] App and embedded service share the required stable self-signed certificate root.
+- [ ] App and embedded service both resolve to pinned certificate root `040b5488fb2b6c02b0786e76b674cb4460658ca2`.
 - [x] package includes the expected official macFUSE 5.3.3 runtime/component.
 - [x] package does not contain ntfs-3g or FUSE-T product payloads.
-- [x] SHA-256 recorded above.
+- [ ] SHA-256 for the newly rebuilt signed package recorded above.
 
-Never reuse an old package hash for a new exact HEAD.
+An ad-hoc designated requirement of the form `cdhash H"..."` is a release failure even if ordinary `codesign --verify` succeeds. Never reuse an old package hash for a new exact HEAD.
 
 ## 5. Fixed-head GitHub Actions gate
 
