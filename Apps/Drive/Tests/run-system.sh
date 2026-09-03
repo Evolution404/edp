@@ -710,6 +710,20 @@ for scenario in S36 S37 S38 S39 S40; do
 done
 echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
 
+# Standard encrypted EDP media must be claimed during the Disk Arbitration peek
+# phase, before macOS starts automatic FSKit probing. This closes the physical
+# replug race where fskitd can retain /dev/rdiskNs1 and make the whole-disk RW
+# raw lease fail with EBUSY. Classification remains standard-EDP-only; no daemon
+# hot-path workaround may kill/reset fskitd globally.
+/usr/bin/grep -Fq 'struct EDPEarlyDiskClaimClassifier: Sendable' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'resolved.mediaKind == .standardEncrypted && resolved.identity != nil' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'DARegisterDiskPeekCallback(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'DADiskClaim(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'EDP Drive owns this standard encrypted physical generation' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'SCENARIO=S41_OK' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+! /usr/bin/grep -Ei 'killall.*fskitd|pkill.*fskitd|SIG(KILL|TERM).*fskitd' "${RUNTIME_SOURCE}" "${NATIVE_SYSTEM_SOURCE}" "${RAW_ACCESS_COORDINATOR_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_EARLY_EDP_DISK_CLAIM_OK'
+
 # Lifecycle deadlines are monotonic and scheduler-driven. Bridge activation and
 # mount drain timeouts must not regress to wall-clock Date()/asyncAfter logic.
 /usr/bin/grep -Fq 'protocol EDPLifecycleScheduling' "${SCHEDULER_SOURCE}"

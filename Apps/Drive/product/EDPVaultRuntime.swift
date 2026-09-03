@@ -2499,7 +2499,12 @@ final class EDPServiceController: @unchecked Sendable {
         self.store = try store ?? makeCredentialStore()
         self.policies = try policies ?? makePolicyStore()
         self.manager = try manager ?? EDPMountCoordinator(metrics: metrics)
-        let effectiveDiskArbitration = try diskArbitration ?? EDPDiskArbitrationController()
+        let earlyClaimClassifier = EDPEarlyDiskClaimClassifier(
+            mediaProvider: mediaProvider,
+            metadataReader: metadataReader
+        )
+        let effectiveDiskArbitration = try diskArbitration
+            ?? EDPDiskArbitrationController(earlyClaimClassifier: earlyClaimClassifier)
         self.diskArbitration = effectiveDiskArbitration
         self.rawAccess = EDPRawAccessCoordinator(
             ownerQueue: queue,

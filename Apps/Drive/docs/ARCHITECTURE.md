@@ -84,6 +84,8 @@ Classification and ownership are separate decisions.
 
 Only `standardEncrypted` can be owned by Drive. All other classes remain with macOS.
 
+For native production discovery, ownership begins during Disk Arbitration's peek phase, before automatic filesystem probing. The privileged service performs the existing read-only EDP metadata classification there and calls `DADiskClaim` only when the whole USB is verified as `standardEncrypted` with a complete five-factor identity. Classification/read failure fails open to macOS rather than claiming an unverified device. This prevents macOS 26 FSKit from retaining a child physical partition such as `/dev/rdiskNs1` before Drive establishes its whole-device raw lease; Drive must not solve that race by killing or globally resetting `fskitd`.
+
 For a managed device, durable identity is:
 
 ```text
@@ -285,6 +287,8 @@ exactly one raw-open retry
 ```
 
 Non-EBUSY raw errors never trigger this recovery.
+
+The one-shot unmount recovery is a fallback, not the primary insertion-race mechanism. A physical reinsert can otherwise let macOS 26 `fskitd` open the FAT16 child partition first; that child read fd can keep whole-device `O_RDWR` raw open at `EBUSY` even when no filesystem is mounted and a forced whole-device unmount reports success. The production prevention is the standard-EDP-only Disk Arbitration peek/claim boundary described above.
 
 ## 12. Teardown ordering
 

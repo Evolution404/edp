@@ -142,6 +142,24 @@ protocol EDPRawMetadataReading: Sendable {
     func snapshot(for media: EDPWholeUSBMedia) throws -> EDPRawMetadataSnapshot
 }
 
+struct EDPEarlyDiskClaimClassifier: Sendable {
+    let mediaProvider: any EDPWholeUSBMediaProviding
+    let metadataReader: any EDPRawMetadataReading
+
+    func shouldClaim(bsdName: String) -> Bool {
+        guard let media = try? mediaProvider.allWholeUSBMedia().first(where: { $0.bsdName == bsdName }),
+              let metadata = try? metadataReader.snapshot(for: media),
+              mediaProvider.registryEntryExists(media.registryEntryID),
+              mediaProvider.registryEntryExists(media.usbRegistryEntryID),
+              let current = try? mediaProvider.allWholeUSBMedia().first(where: { $0.bsdName == bsdName }),
+              current == media else {
+            return false
+        }
+        let resolved = EDPPhysicalIdentityResolver.resolve(media: media, metadata: metadata)
+        return resolved.mediaKind == .standardEncrypted && resolved.identity != nil
+    }
+}
+
 struct PhysicalDisk: Hashable, Sendable {
     let bsdName: String
     let rawPath: String
@@ -613,6 +631,44 @@ private func daOperationCallback(
     box.handleCallback(dissenter)
 }
 
+private func daEarlyClaimReleaseCallback(
+    _ disk: DADisk,
+    _ context: UnsafeMutableRawPointer?
+) -> Unmanaged<DADissenter>? {
+    let dissenter = DADissenterCreate(
+        kCFAllocatorDefault,
+        DAReturn(kDAReturnNotPermitted),
+        "EDP Drive owns this standard encrypted physical generation" as CFString
+    )
+    return Unmanaged.passRetained(dissenter)
+}
+
+private func daEarlyClaimResultCallback(
+    _ disk: DADisk,
+    _ dissenter: DADissenter?,
+    _ context: UnsafeMutableRawPointer?
+) {
+    guard let dissenter,
+          let name = DADiskGetBSDName(disk) else { return }
+    let status = DADissenterGetStatus(dissenter)
+    let detail = DADissenterGetStatusString(dissenter).map { $0 as String } ?? "unknown"
+    NSLog(
+        "EDP early physical-disk claim refused for %@: status=%d %@",
+        String(cString: name),
+        status,
+        detail
+    )
+}
+
+private func daEarlyPeekCallback(
+    _ disk: DADisk,
+    _ context: UnsafeMutableRawPointer?
+) {
+    guard let context else { return }
+    let controller = Unmanaged<EDPDiskArbitrationController>.fromOpaque(context).takeUnretainedValue()
+    controller.handleEarlyPeek(disk)
+}
+
 protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
     func suppressAutomount(usbRegistryEntryID: UInt64)
     func allowAutomount(usbRegistryEntryID: UInt64)
@@ -639,14 +695,25 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
     private let stateLock = NSLock()
     private let operationLock = NSLock()
     private let completionQueue = DispatchQueue(label: "com.edp.drive.disk-arbitration-completion")
+    private let earlyClaimClassifier: EDPEarlyDiskClaimClassifier?
     private var suppressedUSBRegistryEntryIDs = Set<UInt64>()
     private var pendingOperations = [UUID: DAOperationBox]()
 
-    init() throws {
+    init(earlyClaimClassifier: EDPEarlyDiskClaimClassifier? = nil) throws {
         guard let session = DASessionCreate(kCFAllocatorDefault) else {
             throw RuntimeNativeError("DASessionCreate failed")
         }
         self.session = session
+        self.earlyClaimClassifier = earlyClaimClassifier
+        if earlyClaimClassifier != nil {
+            DARegisterDiskPeekCallback(
+                session,
+                nil,
+                -100,
+                daEarlyPeekCallback,
+                Unmanaged.passUnretained(self).toOpaque()
+            )
+        }
         DARegisterDiskMountApprovalCallback(
             session,
             nil,
@@ -654,6 +721,25 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
             Unmanaged.passUnretained(self).toOpaque()
         )
         DASessionSetDispatchQueue(session, queue)
+    }
+
+    fileprivate func handleEarlyPeek(_ disk: DADisk) {
+        guard let earlyClaimClassifier else { return }
+        let media = DADiskCopyIOMedia(disk)
+        guard media != IO_OBJECT_NULL else { return }
+        defer { IOObjectRelease(media) }
+        guard ioBool(ioRegistryProperty(media, "Whole")) == true,
+              let name = DADiskGetBSDName(disk) else { return }
+        let bsdName = String(cString: name)
+        guard earlyClaimClassifier.shouldClaim(bsdName: bsdName) else { return }
+        DADiskClaim(
+            disk,
+            DADiskClaimOptions(kDADiskClaimOptionDefault),
+            daEarlyClaimReleaseCallback,
+            nil,
+            daEarlyClaimResultCallback,
+            nil
+        )
     }
 
     deinit {

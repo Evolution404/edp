@@ -2688,6 +2688,50 @@ struct ValidateCredentialPolicyServiceLifecycle {
         }
 
         do {
+            let state = EDPVirtualUSBState()
+            let fixture = try EDPVirtualDiskFactory.capturedDisk4(fixtureDirectory: fixtureDirectory)
+            state.insert(
+                fixture,
+                as: "disk93",
+                registryEntryID: 0x9300,
+                usbRegistryEntryID: 0x9301
+            )
+            let classifier = EDPEarlyDiskClaimClassifier(
+                mediaProvider: EDPVirtualWholeUSBMediaProvider(state: state),
+                metadataReader: EDPVirtualRawMetadataReader(state: state)
+            )
+            guard classifier.shouldClaim(bsdName: "disk93") else {
+                throw LifecycleValidationError(
+                    "S41 standard encrypted EDP media was not selected for early Disk Arbitration claim"
+                )
+            }
+
+            state.setMetadataFault(.readFailure("EIO: early-claim classification read failure"), for: "disk93")
+            guard !classifier.shouldClaim(bsdName: "disk93") else {
+                throw LifecycleValidationError(
+                    "S41 metadata failure incorrectly claimed an unverified USB device"
+                )
+            }
+
+            state.setMetadataFault(.none, for: "disk93")
+            state.updateMetadata(for: "disk93") { metadata in
+                metadata = EDPRawMetadataSnapshot(
+                    lba0: metadata.lba0,
+                    lba4: metadata.lba4,
+                    lba7: Data(repeating: 0, count: metadata.lba7.count),
+                    lba11: metadata.lba11,
+                    lba12: metadata.lba12
+                )
+            }
+            guard !classifier.shouldClaim(bsdName: "disk93") else {
+                throw LifecycleValidationError(
+                    "S41 non-standard EDP metadata was incorrectly retained by the early claim classifier"
+                )
+            }
+            print("SCENARIO=S41_OK early_claim_is_standard_edp_only_and_fail_open_for_unverified_media")
+        }
+
+        do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
                 insertDevice: true

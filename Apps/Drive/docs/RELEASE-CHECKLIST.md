@@ -243,9 +243,10 @@ With the exact physical generation revalidated immediately before eject:
 - [x] automount/raw reacquisition remains suppressed after logical safe eject.
 - [x] final residue = 0 immediately after final safe eject.
 - [x] final U-state = 0 immediately after final safe eject (`privilegedAccessReady=false`, all partitions unavailable).
-- [!] release blocker found after that clean state: foreground App restart reacquired the still-inserted same USB generation. `ddf510b` fixed App/service persistence but follow-up audit found tombstone retirement still too permissive when discovery omitted the device or a replacement generation overlapped the original. The current S36–S40 hardening makes exact original `usbRegistryEntryID` disappearance the sole release authority; new exact-head signed physical retest remains required.
+- [x] `f7d7dde` focused physical retest closed the original App/service restart blocker: safe eject kept `privilegedAccessReady=false` across foreground App restart and a complete privileged-service stop/start while the same USB generation remained physically inserted; type2/type4 saved credential state remained intact.
+- [!] the subsequent real remove/reinsert exposed a different release blocker: the same five-factor Lexar identity was rediscovered, but whole-device raw reopen failed with `EDP_RAW_LEASE_OPEN_FAILED:16`. Root `lsof` proved macOS 26 `fskitd` retained `/dev/rdisk6s1`; forced whole unmount, explicit raw refresh, and service restart did not clear it. The current S41 hardening claims only verified `standardEncrypted` whole media in the Disk Arbitration peek phase before automatic FSKit probing. A fresh exact-head package + physical replug is required to prove that prevention path.
 
-After safe eject, merely restarting the App or service must not cause re-acquisition of the logically ejected still-inserted device. Transient discovery/metadata omission must not clear suppression. If a replacement generation is observed while the persisted original USB registry generation still exists, both remain fail-closed; only confirmed disappearance of the original registry generation may admit the replacement.
+After safe eject, merely restarting the App or service must not cause re-acquisition of the logically ejected still-inserted device. Transient discovery/metadata omission must not clear suppression. If a replacement generation is observed while the persisted original USB registry generation still exists, both remain fail-closed; only confirmed disappearance of the original registry generation may admit the replacement. On the subsequent fresh insertion, raw access must return automatically without FDA/admin prompting and without a persistent `fskitd` holder on the physical child partition.
 
 ## 13. Physical remove / reinsert gate
 
@@ -253,10 +254,10 @@ After actual removal and reinsertion:
 
 - [x] Drive rediscovers the device after physical removal/reinsert.
 - [x] stable five-factor device identity remains the same.
-- [x] current BSD name was freshly re-enumerated; it happened to remain `disk26`, so no claim of physical `diskN` change is made.
-- [x] retained raw access returns without a new FDA/admin prompt.
-- [x] saved credential/policy state is available.
-- [x] configured auto-mount behavior (`false` on all three partitions) is restored.
+- [x] latest focused retest re-enumerated the Lexar as `disk6`; BSD-name value is evidence only and is not durable identity.
+- [!] `f7d7dde` failed to restore retained raw access after reinsert: `EDP_RAW_LEASE_OPEN_FAILED:16`, with root `lsof` showing `fskitd` holding `/dev/rdisk6s1`. Current early-claim hardening requires a new physical replug retest.
+- [x] saved credential/policy state remained available during the failed raw-reacquisition case.
+- [x] configured auto-mount behavior (`false` on all three partitions) remained restored.
 
 If `diskN` happens not to change during the test, do not report “physical diskN change verified.”
 
