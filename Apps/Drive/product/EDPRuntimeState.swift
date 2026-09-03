@@ -6,6 +6,7 @@ let legacyDataRoot = "/var/db/com.edp.usbvault"
 let sessionRoot = dataRoot + "/sessions"
 let credentialIndexPath = dataRoot + "/credential-index.json"
 let policyPath = dataRoot + "/device-policies.json"
+let logicalEjectSuppressionPath = dataRoot + "/logical-eject-suppressions.json"
 let legacyCredentialPath = legacyDataRoot + "/credentials.json"
 let legacyMasterKeyPath = legacyDataRoot + "/master.key"
 

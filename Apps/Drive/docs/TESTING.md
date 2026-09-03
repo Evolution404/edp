@@ -84,16 +84,17 @@ Authoritative for hardware-free lifecycle semantics such as:
 - mount/eject single-flight;
 - shutdown/eject serialization;
 - raw EBUSY exact-generation recovery S31–S35;
+- safe-eject logical suppression S36–S38: App reconcile does not reacquire, service restart preserves the tombstone, and a new physical USB generation releases it;
 - fixed-seed lifecycle property model.
 
 Important distinction:
 
-S31–S35 prove the **contract** of raw EBUSY recovery. They do not prove a physical EBUSY event occurred on a real USB device.
+S31–S35 prove the **contract** of raw EBUSY recovery. They do not prove a physical EBUSY event occurred on a real USB device. S36–S38 are deterministic lifecycle evidence for safe-eject suppression; the corresponding physical release gate must still verify a real safe eject followed by App restart while the same USB remains inserted.
 
 Expected high-level markers include:
 
 ```text
-SCENARIO=S01_OK ... SCENARIO=S35_OK
+SCENARIO=S01_OK ... SCENARIO=S38_OK
 MODEL_SEQUENCES=10000
 MODEL_STEPS=320000
 RESULT=DRIVE_LIFECYCLE_MODEL_PROPERTIES_OK

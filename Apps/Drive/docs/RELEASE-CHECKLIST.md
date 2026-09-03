@@ -9,18 +9,19 @@ Updated: 2026-09-03
 Record before release testing:
 
 ```text
-Status: ACTIVE SIGNED RELEASE CANDIDATE — final reboot gate in progress
+Status: INVALIDATED — final physical safe-eject/App-restart gate exposed raw reacquisition
 Branch: codex/ui-macos26-liquid-glass
-Exact release HEAD: 51a6c9c1e75e3d2dd2695c5c082a7717a010f12d
+Invalidated release HEAD: 51a6c9c1e75e3d2dd2695c5c082a7717a010f12d
 Version: 0.6.0
-Clean.pkg path: Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
-Clean.pkg SHA-256: bf4435769052ff4a8798a34d50ce406415cc4f69eb0ed6f8965cd340ac9059b7
-Fixed-head GitHub Actions run: 33717175105 — PASS
+Invalidated Clean.pkg path: Apps/Drive/artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
+Invalidated Clean.pkg SHA-256: bf4435769052ff4a8798a34d50ce406415cc4f69eb0ed6f8965cd340ac9059b7
+Fixed-head GitHub Actions run for invalidated candidate: 33717175105 — PASS
+Replacement candidate: PENDING safe-eject tombstone fix commit / exact-head CI / signed rebuild
 Date: 2026-09-03
 Tester: automated local + GitHub Actions + macOS first-install + physical Lexar acceptance
 ```
 
-The earlier ad-hoc package (`f734f43`, SHA-256 `62f685f3…dedda`) is invalidated permanently. The active candidate is certificate-backed with the pinned `EDP Project Code Signing` root and installer-managed LaunchDaemon service mode.
+The earlier ad-hoc package (`f734f43`, SHA-256 `62f685f3…dedda`) is invalidated permanently. The certificate-backed `51a6c9c` package is also invalidated: after final reboot and successful safe eject, restarting the foreground App while the same Lexar remained physically inserted reacquired raw access (`privilegedAccessReady=true`). The replacement runtime persists a stable-device + USB-generation logical-eject tombstone and must complete a new signed physical retest before release-ready status.
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 
@@ -235,13 +236,14 @@ With the exact physical generation revalidated immediately before eject:
 
 - [x] XPC safe eject succeeds.
 - [x] all managed user filesystems are gone after eject.
-- [ ] final DiskImages2 publication/residue audit — repeat after the mandatory post-install reboot.
-- [ ] final hidden macFUSE bridge/transport audit — repeat after the mandatory post-install reboot.
+- [x] final DiskImages2 publication/residue audit after mandatory reboot found no EDP publication/mount/process residue.
+- [x] final hidden macFUSE bridge/transport audit after mandatory reboot found no `.edp-*` mount/volume or `edp-mfmount`/`diskimages2-attach` process residue.
 - [x] retained raw lease is released (`privilegedAccessReady=false`) while the logically ejected device remains physically inserted.
 - [x] snapshot reflects unavailable partitions with saved credential state.
 - [x] automount/raw reacquisition remains suppressed after logical safe eject.
-- [ ] final residue = 0 — pending final reboot/eject audit.
-- [ ] final U-state = 0 — pending final reboot/eject audit.
+- [x] final residue = 0 immediately after final safe eject.
+- [x] final U-state = 0 immediately after final safe eject (`privilegedAccessReady=false`, all partitions unavailable).
+- [!] release blocker found after that clean state: foreground App restart reacquired the still-inserted same USB generation. Replacement S36–S38 fix is implemented locally and requires new signed physical retest.
 
 After safe eject, merely restarting the App must not cause re-acquisition of the logically ejected still-inserted device.
 
@@ -264,18 +266,18 @@ This is mandatory for a release candidate even if earlier commits already passed
 
 With the candidate installed and credentials/policy saved:
 
-- [ ] reboot macOS.
-- [ ] no manual service FDA is added before or after reboot.
-- [ ] App starts/opens normally.
-- [ ] service health PASS.
-- [ ] macFUSE Local enablement is ready or converges through the bounded foreground enablement path.
-- [ ] standard EDP device is discovered.
-- [ ] retained App-FDA raw access works after reboot.
-- [ ] no repeat admin/Touch ID/FDA authorization is required.
-- [ ] credential persistence PASS.
-- [ ] policy persistence PASS.
-- [ ] configured partition mount behavior PASS.
-- [ ] final safe eject PASS with residue/U-state = 0.
+- [x] reboot macOS completed; boot time revalidated as 2026-09-03 14:51:53.
+- [x] no manual service FDA was added before or after reboot.
+- [x] App/service opened and XPC health remained normal after reboot.
+- [x] service health PASS.
+- [x] macFUSE Local path was operational, proven by post-reboot type1/type2/type4 mount/remount tests.
+- [x] standard Lexar EDP device was discovered after reboot.
+- [x] retained App-FDA raw access worked after reboot.
+- [x] no repeat admin/Touch ID/FDA authorization was required.
+- [x] credential persistence PASS.
+- [x] policy persistence PASS.
+- [x] configured partition behavior/capability PASS, including type1 RO and type2/type4 RW persistence.
+- [!] final safe eject itself reached residue/U-state = 0, but subsequent foreground App restart incorrectly reacquired the still-inserted device. Candidate invalidated; replacement focused retest pending.
 
 ## 15. Physical negative-media matrix
 

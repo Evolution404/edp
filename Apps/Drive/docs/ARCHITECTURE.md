@@ -337,10 +337,13 @@ Safe eject sequence is generation-aware:
 2. drain managed partition sessions;
 3. release lower resources only after upper teardown is proven;
 4. revalidate the original whole-USB generation;
-5. request exact physical DA eject;
-6. retain suppression until actual removal/reinsertion.
+5. arm and atomically persist a logical-eject tombstone for the stable device ID + current USB registry generation;
+6. request exact physical DA eject;
+7. retain suppression until actual removal/reinsertion.
 
-If the original device has already disappeared, eject can finish idempotently. If the BSD name was reused by a replacement device, the replacement must not be touched.
+The tombstone lives under `/var/db/com.edp.drive/logical-eject-suppressions.json`. Reconcile reloads/reapplies it after privileged-service restart, so neither a foreground App restart nor a service restart may reacquire raw access for the same still-inserted USB generation. Physical disappearance clears the tombstone; observing the same stable device ID with a different USB registry generation also clears it and admits the new insertion. A failed physical eject rolls the tombstone back before raw-access recovery. If persistence cannot be made coherent, the path fails closed.
+
+If the original device has already disappeared, eject can finish idempotently and retire its tombstone. If the BSD name was reused by a replacement device, the replacement must not be touched.
 
 ## 16. Credentials and policy
 

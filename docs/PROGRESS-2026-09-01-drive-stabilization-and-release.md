@@ -179,9 +179,13 @@ UI_HITCH_COUNT_GT33MS=1
 - [x] single-App FDA：仅 EDP Drive App 授权一次；Lexar `21c4:0cd1` / onlyID `3164177653` / capacity `124736503808` / metadata deviceID `disk&ven_lexar&prod_usb_flash_drive` 随后 `privilegedAccessReady=true`。App restart、service stop/start/restart、物理拔插后均不需要再次管理员/FDA授权。
 - [x] policy/credential persistence：type2/type4 密码仅在 UI 验证保存；credential checkpoint、policy round-trip/restore 在拔插前后 PASS；三分区 autoMount 均保持 false。
 - [x] 实盘三分区：type1 FAT16 RO remount PASS；type2/type4 RW marker persistence/remount/hash/delete PASS；测试后全部显式卸载，无测试 marker 残留。
-- [x] safe eject / physical reinsert：XPC safe eject PASS，逻辑推出后 raw reacquisition 被抑制且分区 unavailable；物理拔插后同一五因素 identity、FDA、凭据、策略均恢复。BSD 名恰好仍为 disk26，因此不宣称 physical diskN change PASS。
+- [x] safe eject / physical reinsert：XPC safe eject PASS，逻辑推出后 raw lease 释放且分区 unavailable；物理拔插后同一五因素 identity、FDA、凭据、策略均恢复。第一次 reinsert BSD 名仍为 disk26。
 - [x] service lifecycle：health、graceful stop、on-demand start、restart PASS；8-cycle warmup=74ms，稳态 1049–1072ms，first avg=1064.0ms，last avg=1060.3ms，slope=-0.2ms/cycle，每轮只有一个 daemon。
-- [ ] mandatory post-install reboot → retained access / credential / policy / functional-all → final safe eject → residue/U-state=0 — PENDING。
+- [x] mandatory post-install reboot 已执行：boot time=2026-09-03 14:51:53；物理盘从 reboot 前 `disk26` 变为 reboot 后 `disk6`，stable five-factor ID 不变；FDA retained、credential、policy、type1 RO、type2/type4 RW persistence 全部再次 PASS，无重复授权。
+- [!] final safe eject 当下达到 residue=0 / U-state=0，但随后在 USB 仍物理插入时重启 foreground App，旧 `51a6c9c` service 重新扫描并把同一 generation 恢复为 `privilegedAccessReady=true`。因此 `51a6c9c` / SHA-256 `bf443576...9059b7` 候选**作废**，D4 暂未关闭。
+- [x] 根因与修复：旧 `EDPEjectCoordinator.finishWaiters()` 在 eject success 后立即释放 in-flight suppression；下一次 reconcile 可重新申请 raw lease。现改为 stable device ID + USB registry generation 的持久 logical-eject tombstone `/var/db/com.edp.drive/logical-eject-suppressions.json`；App reconcile/service restart 同 generation 均保持抑制，仅物理 disappearance 或新 USB generation 释放；physical-eject failure 先原子回滚 tombstone 再执行 raw recovery。
+- [x] 新增 S36/S37/S38：App reconcile 不重获、service restart 持久抑制、物理 generation 变化释放抑制；S01-S38、10000 sequences/320000 steps、fast/system/virtual 全绿，新增 `RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK`。
+- [ ] 新 fix exact-head CI → self-signed rebuild/install → focused physical safe-eject/App-restart/service-restart/reinsert retest — PENDING。
 
 ## Phase E — 文档、测试矩阵与 Release Checklist
 

@@ -2464,6 +2464,7 @@ final class EDPServiceController: @unchecked Sendable {
         rawAccessLeaseOpener: EDPRawAccessLeaseOpening? = nil,
         credentialVerifier: EDPCredentialVerifying? = nil,
         metrics: EDPRuntimeMetrics = EDPRuntimeMetrics(),
+        ejectSuppressionPath: String? = nil,
         performLegacyRuntimeMigration: Bool = true
     ) throws {
         self.mediaProvider = mediaProvider
@@ -2507,11 +2508,14 @@ final class EDPServiceController: @unchecked Sendable {
             openerRunsOffOwnerQueue: rawAccessOpenerRunsOffControllerQueue,
             metrics: metrics
         )
-        let effectiveEjectCoordinator = EDPEjectCoordinator(
+        let effectiveEjectSuppressionPath = ejectSuppressionPath
+            ?? (performLegacyRuntimeMigration ? logicalEjectSuppressionPath : nil)
+        let effectiveEjectCoordinator = try EDPEjectCoordinator(
             ownerQueue: queue,
             diskArbitration: effectiveDiskArbitration,
             mediaProvider: mediaProvider,
-            metrics: metrics
+            metrics: metrics,
+            logicalSuppressionPath: effectiveEjectSuppressionPath
         )
         self.eject = effectiveEjectCoordinator
         self.recovery = EDPRecoveryCoordinator(
@@ -2580,7 +2584,7 @@ final class EDPServiceController: @unchecked Sendable {
         policyDocument: EDPPolicyDocument
     ) throws {
         var records = try store.load().records
-        for disk in disks where !eject.isEjecting(deviceID: disk.deviceID) {
+        for disk in disks where !eject.isSuppressed(deviceID: disk.deviceID) {
             guard let devicePolicy = policyDocument.devices.first(
                 where: { $0.deviceID == disk.deviceID }
             ) else { continue }
@@ -2640,7 +2644,7 @@ final class EDPServiceController: @unchecked Sendable {
     }
 
     private func rawAccessGenerationMatchesLocked(_ disk: PhysicalDisk) -> Bool {
-        guard !eject.isEjecting(deviceID: disk.deviceID),
+        guard !eject.isSuppressed(deviceID: disk.deviceID),
               let current = connectedDisks.first(where: { $0.deviceID == disk.deviceID }),
               current.registryEntryID == disk.registryEntryID,
               current.rawPath == disk.rawPath,
@@ -2677,7 +2681,7 @@ final class EDPServiceController: @unchecked Sendable {
     ) {
         rawAccess.requireLeaseAsync(
             for: disk,
-            isEjecting: eject.isEjecting(deviceID: disk.deviceID),
+            isEjecting: eject.isSuppressed(deviceID: disk.deviceID),
             generationMatches: { [weak self] candidate in
                 self?.rawAccessGenerationMatchesLocked(candidate) == true
             },
@@ -2766,9 +2770,9 @@ final class EDPServiceController: @unchecked Sendable {
                 let disks = try discovery.scan()
                 connectedDisks = disks
                 let connectedDeviceIDs = Set(disks.map(\.deviceID))
-                eject.releaseDisconnectedGenerations()
+                try eject.reconcileSuppressedGenerations(disks: disks)
                 rawAccess.prune(to: disks)
-                for disk in disks where !eject.isEjecting(deviceID: disk.deviceID)
+                for disk in disks where !eject.isSuppressed(deviceID: disk.deviceID)
                     && (rawAccess.readiness(deviceID: disk.deviceID) == nil
                         || rawAccessLeaseLocked(for: disk) == nil) {
                     rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, failure in
@@ -2808,7 +2812,7 @@ final class EDPServiceController: @unchecked Sendable {
                 try probeDefaultPasswordsLocked(disks: disks, policyDocument: policyDocument)
                 let records = try store.load().records
                 for disk in disks {
-                    if eject.isEjecting(deviceID: disk.deviceID) {
+                    if eject.isSuppressed(deviceID: disk.deviceID) {
                         if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
                             diskArbitration.unmountWholeAsync(
                                 disk.bsdName,
@@ -2921,7 +2925,7 @@ final class EDPServiceController: @unchecked Sendable {
                 let records = try store.load().records
                 let policyDocument = try policies.load()
                 let connectedByID = Dictionary(uniqueKeysWithValues: disks
-                    .filter { !eject.isEjecting(deviceID: $0.deviceID) }
+                    .filter { !eject.isSuppressed(deviceID: $0.deviceID) }
                     .map { ($0.deviceID, $0) })
                 let deviceIDs = Set(policyDocument.devices.map(\.deviceID))
                     .union(records.map(\.deviceID))
@@ -3392,7 +3396,7 @@ final class EDPServiceController: @unchecked Sendable {
                 return
             }
             let disks = self.connectedDisks.filter {
-                !self.eject.isEjecting(deviceID: $0.deviceID)
+                !self.eject.isSuppressed(deviceID: $0.deviceID)
             }
             self.refreshRawAccessNextLocked(
                 disks,
@@ -3444,7 +3448,7 @@ final class EDPServiceController: @unchecked Sendable {
             guard policyDocument.globalAutoMountEnabled else { return false }
 
             var clearedAny = false
-            for disk in connectedDisks where !eject.isEjecting(deviceID: disk.deviceID) {
+            for disk in connectedDisks where !eject.isSuppressed(deviceID: disk.deviceID) {
                 guard let devicePolicy = policyDocument.devices.first(
                     where: { $0.deviceID == disk.deviceID }
                 ) else { continue }
@@ -3509,6 +3513,20 @@ final class EDPServiceController: @unchecked Sendable {
                     }
 
                     self.rawAccess.prepareForPhysicalEject(deviceID: deviceID)
+                    do {
+                        try self.eject.armLogicalSuppression(disk: disk)
+                    } catch {
+                        self.manager.recordPhysicalEjectResult(
+                            deviceID: deviceID,
+                            failureCode: .teardownFailed
+                        )
+                        self.recoverFailedEjectLocked(
+                            disk: disk,
+                            errorMessage: "无法持久化安全推出抑制状态：\(error)",
+                            completion: finishRequest
+                        )
+                        return
+                    }
 
                     self.eject.performPhysicalEjectAsync(disk: disk) { [weak self] errorMessage in
                         guard let self else { return }
@@ -3518,6 +3536,19 @@ final class EDPServiceController: @unchecked Sendable {
                                     deviceID: deviceID,
                                     failureCode: .teardownFailed
                                 )
+                                do {
+                                    try self.eject.cancelLogicalSuppression(deviceID: deviceID)
+                                } catch {
+                                    self.addActivity(
+                                        "安全推出失败且抑制状态回滚失败：\(error)",
+                                        level: "error",
+                                        deviceID: deviceID
+                                    )
+                                    finishRequest(
+                                        "\(errorMessage)；安全推出抑制状态回滚失败：\(error)"
+                                    )
+                                    return
+                                }
                                 self.recoverFailedEjectLocked(
                                     disk: disk,
                                     errorMessage: errorMessage,
@@ -3531,6 +3562,22 @@ final class EDPServiceController: @unchecked Sendable {
                             )
                             self.connectedDisks.removeAll { $0.deviceID == deviceID }
                             self.rawAccess.removeDevice(deviceID: deviceID)
+                            if !self.mediaProvider.registryEntryExists(disk.usbRegistryEntryID) {
+                                do {
+                                    try self.eject.cancelLogicalSuppression(deviceID: deviceID)
+                                } catch {
+                                    // The USB generation is already physically
+                                    // absent, so the eject itself is complete.
+                                    // A stale persisted tombstone is harmless and
+                                    // will be retired when a different USB
+                                    // generation is observed on reinsertion.
+                                    self.addActivity(
+                                        "设备已拔出，但安全推出抑制状态清理失败：\(error)",
+                                        level: "error",
+                                        deviceID: deviceID
+                                    )
+                                }
+                            }
                             self.addActivity("设备已安全推出", deviceID: deviceID)
                             finishRequest(nil)
                         }

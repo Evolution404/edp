@@ -87,6 +87,7 @@ private final class TemporaryKeychainContext {
     let keychainURL: URL
     let policyURL: URL
     let credentialIndexURL: URL
+    let ejectSuppressionURL: URL
     private let keychain: SecKeychain
 
     init() throws {
@@ -96,6 +97,7 @@ private final class TemporaryKeychainContext {
         let localKeychainURL = localRoot.appendingPathComponent("test.keychain-db")
         let localPolicyURL = localRoot.appendingPathComponent("policy.json")
         let localCredentialIndexURL = localRoot.appendingPathComponent("credential-index.json")
+        let localEjectSuppressionURL = localRoot.appendingPathComponent("logical-eject-suppressions.json")
 
         let password = Data("edp-test-e-keychain-password".utf8)
         var created: SecKeychain?
@@ -128,6 +130,7 @@ private final class TemporaryKeychainContext {
         keychainURL = localKeychainURL
         policyURL = localPolicyURL
         credentialIndexURL = localCredentialIndexURL
+        ejectSuppressionURL = localEjectSuppressionURL
         keychain = created
     }
 
@@ -713,11 +716,12 @@ private struct ControllerEnvironment {
         insertDevice: Bool,
         manager: FakeMountManager = FakeMountManager(),
         security: TemporaryKeychainContext? = nil,
+        state: EDPVirtualUSBState? = nil,
         diskArbitration: FakeDiskArbitration = FakeDiskArbitration(),
         rawAccessLeaseOpener: EDPRawAccessLeaseOpening? = nil
     ) throws -> ControllerEnvironment {
         let security = try security ?? TemporaryKeychainContext()
-        let state = EDPVirtualUSBState()
+        let state = state ?? EDPVirtualUSBState()
         let fixture = try EDPVirtualDiskFactory.capturedDisk4(fixtureDirectory: fixtureDirectory)
         if insertDevice {
             state.insert(
@@ -774,6 +778,7 @@ private struct ControllerEnvironment {
                     throw LifecycleValidationError("password did not unlock partition \(partitionType)")
                 }
             },
+            ejectSuppressionPath: security.ejectSuppressionURL.path,
             performLegacyRuntimeMigration: false
         )
         return ControllerEnvironment(
@@ -2561,6 +2566,84 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 }
             }
             print("SCENARIO=S35_OK non_busy_raw_failures_never_force_unmount")
+        }
+
+        do {
+            let security = try TemporaryKeychainContext()
+            let state = EDPVirtualUSBState()
+            let firstDiskArbitration = FakeDiskArbitration()
+            let firstOpenScript = RawAccessOpenScript(["OK"])
+            let first = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                security: security,
+                state: state,
+                diskArbitration: firstDiskArbitration,
+                rawAccessLeaseOpener: { try firstOpenScript.open($0) }
+            )
+            first.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S36 initial raw lease did not become ready") {
+                (try? first.connectedDevice().privilegedAccessReady) == true
+            }
+            let device = try first.connectedDevice()
+            try first.controller.eject(deviceID: device.deviceID)
+            first.controller.reconcileSynchronouslyForTesting()
+            Thread.sleep(forTimeInterval: 0.05)
+            let afterEject = try first.snapshot()
+            guard afterEject.devices.first(where: { $0.deviceID == device.deviceID })?.connected == false,
+                  afterEject.devices.first(where: { $0.deviceID == device.deviceID })?.privilegedAccessReady == false,
+                  firstOpenScript.count() == 1,
+                  firstDiskArbitration.suppressed.contains(0x9001) else {
+                throw LifecycleValidationError(
+                    "S36 safe eject did not suppress same-generation rediscovery after App reconciliation"
+                )
+            }
+            print("SCENARIO=S36_OK safe_eject_survives_app_reconcile_until_physical_change")
+
+            let secondDiskArbitration = FakeDiskArbitration()
+            let secondOpenScript = RawAccessOpenScript(["OK"])
+            let second = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: false,
+                security: security,
+                state: state,
+                diskArbitration: secondDiskArbitration,
+                rawAccessLeaseOpener: { try secondOpenScript.open($0) }
+            )
+            second.controller.reconcileSynchronouslyForTesting()
+            Thread.sleep(forTimeInterval: 0.05)
+            let afterServiceRestart = try second.snapshot()
+            guard afterServiceRestart.devices.first(where: { $0.deviceID == device.deviceID })?.connected == false,
+                  afterServiceRestart.devices.first(where: { $0.deviceID == device.deviceID })?.privilegedAccessReady == false,
+                  secondOpenScript.count() == 0,
+                  secondDiskArbitration.suppressed.contains(0x9001) else {
+                throw LifecycleValidationError(
+                    "S37 persisted logical eject suppression was lost across service restart"
+                )
+            }
+            print("SCENARIO=S37_OK safe_eject_suppression_persists_across_service_restart")
+
+            state.replace(
+                "disk90",
+                with: second.fixture,
+                registryEntryID: 0x9200,
+                usbRegistryEntryID: 0x9201
+            )
+            second.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S38 new physical generation did not clear logical eject suppression") {
+                secondOpenScript.count() == 1
+                    && (try? second.connectedDevice().privilegedAccessReady) == true
+            }
+            let reinserted = try second.connectedDevice()
+            guard reinserted.deviceID == device.deviceID,
+                  reinserted.bsdName == "disk90",
+                  reinserted.privilegedAccessReady,
+                  !secondDiskArbitration.suppressed.contains(0x9201) else {
+                throw LifecycleValidationError(
+                    "S38 physical generation change did not restore normal managed discovery"
+                )
+            }
+            print("SCENARIO=S38_OK physical_generation_change_releases_safe_eject_suppression")
         }
 
         do {

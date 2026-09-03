@@ -4,7 +4,7 @@ Updated: 2026-09-03
 Current validated branch: `codex/ui-macos26-liquid-glass`
 Current validated release baseline: `51a6c9c1e75e3d2dd2695c5c082a7717a010f12d`
 Current fixed-head CI: GitHub Actions run `33717175105` — **PASS**
-Current physical release candidate: certificate-backed self-signed Clean.pkg SHA-256 `bf4435769052ff4a8798a34d50ce406415cc4f69eb0ed6f8965cd340ac9059b7`. Factory-clean, signed install, XPC, single-App FDA, Lexar three-partition capability/persistence, safe-eject/reinsert and service lifecycle gates are PASS; mandatory post-install reboot + final residue/U-state audit remains pending.
+Current physical release candidate: **PENDING REBUILD**. The certificate-backed `51a6c9c` package (SHA-256 `bf4435769052ff4a8798a34d50ce406415cc4f69eb0ed6f8965cd340ac9059b7`) passed factory-clean/install/FDA/replug/service/reboot/partition persistence, but final physical acceptance found a release-blocking safe-eject bug: restarting the foreground App while the logically ejected Lexar remained physically inserted reacquired raw access. The runtime fix now persists a logical-eject tombstone across App/service restarts and releases it only on physical-generation disappearance/change; S36–S38 and local fast/system/virtual are PASS. A new exact-head signed package + CI + focused physical retest is required before release-ready status.
 
 > This file is the current product-status source of truth. Historical plans, handoffs, diagnostics and experiment trackers are evidence only. They must not override this file, `ARCHITECTURE.md`, `TESTING.md`, or `RELEASE-CHECKLIST.md`.
 

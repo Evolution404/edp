@@ -693,6 +693,22 @@ for scenario in S31 S32 S33 S34 S35; do
 done
 echo 'RESULT=DRIVE_SYSTEM_RAW_EBUSY_RECOVERY_OK'
 
+# A successful safe eject must remain logically suppressed while the same USB
+# generation is still physically inserted. The tombstone is persisted so a
+# foreground App reconnect or privileged-service restart cannot silently
+# reacquire raw access; only physical disappearance/new USB generation releases
+# the suppression.
+/usr/bin/grep -Fq 'logicalEjectSuppressionPath' "${RUNTIME_STATE_SOURCE}"
+/usr/bin/grep -Fq 'logicallyEjectedUSBRegistryIDs' "${EJECT_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'func armLogicalSuppression(disk:' "${EJECT_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'func reconcileSuppressedGenerations(disks:' "${EJECT_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'try eject.reconcileSuppressedGenerations(disks: disks)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'try self.eject.armLogicalSuppression(disk: disk)' "${RUNTIME_SOURCE}"
+for scenario in S36 S37 S38; do
+  /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+done
+echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
+
 # Lifecycle deadlines are monotonic and scheduler-driven. Bridge activation and
 # mount drain timeouts must not regress to wall-clock Date()/asyncAfter logic.
 /usr/bin/grep -Fq 'protocol EDPLifecycleScheduling' "${SCHEDULER_SOURCE}"
