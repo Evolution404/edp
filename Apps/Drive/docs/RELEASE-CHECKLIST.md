@@ -1,6 +1,6 @@
 # EDP Drive — Release Checklist
 
-Updated: 2026-09-03
+Updated: 2026-09-04
 
 > Use this checklist for an actual release candidate. A prior green commit does not substitute for exact-head verification of the package being released.
 
@@ -9,19 +9,20 @@ Updated: 2026-09-03
 Record before release testing:
 
 ```text
-Status: INVALIDATED — early physical claim passed, but true privileged-process restart exposed a Disk Arbitration claim gap
+Status: PHYSICAL GATES PASS — exact-head reboot/post-reboot audit pending
 Branch: codex/ui-macos26-liquid-glass
-Latest invalidated release HEAD: 54c048f39ddab9bd22e1cc01bd7d7276a75d3a0f
+Release code/package HEAD: 9b5a8595203cf88ff726f9aa08bc62b8c25a8d29
 Version: 0.6.0
-Invalidated Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
-Invalidated Clean.pkg SHA-256: cbb9b83bf25b60971e79136123b3700548f83e79b7610e399dae708d6ad13a8b
-Fixed-head GitHub Actions run for latest invalidated candidate: 33745043903 — PASS
-Replacement candidate: PENDING claim-continuous runtime-control commit / exact-head CI / signed rebuild
-Date: 2026-09-03
+Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
+Clean.pkg SHA-256: 43659c5fd37cc3cdb5546ab14b71782ea339bd6899209a59570bd119e0e9e264
+Exact-head GitHub Actions run: 33748594918 — PASS 5/5
+Physical acceptance: PASS for early claim, Pause/Resume/Restart continuity, safe eject, exact removal/reinsert, and Complete-Quit end state
+Remaining mandatory gate: exact-head reboot + post-reboot health/identity/raw/safe-eject audit
+Date: 2026-09-04
 Tester: automated local + GitHub Actions + macOS first-install + physical Lexar acceptance
 ```
 
-Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY. `54c048f` then physically proved early standard-EDP `DADiskClaim` prevents that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the same EBUSY window. The replacement runtime keeps routine Stop/Start/Restart inside the same privileged process/DA owner and reserves true process shutdown for Complete Quit after safe-ejecting connected EDP devices.
+Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` prevents that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closes that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner and reserving true process shutdown for Complete Quit after safe-ejecting connected EDP devices. The installed `9b5a859` package has now passed those physical gates; only its exact-head reboot audit remains.
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 
@@ -226,10 +227,10 @@ Historical process-level lifecycle evidence remains useful for launchd/on-demand
 - [x] historical 8-cycle process-level gate PASS: warmup 74ms; steady starts 1049–1072ms; first steady avg 1064.0ms, last avg 1060.3ms, slope -0.2ms/cycle; one daemon each cycle.
 - [x] S42 deterministic contract PASS: runtime pause releases raw state and resume reacquires the same generation without service shutdown.
 - [x] S43 deterministic contract PASS: runtime restart reuses the same service / Disk Arbitration owner.
-- [ ] physical runtime Pause: raw lease/mount/transport released, service PID remains, `DA_CLAIMED=true`, no `fskitd` child holder — PENDING replacement package.
-- [ ] physical runtime Start/Resume: same service/claim owner reacquires raw access, no EBUSY and no new FDA/admin prompt — PENDING replacement package.
-- [ ] physical runtime Restart: service PID/DA claim remain continuous and raw access returns — PENDING replacement package.
-- [ ] Complete Quit: connected EDP devices are safe-ejected first, then the privileged process actually exits — PENDING replacement package.
+- [x] physical runtime Pause PASS on installed `9b5a859`: raw lease released, `runtimePaused=true`, service PID stayed `34883`, `DA_CLAIMED=true`, and no EBUSY recovery occurred.
+- [x] physical runtime Start/Resume PASS: same service PID/claim owner retained control and `privilegedAccessReady=true` reconverged automatically within about 2 seconds, with `rawBusyRecoveryCount=0` and no new FDA prompt.
+- [x] physical runtime Restart PASS: service PID remained `34883`, `DA_CLAIMED=true` throughout, raw access reconverged automatically, and no `fskitd` child holder appeared.
+- [x] Complete Quit end-state PASS: after safe eject, graceful service shutdown plus foreground App termination left both processes absent; reopening EDP Drive restored the service while the still-inserted logically-ejected Lexar remained suppressed (`privilegedAccessReady=false`).
 
 Routine lifecycle control must not use `kill -9` and must not terminate the privileged process merely to implement Stop/Start/Restart. True process shutdown is reserved for Complete Quit.
 
@@ -248,7 +249,7 @@ With the exact physical generation revalidated immediately before eject:
 - [x] final U-state = 0 immediately after final safe eject (`privilegedAccessReady=false`, all partitions unavailable).
 - [x] `f7d7dde` focused physical retest closed the original App/service restart blocker: safe eject kept `privilegedAccessReady=false` across foreground App restart and a complete privileged-service stop/start while the same USB generation remained physically inserted; type2/type4 saved credential state remained intact.
 - [x] installed `54c048f` then proved the S41 prevention path on a fresh physical replug: `DA_CLAIMED=true`, root `lsof` showed `edp-drive-service` as the only raw holder on `/dev/rdisk6`, no `fskitd` child-partition holder existed, `privilegedAccessReady=true`, and both `rawBusyRecoveryCount` / `forcedWholeUnmountCount` remained zero.
-- [!] foreground App restart preserved that claim, but a **true privileged-process stop/start** released the DA session and immediately reproduced the `fskitd` holder / EBUSY state. This is the current release blocker addressed by S42/S43 claim-continuous runtime controls.
+- [x] installed `9b5a859` closed the former claim-gap blocker: foreground App restart kept raw readiness/claim; routine runtime Pause/Resume/Restart kept one privileged service PID and continuous DA ownership; safe eject still succeeded under the active early claim; App/runtime restart while logically ejected did not reacquire.
 
 After safe eject, merely restarting the App or service must not cause re-acquisition of the logically ejected still-inserted device. Transient discovery/metadata omission must not clear suppression. If a replacement generation is observed while the persisted original USB registry generation still exists, both remain fail-closed; only confirmed disappearance of the original registry generation may admit the replacement. On the subsequent fresh insertion, raw access must return automatically without FDA/admin prompting and without a persistent `fskitd` holder on the physical child partition.
 
@@ -258,8 +259,8 @@ After actual removal and reinsertion:
 
 - [x] Drive rediscovers the device after physical removal/reinsert.
 - [x] stable five-factor device identity remains the same.
-- [x] latest focused retest re-enumerated the Lexar as `disk6`; BSD-name value is evidence only and is not durable identity.
-- [x] `54c048f` fresh replug restored retained raw access directly under early claim: no EBUSY recovery was needed and no `fskitd` child holder appeared.
+- [x] latest `9b5a859` focused retest re-enumerated the Lexar as `disk27`; BSD-name value is evidence only and is not durable identity.
+- [x] `9b5a859` fresh replug restored retained raw access directly under early claim: `DA_CLAIMED=true`, root `lsof` showed only `edp-drive-service` on `/dev/rdisk27`, no `/dev/rdisk27s1` `fskitd` holder appeared, and no EBUSY recovery was needed.
 - [x] saved credential/policy state remained available across removal/reinsert.
 - [x] configured auto-mount behavior (`false` on all three partitions) remained restored.
 
@@ -282,7 +283,8 @@ With the candidate installed and credentials/policy saved:
 - [x] credential persistence PASS.
 - [x] policy persistence PASS.
 - [x] configured partition behavior/capability PASS, including type1 RO and type2/type4 RW persistence.
-- [!] final safe eject itself reached residue/U-state = 0, but subsequent foreground App restart incorrectly reacquired the still-inserted device. Candidate invalidated; replacement focused retest pending.
+- [x] historical reboot gate for the earlier baseline passed, but it does not substitute for the mandatory `9b5a859` exact-head reboot.
+- [ ] reboot the currently installed `9b5a859` package and repeat service health, five-factor identity, retained raw access, credential/policy persistence and final safe-eject audit.
 
 ## 15. Physical negative-media matrix
 
@@ -352,13 +354,13 @@ NTFS RW is not a prerequisite for this release. The accepted NTFS ADR uses nativ
 
 ## 19. Current known blockers
 
-As of 2026-09-03:
+As of 2026-09-04:
 
 ```text
 ordinaryUSB physical negative      BLOCKED_BY_FIXTURE
 legacyNoPassword physical negative BLOCKED_BY_FIXTURE
 currentNoPassword physical negative BLOCKED_BY_FIXTURE
 unrecognizedEDP physical negative  BLOCKED_BY_FIXTURE
-signed candidate 51a6c9c install/FDA/physical/service gates PASS; mandatory post-install reboot/final eject audit PENDING
+9b5a859 physical release gates      PASS; exact-head reboot/post-reboot audit PENDING
 NTFS RW ADR                         ACCEPTED A+C (native NTFS RO + writable ExFAT)
 ```

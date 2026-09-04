@@ -883,10 +883,11 @@ HISTORICAL_DOC="${ROOT}/Apps/Drive/docs/HISTORICAL.md"
 for doc in "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}" "${NTFS_ADR_DOC}" "${HISTORICAL_DOC}"; do
   [[ -s "${doc}" ]]
 done
-/usr/bin/grep -Fq 'Current fixed-head CI:' "${STATUS_DOC}"
-/usr/bin/grep -Fq 'exact persisted `usbRegistryEntryID`' "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${RELEASE_DOC}"
+/usr/bin/grep -Fq 'Current exact-head CI:' "${STATUS_DOC}"
+/usr/bin/grep -Fq 'persisted original `usbRegistryEntryID`' "${ARCHITECTURE_DOC}"
+/usr/bin/grep -Fq 'logically-ejected' "${STATUS_DOC}" "${RELEASE_DOC}"
 /usr/bin/grep -Fq 'S36–S40' "${STATUS_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}"
-/usr/bin/grep -Fq '— **PASS**' "${STATUS_DOC}"
+/usr/bin/grep -Fq '— **PASS 5/5**' "${STATUS_DOC}"
 /usr/bin/grep -Fq 'autoMount = false' "${STATUS_DOC}"
 /usr/bin/grep -Fq 'THRESHOLD_NS = 33_000_000' "${STATUS_DOC}" "${TESTING_DOC}"
 /usr/bin/grep -Fq 'make drive-test-fast' "${TESTING_DOC}"
