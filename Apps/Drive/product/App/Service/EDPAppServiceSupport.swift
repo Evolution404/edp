@@ -231,16 +231,6 @@ func macFUSEModulesEnabledInSettings() -> Bool {
     return Set(edpMacFUSEModuleIDs).isSubset(of: Set(modules))
 }
 
-func macFUSEPluginsEnabled(_ listing: String) -> Bool {
-    edpMacFUSEModuleIDs.allSatisfy { moduleID in
-        listing.split(separator: "\n").contains { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            return trimmed.hasPrefix("+ \(moduleID)")
-                || (trimmed.hasPrefix("+") && line.contains(moduleID))
-        }
-    }
-}
-
 func noActiveFSKitMountsForAgentReset() -> Bool {
     var mounts: UnsafeMutablePointer<statfs>?
     let count = getmntinfo(&mounts, MNT_NOWAIT)
@@ -255,29 +245,26 @@ func noActiveFSKitMountsForAgentReset() -> Bool {
     return true
 }
 
-func macFUSELocalEnablementReady() async -> Bool {
+func macFUSELocalEnablementReady() -> Bool {
     let genericModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
     let localModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
-    guard FileManager.default.fileExists(atPath: edpMacFUSEHostPath),
-          FileManager.default.fileExists(atPath: genericModule),
-          FileManager.default.fileExists(atPath: localModule),
-          macFUSEModulesEnabledInSettings() else {
-        return false
-    }
-    guard let listing = try? await runUserTool("/usr/bin/pluginkit", ["-m", "-A", "-D"]) else {
-        return false
-    }
-    return macFUSEPluginsEnabled(listing)
+    let framework = "/Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework"
+    return FileManager.default.fileExists(atPath: edpMacFUSEHostPath)
+        && FileManager.default.fileExists(atPath: genericModule)
+        && FileManager.default.fileExists(atPath: localModule)
+        && FileManager.default.fileExists(atPath: framework)
+        && macFUSEModulesEnabledInSettings()
 }
 
 /// macFUSE's signed installer deploys the FSKit host and modules system-wide,
 /// while FSKit keeps module enablement in the console user's settings. Perform
-/// this user-context step from the signed App so a clean install does not
-/// require a terminal workaround before the first Direct MFMount. The caller
-/// performs a bounded stability retry because installer/FSKit registration can
-/// still be converging during the first foreground launch.
+/// this user-context registration from the signed App so a clean install does
+/// not require a terminal workaround before the first Direct MFMount. Explicit
+/// registration command completion plus the persisted FSKit settings are the
+/// enablement authorities; PluginKit's global listing is not a stable FSKit
+/// readiness signal on macOS 26.
 func ensureMacFUSELocalEnablement() async throws -> Bool {
     let genericModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
@@ -290,22 +277,13 @@ func ensureMacFUSELocalEnablement() async throws -> Bool {
     }
 
     let pluginKit = "/usr/bin/pluginkit"
-    let before = (try? await runUserTool(pluginKit, ["-m", "-A", "-D"])) ?? ""
-    let pluginsWereEnabled = macFUSEPluginsEnabled(before)
-    let settingsWereEnabled = macFUSEModulesEnabledInSettings()
-    if pluginsWereEnabled && settingsWereEnabled {
-        return false
+    let launchServices = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    _ = try await runUserTool(launchServices, ["-f", "-R", "-trusted", edpMacFUSEHostPath])
+    for modulePath in [genericModule, localModule] {
+        _ = try await runUserTool(pluginKit, ["-a", modulePath])
     }
-
-    if !pluginsWereEnabled {
-        let launchServices = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-        _ = try await runUserTool(launchServices, ["-f", "-R", "-trusted", edpMacFUSEHostPath])
-        for modulePath in [genericModule, localModule] {
-            _ = try await runUserTool(pluginKit, ["-a", modulePath])
-        }
-        for moduleID in edpMacFUSEModuleIDs {
-            _ = try await runUserTool(pluginKit, ["-e", "use", "-i", moduleID])
-        }
+    for moduleID in edpMacFUSEModuleIDs {
+        _ = try await runUserTool(pluginKit, ["-e", "use", "-i", moduleID])
     }
 
     var enabledModules = [String]()
@@ -345,16 +323,7 @@ func ensureMacFUSELocalEnablement() async throws -> Bool {
         )
     }
 
-    let after = try await runUserTool(pluginKit, ["-m", "-A", "-D"])
-    guard macFUSEPluginsEnabled(after) else {
-        throw NSError(
-            domain: "com.edp.drive.fskit",
-            code: 2,
-            userInfo: [NSLocalizedDescriptionKey: "macFUSE FSKit 模块未被 PluginKit 启用"]
-        )
-    }
-
-    if settingsChanged || !pluginsWereEnabled {
+    if settingsChanged {
         // Never recycle FSKit user agents while any FSKit volume is active.
         // Registration/settings have already been persisted above, so a busy
         // system can converge naturally without disrupting EDP or unrelated

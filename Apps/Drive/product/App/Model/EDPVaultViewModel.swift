@@ -150,7 +150,7 @@ final class EDPVaultViewModel: ObservableObject {
             let enablement = await Task.detached(priority: .utility) { () async -> (restartedAgents: Bool, error: String?) in
                 do {
                     let restartedAgents = try await ensureMacFUSELocalEnablement()
-                    guard await macFUSELocalEnablementReady() else {
+                    guard macFUSELocalEnablementReady() else {
                         return (restartedAgents, "macFUSE FSKit 启用状态尚未就绪")
                     }
                     return (restartedAgents, nil)
@@ -758,18 +758,7 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func refreshTransportRuntimeState() {
-        let root = "/Library/Filesystems/macfuse.fs/Contents"
-        let hostApp = root + "/Resources/macfuse.app"
-        let genericModule = hostApp
-            + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
-        let localModule = hostApp
-            + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex"
-        let framework = root + "/Frameworks/MFMount.framework"
-        transportRuntimeReady = FileManager.default.fileExists(atPath: hostApp)
-            && FileManager.default.fileExists(atPath: genericModule)
-            && FileManager.default.fileExists(atPath: localModule)
-            && FileManager.default.fileExists(atPath: framework)
-            && macFUSEModulesEnabledInSettings()
+        transportRuntimeReady = macFUSELocalEnablementReady()
     }
 
     private func requireTransportRuntime() -> Bool {
