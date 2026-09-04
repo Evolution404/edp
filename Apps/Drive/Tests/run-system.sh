@@ -507,24 +507,39 @@ echo 'RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK'
 echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
 
 # Repeated FSKit-over-DiskImages2 mounts must not reuse the previous generation
-# as soon as Disk Arbitration reports eject success. Exact publication absence,
-# transport exit, a monotonic quiescence barrier, and a unique per-attempt bridge
-# path are all required before the same logical partition can mount again.
+# as soon as Disk Arbitration reports eject success. User-visible filesystem
+# teardown uses Disk Arbitration completion rather than a blind fixed sleep;
+# exact lower teardown still arms a monotonic 3-second remount barrier. Manual
+# unmount may return once lower resources are gone, but an immediate remount must
+# remain gated until that barrier expires. Internal eject/shutdown waiters keep
+# the full quiescence contract.
 /usr/bin/grep -Fq 'struct EDPRemountQuiescenceGate' "${SCHEDULER_SOURCE}"
 /usr/bin/grep -Fq 'guard active[token.sessionKey] == token else { return false }' "${SCHEDULER_SOURCE}"
 /usr/bin/grep -Fq 'remountQuiescenceSeconds: TimeInterval = 3.0' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'event: "remountQuiescenceWait"' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'event: "nativeFilesystemQuiescenceStarted"' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'event: "nativeFilesystemQuiescenceComplete"' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'continueUnmountAfterNativeFilesystemQuiescence' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "nativeFilesystemDAUnmountStarted"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'diskArbitration.unmountAsync(session.exposedBSD)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "nativeFilesystemDAUnmountComplete"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'continueUnmountAfterNativeFilesystemDeactivation' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'event: "userVisibleUnmountComplete"' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'waitForRemountQuiescence: false' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'private func waitForDeviceRemountQuiescence(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'private func waitForAllRemountQuiescence(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'remount quiescence did not drain before eject deadline' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'remount quiescence did not drain before shutdown deadline' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'Keep the DiskImages2 IOMedia' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'event: "remountQuiescenceStarted"' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'event: "remountQuiescenceComplete"' "${RUNTIME_SOURCE}"
+UNMOUNT_GATE_SECTION="$(/usr/bin/awk '/private func beginUnmountQuiescence\(/,/private func completeUnmountWaiters\(/' "${RUNTIME_SOURCE}")"
+EARLY_COMPLETE_LINE="$(/usr/bin/grep -nF 'completeUnmountWaiters(' <<<"${UNMOUNT_GATE_SECTION}" | /usr/bin/head -1 | /usr/bin/cut -d: -f1)"
+GATE_SCHEDULE_LINE="$(/usr/bin/grep -nF 'scheduler.schedule(' <<<"${UNMOUNT_GATE_SECTION}" | /usr/bin/head -1 | /usr/bin/cut -d: -f1)"
+[[ "${EARLY_COMPLETE_LINE}" =~ ^[0-9]+$ && "${GATE_SCHEDULE_LINE}" =~ ^[0-9]+$ && "${EARLY_COMPLETE_LINE}" -lt "${GATE_SCHEDULE_LINE}" ]]
 /usr/bin/grep -Fq 'operation.journalContext.id.uuidString.lowercased().prefix(8)' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'RESULT=REMOUNT_QUIESCENCE_GENERATION_OK' \
   "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift"
 echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
+echo 'RESULT=DRIVE_SYSTEM_FAST_MANUAL_UNMOUNT_GATED_REMOUNT_OK'
 
 # Generic runtime utilities live outside the orchestration file so controller
 # responsibilities do not grow back through local process/error/file helpers.

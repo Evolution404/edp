@@ -96,7 +96,11 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
     private var cancelledMountOperations = Set<String>()
     private var mountWaiters = [String: [EDPDaemonMountCompletion]]()
     private var lastMountFailureCodes = [String: EDPLifecycleFailureCode]()
-    private var unmountWaiters = [String: [EDPDaemonMountCompletion]]()
+    private struct UnmountWaiter {
+        let waitForRemountQuiescence: Bool
+        let completion: EDPDaemonMountCompletion
+    }
+    private var unmountWaiters = [String: [UnmountWaiter]]()
     private var unmountJournalContexts = [String: EDPLifecycleOperationContext]()
     private var ejectWaiters = [String: [EDPDaemonMountCompletion]]()
     private var ejectJournalContexts = [String: EDPLifecycleOperationContext]()
@@ -1826,6 +1830,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 context: context,
                 deadline: self.scheduler.deadline(after: 15),
                 waitingRecorded: false,
+                waitForRemountQuiescence: false,
                 completion: completion
             )
         }
@@ -1836,6 +1841,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         context: EDPLifecycleOperationContext,
         deadline: UInt64,
         waitingRecorded: Bool,
+        waitForRemountQuiescence: Bool,
         completion: @escaping EDPDaemonMountCompletion
     ) {
         if activeMountOperations.contains(sessionKey) {
@@ -1863,17 +1869,24 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                     context: context,
                     deadline: deadline,
                     waitingRecorded: true,
+                    waitForRemountQuiescence: waitForRemountQuiescence,
                     completion: completion
                 )
             }
             return
         }
-        beginUnmount(sessionKey, context: context, completion: completion)
+        beginUnmount(
+            sessionKey,
+            context: context,
+            waitForRemountQuiescence: waitForRemountQuiescence,
+            completion: completion
+        )
     }
 
     private func beginUnmount(
         _ sessionKey: String,
         context: EDPLifecycleOperationContext? = nil,
+        waitForRemountQuiescence: Bool = true,
         completion: @escaping EDPDaemonMountCompletion
     ) {
         let journalContext = context
@@ -1884,7 +1897,18 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 state: "coalesced",
                 event: "joinedExistingUnmount"
             )
-            unmountWaiters[sessionKey, default: []].append(completion)
+            if !waitForRemountQuiescence,
+               sessions[sessionKey] == nil,
+               remountQuiescence.activeToken(for: sessionKey) != nil {
+                completion(nil)
+                return
+            }
+            unmountWaiters[sessionKey, default: []].append(
+                UnmountWaiter(
+                    waitForRemountQuiescence: waitForRemountQuiescence,
+                    completion: completion
+                )
+            )
             return
         }
         guard let session = sessions[sessionKey] else {
@@ -1892,7 +1916,12 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
             completion(nil)
             return
         }
-        unmountWaiters[sessionKey] = [completion]
+        unmountWaiters[sessionKey] = [
+            UnmountWaiter(
+                waitForRemountQuiescence: waitForRemountQuiescence,
+                completion: completion
+            )
+        ]
         unmountJournalContexts[sessionKey] = journalContext
         missingSince.removeValue(forKey: sessionKey)
 
@@ -1917,71 +1946,67 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 event: "userFilesystemTeardownStarted",
                 ownedResources: ["filesystem", "publication", "transport"]
             )
-            do {
-                try EDPNativeMountTable.unmountPath(userMount)
-            } catch {
-                finishUnmount(sessionKey, error: String(describing: error))
-                return
-            }
-            guard !EDPNativeMountTable.isMountpoint(userMount) else {
+            guard !session.exposedBSD.isEmpty else {
                 finishUnmount(
                     sessionKey,
-                    error: "user volume remained mounted after unmount: \(userMount)"
+                    error: "mounted EDP filesystem has no published Disk Arbitration device"
                 )
                 return
             }
             recordLifecycle(
                 journalContext,
                 state: "quiescingFilesystem",
-                event: "userFilesystemTeardownComplete",
-                ownedResources: ["publication", "transport"]
+                event: "nativeFilesystemDAUnmountStarted",
+                ownedResources: ["filesystem", "publication", "transport"]
             )
-            recordLifecycle(
-                journalContext,
-                state: "quiescingFilesystem",
-                event: "nativeFilesystemQuiescenceStarted",
-                ownedResources: ["publication", "transport"]
-            )
-            if remountQuiescenceSeconds > 0 {
-                scheduler.schedule(
-                    on: lifecycleQueue,
-                    after: remountQuiescenceSeconds
-                ) { [weak self] in
-                    guard let self,
-                          self.unmountWaiters[sessionKey] != nil,
+            diskArbitration.unmountAsync(session.exposedBSD) { [weak self] error in
+                guard let self else { return }
+                self.lifecycleQueue.async {
+                    guard self.unmountWaiters[sessionKey] != nil,
                           self.sessions[sessionKey] === session else {
+                        return
+                    }
+                    if let error, EDPNativeMountTable.isMountpoint(userMount) {
+                        self.finishUnmount(sessionKey, error: String(describing: error))
+                        return
+                    }
+                    guard !EDPNativeMountTable.isMountpoint(userMount) else {
+                        self.finishUnmount(
+                            sessionKey,
+                            error: "user volume remained mounted after Disk Arbitration unmount: \(userMount)"
+                        )
                         return
                     }
                     self.recordLifecycle(
                         journalContext,
-                        state: "tearingDownPublication",
-                        event: "nativeFilesystemQuiescenceComplete",
+                        state: "quiescingFilesystem",
+                        event: "userFilesystemTeardownComplete",
                         ownedResources: ["publication", "transport"]
                     )
-                    self.continueUnmountAfterNativeFilesystemQuiescence(
+                    self.recordLifecycle(
+                        journalContext,
+                        state: "tearingDownPublication",
+                        event: "nativeFilesystemDAUnmountComplete",
+                        ownedResources: ["publication", "transport"]
+                    )
+                    self.continueUnmountAfterNativeFilesystemDeactivation(
                         sessionKey,
                         session: session,
                         journalContext: journalContext
                     )
                 }
-                return
             }
-            recordLifecycle(
-                journalContext,
-                state: "tearingDownPublication",
-                event: "nativeFilesystemQuiescenceComplete",
-                ownedResources: ["publication", "transport"]
-            )
+            return
         }
 
-        continueUnmountAfterNativeFilesystemQuiescence(
+        continueUnmountAfterNativeFilesystemDeactivation(
             sessionKey,
             session: session,
             journalContext: journalContext
         )
     }
 
-    private func continueUnmountAfterNativeFilesystemQuiescence(
+    private func continueUnmountAfterNativeFilesystemDeactivation(
         _ sessionKey: String,
         session: MountSession,
         journalContext: EDPLifecycleOperationContext
@@ -2086,6 +2111,11 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 event: "remountQuiescenceStarted"
             )
         }
+        completeUnmountWaiters(
+            sessionKey,
+            waitForRemountQuiescence: false,
+            error: nil
+        )
         scheduler.schedule(
             on: lifecycleQueue,
             after: remountQuiescenceSeconds
@@ -2105,6 +2135,30 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         }
     }
 
+    private func completeUnmountWaiters(
+        _ sessionKey: String,
+        waitForRemountQuiescence: Bool,
+        error: String?
+    ) {
+        guard let waiters = unmountWaiters[sessionKey] else { return }
+        let completing = waiters.filter {
+            $0.waitForRemountQuiescence == waitForRemountQuiescence
+        }
+        unmountWaiters[sessionKey] = waiters.filter {
+            $0.waitForRemountQuiescence != waitForRemountQuiescence
+        }
+        if !waitForRemountQuiescence,
+           !completing.isEmpty,
+           let context = unmountJournalContexts[sessionKey] {
+            recordLifecycle(
+                context,
+                state: "quiescing",
+                event: "userVisibleUnmountComplete"
+            )
+        }
+        for waiter in completing { waiter.completion(error) }
+    }
+
     private func finishUnmount(_ sessionKey: String, error: String?) {
         if error != nil { persistSessions() }
         if let context = unmountJournalContexts.removeValue(forKey: sessionKey) {
@@ -2116,7 +2170,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
             )
         }
         let callbacks = unmountWaiters.removeValue(forKey: sessionKey) ?? []
-        for callback in callbacks { callback(error) }
+        for callback in callbacks { callback.completion(error) }
     }
 
     func ejectAsync(deviceID: String, completion: @escaping EDPDaemonMountCompletion) {
@@ -2194,17 +2248,64 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         }
         teardownSessionKeys(keys, index: 0) { [weak self] errorMessage in
             guard let self else { return }
+            if let errorMessage {
+                if let context = self.ejectJournalContexts[deviceID] {
+                    self.recordLifecycle(
+                        context,
+                        state: "failed",
+                        event: "sessionTeardownFailure",
+                        diagnosticCode: .teardownFailed
+                    )
+                }
+                self.finishEject(deviceID, error: errorMessage)
+                return
+            }
             if let context = self.ejectJournalContexts[deviceID] {
                 self.recordLifecycle(
                     context,
-                    state: errorMessage == nil ? "physicalEjectHandoff" : "failed",
-                    event: errorMessage == nil
-                        ? "sessionTeardownComplete"
-                        : "sessionTeardownFailure",
-                    diagnosticCode: errorMessage == nil ? nil : .teardownFailed
+                    state: "waitingForRemountQuiescence",
+                    event: "sessionTeardownComplete"
                 )
             }
-            self.finishEject(deviceID, error: errorMessage)
+            self.waitForDeviceRemountQuiescence(
+                deviceID: deviceID,
+                deadline: deadline,
+                waitingRecorded: false
+            )
+        }
+    }
+
+    private func waitForDeviceRemountQuiescence(
+        deviceID: String,
+        deadline: UInt64,
+        waitingRecorded: Bool
+    ) {
+        let prefix = "\(deviceID):"
+        let hasActiveBarrier = unmountWaiters.keys.contains { sessionKey in
+            sessionKey.hasPrefix(prefix)
+                && remountQuiescence.activeToken(for: sessionKey) != nil
+        }
+        guard hasActiveBarrier else {
+            finishEject(deviceID, error: nil)
+            return
+        }
+        if !waitingRecorded, let context = ejectJournalContexts[deviceID] {
+            recordLifecycle(
+                context,
+                state: "waitingForRemountQuiescence",
+                event: "waitingForRemountQuiescence"
+            )
+        }
+        guard !scheduler.hasReached(deadline) else {
+            finishEject(deviceID, error: "remount quiescence did not drain before eject deadline")
+            return
+        }
+        scheduler.schedule(on: lifecycleQueue, after: 0.05) { [weak self] in
+            self?.waitForDeviceRemountQuiescence(
+                deviceID: deviceID,
+                deadline: deadline,
+                waitingRecorded: true
+            )
         }
     }
 
@@ -2353,17 +2454,59 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
             } else {
                 finalError = errorMessage
             }
+            if let finalError {
+                if let context = self.shutdownJournalContext {
+                    self.recordLifecycle(
+                        context,
+                        state: "failed",
+                        event: "sessionTeardownFailure",
+                        diagnosticCode: .teardownFailed
+                    )
+                }
+                self.finishShutdown(finalError)
+                return
+            }
             if let context = self.shutdownJournalContext {
                 self.recordLifecycle(
                     context,
-                    state: finalError == nil ? "finalizing" : "failed",
-                    event: finalError == nil
-                        ? "sessionTeardownComplete"
-                        : "sessionTeardownFailure",
-                    diagnosticCode: finalError == nil ? nil : .teardownFailed
+                    state: "waitingForRemountQuiescence",
+                    event: "sessionTeardownComplete"
                 )
             }
-            self.finishShutdown(finalError)
+            self.waitForAllRemountQuiescence(
+                deadline: deadline,
+                waitingRecorded: false
+            )
+        }
+    }
+
+    private func waitForAllRemountQuiescence(
+        deadline: UInt64,
+        waitingRecorded: Bool
+    ) {
+        let hasActiveBarrier = unmountWaiters.keys.contains { sessionKey in
+            remountQuiescence.activeToken(for: sessionKey) != nil
+        }
+        guard hasActiveBarrier else {
+            finishShutdown(nil)
+            return
+        }
+        if !waitingRecorded, let context = shutdownJournalContext {
+            recordLifecycle(
+                context,
+                state: "waitingForRemountQuiescence",
+                event: "waitingForRemountQuiescence"
+            )
+        }
+        guard !scheduler.hasReached(deadline) else {
+            finishShutdown("remount quiescence did not drain before shutdown deadline")
+            return
+        }
+        scheduler.schedule(on: lifecycleQueue, after: 0.05) { [weak self] in
+            self?.waitForAllRemountQuiescence(
+                deadline: deadline,
+                waitingRecorded: true
+            )
         }
     }
 
