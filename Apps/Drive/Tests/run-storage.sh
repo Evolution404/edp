@@ -924,26 +924,45 @@ start_adapter() {
   mkdir -p "$bridge"
   printf '%s\n' "$bridge" >>"$ACTIVE_MOUNTS"
 
-  local attempt adapter_pid
+  local attempt adapter_pid ready_fifo ready_status
   for attempt in 1 2; do
     : >"$adapter_log"
-    "$ADAPTER_BIN" \
-      --raw-device-file "$EDP_IMAGE" \
-      --vid "$VID" --pid "$PID" --device-size "$DEVICE_SIZE" \
-      --partition-type "$partition" --password-file "$PASSWORD_FILE" \
-      --mountpoint "$bridge" --volume-name "EDP Storage $tag" \
-      >"$adapter_log" 2>&1 &
+    ready_fifo="$WORK_DIR/ready-$tag-$attempt.fifo"
+    /bin/rm -f "$ready_fifo"
+    /usr/bin/mkfifo "$ready_fifo"
+    (
+      exec 9>"$ready_fifo"
+      export EDP_MFMOUNT_READY_FD=9
+      exec "$ADAPTER_BIN" \
+        --raw-device-file "$EDP_IMAGE" \
+        --vid "$VID" --pid "$PID" --device-size "$DEVICE_SIZE" \
+        --partition-type "$partition" --password-file "$PASSWORD_FILE" \
+        --mountpoint "$bridge" --volume-name "EDP Storage $tag"
+    ) >"$adapter_log" 2>&1 &
     adapter_pid=$!
     printf '%s|%s\n' "$adapter_pid" "$ADAPTER_BIN" >>"$ACTIVE_PROCESSES"
 
-    for _ in $(/usr/bin/seq 1 200); do
-      if is_mounted "$bridge" && [[ -f "$bridge/volume.raw" ]]; then
-        printf -v "$output_variable" '%s' "$adapter_pid"
-        return 0
-      fi
-      /bin/kill -0 "$adapter_pid" >/dev/null 2>&1 || break
-      /bin/sleep 0.1
-    done
+    set +e
+    /usr/bin/perl -e '
+      $SIG{ALRM} = sub { exit 2 };
+      alarm 20;
+      open my $fh, "<", $ARGV[0] or exit 3;
+      my $n = sysread($fh, my $marker, 1);
+      exit(($n // 0) == 1 && $marker eq "R" ? 0 : 4);
+    ' "$ready_fifo"
+    ready_status=$?
+    set -e
+    /bin/rm -f "$ready_fifo"
+
+    if (( ready_status == 0 )) && is_mounted "$bridge" && [[ -f "$bridge/volume.raw" ]]; then
+      /usr/bin/grep -Fq 'DIRECT_MFMOUNT_READY_SIGNAL=1' "$adapter_log"
+      printf -v "$output_variable" '%s' "$adapter_pid"
+      return 0
+    fi
+
+    if (( ready_status == 0 )); then
+      echo "macFUSE Local READY arrived before volume.raw became usable: $tag attempt=$attempt" >&2
+    fi
 
     if /bin/kill -0 "$adapter_pid" >/dev/null 2>&1; then
       /bin/kill -TERM "$adapter_pid" >/dev/null 2>&1 || true

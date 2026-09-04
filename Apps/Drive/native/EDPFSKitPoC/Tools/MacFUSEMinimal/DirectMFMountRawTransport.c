@@ -34,7 +34,7 @@ extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 #define RAW_FILE_NAME "volume.raw"
 #define DIRECT_MAX_IO (4U * 1024U * 1024U)
 
-static void signal_mount_ready(void) {
+void EDPDirectMFMountSignalReady(void) {
     const char *ready_fd_text = getenv("EDP_MFMOUNT_READY_FD");
     if (ready_fd_text == NULL || *ready_fd_text == '\0') return;
 
@@ -709,12 +709,6 @@ int main(int argc, char **argv) {
             state.backing_size,
             mountpoint,
             state.read_only ? 1 : 0);
-    /* MFMountResultSuccess is the framework's authoritative point that the
-     * volume has been mounted and the channel is associated with its transport.
-     * Signal the privileged parent through the inherited one-shot pipe instead
-     * of making it poll the mount table every 100 ms. */
-    signal_mount_ready();
-
     int exit_code = 0;
     while (state.running) {
         MFMessageRef message = MFChannelCopyNextMessage(channel);

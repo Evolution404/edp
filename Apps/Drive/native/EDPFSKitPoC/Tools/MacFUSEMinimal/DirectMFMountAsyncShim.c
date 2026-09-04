@@ -34,6 +34,8 @@ struct da_unmount_context {
     DAReturn status;
 };
 
+extern void EDPDirectMFMountSignalReady(void);
+
 static atomic_bool g_teardown_active = false;
 static atomic_bool g_teardown_complete = false;
 static atomic_bool g_transport_released = false;
@@ -563,6 +565,12 @@ static void *mount_worker(void *opaque) {
 
     if (result != MFMountResultSuccess) {
         (void)MFChannelClose(args->channel);
+    } else {
+        /* EDPAsyncMFMount returns immediately after spawning this worker, so
+         * only the real framework MFMount completion here is authoritative for
+         * filesystem readiness.  Signal the parent now; FUSE INIT alone can
+         * still precede the Local mount becoming usable at volume.raw. */
+        EDPDirectMFMountSignalReady();
     }
 
     destroy_args(args);

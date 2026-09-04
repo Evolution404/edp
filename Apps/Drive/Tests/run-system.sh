@@ -158,11 +158,12 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_ATOMIC_HDIUTIL_SNAPSHOT_OK'
 
 # The macFUSE Local FSKit block bridge keeps its established local,nobrowse VFS
 # semantics. Repeated-remount safety is enforced by exact publication teardown,
-# unique generations, and quiescence; do not change the bridge's read/write VFS
-# behavior as a substitute for lifecycle isolation.
+# unique generations, and real framework completion events; do not change the
+# bridge's read/write VFS behavior as a substitute for lifecycle isolation.
 TRANSPORT_BUILD="${ROOT}/Apps/Drive/installer/build-transport-backends.sh"
 TRANSPORT_PROVIDER="${ROOT}/Apps/Drive/product/EDPTransportProvider.swift"
 RAW_TRANSPORT="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
+ASYNC_SHIM="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c"
 /usr/bin/grep -Fq '"nobrowse,volname=%s"' "${RAW_TRANSPORT}"
 /usr/bin/grep -Fq 'localVolume: true' "${TRANSPORT_PROVIDER}"
 /usr/bin/grep -Fq 'EDP_MFMOUNT_OPTIONS": "local,nobrowse"' "${TRANSPORT_PROVIDER}"
@@ -562,6 +563,14 @@ echo 'RESULT=DRIVE_SYSTEM_EVENT_DRIVEN_GENERATION_HANDOFF_OK'
 ! /usr/bin/grep -Fq 'scheduler.schedule(on: lifecycleQueue, after: 0.1)' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func observeReady(on queue:' "${TRANSPORT_SOURCE}"
 /usr/bin/grep -Fq 'EDP_MFMOUNT_READY_FD' "${MOUNT_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'void EDPDirectMFMountSignalReady(void)' "${RAW_TRANSPORT}"
+MOUNT_WORKER_SECTION="$(/usr/bin/awk '/static void \*mount_worker\(/,/MFMountResult EDPAsyncMFMount\(/' "${ASYNC_SHIM}")"
+/usr/bin/grep -Fq 'only the real framework MFMount completion here is authoritative' <<<"${MOUNT_WORKER_SECTION}"
+/usr/bin/grep -Fq 'EDPDirectMFMountSignalReady();' <<<"${MOUNT_WORKER_SECTION}"
+[[ "$(/usr/bin/grep -Fc 'EDPDirectMFMountSignalReady();' "${ASYNC_SHIM}")" -eq 1 ]]
+! /usr/bin/grep -Fq 'EDPDirectMFMountSignalReady();' "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'export EDP_MFMOUNT_READY_FD=9' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'macFUSE Local READY arrived before volume.raw became usable' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'terminalObservers.append' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq '.milliseconds(250)' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'fileprivate func handleDiskEvent()' "${NATIVE_SYSTEM_SOURCE}"
