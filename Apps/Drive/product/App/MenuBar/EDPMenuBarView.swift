@@ -6,6 +6,14 @@ struct EDPMenuBarView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var credentialTarget: EDPCredentialTarget?
 
+    init(
+        model: EDPVaultViewModel,
+        initialCredentialTarget: EDPCredentialTarget? = nil
+    ) {
+        self.model = model
+        _credentialTarget = State(initialValue: initialCredentialTarget)
+    }
+
     private var connectedDevices: [EDPXPCDevice] {
         model.snapshot.devices.filter(\.connected)
     }
@@ -42,6 +50,23 @@ struct EDPMenuBarView: View {
     }
 
     var body: some View {
+        Group {
+            if let credentialTarget {
+                EDPMenuCredentialEditor(
+                    target: credentialTarget,
+                    model: model,
+                    onDismiss: { self.credentialTarget = nil }
+                )
+            } else {
+                menuContent
+            }
+        }
+        .frame(width: 390)
+        .background(.clear)
+        .onAppear { model.refresh() }
+    }
+
+    private var menuContent: some View {
         VStack(spacing: 0) {
             menuHeader
 
@@ -63,12 +88,6 @@ struct EDPMenuBarView: View {
 
             Divider().padding(.horizontal, 12)
             footer
-        }
-        .frame(width: 390)
-        .background(.clear)
-        .onAppear { model.refresh() }
-        .sheet(item: $credentialTarget) { target in
-            EDPCredentialSheet(target: target, model: model)
         }
     }
 
@@ -420,6 +439,66 @@ struct EDPMenuBarView: View {
         case .secure: return "lock.square"
         case nil: return "externaldrive.badge.questionmark"
         }
+    }
+}
+
+private struct EDPMenuCredentialEditor: View {
+    let target: EDPCredentialTarget
+    @ObservedObject var model: EDPVaultViewModel
+    let onDismiss: () -> Void
+
+    @State private var password = ""
+    @FocusState private var passwordFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            EDPMenuPanelHeader(
+                title: "设置\(target.partitionName)密码",
+                subtitle: "安全验证后保存到系统钥匙串",
+                backAction: onDismiss
+            )
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text("密码会先在当前 U 盘上验证，成功后才保存到系统钥匙串。应用不会修改盘上的密码。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                SecureField("现有分区密码", text: $password)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($passwordFocused)
+                    .accessibilityIdentifier("menuCredentialPasswordField")
+                    .onSubmit(saveCredential)
+
+                EDPGlassToolbar {
+                    HStack {
+                        Spacer()
+                        Button("取消", action: onDismiss)
+                            .buttonStyle(.glass)
+                            .keyboardShortcut(.cancelAction)
+                        Button("验证并保存", action: saveCredential)
+                            .buttonStyle(.glassProminent)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(password.isEmpty || model.isBusy)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .frame(width: 390)
+        .accessibilityIdentifier("menuCredentialEditor")
+    }
+
+    private func saveCredential() {
+        guard !password.isEmpty, !model.isBusy else { return }
+        model.saveCredential(
+            deviceID: target.deviceID,
+            partitionType: target.partitionType,
+            password: password
+        )
+        password = ""
+        passwordFocused = false
+        onDismiss()
     }
 }
 

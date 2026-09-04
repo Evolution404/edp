@@ -19,6 +19,7 @@ struct EDPUIAutomationMain {
             } else {
                 try validatePreviewScenarios()
                 try validatePageRendering()
+                try validateMenuBarCredentialFocus()
                 try validateSidebarGeometry(toggleCount: 20, emitScenarioMarkers: true)
                 print("RESULT=DRIVE_UI_AUTOMATION_OK")
             }
@@ -110,6 +111,45 @@ struct EDPUIAutomationMain {
             print("SCENARIO=UI_PAGE_\(name)_OK")
         }
         print("RESULT=DRIVE_UI_PAGE_RENDERING_OK")
+    }
+
+    private static func validateMenuBarCredentialFocus() throws {
+        let configuration = EDPPreviewScenarioFactory.configuration(for: .credentialMissing)
+        let model = EDPVaultViewModel(previewConfiguration: configuration)
+        guard let device = configuration.snapshot.devices.first(where: \.connected),
+              let partition = device.partitions.first(where: { $0.encrypted }) else {
+            throw EDPUIAutomationFailure(description: "menu credential focus fixture missing")
+        }
+        let target = EDPCredentialTarget(
+            deviceID: device.deviceID,
+            partitionType: partition.partitionType,
+            partitionName: partition.displayName
+        )
+        let root = AnyView(
+            EDPMenuBarView(model: model, initialCredentialTarget: target)
+                .environment(\.colorScheme, .light)
+        )
+        let window = makeWindow(rootView: root, size: NSSize(width: 390, height: 320))
+        defer { window.close() }
+        spin(seconds: 0.15)
+
+        guard let contentView = window.contentView,
+              let secureField = findSecureTextField(in: contentView) else {
+            throw EDPUIAutomationFailure(description: "inline menu credential SecureField missing")
+        }
+        try require(window.attachedSheet == nil, "menu credential editor regressed to attached sheet")
+        try require(window.makeFirstResponder(secureField), "menu credential SecureField refused first responder")
+        spin(seconds: 0.05)
+        guard let fieldEditor = window.firstResponder as? NSTextView else {
+            throw EDPUIAutomationFailure(description: "menu credential field editor did not become first responder")
+        }
+        fieldEditor.insertText("focus-regression", replacementRange: NSRange(location: NSNotFound, length: 0))
+        spin(seconds: 0.05)
+        try require(!secureField.stringValue.isEmpty, "menu credential SecureField did not accept input")
+        try require(window.isVisible, "menu credential host window closed after SecureField focus")
+        try require(window.attachedSheet == nil, "menu credential focus created a sheet")
+        print("SCENARIO=UI_MENU_CREDENTIAL_FOCUS_OK")
+        print("RESULT=DRIVE_UI_MENU_CREDENTIAL_FOCUS_OK")
     }
 
     private static func validateSidebarHitches(
@@ -260,6 +300,14 @@ struct EDPUIAutomationMain {
         }
         for subview in view.subviews {
             if let found = findSplitController(in: subview) { return found }
+        }
+        return nil
+    }
+
+    private static func findSecureTextField(in view: NSView) -> NSSecureTextField? {
+        if let field = view as? NSSecureTextField { return field }
+        for subview in view.subviews {
+            if let found = findSecureTextField(in: subview) { return found }
         }
         return nil
     }
