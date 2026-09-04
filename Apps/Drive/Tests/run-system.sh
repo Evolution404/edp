@@ -288,6 +288,7 @@ echo 'RESULT=DRIVE_SYSTEM_DEFAULT_POLICY_RATCHETS_OK'
 # peer signature check against the newly installed bundle and cannot control the
 # privileged service.
 PREINSTALL_SOURCE="${ROOT}/Apps/Drive/installer/scripts/native-preinstall"
+POSTINSTALL_SOURCE="${ROOT}/Apps/Drive/installer/scripts/native-postinstall"
 CLEAN_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
 NATIVE_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-native-installer.sh"
 INSTALLER_PROBE_TEST_OUTPUT="$("${INSTALLER_MEDIA_PROBE_RUNNER}")"
@@ -337,6 +338,23 @@ if /usr/bin/grep -Eq '^[[:space:]]*/usr/bin/hdiutil[[:space:]]' "${PREINSTALL_SO
   exit 1
 fi
 echo 'RESULT=DRIVE_SYSTEM_INSTALLER_HDIUTIL_BOUNDED_OK'
+
+# macFUSE's signed installer can reset the console user's FSKit enabledModules
+# state. preinstall deliberately stops the old foreground App before bundle
+# replacement, so postinstall must relaunch the new App in that same GUI user's
+# bootstrap namespace. The App owns the TCC-safe user-domain enablement repair;
+# the privileged installer must not edit the user's Group Container directly.
+/usr/bin/grep -Fq 'DRIVE_UI_EXECUTABLE="${APP}/Contents/MacOS/EDP Drive"' "${POSTINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'relaunch_drive_ui_for_console_user()' "${POSTINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'console_uid="$(/usr/bin/stat -f '\''%u'\'' /dev/console 2>/dev/null || true)"' "${POSTINSTALL_SOURCE}"
+/usr/bin/grep -Fq '/bin/launchctl asuser "${console_uid}" /usr/bin/open -g -a "${APP}"' "${POSTINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'drive_ui_running_for_uid "${console_uid}"' "${POSTINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'macFUSE package upgrades reset enabledModules.plist' "${POSTINSTALL_SOURCE}"
+! /usr/bin/grep -Fq 'sudo ' "${POSTINSTALL_SOURCE}"
+LAST_SERVICE_KICKSTART_LINE="$(/usr/bin/grep -nF '/bin/launchctl kickstart -k "system/${SERVICE_LABEL}"' "${POSTINSTALL_SOURCE}" | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)"
+RELAUNCH_CALL_LINE="$(/usr/bin/grep -nFx 'relaunch_drive_ui_for_console_user' "${POSTINSTALL_SOURCE}" | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)"
+[[ "${LAST_SERVICE_KICKSTART_LINE}" =~ ^[0-9]+$ && "${RELAUNCH_CALL_LINE}" =~ ^[0-9]+$ && "${LAST_SERVICE_KICKSTART_LINE}" -lt "${RELAUNCH_CALL_LINE}" ]]
+echo 'RESULT=DRIVE_SYSTEM_INSTALLER_FOREGROUND_RELAUNCH_OK'
 echo 'RESULT=DRIVE_SYSTEM_UPGRADE_UI_HANDOFF_OK'
 echo 'RESULT=DRIVE_SYSTEM_INSTALLER_TEST_ORPHAN_REVALIDATION_OK'
 echo 'RESULT=DRIVE_SYSTEM_INSTALLER_UNRELATED_FSKIT_MOUNT_OK'

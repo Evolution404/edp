@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="/Library/Application Support/EDP Drive"
 APP="/Applications/EDP Drive.app"
+DRIVE_UI_EXECUTABLE="${APP}/Contents/MacOS/EDP Drive"
 SERVICE_LABEL="com.edp.drive.service"
 PLIST="/Library/LaunchDaemons/com.edp.drive.service.plist"
 
@@ -25,6 +26,49 @@ bootstrap_service() {
   return 1
 }
 
+drive_ui_running_for_uid() {
+  local console_uid="$1"
+  /bin/ps -axo uid=,command= \
+    | /usr/bin/awk -v uid="${console_uid}" -v executable="${DRIVE_UI_EXECUTABLE}" '
+        $1 == uid {
+          $1 = ""
+          sub(/^[[:space:]]+/, "")
+          if ($0 == executable) found = 1
+        }
+        END { exit(found ? 0 : 1) }
+      '
+}
+
+relaunch_drive_ui_for_console_user() {
+  local console_uid
+  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
+  # No authenticated GUI user exists at loginwindow. The App will launch in the
+  # normal user session later, so a headless package install remains valid.
+  if [[ ! "${console_uid}" =~ ^[0-9]+$ || "${console_uid}" -le 0 ]]; then
+    return 0
+  fi
+
+  if drive_ui_running_for_uid "${console_uid}"; then
+    return 0
+  fi
+
+  local attempt
+  for attempt in {1..20}; do
+    # preinstall intentionally terminates the old foreground App before bundle
+    # replacement. Relaunch the newly installed App in the authenticated user's
+    # bootstrap namespace so its user-owned FSKit enablement convergence runs
+    # immediately after macFUSE package upgrades reset enabledModules.plist.
+    /bin/launchctl asuser "${console_uid}" /usr/bin/open -g -a "${APP}" >/dev/null 2>&1 || true
+    /bin/sleep 0.25
+    if drive_ui_running_for_uid "${console_uid}"; then
+      return 0
+    fi
+  done
+
+  echo "EDP Drive foreground App did not relaunch for console uid ${console_uid}; refusing to report a ready installation." >&2
+  return 1
+}
+
 if [[ -f "${PLIST}" ]]; then
   bootstrap_service
   /bin/launchctl enable "system/${SERVICE_LABEL}" || true
@@ -34,5 +78,7 @@ elif /bin/launchctl print "system/${SERVICE_LABEL}" >/dev/null 2>&1; then
   # in-place package upgrade cannot keep executing the previous app binary.
   /bin/launchctl kickstart -k "system/${SERVICE_LABEL}" || true
 fi
+
+relaunch_drive_ui_for_console_user
 
 exit 0
