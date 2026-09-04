@@ -147,24 +147,21 @@ final class EDPVaultViewModel: ObservableObject {
         refresh()
         resumeRuntimeForAppLaunch()
         Task { [weak self] in
-            let enablement = await Task.detached(priority: .utility) { () async -> (restartedAgents: Bool, error: String?) in
+            let enablementError = await Task.detached(priority: .utility) { () async -> String? in
                 do {
-                    let restartedAgents = try await ensureMacFUSELocalEnablement()
-                    guard macFUSELocalEnablementReady() else {
-                        return (restartedAgents, "macFUSE FSKit 启用状态尚未就绪")
-                    }
-                    return (restartedAgents, nil)
+                    _ = try await ensureMacFUSELocalEnablement()
+                    return nil
                 } catch {
-                    return (false, error.localizedDescription)
+                    return error.localizedDescription
                 }
             }.value
             guard let self else { return }
-            if let error = enablement.error {
-                self.lastError = "macFUSE Local 启用失败：\(error)"
+            if let enablementError {
+                self.lastError = "macFUSE Local 注册失败：\(enablementError)"
             }
-            // Registration commands and settings writes above are completion
-            // authorities. Do not add a fixed post-registration sleep: the
-            // FSKit agent is demand-launched when the next mount is requested.
+            // Runtime presence is a packaging invariant. FSKit enablement is
+            // deliberately not guessed from PluginKit, FSClient, or Apple's
+            // private settings plist; the next real MFMount is authoritative.
             self.refreshTransportRuntimeState()
             if self.transportRuntimeReady == true {
                 self.retryTransientAutomaticMounts()
@@ -758,12 +755,12 @@ final class EDPVaultViewModel: ObservableObject {
     }
 
     func refreshTransportRuntimeState() {
-        transportRuntimeReady = macFUSELocalEnablementReady()
+        transportRuntimeReady = macFUSELocalRuntimeReady()
     }
 
     private func requireTransportRuntime() -> Bool {
         guard transportRuntimeReady == true else {
-            lastError = "macFUSE Local 运行组件未安装或尚未启用，请重新打开 EDP Drive 或运行安装器。"
+            lastError = "macFUSE Local 运行组件未安装完整，请重新运行 EDP Drive 安装器。"
             return false
         }
         return true

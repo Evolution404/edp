@@ -255,6 +255,8 @@ echo 'RESULT=DRIVE_SYSTEM_UI_SHELL_SPLIT_OK'
 ! /usr/bin/grep -Fq 'struct EDPSettingsView: View' "${APP_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UI_PAGE_SPLIT_OK'
 /usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() async throws -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'edpMacFUSEInstallerPath' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq '"install", "--components", "file-system-extensions"' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'let edpDriveServicePath = edpDriveAppPath' "${APP_SERVICE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() async throws -> Bool' "${APP_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UI_SERVICE_SUPPORT_SPLIT_OK'
@@ -919,8 +921,8 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 ! /usr/bin/grep -Fq 'while process.isRunning' "${APP_SERVICE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq 'Task.sleep(for: .milliseconds(50))' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'try await ensureMacFUSELocalEnablement()' "${APP_VIEW_MODEL_SOURCE}"
-/usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
-! /usr/bin/grep -Fq 'await macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'macFUSELocalRuntimeReady()' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${RUNTIME_SOURCE}" "${MOUNT_LIFECYCLE_SOURCE}" "${PUBLISHER_SOURCE}"
 DISKIMAGES_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPDiskImages2Publisher/{found=1} found {print}' "${PUBLISHER_SOURCE}")"
 /usr/bin/grep -Fq 'helperPath = binaryRoot + "/diskimages2-attach"' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
@@ -951,20 +953,16 @@ echo 'RESULT=DRIVE_SYSTEM_EXTERNAL_DEPENDENCY_BOUNDARIES_OK'
 ! /usr/bin/grep -Fq 'edpMacFUSEEnablementMaxAttempts' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'for attempt in' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'Require the user FSKit state to remain stable for one' "${APP_VIEW_MODEL_SOURCE}"
-/usr/bin/grep -Fq 'func macFUSELocalEnablementReady() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'macFUSEModulesEnabledInSettings()' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'transportRuntimeReady = macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
-! /usr/bin/grep -Fq 'pluginkit", ["-m", "-A", "-D"]' "${APP_SERVICE_SUPPORT_SOURCE}"
-! /usr/bin/grep -Fq 'macFUSEPluginsEnabled' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'runUserTool(pluginKit, ["-a", modulePath])' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'runUserTool(pluginKit, ["-e", "use", "-i", moduleID])' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'func macFUSELocalRuntimeReady() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'transportRuntimeReady = macFUSELocalRuntimeReady()' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'enabledModules.plist' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'FSClient' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
 /usr/bin/grep -Fq 'func noActiveFSKitMountsForAgentReset() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'guard noActiveFSKitMountsForAgentReset() else {' "${APP_SERVICE_SUPPORT_SOURCE}"
-FSKIT_APP_RESET_GUARD_LINE="$(/usr/bin/grep -nF 'guard noActiveFSKitMountsForAgentReset() else {' "${APP_SERVICE_SUPPORT_SOURCE}" | /usr/bin/cut -d: -f1)"
-FSKIT_APP_KILLALL_LINE="$(/usr/bin/grep -nF 'runUserTool("/usr/bin/killall", ["-9", "fskit_agent", "extensionkitservice"])' "${APP_SERVICE_SUPPORT_SOURCE}" | /usr/bin/cut -d: -f1)"
-[[ -n "${FSKIT_APP_RESET_GUARD_LINE}" && -n "${FSKIT_APP_KILLALL_LINE}" && "${FSKIT_APP_RESET_GUARD_LINE}" -lt "${FSKIT_APP_KILLALL_LINE}" ]]
-echo 'RESULT=DRIVE_SYSTEM_FSKIT_APP_RESET_FAIL_CLOSED_OK'
+/usr/bin/grep -Fq 'let forceRegistration = noActiveFSKitMountsForAgentReset()' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'arguments.append("--force")' "${APP_SERVICE_SUPPORT_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_FSKIT_OFFICIAL_INSTALLER_PATH_OK'
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_EVENT_DRIVEN_OK'
 echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 
