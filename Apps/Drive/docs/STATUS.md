@@ -5,7 +5,7 @@ Current validated branch: `codex/ui-macos26-liquid-glass`
 Current release code/package HEAD: `9b5a8595203cf88ff726f9aa08bc62b8c25a8d29`
 Current exact-head CI: GitHub Actions run `33748594918` — **PASS 5/5** (native, fast, virtual USB, UI-system and storage M01–M14). UI performance evidence remains GitHub-Actions-only.
 Current signed package: `artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`, SHA-256 `43659c5fd37cc3cdb5546ab14b71782ea339bd6899209a59570bd119e0e9e264` — strict release verifier PASS and installed on the acceptance Mac.
-Current physical release candidate: **PHYSICAL GATES PASS; EXACT-HEAD REBOOT STILL PENDING**. `9b5a859` keeps routine Stop/Start/Restart inside one privileged process so the Disk Arbitration session/claim never drops (S42/S43), while Complete Quit safe-ejects connected EDP devices before true process shutdown. Fresh Lexar acceptance on the installed package proved: five-factor identity unchanged (`21c4:0cd1`, onlyID `3164177653`, capacity `124736503808`, metadata deviceID `disk&ven_lexar&prod_usb_flash_drive`, stable ID `disk&ven_lexar&prod_usb_flash_drive#59e8f8ae5883447c198104e7`); `DA_CLAIMED=true`; root `lsof` showed only `edp-drive-service` on the whole raw disk and no `fskitd` child holder; `privilegedAccessReady=true`; `rawBusyRecoveryCount=0`; SN750 remained `ordinaryUSB`; saved type2/type4 credentials and all three `autoMount=false` policies persisted. Physical runtime Pause released raw state while keeping the same service PID and claim; Resume/Restart kept the same PID/claim and raw access reconverged automatically within about 2 seconds with no EBUSY. Foreground App restart preserved claim/raw readiness. Safe eject produced `privilegedAccessReady=false` with saved credentials; App restart and runtime restart while still physically inserted did not reacquire. Exact physical removal was confirmed by IOKit and `/dev/disk27` disappearance; reinsertion automatically regained early claim/raw readiness with no `fskitd` child holder. Complete-Quit end state was also physically exercised: safe eject + graceful shutdown + foreground App termination left both App and service absent; reopening restored the service while the still-inserted logically-ejected Lexar remained suppressed (`privilegedAccessReady=false`). The only remaining mandatory release gate is a reboot of this exact installed `9b5a859` package followed by the post-reboot health/identity/raw/safe-eject audit.
+Current physical release candidate: **RELEASE-READY**. `9b5a859` keeps routine Stop/Start/Restart inside one privileged process so the Disk Arbitration session/claim never drops (S42/S43), while Complete Quit safe-ejects connected EDP devices before true process shutdown. Fresh Lexar acceptance on the installed package proved: five-factor identity unchanged (`21c4:0cd1`, onlyID `3164177653`, capacity `124736503808`, metadata deviceID `disk&ven_lexar&prod_usb_flash_drive`, stable ID `disk&ven_lexar&prod_usb_flash_drive#59e8f8ae5883447c198104e7`); `DA_CLAIMED=true`; root `lsof` showed only `edp-drive-service` on the whole raw disk and no `fskitd` child holder; `privilegedAccessReady=true`; `rawBusyRecoveryCount=0`; saved type2/type4 credentials and all three `autoMount=false` policies persisted. Physical runtime Pause released raw state while keeping the same service PID and claim; Resume/Restart kept the same PID/claim and raw access reconverged automatically within about 2 seconds with no EBUSY. Foreground App restart preserved claim/raw readiness. Safe eject produced `privilegedAccessReady=false` with saved credentials; App restart and runtime restart while still physically inserted did not reacquire. Exact physical removal was confirmed by IOKit and `/dev/disk27` disappearance; reinsertion automatically regained early claim/raw readiness with no `fskitd` child holder. Complete-Quit end state was also physically exercised: safe eject + graceful shutdown + foreground App termination left both App and service absent; reopening restored the service while the still-inserted logically-ejected Lexar remained suppressed (`privilegedAccessReady=false`). The mandatory exact-head reboot gate is also complete: boot time `2026-09-04 13:30:00`, service health PASS, the still-inserted logically-ejected Lexar remained suppressed across reboot with zero raw errors/busy recovery, physical removal cleared the original generation, reinsertion re-enumerated it as `disk4` with the same five-factor identity, `DA_CLAIMED=true`, `privilegedAccessReady=true`, root `lsof` showed only `edp-drive-service` on `/dev/rdisk4` and no `fskitd` child holder, and the final safe-eject residue/U-state audit passed with no EDP mount/process/raw-holder residue.
 
 > This file is the current product-status source of truth. Historical plans, handoffs, diagnostics and experiment trackers are evidence only. They must not override this file, `ARCHITECTURE.md`, `TESTING.md`, or `RELEASE-CHECKLIST.md`.
 
@@ -341,16 +341,18 @@ Blocked only by missing physical fixtures listed above.
 
 ### D4 — exact-head reboot gate
 
-Still required for the eventual release candidate:
+DONE for release code/package HEAD `9b5a8595203cf88ff726f9aa08bc62b8c25a8d29`.
 
-1. build and verify exact-head Clean.pkg;
-2. install it;
-3. reboot macOS;
-4. verify only `com.edp.drive` FDA is used;
-5. verify retained raw access after reboot;
-6. verify credential/policy persistence;
-7. verify standard EDP mount/capability path;
-8. safe eject and prove residue/U-state = 0.
+- exact-head Clean.pkg verifier PASS and installed;
+- reboot completed at `2026-09-04 13:30:00`;
+- service health PASS without a second service FDA subject;
+- logically-ejected same generation remained suppressed across reboot;
+- exact physical removal cleared the persisted generation;
+- fresh reinsert enumerated as `disk4` with unchanged five-factor identity;
+- `DA_CLAIMED=true`, `privilegedAccessReady=true`, zero raw errors/busy recovery;
+- root holder audit showed only `edp-drive-service` on the whole raw disk and no `fskitd` child holder;
+- credential/policy persistence PASS;
+- final safe eject PASS with residue/U-state = 0.
 
 ### Phase E
 

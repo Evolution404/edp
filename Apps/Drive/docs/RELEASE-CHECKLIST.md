@@ -9,20 +9,20 @@ Updated: 2026-09-04
 Record before release testing:
 
 ```text
-Status: PHYSICAL GATES PASS — exact-head reboot/post-reboot audit pending
+Status: RELEASE-READY
 Branch: codex/ui-macos26-liquid-glass
 Release code/package HEAD: 9b5a8595203cf88ff726f9aa08bc62b8c25a8d29
 Version: 0.6.0
 Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
 Clean.pkg SHA-256: 43659c5fd37cc3cdb5546ab14b71782ea339bd6899209a59570bd119e0e9e264
 Exact-head GitHub Actions run: 33748594918 — PASS 5/5
-Physical acceptance: PASS for early claim, Pause/Resume/Restart continuity, safe eject, exact removal/reinsert, and Complete-Quit end state
-Remaining mandatory gate: exact-head reboot + post-reboot health/identity/raw/safe-eject audit
+Physical acceptance: PASS for early claim, Pause/Resume/Restart continuity, safe eject, exact removal/reinsert, Complete-Quit end state, and exact-head reboot/post-reboot audit
+Remaining mandatory gate: none
 Date: 2026-09-04
 Tester: automated local + GitHub Actions + macOS first-install + physical Lexar acceptance
 ```
 
-Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` prevents that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closes that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner and reserving true process shutdown for Complete Quit after safe-ejecting connected EDP devices. The installed `9b5a859` package has now passed those physical gates; only its exact-head reboot audit remains.
+Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` prevents that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closes that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner and reserving true process shutdown for Complete Quit after safe-ejecting connected EDP devices. The installed `9b5a859` package has passed the physical gates and the mandatory exact-head reboot/post-reboot audit.
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 
@@ -283,8 +283,13 @@ With the candidate installed and credentials/policy saved:
 - [x] credential persistence PASS.
 - [x] policy persistence PASS.
 - [x] configured partition behavior/capability PASS, including type1 RO and type2/type4 RW persistence.
-- [x] historical reboot gate for the earlier baseline passed, but it does not substitute for the mandatory `9b5a859` exact-head reboot.
-- [ ] reboot the currently installed `9b5a859` package and repeat service health, five-factor identity, retained raw access, credential/policy persistence and final safe-eject audit.
+- [x] historical reboot gate for the earlier baseline passed, but it did not substitute for the mandatory `9b5a859` exact-head reboot.
+- [x] exact-head `9b5a859` reboot completed at `2026-09-04 13:30:00`; service health PASS and no repeat FDA/admin authorization was required.
+- [x] the still-inserted logically-ejected Lexar remained suppressed across reboot (`privilegedAccessReady=false`, no raw errors, no busy recovery).
+- [x] exact physical removal cleared the old generation; fresh reinsert enumerated as `disk4` with the same five-factor identity and automatically restored `DA_CLAIMED=true` / `privilegedAccessReady=true`.
+- [x] post-reboot root holder audit showed only `edp-drive-service` on `/dev/rdisk4`, with no `fskitd` child-partition holder.
+- [x] type2/type4 credentials and all three `autoMount=false` policies persisted across reboot/removal/reinsert.
+- [x] final post-reboot safe eject PASS; `privilegedAccessReady=false`, partitions unavailable, raw errors/busy recovery zero, and no EDP mount/process/raw-holder residue remained.
 
 ## 15. Physical negative-media matrix
 
@@ -361,6 +366,7 @@ ordinaryUSB physical negative      BLOCKED_BY_FIXTURE
 legacyNoPassword physical negative BLOCKED_BY_FIXTURE
 currentNoPassword physical negative BLOCKED_BY_FIXTURE
 unrecognizedEDP physical negative  BLOCKED_BY_FIXTURE
-9b5a859 physical release gates      PASS; exact-head reboot/post-reboot audit PENDING
+9b5a859 physical release gates      PASS
+9b5a859 exact-head reboot gate      PASS
 NTFS RW ADR                         ACCEPTED A+C (native NTFS RO + writable ExFAT)
 ```
