@@ -135,6 +135,7 @@ struct EDPXPCSnapshot: Codable, Sendable {
     func requestRuntimeResume(withReply reply: @escaping (String?) -> Void)
     func requestRuntimeRestart(withReply reply: @escaping (String?) -> Void)
     func requestGracefulShutdown(withReply reply: @escaping (String?) -> Void)
+    func acknowledgeGracefulShutdownReply()
     func snapshot(withReply reply: @escaping (Data) -> Void)
     func refreshRawAccess(withReply reply: @escaping (String?) -> Void)
     func retryTransientAutomaticMounts(withReply reply: @escaping (String?) -> Void)

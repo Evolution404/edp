@@ -108,16 +108,31 @@ private extension EDPTransportSession {
         let result = TransportStopResultBox()
         stopAsync(
             on: queue,
-            unmount: unmount,
+            unmountAsync: { path, completion in
+                do {
+                    try unmount(path)
+                    completion(nil)
+                } catch {
+                    completion(String(describing: error))
+                }
+            },
             isMounted: isMounted,
             gracefulExitSeconds: gracefulExitSeconds,
-            recoverStuckProcess: recoverStuckProcess
+            recoverStuckProcessAsync: recoverStuckProcess.map { recover in
+                { completion in completion(recover()) }
+            }
         ) { recovered, _, error in
             result.set(recovered: recovered, error: error)
         }
+        // Drain nested same-queue event callbacks before advancing virtual
+        // time. Normal teardown is completion-driven and must not consume even
+        // one timeout tick merely because an async callback was enqueued from
+        // inside the first lifecycle turn.
+        queue.sync {}
         queue.sync {}
         for _ in 0..<240 where !result.snapshot().completed {
             transportLifecycleScheduler.advance(by: 0.05)
+            queue.sync {}
             queue.sync {}
         }
         let snapshot = result.snapshot()
@@ -132,6 +147,11 @@ private extension EDPTransportSession {
 }
 
 private final class FakeManagedProcess: EDPManagedProcess {
+    private struct ExitObserver {
+        let queue: DispatchQueue
+        let handler: EDPProcessExitHandler
+    }
+
     enum ExitBehavior {
         case alreadyExited
         case exitsOnTerminate
@@ -143,6 +163,7 @@ private final class FakeManagedProcess: EDPManagedProcess {
     private(set) var terminateCount = 0
     private(set) var forceTerminateCount = 0
     private var running: Bool
+    private var exitObservers = [ExitObserver]()
 
     init(_ behavior: ExitBehavior) {
         self.behavior = behavior
@@ -151,22 +172,44 @@ private final class FakeManagedProcess: EDPManagedProcess {
 
     var isRunning: Bool { running }
 
+    func observeExit(on queue: DispatchQueue, _ handler: @escaping EDPProcessExitHandler) {
+        if !running {
+            queue.async(execute: handler)
+            return
+        }
+        exitObservers.append(ExitObserver(queue: queue, handler: handler))
+    }
+
     func terminate() {
         terminateCount += 1
         if behavior == .exitsOnTerminate {
-            running = false
+            markExited()
         }
     }
 
     func forceTerminate() {
         forceTerminateCount += 1
         if behavior == .exitsOnForce {
-            running = false
+            markExited()
         }
     }
 
     func recoverFromHostReset() {
+        markExited()
+    }
+
+    func simulateNaturalExit() {
+        markExited()
+    }
+
+    private func markExited() {
+        guard running else { return }
         running = false
+        let observers = exitObservers
+        exitObservers.removeAll()
+        for observer in observers {
+            observer.queue.async(execute: observer.handler)
+        }
     }
 }
 
@@ -182,8 +225,8 @@ private enum ValidateTransportLifecycle {
         try validateNoRecoveryCallbackStillFailsClosed()
         try validateMountedTransportIsNeverKilled()
         try validateExitedTransportWithMountedVFSFailsClosed()
-        try validateRemountQuiescenceGenerationGate()
-        print("RESULT=REMOUNT_QUIESCENCE_GENERATION_OK")
+        try validateEventDrivenGenerationTeardown()
+        print("RESULT=TRANSPORT_EVENT_DRIVEN_GENERATION_TEARDOWN_OK")
         print("RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK")
         print("RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK")
     }
@@ -370,41 +413,27 @@ private enum ValidateTransportLifecycle {
         try require(!recoveryAttempted, "exited transport with live VFS mount attempted unsafe host recovery")
     }
 
-    private static func validateRemountQuiescenceGenerationGate() throws {
-        var gate = EDPRemountQuiescenceGate()
-        let first = gate.begin(
-            sessionKey: "device-a:2",
-            nowNanoseconds: 1_000_000_000,
-            stabilizationSeconds: 3
+    private static func validateEventDrivenGenerationTeardown() throws {
+        let process = FakeManagedProcess(.neverExits)
+        let session = makeSession(process)
+        var mounted = true
+        let before = transportLifecycleScheduler.nowNanoseconds
+        let recovered = try session.stop(
+            unmount: { _ in
+                mounted = false
+                process.simulateNaturalExit()
+            },
+            isMounted: { _ in mounted },
+            gracefulExitSeconds: 5
         )
-        try require(first.generation == 1, "first quiescence generation was not 1")
+        try require(!recovered, "normal teardown incorrectly reported host recovery")
+        try require(!mounted, "event-driven teardown kept the VFS mount active")
+        try require(!process.isRunning, "event-driven teardown kept the transport alive")
+        try require(process.terminateCount == 0, "normal event-driven teardown waited for SIGTERM timeout")
+        try require(process.forceTerminateCount == 0, "normal event-driven teardown reached SIGKILL")
         try require(
-            gate.remainingDelay(for: "device-a:2", nowNanoseconds: 2_000_000_000) == 2,
-            "quiescence remaining delay was incorrect"
-        )
-
-        let second = gate.begin(
-            sessionKey: "device-a:2",
-            nowNanoseconds: 2_000_000_000,
-            stabilizationSeconds: 3
-        )
-        try require(second.generation == 2, "second quiescence generation did not advance")
-        try require(
-            !gate.complete(first),
-            "stale generation incorrectly completed the current quiescence barrier"
-        )
-        try require(
-            gate.activeToken(for: "device-a:2") == second,
-            "stale completion replaced the current quiescence generation"
-        )
-        try require(
-            gate.remainingDelay(for: "device-a:2", nowNanoseconds: 5_000_000_000) == 0,
-            "elapsed quiescence did not become eligible"
-        )
-        try require(gate.complete(second), "current quiescence generation did not complete")
-        try require(
-            gate.activeToken(for: "device-a:2") == nil,
-            "completed quiescence generation remained active"
+            transportLifecycleScheduler.nowNanoseconds == before,
+            "normal teardown advanced a time-based stabilization gate"
         )
     }
 

@@ -39,6 +39,7 @@ SCHEDULER_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleScheduler.swift"
 JOURNAL_SOURCE="${ROOT}/Apps/Drive/product/EDPLifecycleJournal.swift"
 RUNTIME_METRICS_SOURCE="${ROOT}/Apps/Drive/product/EDPRuntimeMetrics.swift"
 NATIVE_SYSTEM_SOURCE="${ROOT}/Apps/Drive/product/EDPNativeSystem.swift"
+IOKIT_LIFECYCLE_SOURCE="${ROOT}/Apps/Drive/product/EDPIOKitLifecycle.swift"
 MACFUSE_POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPMacFUSERuntimePolicy.swift"
 PUBLISHER_SOURCE="${ROOT}/Apps/Drive/product/EDPBlockDevicePublisher.swift"
 POLICY_SOURCE="${ROOT}/Apps/Drive/product/EDPDevicePolicyStore.swift"
@@ -109,11 +110,9 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 /usr/bin/grep -Fq '[[ -z "$devices" && "$final_snapshot" == "$owner_snapshot" ]]' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq '! /bin/kill -0 "$pid"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'proc_pidpath(' "${DA_MOUNT_SOURCE}"
-/usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS=3' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'Keep the DiskImages2 IOMedia' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'wait_for_remount_quiescence' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'if (( iteration < LOOP_COUNT )); then' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'wait_for_remount_quiescence' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'DADiskEject(disk, kDADiskEjectOptionDefault' "${DA_MOUNT_SOURCE}"
 M12_SECTION="$(/usr/bin/awk '/^run_m12\(\)/,/^run_m14\(\)/' "${STORAGE_RUNNER}")"
 /usr/bin/grep -Fq 'unmount_path "$mountpoint"' <<<"${M12_SECTION}"
@@ -509,55 +508,69 @@ for marker in \
 done
 echo 'RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK'
 
-# DiskImages2 publication and macFUSE scratch recovery are also asynchronous.
-# The publisher may still invoke hdiutil as a bounded adapter, but it must never
-# block a lifecycle queue with sleep/wait loops or expose a synchronous publish
-# fallback.
+# DiskImages2 publication teardown is event-driven on exact synthetic IOMedia
+# generations. hdiutil is allowed only as a one-shot abnormal recovery inspector;
+# neither normal teardown nor owner recovery may poll it on a timer. Recovery
+# also binds diskimagesiod to PID + process start time before TERM/KILL so PID
+# reuse can never become a signal target.
 ! /usr/bin/grep -Fq 'Thread.sleep' "${PUBLISHER_SOURCE}"
 ! /usr/bin/grep -Fq 'waitUntilExit()' "${PUBLISHER_SOURCE}"
+! /usr/bin/grep -Fq 'waitForPublicationToDisappearAsync' "${PUBLISHER_SOURCE}"
+! /usr/bin/grep -Fq '@Sendable func poll()' "${PUBLISHER_SOURCE}"
 ! /usr/bin/grep -Fq 'func publishWritableImage(' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'func publishWritableImageAsync(' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'private final class EDPPublicationTerminationOperation' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'private struct EDPProcessGeneration' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'info.pbi_start_tvsec' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'DispatchSource.makeProcessSource' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'private final class EDPExactResourceTerminationWaiter' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'registryEntryID: generation.registryEntryID' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'EDPIOMediaTerminationMonitor' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'EDPIOKitMediaLifecycle.registryEntryExists' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'func cleanupNewOrphansAsync(' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'func cleanupOrphanAsync(' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'runBoundedProcessAsync(' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'ensurePublicationGoneAsync(' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'A successful Disk Arbitration eject only means the BSD' "${PUBLISHER_SOURCE}"
-echo 'RESULT=DRIVE_SYSTEM_ASYNC_BLOCK_PUBLISHER_OK'
+echo 'RESULT=DRIVE_SYSTEM_EVENT_DRIVEN_BLOCK_PUBLISHER_OK'
 
-# Repeated FSKit-over-DiskImages2 mounts must not reuse the previous generation
-# as soon as Disk Arbitration reports eject success. User-visible filesystem
-# teardown uses Disk Arbitration completion rather than a blind fixed sleep;
-# exact lower teardown still arms a monotonic 3-second remount barrier. Manual
-# unmount may return once lower resources are gone, but an immediate remount must
-# remain gated until that barrier expires. Internal eject/shutdown waiters keep
-# the full quiescence contract.
-/usr/bin/grep -Fq 'struct EDPRemountQuiescenceGate' "${SCHEDULER_SOURCE}"
-/usr/bin/grep -Fq 'guard active[token.sessionKey] == token else { return false }' "${SCHEDULER_SOURCE}"
-/usr/bin/grep -Fq 'remountQuiescenceSeconds: TimeInterval = 3.0' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'event: "remountQuiescenceWait"' "${RUNTIME_SOURCE}"
+# Generation handoff must be based on actual teardown events, never a fixed
+# remount delay. Native filesystem DA completion, exact DiskImages2 IOMedia
+# termination, exact hidden-source IOMedia termination and transport child exit
+# together define terminal teardown. A completed teardown can remount
+# immediately; time does not participate in generation ownership.
+! /usr/bin/grep -Fq 'EDPRemountQuiescenceGate' "${SCHEDULER_SOURCE}"
+! /usr/bin/grep -Fq 'remountQuiescenceSeconds' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'remountQuiescenceWait' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'remountQuiescenceStarted' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'remountQuiescenceComplete' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'event: "nativeFilesystemDAUnmountStarted"' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'diskArbitration.unmountAsync(session.exposedBSD)' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'event: "nativeFilesystemDAUnmountComplete"' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'continueUnmountAfterNativeFilesystemDeactivation' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'event: "userVisibleUnmountComplete"' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'waitForRemountQuiescence: false' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'private func waitForDeviceRemountQuiescence(' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'private func waitForAllRemountQuiescence(' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'remount quiescence did not drain before eject deadline' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'remount quiescence did not drain before shutdown deadline' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'Keep the DiskImages2 IOMedia' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'event: "remountQuiescenceStarted"' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'event: "remountQuiescenceComplete"' "${RUNTIME_SOURCE}"
-UNMOUNT_GATE_SECTION="$(/usr/bin/awk '/private func beginUnmountQuiescence\(/,/private func completeUnmountWaiters\(/' "${RUNTIME_SOURCE}")"
-EARLY_COMPLETE_LINE="$(/usr/bin/grep -nF 'completeUnmountWaiters(' <<<"${UNMOUNT_GATE_SECTION}" | /usr/bin/head -1 | /usr/bin/cut -d: -f1)"
-GATE_SCHEDULE_LINE="$(/usr/bin/grep -nF 'scheduler.schedule(' <<<"${UNMOUNT_GATE_SECTION}" | /usr/bin/head -1 | /usr/bin/cut -d: -f1)"
-[[ "${EARLY_COMPLETE_LINE}" =~ ^[0-9]+$ && "${GATE_SCHEDULE_LINE}" =~ ^[0-9]+$ && "${EARLY_COMPLETE_LINE}" -lt "${GATE_SCHEDULE_LINE}" ]]
+/usr/bin/grep -Fq 'requireSourceTermination: true' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'exposedRegistryEntryID' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func observeExit(on queue:' "${TRANSPORT_SOURCE}"
 /usr/bin/grep -Fq 'operation.journalContext.id.uuidString.lowercased().prefix(8)' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'RESULT=REMOUNT_QUIESCENCE_GENERATION_OK' \
+/usr/bin/grep -Fq 'RESULT=TRANSPORT_EVENT_DRIVEN_GENERATION_TEARDOWN_OK' \
   "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift"
-echo 'RESULT=DRIVE_SYSTEM_REMOUNT_QUIESCENCE_OK'
-echo 'RESULT=DRIVE_SYSTEM_FAST_MANUAL_UNMOUNT_GATED_REMOUNT_OK'
+echo 'RESULT=DRIVE_SYSTEM_EVENT_DRIVEN_GENERATION_HANDOFF_OK'
+
+# User-visible success paths are event-driven end to end. MFMount readiness is
+# delivered through an inherited READY pipe, mount cancellation drains through
+# terminal observers, whole-USB DA events reconcile immediately, and graceful
+# process exit is released only after the client ACKs receipt of the reply.
+! /usr/bin/grep -Fq 'pollBridgeActivation' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'scheduler.schedule(on: lifecycleQueue, after: 0.1)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'func observeReady(on queue:' "${TRANSPORT_SOURCE}"
+/usr/bin/grep -Fq 'EDP_MFMOUNT_READY_FD' "${MOUNT_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'terminalObservers.append' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq '.milliseconds(250)' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'fileprivate func handleDiskEvent()' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'onChange?()' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'func acknowledgeGracefulShutdownReply()' "${XPC_PROTOCOL_SOURCE}"
+/usr/bin/grep -Fq 'acknowledgementProxy.acknowledgeGracefulShutdownReply()' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'proxy.acknowledgeGracefulShutdownReply()' "${APP_SOURCE}"
+! /usr/bin/grep -Fq '.milliseconds(100)' "${SERVICE_MAIN_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_ZERO_FIXED_WAIT_SUCCESS_PATH_OK'
 
 # Generic runtime utilities live outside the orchestration file so controller
 # responsibilities do not grow back through local process/error/file helpers.
@@ -711,7 +724,9 @@ echo 'RESULT=DRIVE_SYSTEM_SERVICE_MAIN_SPLIT_OK'
 /usr/bin/grep -Fq 'recognizedRawAccessFailure' "${MOUNT_LIFECYCLE_SOURCE}"
 /usr/bin/grep -Fq 'struct EDPFSKitMountLifecycleMachine' "${MOUNT_LIFECYCLE_SOURCE}"
 /usr/bin/grep -Fq 'enum EDPFSKitHostRecovery' "${MOUNT_LIFECYCLE_SOURCE}"
-/usr/bin/grep -Fq 'restartConsoleAgentIfSafe()' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'restartConsoleAgentIfSafeAsync(' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'process.terminationHandler' "${MOUNT_LIFECYCLE_SOURCE}"
+! /usr/bin/grep -Fq 'EDPNativeBoundedProcess.run' "${MOUNT_LIFECYCLE_SOURCE}"
 ! /usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'enum EDPFSKitHostRecovery' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func lastFailureCode(deviceID:' "${RUNTIME_SOURCE}"
@@ -812,13 +827,14 @@ FULL_EXIT_SHUTDOWN_LINE="$(/usr/bin/grep -nF 'proxy.requestGracefulShutdown' <<<
 echo 'RESULT=DRIVE_SYSTEM_FULL_EXIT_SAFE_EJECT_ORDER_OK'
 echo 'RESULT=DRIVE_SYSTEM_CLAIM_CONTINUOUS_RUNTIME_CONTROL_OK'
 
-# Lifecycle deadlines are monotonic and scheduler-driven. Bridge activation and
-# mount drain timeouts must not regress to wall-clock Date()/asyncAfter logic.
+# Lifecycle failure bounds are monotonic and scheduler-driven. Bridge readiness
+# and mount-drain success are event-driven; only their timeout branches consume
+# the virtual clock and must never regress to wall-clock Date()/asyncAfter logic.
 /usr/bin/grep -Fq 'protocol EDPLifecycleScheduling' "${SCHEDULER_SOURCE}"
 /usr/bin/grep -Fq 'DispatchTime.now().uptimeNanoseconds' "${SCHEDULER_SOURCE}"
-/usr/bin/grep -Fq 'scheduler.deadline(after: 8)' "${RUNTIME_SOURCE}"
-[[ "$(/usr/bin/grep -Fc 'scheduler.deadline(after: 15)' "${RUNTIME_SOURCE}")" -ge 3 ]]
-/usr/bin/grep -Fq 'scheduler.deadline(after: gracefulExitSeconds)' "${TRANSPORT_SOURCE}"
+/usr/bin/grep -Fq 'scheduler.schedule(on: lifecycleQueue, after: 8)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'scheduler.schedule(on: lifecycleQueue, after: timeoutSeconds)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'scheduler.schedule(on: operation.queue, after: max(0, gracefulExitSeconds))' "${TRANSPORT_SOURCE}"
 ! /usr/bin/grep -Eq 'Date\(\)\.addingTimeInterval\((8|15)\)' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Eq 'Date\(\) [<>]=? deadline' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_VIRTUAL_CLOCK_LIFECYCLE_OK'
@@ -887,9 +903,12 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 # Task-cancellable, while every agent reset is fail-closed on active FSKit mounts.
 /usr/bin/grep -Fq 'enum EDPUserToolError: Error, LocalizedError, Sendable' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'timeout: Duration = .seconds(8)' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'try Task.checkCancellation()' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'Darwin.kill(process.processIdentifier, SIGKILL)' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'withTaskCancellationHandler' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'requestCancellation()' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'Darwin.kill(self.process.processIdentifier, SIGKILL)' "${APP_SERVICE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq 'waitUntilExit()' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'while process.isRunning' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'Task.sleep(for: .milliseconds(50))' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'try await ensureMacFUSELocalEnablement()' "${APP_VIEW_MODEL_SOURCE}"
 /usr/bin/grep -Fq 'await macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${RUNTIME_SOURCE}" "${MOUNT_LIFECYCLE_SOURCE}" "${PUBLISHER_SOURCE}"
@@ -903,22 +922,26 @@ DISKIMAGES_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPDiskImages2Publis
 "${APP_SERVICE_SUPPORT_RUNNER}" | /usr/bin/grep -Fq 'RESULT=DRIVE_APP_USER_TOOL_BOUNDED_TYPED_CANCELLABLE_OK'
 echo 'RESULT=DRIVE_SYSTEM_EXTERNAL_DEPENDENCY_BOUNDARIES_OK'
 
-# Normal product lifecycle must not fall back to shell-side process inspection
-# or codesign/umount helpers. Runtime signature validation is Security.framework,
-# service liveness is SMAppService + XPC, and VFS teardown is unmount(2).
+# Normal product lifecycle must never execute a potentially uninterruptible VFS
+# unmount syscall inside the privileged service. The exact hidden IOMedia
+# generation is monitored in IOKit and /sbin/umount is isolated in a helper
+# process whose termination is event-driven. App-side helper execution is also
+# Process.terminationHandler-driven; enablement does not use fixed retry sleeps.
 ! /usr/bin/grep -Fq '/bin/launchctl' "${APP_SOURCE}" "${APP_VIEW_MODEL_SOURCE}" "${APP_SERVICE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/codesign' "${MACFUSE_POLICY_SOURCE}"
 /usr/bin/grep -Fq 'SecStaticCodeCheckValidity' "${MACFUSE_POLICY_SOURCE}"
 /usr/bin/grep -Fq 'kSecCodeInfoTeamIdentifier' "${MACFUSE_POLICY_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${MACFUSE_POLICY_SOURCE}"
-! /usr/bin/grep -Fq '/sbin/umount' "${NATIVE_SYSTEM_SOURCE}"
-/usr/bin/grep -Fq 'Darwin.unmount(path, flags)' "${NATIVE_SYSTEM_SOURCE}"
-/usr/bin/grep -Fq 'Task.detached(priority: .utility)' "${APP_VIEW_MODEL_SOURCE}"
-/usr/bin/grep -Fq 'let edpMacFUSEEnablementMaxAttempts = 5' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'for attempt in 1...edpMacFUSEEnablementMaxAttempts' "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'executableURL = URL(fileURLWithPath: "/sbin/umount")' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'requireSourceTermination: true' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'Darwin.unmount(path, flags)' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'final class EDPIOMediaTerminationMonitor' "${IOKIT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'process.terminationHandler' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'withTaskCancellationHandler' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'edpMacFUSEEnablementMaxAttempts' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'for attempt in' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'Require the user FSKit state to remain stable for one' "${APP_VIEW_MODEL_SOURCE}"
 /usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
-/usr/bin/grep -Fq 'Require the user FSKit state to remain stable for one' "${APP_VIEW_MODEL_SOURCE}"
-! /usr/bin/grep -Fq 'while !macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 /usr/bin/grep -Fq 'func noActiveFSKitMountsForAgentReset() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'guard noActiveFSKitMountsForAgentReset() else {' "${APP_SERVICE_SUPPORT_SOURCE}"
@@ -926,7 +949,7 @@ FSKIT_APP_RESET_GUARD_LINE="$(/usr/bin/grep -nF 'guard noActiveFSKitMountsForAge
 FSKIT_APP_KILLALL_LINE="$(/usr/bin/grep -nF 'runUserTool("/usr/bin/killall", ["-9", "fskit_agent", "extensionkitservice"])' "${APP_SERVICE_SUPPORT_SOURCE}" | /usr/bin/cut -d: -f1)"
 [[ -n "${FSKIT_APP_RESET_GUARD_LINE}" && -n "${FSKIT_APP_KILLALL_LINE}" && "${FSKIT_APP_RESET_GUARD_LINE}" -lt "${FSKIT_APP_KILLALL_LINE}" ]]
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_APP_RESET_FAIL_CLOSED_OK'
-echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_BOUNDED_RETRY_OK'
+echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_EVENT_DRIVEN_OK'
 echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 
 # Current Drive documentation must remain aligned with canonical Makefile/CI

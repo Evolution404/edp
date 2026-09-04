@@ -463,53 +463,6 @@ struct RuntimeNativeError: Error, CustomStringConvertible, Sendable {
     var description: String { message }
 }
 
-enum EDPNativeBoundedProcess {
-    static func run(
-        executable: String,
-        arguments: [String],
-        timeout: TimeInterval,
-        label: String,
-        terminateGrace: TimeInterval = 0.75,
-        killGrace: TimeInterval = 0.75
-    ) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let pid = process.processIdentifier
-
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        if !process.isRunning {
-            return process.terminationStatus
-        }
-
-        process.terminate()
-        let terminateDeadline = Date().addingTimeInterval(terminateGrace)
-        while process.isRunning && Date() < terminateDeadline {
-            Thread.sleep(forTimeInterval: 0.05)
-        }
-        if process.isRunning {
-            _ = Darwin.kill(pid, SIGKILL)
-            let killDeadline = Date().addingTimeInterval(killGrace)
-            while process.isRunning && Date() < killDeadline {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-        }
-
-        if process.isRunning {
-            throw RuntimeNativeError(
-                "\(label) timed out after \(Int(timeout)) seconds and helper remained alive after SIGKILL"
-            )
-        }
-        throw RuntimeNativeError("\(label) timed out after \(Int(timeout)) seconds")
-    }
-}
-
 typealias EDPDiskArbitrationVoidCompletion = @Sendable (RuntimeNativeError?) -> Void
 typealias EDPDiskArbitrationMountCompletion = @Sendable (String?, RuntimeNativeError?) -> Void
 
@@ -1087,6 +1040,159 @@ private func statfsString<T>(_ field: inout T) -> String {
     }
 }
 
+typealias EDPVFSUnmountCompletion = @Sendable (RuntimeNativeError?) -> Void
+
+private final class EDPIsolatedVFSUnmountOperation: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let path: String
+    private let force: Bool
+    private let timeout: TimeInterval
+    private let requireSourceTermination: Bool
+    private let completion: EDPVFSUnmountCompletion
+    private var process: Process?
+    private var sourceMonitor: EDPIOMediaTerminationMonitor?
+    private var sourceTerminated = false
+    private var helperExited = false
+    private var helperStatus: Int32?
+    private var finished = false
+    private var keepAlive: EDPIsolatedVFSUnmountOperation?
+
+    init(
+        queue: DispatchQueue,
+        path: String,
+        force: Bool,
+        timeout: TimeInterval,
+        requireSourceTermination: Bool,
+        completion: @escaping EDPVFSUnmountCompletion
+    ) {
+        self.queue = queue
+        self.path = path
+        self.force = force
+        self.timeout = timeout
+        self.requireSourceTermination = requireSourceTermination
+        self.completion = completion
+    }
+
+    func start() {
+        queue.async { [self] in
+            guard !finished else { return }
+            keepAlive = self
+            guard EDPNativeMountTable.isMountpoint(path) else {
+                finish(nil)
+                return
+            }
+
+            if requireSourceTermination {
+                guard let generation = EDPNativeMountTable.sourceGeneration(forMountpoint: path) else {
+                    finish(RuntimeNativeError(
+                        "cannot resolve exact IOMedia generation for mounted path \(path)"
+                    ))
+                    return
+                }
+                do {
+                    sourceMonitor = try EDPIOMediaTerminationMonitor(
+                        generation: generation,
+                        queue: queue
+                    ) { [weak self] in
+                        guard let self, !self.finished else { return }
+                        self.sourceTerminated = true
+                        self.maybeFinishSuccess()
+                    }
+                } catch {
+                    finish(error as? RuntimeNativeError
+                        ?? RuntimeNativeError(String(describing: error)))
+                    return
+                }
+            } else {
+                sourceTerminated = true
+            }
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/sbin/umount")
+            process.arguments = force ? ["-f", path] : [path]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { [weak self] process in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    self?.helperDidExit(status: process.terminationStatus)
+                }
+            }
+            self.process = process
+            do {
+                try process.run()
+            } catch {
+                finish(RuntimeNativeError(
+                    "isolated VFS unmount launch failed for \(path): \(error)"
+                ))
+                return
+            }
+
+            queue.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                self?.timeoutExpired()
+            }
+        }
+    }
+
+    private func helperDidExit(status: Int32) {
+        guard !finished else { return }
+        helperExited = true
+        helperStatus = status
+        guard !EDPNativeMountTable.isMountpoint(path) else {
+            finish(RuntimeNativeError(
+                "isolated VFS unmount left mounted path \(path): status=\(status)"
+            ))
+            return
+        }
+        maybeFinishSuccess()
+    }
+
+    private func maybeFinishSuccess() {
+        guard !finished, helperExited, sourceTerminated else { return }
+        let status = helperStatus ?? -1
+        // A nonzero helper status is harmless only when the authoritative mount
+        // and exact source generation are both already gone. This covers races
+        // where FSKit completes teardown while umount is returning.
+        if status != 0,
+           EDPNativeMountTable.isMountpoint(path) {
+            finish(RuntimeNativeError(
+                "isolated VFS unmount failed for \(path): status=\(status)"
+            ))
+            return
+        }
+        finish(nil)
+    }
+
+    private func timeoutExpired() {
+        guard !finished else { return }
+        if let process, process.isRunning {
+            process.terminate()
+            queue.asyncAfter(deadline: .now() + 0.5) { [weak self, weak process] in
+                guard let self, !self.finished else { return }
+                if let process, process.isRunning, process.processIdentifier > 1 {
+                    _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                }
+                self.finish(RuntimeNativeError(
+                    "isolated VFS unmount timed out for \(self.path) after \(Int(self.timeout)) seconds"
+                ))
+            }
+            return
+        }
+        finish(RuntimeNativeError(
+            "exact IOMedia generation did not terminate for \(path) after \(Int(timeout)) seconds"
+        ))
+    }
+
+    private func finish(_ error: RuntimeNativeError?) {
+        guard !finished else { return }
+        finished = true
+        process?.terminationHandler = nil
+        sourceMonitor = nil
+        completion(error)
+        keepAlive = nil
+    }
+}
+
 enum EDPNativeMountTable {
     static func entries() -> [(source: String, mountpoint: String, filesystem: String, flags: UInt32)] {
         let count = getfsstat(nil, 0, MNT_NOWAIT)
@@ -1112,6 +1218,34 @@ enum EDPNativeMountTable {
         entries().contains { $0.mountpoint == path }
     }
 
+    static func sourceGeneration(forMountpoint path: String) -> EDPIOMediaGeneration? {
+        guard let source = entries().first(where: { $0.mountpoint == path })?.source,
+              source.hasPrefix("/dev/") else {
+            return nil
+        }
+        return EDPIOKitMediaLifecycle.mediaGeneration(
+            forBSDName: String(source.dropFirst("/dev/".count))
+        )
+    }
+
+    static func unmountPathAsync(
+        _ path: String,
+        force: Bool = false,
+        requireSourceTermination: Bool = false,
+        timeout: TimeInterval? = nil,
+        on queue: DispatchQueue,
+        completion: @escaping EDPVFSUnmountCompletion
+    ) {
+        EDPIsolatedVFSUnmountOperation(
+            queue: queue,
+            path: path,
+            force: force,
+            timeout: timeout ?? (force ? 8 : 15),
+            requireSourceTermination: requireSourceTermination,
+            completion: completion
+        ).start()
+    }
+
     static func mountPoint(forBSD bsdName: String) -> String? {
         let source = "/dev/\(bsdName)"
         return entries().first { $0.source == source }?.mountpoint
@@ -1132,20 +1266,6 @@ enum EDPNativeMountTable {
         return (entry.flags & UInt32(MNT_RDONLY)) != 0
     }
 
-    static func unmountPath(_ path: String, force: Bool = false) throws {
-        guard isMountpoint(path) else { return }
-        let flags = force ? Int32(MNT_FORCE) : 0
-        if Darwin.unmount(path, flags) != 0 {
-            let failure = errno
-            if !isMountpoint(path) { return }
-            throw RuntimeNativeError(
-                "unmount(2) failed for \(path): errno=\(failure) \(String(cString: strerror(failure)))"
-            )
-        }
-        guard !isMountpoint(path) else {
-            throw RuntimeNativeError("mount remained active after unmount(2): \(path)")
-        }
-    }
 }
 
 private func diskEventCallback(_ disk: DADisk, _ context: UnsafeMutableRawPointer?) {
@@ -1164,7 +1284,6 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
     private let session: DASession
     private let queue = DispatchQueue(label: "com.edp.drive.disk-events")
     private var reconciliationTimer: DispatchSourceTimer?
-    private var eventGeneration: UInt64 = 0
     private var onChange: (@Sendable () -> Void)?
 
     init() throws {
@@ -1194,21 +1313,15 @@ final class EDPDiskEventMonitor: @unchecked Sendable {
             reconciliationTimer?.cancel()
             reconciliationTimer = nil
             onChange = nil
-            eventGeneration &+= 1
             DASessionSetDispatchQueue(session, nil)
         }
     }
 
     fileprivate func handleDiskEvent() {
-        // Only whole USB media reaches this point. Coalesce the remaining
-        // attach/disappear burst so raw metadata discovery runs once after the
-        // device graph settles.
-        eventGeneration &+= 1
-        let generation = eventGeneration
-        queue.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
-            guard let self, self.eventGeneration == generation else { return }
-            self.onChange?()
-        }
+        // Disk Arbitration already supplies the whole-USB appeared/disappeared
+        // lifecycle boundary. Reconcile on that event immediately instead of
+        // adding an arbitrary debounce delay to device recognition.
+        onChange?()
     }
 
     deinit {

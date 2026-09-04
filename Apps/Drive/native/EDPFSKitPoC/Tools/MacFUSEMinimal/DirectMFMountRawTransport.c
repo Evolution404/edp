@@ -34,6 +34,33 @@ extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 #define RAW_FILE_NAME "volume.raw"
 #define DIRECT_MAX_IO (4U * 1024U * 1024U)
 
+static void signal_mount_ready(void) {
+    const char *ready_fd_text = getenv("EDP_MFMOUNT_READY_FD");
+    if (ready_fd_text == NULL || *ready_fd_text == '\0') return;
+
+    errno = 0;
+    char *end = NULL;
+    long ready_fd_long = strtol(ready_fd_text, &end, 10);
+    if (errno != 0 || end == NULL || *end != '\0' || ready_fd_long < 3 || ready_fd_long > INT32_MAX) {
+        fprintf(stderr, "DIRECT_MFMOUNT_READY_FD_INVALID=%s\n", ready_fd_text);
+        return;
+    }
+
+    int ready_fd = (int)ready_fd_long;
+    const unsigned char marker = 'R';
+    ssize_t written;
+    do {
+        written = write(ready_fd, &marker, sizeof(marker));
+    } while (written < 0 && errno == EINTR);
+    if (written != (ssize_t)sizeof(marker)) {
+        fprintf(stderr, "DIRECT_MFMOUNT_READY_SIGNAL_FAILED errno=%d\n", errno);
+    } else {
+        fprintf(stderr, "DIRECT_MFMOUNT_READY_SIGNAL=1\n");
+    }
+    close(ready_fd);
+    unsetenv("EDP_MFMOUNT_READY_FD");
+}
+
 struct direct_state {
     int backing_fd;
     uint64_t backing_size;
@@ -682,6 +709,11 @@ int main(int argc, char **argv) {
             state.backing_size,
             mountpoint,
             state.read_only ? 1 : 0);
+    /* MFMountResultSuccess is the framework's authoritative point that the
+     * volume has been mounted and the channel is associated with its transport.
+     * Signal the privileged parent through the inherited one-shot pipe instead
+     * of making it poll the mount table every 100 ms. */
+    signal_mount_ready();
 
     int exit_code = 0;
     while (state.running) {

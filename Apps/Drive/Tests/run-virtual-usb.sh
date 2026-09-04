@@ -28,6 +28,7 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
+  product/EDPIOKitLifecycle.swift \
   product/EDPNativeSystem.swift \
   Tests/VirtualUSB/ValidateDiscoverySeam.swift \
   -o "$BINARY"
@@ -43,6 +44,7 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
+  product/EDPIOKitLifecycle.swift \
   product/EDPNativeSystem.swift \
   Tests/VirtualUSB/EDPFaultPlan.swift \
   Tests/VirtualUSB/EDPVirtualMedia.swift \

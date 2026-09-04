@@ -366,6 +366,9 @@ struct EDPUSBVaultApp: App {
                 print("RESULT=EDP_SERVICE_GRACEFUL_STOP_FAILED")
                 exit(1)
             }
+            // The service exits only after this client proves it received the
+            // teardown reply; this replaces the old fixed reply-drain delay.
+            proxy.acknowledgeGracefulShutdownReply()
             let disconnected = disconnectSemaphore.wait(timeout: .now() + 12) == .success
             connection.invalidate()
             guard disconnected else {

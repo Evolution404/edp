@@ -310,42 +310,116 @@ struct EDPFSKitMountLifecycleMachine: Sendable {
     }
 }
 
+private final class EDPFSKitAgentRecoveryOperation: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let consoleUID: uid_t
+    private let completion: @Sendable (Bool) -> Void
+    private var process: Process?
+    private var finished = false
+    private var keepAlive: EDPFSKitAgentRecoveryOperation?
+
+    init(
+        queue: DispatchQueue,
+        consoleUID: uid_t,
+        completion: @escaping @Sendable (Bool) -> Void
+    ) {
+        self.queue = queue
+        self.consoleUID = consoleUID
+        self.completion = completion
+    }
+
+    func start() {
+        queue.async { [self] in
+            guard !finished else { return }
+            keepAlive = self
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            process.arguments = ["-9", "-U", String(consoleUID), "-x", "fskit_agent"]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { [weak self] process in
+                guard let self else { return }
+                self.queue.async {
+                    guard !self.finished else { return }
+                    let recovered = process.terminationStatus == 0
+                    if recovered {
+                        NSLog("EDP restarted console-user fskit_agent after a mount-free stuck transport")
+                    } else {
+                        NSLog("EDP FSKit agent recovery exited with status %d", process.terminationStatus)
+                    }
+                    self.finish(recovered)
+                }
+            }
+            self.process = process
+            do {
+                try process.run()
+            } catch {
+                NSLog("EDP FSKit agent recovery launch failed: %@", String(describing: error))
+                finish(false)
+                return
+            }
+
+            // Failure ceiling only. A healthy recovery completes from the
+            // process termination event and never waits for this timer.
+            queue.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, !self.finished else { return }
+                if let process = self.process, process.isRunning, process.processIdentifier > 1 {
+                    _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                }
+                NSLog("EDP FSKit agent recovery timed out")
+                self.finish(false)
+            }
+        }
+    }
+
+    private func finish(_ recovered: Bool) {
+        guard !finished else { return }
+        finished = true
+        process?.terminationHandler = nil
+        completion(recovered)
+        keepAlive = nil
+    }
+}
+
 // Recovery of the console-user FSKit host belongs to mount lifecycle policy,
 // not to the top-level daemon controller. It is intentionally fail-closed and
-// refuses to restart the agent while any FSKit mount is still active.
+// refuses to restart the agent while any FSKit mount is still active. The
+// normal path is callback-driven; timeout is only an abnormal failure ceiling.
 enum EDPFSKitHostRecovery {
-    static func restartConsoleAgentIfSafe() -> Bool {
-        guard geteuid() == 0 else { return false }
+    static func restartConsoleAgentIfSafeAsync(
+        on queue: DispatchQueue,
+        completion: @escaping @Sendable (Bool) -> Void
+    ) {
+        guard geteuid() == 0 else {
+            queue.async { completion(false) }
+            return
+        }
 
         var mounts: UnsafeMutablePointer<statfs>?
         let count = getmntinfo(&mounts, MNT_NOWAIT)
-        guard count >= 0, let mounts else { return false }
+        guard count >= 0, let mounts else {
+            queue.async { completion(false) }
+            return
+        }
         for index in 0..<Int(count) {
             if (mounts[index].f_flags_ext & UInt32(MNT_EXT_FSKIT)) != 0 {
                 NSLog("EDP refused FSKit agent recovery because an FSKit mount is still active")
-                return false
+                queue.async { completion(false) }
+                return
             }
         }
 
         var console = stat()
         guard stat("/dev/console", &console) == 0,
               console.st_uid != 0 else {
-            return false
+            queue.async { completion(false) }
+            return
         }
 
-        do {
-            let status = try EDPNativeBoundedProcess.run(
-                executable: "/usr/bin/pkill",
-                arguments: ["-9", "-U", String(console.st_uid), "-x", "fskit_agent"],
-                timeout: 3,
-                label: "restart console-user FSKit agent"
-            )
-            guard status == 0 else { return false }
-            NSLog("EDP restarted console-user fskit_agent after a mount-free stuck transport")
-            return true
-        } catch {
-            NSLog("EDP FSKit agent recovery failed: %@", String(describing: error))
-            return false
-        }
+        EDPFSKitAgentRecoveryOperation(
+            queue: queue,
+            consoleUID: console.st_uid,
+            completion: completion
+        ).start()
     }
 }

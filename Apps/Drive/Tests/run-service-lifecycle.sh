@@ -29,6 +29,7 @@ PRODUCT_SOURCES=(
   product/EDPTransportProvider.swift
   product/EDPTransportRuntimePolicy.swift
   product/EDPFinderVolumeDefaults.swift
+  product/EDPIOKitLifecycle.swift
   product/EDPNativeSystem.swift
   product/EDPBlockDevicePublisher.swift
   product/EDPXPCProtocol.swift

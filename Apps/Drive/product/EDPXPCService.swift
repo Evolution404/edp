@@ -10,6 +10,7 @@ final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol,
     private let controller: EDPServiceController
     private let didRequestShutdown: @Sendable () -> Void
     private let shutdownLock = NSLock()
+    private var shutdownPrepared = false
     private var shutdownSignaled = false
 
     init(controller: EDPServiceController, didRequestShutdown: @escaping @Sendable () -> Void) {
@@ -21,10 +22,16 @@ final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol,
         reply("com.edp.drive.service:running")
     }
 
-    private func signalShutdownOnce() {
+    private func prepareShutdownAcknowledgement() {
         shutdownLock.lock()
-        let shouldSignal = !shutdownSignaled
-        shutdownSignaled = true
+        shutdownPrepared = true
+        shutdownLock.unlock()
+    }
+
+    private func signalShutdownOnceAfterAcknowledgement() {
+        shutdownLock.lock()
+        let shouldSignal = shutdownPrepared && !shutdownSignaled
+        if shouldSignal { shutdownSignaled = true }
         shutdownLock.unlock()
         if shouldSignal { didRequestShutdown() }
     }
@@ -53,11 +60,15 @@ final class EDPXPCService: NSObject, NSXPCListenerDelegate, EDPVaultXPCProtocol,
     func requestGracefulShutdown(withReply reply: @escaping (String?) -> Void) {
         let replyBox = EDPSendableStringReply(reply)
         controller.shutdownGracefullyAsync { [weak self] errorMessage in
-            replyBox(errorMessage)
             if errorMessage == nil {
-                self?.signalShutdownOnce()
+                self?.prepareShutdownAcknowledgement()
             }
+            replyBox(errorMessage)
         }
+    }
+
+    func acknowledgeGracefulShutdownReply() {
+        signalShutdownOnceAfterAcknowledgement()
     }
 
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {

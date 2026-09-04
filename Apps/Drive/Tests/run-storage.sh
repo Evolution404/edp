@@ -95,16 +95,6 @@ chmod 0600 "$PASSWORD_FILE"
 
 log() { printf '%s\n' "$*"; }
 
-REMOUNT_QUIESCENCE_SECONDS=3
-
-wait_for_native_filesystem_quiescence() {
-  /bin/sleep "$REMOUNT_QUIESCENCE_SECONDS"
-}
-
-wait_for_remount_quiescence() {
-  /bin/sleep "$REMOUNT_QUIESCENCE_SECONDS"
-}
-
 is_mounted() {
   [[ -x "$FSKIT_GUARD_BIN" ]] || return 1
   "$FSKIT_GUARD_BIN" --is-mounted "$1" >/dev/null 2>&1
@@ -1082,11 +1072,9 @@ unmount_path() {
     bounded 25 "$DA_MOUNT_BIN" --unmount "$bsd" >/dev/null
   fi
   ! is_mounted "$mountpoint" || return 1
-  # Disk Arbitration reports the native mount gone before FSKit/UVFS has
-  # necessarily finished deactivate/forgetVolume. Keep the DiskImages2 IOMedia
-  # alive through that upper-filesystem quiescence window; only the caller may
-  # detach the publication after this returns.
-  wait_for_native_filesystem_quiescence
+  # Do not sleep after DA completion. The caller immediately ejects the exact
+  # DiskImages2 publication and that generation's terminal event is the lower
+  # lifecycle authority, matching the product event-driven handoff.
 }
 
 assert_no_test_artifacts() {
@@ -1330,7 +1318,6 @@ run_exchange_core() {
   unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m02-stage1
-  wait_for_remount_quiescence
 
   bridge="$MOUNT_ROOT/m02-remount-bridge"
   start_adapter 2 "$bridge" m02-remount pid
@@ -1358,7 +1345,6 @@ run_secure_core() {
   unmount_path "$mountpoint"
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m03-stage1
-  wait_for_remount_quiescence
 
   bridge="$MOUNT_ROOT/m03-remount-bridge"
   start_adapter 4 "$bridge" m03-remount pid
@@ -1388,9 +1374,6 @@ run_m10() {
     eject_image "$bsd" "$bridge/volume.raw"
     stop_adapter "$pid" "$bridge" "m10-$iteration"
     assert_no_test_artifacts "M10-$iteration"
-    if (( iteration < LOOP_COUNT )); then
-      wait_for_remount_quiescence
-    fi
     local current_fds
     current_fds="$(/usr/sbin/lsof -p $$ 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
     (( current_fds > max_fds )) && max_fds="$current_fds"
@@ -1428,7 +1411,6 @@ run_m12() {
   cleanup_crashed_local_mount "$bridge"
   eject_image "$bsd" "$bridge/volume.raw"
   assert_no_test_artifacts M12-crash
-  wait_for_remount_quiescence
 
   bridge="$MOUNT_ROOT/m12-recovery-bridge"
   start_adapter 2 "$bridge" m12-recovery pid
@@ -1522,6 +1504,7 @@ validate_failure_and_build_contracts() {
     product/EDPTransportProvider.swift
     product/EDPTransportRuntimePolicy.swift
     product/EDPFinderVolumeDefaults.swift
+    product/EDPIOKitLifecycle.swift
     product/EDPNativeSystem.swift
     product/EDPBlockDevicePublisher.swift
     product/EDPXPCProtocol.swift

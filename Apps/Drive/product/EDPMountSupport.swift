@@ -1,27 +1,167 @@
 import Darwin
+import Dispatch
 import Foundation
 
-final class EDPSpawnedProcess: EDPManagedProcess, @unchecked Sendable {
+final class EDPTransportReadinessSignal: EDPTransportReadinessObserving, @unchecked Sendable {
+    private struct Observer {
+        let queue: DispatchQueue
+        let handler: @Sendable () -> Void
+    }
+
     private let lock = NSLock()
-    private var pid: pid_t
+    private var ready = false
+    private var closed = false
+    private var observers = [Observer]()
+    private var source: DispatchSourceRead?
+
+    init(fileDescriptor: Int32) {
+        let source = DispatchSource.makeReadSource(
+            fileDescriptor: fileDescriptor,
+            queue: DispatchQueue.global(qos: .utility)
+        )
+        self.source = source
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            var marker: UInt8 = 0
+            while true {
+                let count = withUnsafeMutablePointer(to: &marker) {
+                    Darwin.read(fileDescriptor, $0, 1)
+                }
+                if count == 1 {
+                    if marker == UInt8(ascii: "R") {
+                        self.finishReady()
+                        return
+                    }
+                    continue
+                }
+                if count == 0 {
+                    self.finishClosed()
+                    return
+                }
+                if errno == EINTR { continue }
+                if errno == EAGAIN || errno == EWOULDBLOCK { return }
+                self.finishClosed()
+                return
+            }
+        }
+        source.setCancelHandler {
+            Darwin.close(fileDescriptor)
+        }
+        source.resume()
+    }
+
+    func observeReady(on queue: DispatchQueue, _ handler: @escaping @Sendable () -> Void) {
+        lock.lock()
+        if ready {
+            lock.unlock()
+            queue.async(execute: handler)
+            return
+        }
+        guard !closed else {
+            lock.unlock()
+            return
+        }
+        observers.append(Observer(queue: queue, handler: handler))
+        lock.unlock()
+    }
+
+    private func finishReady() {
+        lock.lock()
+        guard !ready, !closed else {
+            lock.unlock()
+            return
+        }
+        ready = true
+        let callbacks = observers
+        observers.removeAll()
+        let source = self.source
+        self.source = nil
+        lock.unlock()
+        source?.cancel()
+        for callback in callbacks {
+            callback.queue.async(execute: callback.handler)
+        }
+    }
+
+    private func finishClosed() {
+        lock.lock()
+        guard !ready, !closed else {
+            lock.unlock()
+            return
+        }
+        closed = true
+        observers.removeAll()
+        let source = self.source
+        self.source = nil
+        lock.unlock()
+        source?.cancel()
+    }
+
+    deinit {
+        source?.cancel()
+    }
+}
+
+struct EDPSpawnedTransport: Sendable {
+    let process: EDPSpawnedProcess
+    let readiness: EDPTransportReadinessSignal
+}
+
+final class EDPSpawnedProcess: EDPManagedProcess, @unchecked Sendable {
+    private struct ExitObserver {
+        let queue: DispatchQueue
+        let handler: EDPProcessExitHandler
+    }
+
+    private let lock = NSLock()
+    private let pid: pid_t
     private var reaped = false
+    private var exitObservers = [ExitObserver]()
 
     init(pid: pid_t) {
         self.pid = pid
+        DispatchQueue.global(qos: .utility).async { [self] in
+            reapProcess()
+        }
     }
 
     var isRunning: Bool {
         lock.lock()
         defer { lock.unlock() }
-        if reaped { return false }
-        var status: Int32 = 0
-        let result = waitpid(pid, &status, WNOHANG)
-        if result == 0 { return true }
-        if result == pid || (result < 0 && errno == ECHILD) {
-            reaped = true
-            return false
+        return !reaped
+    }
+
+    func observeExit(on queue: DispatchQueue, _ handler: @escaping EDPProcessExitHandler) {
+        lock.lock()
+        if reaped {
+            lock.unlock()
+            queue.async(execute: handler)
+            return
         }
-        return true
+        exitObservers.append(ExitObserver(queue: queue, handler: handler))
+        lock.unlock()
+    }
+
+    private func reapProcess() {
+        var status: Int32 = 0
+        var result: pid_t
+        repeat {
+            result = waitpid(pid, &status, 0)
+        } while result < 0 && errno == EINTR
+
+        lock.lock()
+        guard !reaped else {
+            lock.unlock()
+            return
+        }
+        reaped = true
+        let observers = exitObservers
+        exitObservers.removeAll()
+        lock.unlock()
+
+        for observer in observers {
+            observer.queue.async(execute: observer.handler)
+        }
     }
 
     func terminate() {
@@ -61,10 +201,25 @@ func spawnConsoleTransport(
     rawFD: Int32,
     stdinFD: Int32,
     logFD: Int32
-) throws -> EDPSpawnedProcess {
+) throws -> EDPSpawnedTransport {
     let launcher = binaryRoot + "/edp-console-exec"
     let argv = [launcher, String(identity.0), String(identity.1), "--", executable] + arguments
-    let env = environment.map { "\($0.key)=\($0.value)" }
+    var childEnvironment = environment
+    childEnvironment["EDP_MFMOUNT_READY_FD"] = "4"
+    let env = childEnvironment.map { "\($0.key)=\($0.value)" }
+
+    var readyPipe = [Int32](repeating: -1, count: 2)
+    guard readyPipe.withUnsafeMutableBufferPointer({ Darwin.pipe($0.baseAddress!) }) == 0 else {
+        throw fail("cannot create transport readiness pipe: errno=\(errno)")
+    }
+    var parentOwnsReadyRead = true
+    var parentOwnsReadyWrite = true
+    defer {
+        if parentOwnsReadyRead { Darwin.close(readyPipe[0]) }
+        if parentOwnsReadyWrite { Darwin.close(readyPipe[1]) }
+    }
+    _ = fcntl(readyPipe[0], F_SETFD, FD_CLOEXEC)
+    _ = fcntl(readyPipe[1], F_SETFD, FD_CLOEXEC)
 
     var inheritedRawFD = rawFD
     if rawFD == 3 {
@@ -84,7 +239,13 @@ func spawnConsoleTransport(
         throw fail("posix_spawn_file_actions_init failed")
     }
     defer { posix_spawn_file_actions_destroy(&actions) }
-    for (source, destination) in [(stdinFD, STDIN_FILENO), (logFD, STDOUT_FILENO), (logFD, STDERR_FILENO), (inheritedRawFD, 3)] {
+    for (source, destination) in [
+        (stdinFD, STDIN_FILENO),
+        (logFD, STDOUT_FILENO),
+        (logFD, STDERR_FILENO),
+        (inheritedRawFD, 3),
+        (readyPipe[1], 4),
+    ] {
         let rc = posix_spawn_file_actions_adddup2(&actions, source, destination)
         guard rc == 0 else { throw fail("posix_spawn dup2 failed: \(rc)") }
     }
@@ -110,7 +271,14 @@ func spawnConsoleTransport(
     guard status == 0 else {
         throw fail("posix_spawn transport failed: \(status) \(String(cString: strerror(status)))")
     }
-    return EDPSpawnedProcess(pid: child)
+    Darwin.close(readyPipe[1])
+    parentOwnsReadyWrite = false
+    let readiness = EDPTransportReadinessSignal(fileDescriptor: readyPipe[0])
+    parentOwnsReadyRead = false
+    return EDPSpawnedTransport(
+        process: EDPSpawnedProcess(pid: child),
+        readiness: readiness
+    )
 }
 
 func safeName(_ value: String) -> String {
@@ -126,6 +294,7 @@ final class MountSession: @unchecked Sendable {
     let partitionType: UInt32
     let bridgeMount: String
     let exposedBSD: String
+    let exposedRegistryEntryID: UInt64?
     let filesystem: String
     let userMount: String?
     let transport: EDPTransportSession
@@ -137,6 +306,7 @@ final class MountSession: @unchecked Sendable {
         partitionType: UInt32,
         bridgeMount: String,
         exposedBSD: String,
+        exposedRegistryEntryID: UInt64? = nil,
         filesystem: String,
         userMount: String?,
         transport: EDPTransportSession,
@@ -147,6 +317,7 @@ final class MountSession: @unchecked Sendable {
         self.partitionType = partitionType
         self.bridgeMount = bridgeMount
         self.exposedBSD = exposedBSD
+        self.exposedRegistryEntryID = exposedRegistryEntryID
         self.filesystem = filesystem
         self.userMount = userMount
         self.transport = transport
@@ -164,7 +335,8 @@ final class EDPFSKitMountOperationBox: @unchecked Sendable {
     let journalContext: EDPLifecycleOperationContext
     let completion: EDPDaemonMountCompletion
     var publicationOperation: (any EDPCancellableOperation)?
-    var quiescenceWaitRecorded = false
+    var cancellationHandler: (@Sendable () -> Void)?
+    var terminalObservers = [@Sendable () -> Void]()
     var finished = false
 
     init(

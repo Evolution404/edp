@@ -1467,10 +1467,14 @@ struct ValidateCredentialPolicyServiceLifecycle {
             }
             guard shutdownReply.wait(timeout: .now() + 2) == .success,
                   replyError == nil,
-                  requested.get(),
+                  !requested.get(),
                   env.manager.mounted.isEmpty,
                   env.manager.unmountAllCount == 1 else {
-                throw LifecycleValidationError("S10 async XPC graceful full exit did not teardown service state")
+                throw LifecycleValidationError("S10 graceful shutdown reply did not preserve ACK-before-exit ordering")
+            }
+            service.acknowledgeGracefulShutdownReply()
+            guard requested.get() else {
+                throw LifecycleValidationError("S10 graceful shutdown ACK did not release service exit")
             }
             print("SCENARIO=S10_OK graceful_full_exit")
         }

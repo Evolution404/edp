@@ -136,9 +136,21 @@ jobs:
           ! grep -Fq 'DIRECT_OPCODE opcode=' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           grep -Fq 'runBoundedProcess' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'timeout: 15' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          grep -Fq 'DispatchSource.makeProcessSource' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          grep -Fq 'info.pbi_start_tvsec' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          ! grep -Fq 'waitForPublicationToDisappearAsync' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          ! grep -Fq '@Sendable func poll()' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'process.forceTerminate()' Apps/Drive/product/EDPTransportProvider.swift
-          ! grep -Fq '/sbin/umount' Apps/Drive/product/EDPNativeSystem.swift
-          grep -Fq 'Darwin.unmount(path, flags)' Apps/Drive/product/EDPNativeSystem.swift
+          grep -Fq 'executableURL = URL(fileURLWithPath: "/sbin/umount")' Apps/Drive/product/EDPNativeSystem.swift
+          ! grep -Fq 'Darwin.unmount(path, flags)' Apps/Drive/product/EDPNativeSystem.swift
+          grep -Fq 'EDPIOMediaTerminationMonitor' Apps/Drive/product/EDPIOKitLifecycle.swift
+          grep -Fq 'EDP_MFMOUNT_READY_FD' Apps/Drive/product/EDPMountSupport.swift
+          ! grep -Fq 'pollBridgeActivation' Apps/Drive/product/EDPVaultRuntime.swift
+          ! grep -Fq 'scheduler.schedule(on: lifecycleQueue, after: 0.1)' Apps/Drive/product/EDPVaultRuntime.swift
+          ! grep -Fq '.milliseconds(250)' Apps/Drive/product/EDPNativeSystem.swift
+          grep -Fq 'func acknowledgeGracefulShutdownReply()' Apps/Drive/product/EDPXPCProtocol.swift
+          grep -Fq 'acknowledgementProxy.acknowledgeGracefulShutdownReply()' Apps/Drive/product/App/Model/EDPVaultViewModel.swift
+          ! grep -Fq '.milliseconds(100)' Apps/Drive/product/EDPServiceMain.swift
           grep -Fq 'func unmountAsync(' Apps/Drive/product/EDPVaultRuntime.swift
           grep -Fq 'func ejectAsync(deviceID: String, completion:' Apps/Drive/product/EDPVaultRuntime.swift
           grep -Fq 'func unmountAllAsync(' Apps/Drive/product/EDPVaultRuntime.swift
@@ -206,6 +218,7 @@ jobs:
             -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
             "${EDP_CORE_SWIFTC_FLAGS[@]}" \
             "${CORE_SOURCES[@]}" \
+            product/EDPIOKitLifecycle.swift \
             product/EDPNativeSystem.swift \
             native/EDPFSKitPoC/Tools/ValidateBoundedVFS.swift \
             -o "${RUNNER_TEMP}/validate-bounded-vfs"
@@ -254,6 +267,7 @@ jobs:
             product/EDPTransportProvider.swift
             product/EDPTransportRuntimePolicy.swift
             product/EDPFinderVolumeDefaults.swift
+            product/EDPIOKitLifecycle.swift
             product/EDPNativeSystem.swift
             product/EDPBlockDevicePublisher.swift
             product/EDPXPCProtocol.swift

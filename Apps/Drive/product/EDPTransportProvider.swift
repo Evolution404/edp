@@ -23,40 +23,70 @@ struct EDPTransportSessionError: Error, CustomStringConvertible {
     let description: String
 }
 
+typealias EDPTransportUnmountCompletion = @Sendable (String?) -> Void
+typealias EDPTransportUnmountRequest = (
+    _ mountpoint: String,
+    _ completion: @escaping EDPTransportUnmountCompletion
+) -> Void
+typealias EDPTransportRecoveryCompletion = @Sendable (Bool) -> Void
+typealias EDPTransportRecoveryRequest = (
+    _ completion: @escaping EDPTransportRecoveryCompletion
+) -> Void
+
 private final class EDPTransportStopOperation: @unchecked Sendable {
     let queue: DispatchQueue
-    let unmount: (String) throws -> Void
+    let unmountAsync: EDPTransportUnmountRequest
     let isMounted: (String) -> Bool
-    let recoverStuckProcess: (() -> Bool)?
+    let recoverStuckProcessAsync: EDPTransportRecoveryRequest?
     let completion: @Sendable (Bool, Bool, String?) -> Void
+    var waitingForProcessExit = false
     var recoveryAttempted = false
     var finished = false
 
     init(
         queue: DispatchQueue,
-        unmount: @escaping (String) throws -> Void,
+        unmountAsync: @escaping EDPTransportUnmountRequest,
         isMounted: @escaping (String) -> Bool,
-        recoverStuckProcess: (() -> Bool)?,
+        recoverStuckProcessAsync: EDPTransportRecoveryRequest?,
         completion: @escaping @Sendable (Bool, Bool, String?) -> Void
     ) {
         self.queue = queue
-        self.unmount = unmount
+        self.unmountAsync = unmountAsync
         self.isMounted = isMounted
-        self.recoverStuckProcess = recoverStuckProcess
+        self.recoverStuckProcessAsync = recoverStuckProcessAsync
         self.completion = completion
     }
+}
+
+typealias EDPProcessExitHandler = @Sendable () -> Void
+
+protocol EDPTransportReadinessObserving: AnyObject, Sendable {
+    func observeReady(on queue: DispatchQueue, _ handler: @escaping @Sendable () -> Void)
 }
 
 protocol EDPManagedProcess: AnyObject {
     var isRunning: Bool { get }
     func terminate()
     func forceTerminate()
+    func observeExit(on queue: DispatchQueue, _ handler: @escaping EDPProcessExitHandler)
 }
 
 extension Process: EDPManagedProcess {
     func forceTerminate() {
         guard isRunning else { return }
         _ = Darwin.kill(processIdentifier, SIGKILL)
+    }
+
+    func observeExit(on queue: DispatchQueue, _ handler: @escaping EDPProcessExitHandler) {
+        guard isRunning else {
+            queue.async(execute: handler)
+            return
+        }
+        let previous = terminationHandler
+        terminationHandler = { process in
+            previous?(process)
+            queue.async(execute: handler)
+        }
     }
 }
 
@@ -65,6 +95,7 @@ final class EDPTransportSession: @unchecked Sendable {
     let mountpoint: String
     let capabilities: EDPTransportCapabilities
     private let process: any EDPManagedProcess
+    private let readiness: (any EDPTransportReadinessObserving)?
     private let scheduler: any EDPLifecycleScheduling
 
     init(
@@ -72,32 +103,45 @@ final class EDPTransportSession: @unchecked Sendable {
         mountpoint: String,
         capabilities: EDPTransportCapabilities,
         process: any EDPManagedProcess,
+        readiness: (any EDPTransportReadinessObserving)? = nil,
         scheduler: any EDPLifecycleScheduling = EDPDispatchLifecycleScheduler.shared
     ) {
         self.backend = backend
         self.mountpoint = mountpoint
         self.capabilities = capabilities
         self.process = process
+        self.readiness = readiness
         self.scheduler = scheduler
     }
 
     var isRunning: Bool { process.isRunning }
 
+    func observeReady(on queue: DispatchQueue, _ handler: @escaping @Sendable () -> Void) {
+        readiness?.observeReady(on: queue, handler)
+    }
+
+    func observeExit(on queue: DispatchQueue, _ handler: @escaping EDPProcessExitHandler) {
+        process.observeExit(on: queue, handler)
+    }
+
     func stopAsync(
         on queue: DispatchQueue,
-        unmount: @escaping (String) throws -> Void,
+        unmountAsync: @escaping EDPTransportUnmountRequest,
         isMounted: @escaping (String) -> Bool,
         gracefulExitSeconds: TimeInterval = 5,
-        recoverStuckProcess: (() -> Bool)? = nil,
+        recoverStuckProcessAsync: EDPTransportRecoveryRequest? = nil,
         completion: @escaping @Sendable (Bool, Bool, String?) -> Void
     ) {
         let operation = EDPTransportStopOperation(
             queue: queue,
-            unmount: unmount,
+            unmountAsync: unmountAsync,
             isMounted: isMounted,
-            recoverStuckProcess: recoverStuckProcess,
+            recoverStuckProcessAsync: recoverStuckProcessAsync,
             completion: completion
         )
+        process.observeExit(on: queue) { [weak self, operation] in
+            self?.processDidExit(operation)
+        }
         queue.async { [weak self, operation] in
             self?.beginStop(operation, gracefulExitSeconds: gracefulExitSeconds)
         }
@@ -107,66 +151,90 @@ final class EDPTransportSession: @unchecked Sendable {
         _ operation: EDPTransportStopOperation,
         gracefulExitSeconds: TimeInterval
     ) {
-        do {
-            if operation.isMounted(mountpoint) {
-                guard process.isRunning else {
-                    finishStop(
-                        operation,
-                        recovered: false,
-                        error: "transport process already exited while VFS mount remains active: \(mountpoint)"
-                    )
-                    return
-                }
-                try operation.unmount(mountpoint)
-            }
-            guard !operation.isMounted(mountpoint) else {
+        if operation.isMounted(mountpoint) {
+            guard process.isRunning else {
                 finishStop(
                     operation,
                     recovered: false,
-                    error: "transport mount remained active after VFS unmount: \(mountpoint)"
+                    error: "transport process already exited while VFS mount remains active: \(mountpoint)"
                 )
                 return
             }
-        } catch {
-            finishStop(operation, recovered: false, error: String(describing: error))
+            operation.unmountAsync(mountpoint) { [weak self, operation] errorMessage in
+                guard let self else { return }
+                operation.queue.async { [weak self, operation] in
+                    self?.continueAfterUnmount(
+                        operation,
+                        gracefulExitSeconds: gracefulExitSeconds,
+                        errorMessage: errorMessage
+                    )
+                }
+            }
             return
         }
-        waitForGracefulExit(
+        continueAfterUnmount(
             operation,
-            deadline: scheduler.deadline(after: gracefulExitSeconds)
+            gracefulExitSeconds: gracefulExitSeconds,
+            errorMessage: nil
         )
     }
 
-    private func waitForGracefulExit(
+    private func continueAfterUnmount(
         _ operation: EDPTransportStopOperation,
-        deadline: UInt64
+        gracefulExitSeconds: TimeInterval,
+        errorMessage: String?
+    ) {
+        guard !operation.finished else { return }
+        if let errorMessage {
+            finishStop(operation, recovered: false, error: errorMessage)
+            return
+        }
+        guard !operation.isMounted(mountpoint) else {
+            finishStop(
+                operation,
+                recovered: false,
+                error: "transport mount remained active after VFS unmount: \(mountpoint)"
+            )
+            return
+        }
+        beginProcessExitWait(operation, gracefulExitSeconds: gracefulExitSeconds)
+    }
+
+    private func beginProcessExitWait(
+        _ operation: EDPTransportStopOperation,
+        gracefulExitSeconds: TimeInterval
     ) {
         guard process.isRunning else {
             finishStop(operation, recovered: false, error: nil)
             return
         }
-        guard scheduler.hasReached(deadline) else {
-            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
-                self?.waitForGracefulExit(operation, deadline: deadline)
-            }
+        operation.waitingForProcessExit = true
+        scheduler.schedule(on: operation.queue, after: max(0, gracefulExitSeconds)) { [weak self, operation] in
+            self?.gracefulExitTimeout(operation)
+        }
+    }
+
+    private func processDidExit(_ operation: EDPTransportStopOperation) {
+        guard !operation.finished, operation.waitingForProcessExit else { return }
+        finishStop(operation, recovered: operation.recoveryAttempted, error: nil)
+    }
+
+    private func gracefulExitTimeout(_ operation: EDPTransportStopOperation) {
+        guard !operation.finished, operation.waitingForProcessExit else { return }
+        guard process.isRunning else {
+            finishStop(operation, recovered: false, error: nil)
             return
         }
         process.terminate()
-        waitAfterTerminate(operation, deadline: scheduler.deadline(after: 2))
+        scheduler.schedule(on: operation.queue, after: 2) { [weak self, operation] in
+            self?.terminateTimeout(operation)
+        }
     }
 
-    private func waitAfterTerminate(
-        _ operation: EDPTransportStopOperation,
-        deadline: UInt64
-    ) {
+    private func terminateTimeout(_ operation: EDPTransportStopOperation) {
+        guard !operation.finished, operation.waitingForProcessExit else { return }
         guard process.isRunning else {
             finishStop(operation, recovered: false, error: nil)
-            return
-        }
-        guard scheduler.hasReached(deadline) else {
-            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
-                self?.waitAfterTerminate(operation, deadline: deadline)
-            }
             return
         }
 
@@ -174,26 +242,20 @@ final class EDPTransportSession: @unchecked Sendable {
         // transport can therefore receive SIGKILL without risking a live user
         // filesystem.
         process.forceTerminate()
-        waitAfterForceTerminate(operation, deadline: scheduler.deadline(after: 1))
+        scheduler.schedule(on: operation.queue, after: 1) { [weak self, operation] in
+            self?.forceTerminateTimeout(operation)
+        }
     }
 
-    private func waitAfterForceTerminate(
-        _ operation: EDPTransportStopOperation,
-        deadline: UInt64
-    ) {
+    private func forceTerminateTimeout(_ operation: EDPTransportStopOperation) {
+        guard !operation.finished, operation.waitingForProcessExit else { return }
         guard process.isRunning else {
             finishStop(operation, recovered: false, error: nil)
             return
         }
-        guard scheduler.hasReached(deadline) else {
-            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
-                self?.waitAfterForceTerminate(operation, deadline: deadline)
-            }
-            return
-        }
 
         guard !operation.recoveryAttempted,
-              let recover = operation.recoverStuckProcess else {
+              let recover = operation.recoverStuckProcessAsync else {
             finishStop(
                 operation,
                 recovered: false,
@@ -202,29 +264,33 @@ final class EDPTransportSession: @unchecked Sendable {
             return
         }
         operation.recoveryAttempted = true
-        guard recover() else {
-            finishStop(
-                operation,
-                recovered: false,
-                error: "transport process did not exit after SIGKILL and host recovery was refused: \(mountpoint)"
-            )
-            return
+        recover { [weak self, operation] recovered in
+            guard let self else { return }
+            operation.queue.async {
+                guard !operation.finished else { return }
+                guard recovered else {
+                    self.finishStop(
+                        operation,
+                        recovered: false,
+                        error: "transport process did not exit after SIGKILL and host recovery was refused: \(self.mountpoint)"
+                    )
+                    return
+                }
+                guard self.process.isRunning else {
+                    self.finishStop(operation, recovered: true, error: nil)
+                    return
+                }
+                self.scheduler.schedule(on: operation.queue, after: 2) { [weak self, operation] in
+                    self?.hostRecoveryTimeout(operation)
+                }
+            }
         }
-        waitAfterHostRecovery(operation, deadline: scheduler.deadline(after: 2))
     }
 
-    private func waitAfterHostRecovery(
-        _ operation: EDPTransportStopOperation,
-        deadline: UInt64
-    ) {
+    private func hostRecoveryTimeout(_ operation: EDPTransportStopOperation) {
+        guard !operation.finished, operation.waitingForProcessExit else { return }
         guard process.isRunning else {
             finishStop(operation, recovered: true, error: nil)
-            return
-        }
-        guard scheduler.hasReached(deadline) else {
-            scheduler.schedule(on: operation.queue, after: 0.05) { [weak self, operation] in
-                self?.waitAfterHostRecovery(operation, deadline: deadline)
-            }
             return
         }
         finishStop(

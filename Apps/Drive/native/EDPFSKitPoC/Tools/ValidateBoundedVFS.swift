@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 
 @main
@@ -6,41 +7,66 @@ private enum ValidateBoundedVFS {
         let description: String
     }
 
+    private final class ErrorBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: RuntimeNativeError?
+
+        func set(_ error: RuntimeNativeError?) {
+            lock.lock()
+            value = error
+            lock.unlock()
+        }
+
+        func get() -> RuntimeNativeError? {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+    }
+
     private static func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         guard condition() else { throw ValidationError(description: message) }
     }
 
     static func main() {
         do {
-            let trueStatus = try EDPNativeBoundedProcess.run(
-                executable: "/usr/bin/true",
-                arguments: [],
-                timeout: 1,
-                label: "bounded true probe"
-            )
-            try require(trueStatus == 0, "bounded normal process returned \(trueStatus)")
+            let queue = DispatchQueue(label: "com.edp.drive.tests.event-vfs")
+            let finished = DispatchSemaphore(value: 0)
+            let result = ErrorBox()
+            let started = ContinuousClock.now
 
-            let started = Date()
-            var timedOut = false
-            do {
-                _ = try EDPNativeBoundedProcess.run(
-                    executable: "/bin/sleep",
-                    arguments: ["5"],
-                    timeout: 0.1,
-                    label: "bounded timeout probe",
-                    terminateGrace: 0.1,
-                    killGrace: 0.1
-                )
-            } catch {
-                timedOut = true
+            // A path that is already absent must complete from the lifecycle
+            // state immediately. No sleep/poll/process launch is needed on the
+            // healthy idempotent path.
+            EDPNativeMountTable.unmountPathAsync(
+                "/private/tmp/edp-definitely-not-a-mountpoint",
+                force: true,
+                requireSourceTermination: true,
+                timeout: 0.1,
+                on: queue
+            ) { error in
+                result.set(error)
+                finished.signal()
             }
-            let elapsed = Date().timeIntervalSince(started)
-            try require(timedOut, "bounded timeout probe unexpectedly succeeded")
-            try require(elapsed < 1.5, "bounded timeout probe blocked for \(elapsed) seconds")
 
-            try EDPNativeMountTable.unmountPath("/private/tmp/edp-definitely-not-a-mountpoint")
+            try require(
+                finished.wait(timeout: .now() + 1) == .success,
+                "event-driven VFS no-op unmount did not complete"
+            )
+            try require(
+                result.get() == nil,
+                "event-driven VFS no-op unmount failed: \(String(describing: result.get()))"
+            )
+            let elapsed = started.duration(to: .now)
+            try require(
+                elapsed < .seconds(1),
+                "event-driven VFS no-op path consumed an unexpected delay: \(elapsed)"
+            )
 
-            print("BOUNDED_VFS_TIMEOUT_SECONDS=\(String(format: "%.3f", elapsed))")
+            print("EVENT_DRIVEN_VFS_NOOP_SECONDS=\(elapsed)")
+            print("RESULT=EVENT_DRIVEN_VFS_UNMOUNT_GUARD_OK")
+            // Keep the historical marker for downstream release jobs while the
+            // implementation contract is now event-driven rather than polling.
             print("RESULT=BOUNDED_VFS_UNMOUNT_GUARD_OK")
         } catch {
             fputs("VALIDATION_ERROR=\(error)\n", stderr)

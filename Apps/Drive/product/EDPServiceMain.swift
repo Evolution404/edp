@@ -14,12 +14,11 @@ private func daemon() throws -> Never {
     let listener = NSXPCListener(machServiceName: edpVaultMachServiceName)
     let listenerBox = EDPXPCListenerBox(listener)
     let xpcService = EDPXPCService(controller: controller) {
+        // The client sends this acknowledgement only after receiving the
+        // graceful-shutdown reply, so no fixed reply-drain delay is needed.
         monitor.stop()
-        // Let the shutdown reply drain before invalidating the connection.
-        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
-            listenerBox.listener.invalidate()
-            stopped.signal()
-        }
+        listenerBox.listener.invalidate()
+        stopped.signal()
     }
     listener.delegate = xpcService
     listener.resume()

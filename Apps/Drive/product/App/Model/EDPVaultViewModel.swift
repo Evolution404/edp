@@ -148,41 +148,23 @@ final class EDPVaultViewModel: ObservableObject {
         resumeRuntimeForAppLaunch()
         Task { [weak self] in
             let enablement = await Task.detached(priority: .utility) { () async -> (restartedAgents: Bool, error: String?) in
-                var restartedAgents = false
-                var lastError: String?
-
-                for attempt in 1...edpMacFUSEEnablementMaxAttempts {
-                    do {
-                        restartedAgents = try await ensureMacFUSELocalEnablement() || restartedAgents
-                        if await macFUSELocalEnablementReady() {
-                            // Require the user FSKit state to remain stable for one
-                            // observation interval. A clean macFUSE install can
-                            // rewrite enabledModules shortly after the App starts.
-                            try? await Task.sleep(for: .seconds(1))
-                            if await macFUSELocalEnablementReady() {
-                                return (restartedAgents, nil)
-                            }
-                            lastError = "macFUSE FSKit 启用状态未保持稳定（\(attempt)/\(edpMacFUSEEnablementMaxAttempts)）"
-                        } else {
-                            lastError = "macFUSE FSKit 启用状态尚未就绪（\(attempt)/\(edpMacFUSEEnablementMaxAttempts)）"
-                        }
-                    } catch {
-                        lastError = error.localizedDescription
+                do {
+                    let restartedAgents = try await ensureMacFUSELocalEnablement()
+                    guard await macFUSELocalEnablementReady() else {
+                        return (restartedAgents, "macFUSE FSKit 启用状态尚未就绪")
                     }
-
-                    if attempt < edpMacFUSEEnablementMaxAttempts {
-                        try? await Task.sleep(for: .seconds(1))
-                    }
+                    return (restartedAgents, nil)
+                } catch {
+                    return (false, error.localizedDescription)
                 }
-                return (restartedAgents, lastError ?? "macFUSE FSKit 启用状态未就绪")
             }.value
             guard let self else { return }
             if let error = enablement.error {
                 self.lastError = "macFUSE Local 启用失败：\(error)"
             }
-            if enablement.restartedAgents {
-                try? await Task.sleep(for: .seconds(3))
-            }
+            // Registration commands and settings writes above are completion
+            // authorities. Do not add a fixed post-registration sleep: the
+            // FSKit agent is demand-launched when the next mount is requested.
             self.refreshTransportRuntimeState()
             if self.transportRuntimeReady == true {
                 self.retryTransientAutomaticMounts()
@@ -745,7 +727,15 @@ final class EDPVaultViewModel: ObservableObject {
                       currentID == operationID else { return }
                 if let errorMessage {
                     self.failFullExit(operationID: operationID, detail: errorMessage)
+                    return
                 }
+                // Receipt of this reply is the authoritative drain event. ACK it
+                // explicitly so the service can exit without a fixed delay.
+                guard let acknowledgementProxy = self.proxy() else {
+                    self.failFullExit(operationID: operationID, detail: "完全退出确认期间 XPC 连接不可用")
+                    return
+                }
+                acknowledgementProxy.acknowledgeGracefulShutdownReply()
                 // Success is completed by serviceConnectionEnded(), after the
                 // privileged process actually exits and the XPC connection ends.
             }

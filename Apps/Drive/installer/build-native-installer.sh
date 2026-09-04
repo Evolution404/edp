@@ -108,6 +108,7 @@ PRODUCT_SOURCES=(
   "${REPO_ROOT}/product/EDPTransportProvider.swift"
   "${REPO_ROOT}/product/EDPTransportRuntimePolicy.swift"
   "${REPO_ROOT}/product/EDPFinderVolumeDefaults.swift"
+  "${REPO_ROOT}/product/EDPIOKitLifecycle.swift"
   "${REPO_ROOT}/product/EDPNativeSystem.swift"
   "${REPO_ROOT}/product/EDPBlockDevicePublisher.swift"
   "${REPO_ROOT}/product/EDPXPCProtocol.swift"
