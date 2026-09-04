@@ -34,7 +34,7 @@ struct EDPUIAutomationMain {
 
     private static func validatePreviewScenarios() throws {
         let expected = Set([
-            "healthy-one-device", "no-device", "two-devices", "fda-required",
+            "healthy-one-device", "no-device", "two-devices", "fda-required", "raw-busy",
             "service-stopped", "credential-missing", "partition-error",
             "all-mounted", "offline-saved-device",
         ])
@@ -52,7 +52,17 @@ struct EDPUIAutomationMain {
                 try require(configuration.snapshot.devices.count == 2, "two-devices scenario count")
                 try require(Set(configuration.snapshot.devices.map(\.deviceID)).count == 2, "two-devices identity collision")
             case .fdaRequired:
-                try require(configuration.snapshot.devices.contains { $0.connected && !$0.privilegedAccessReady }, "fda-required scenario lacks blocked device")
+                try require(configuration.snapshot.devices.contains {
+                    $0.connected && $0.rawAccessState == .permissionRequired
+                }, "fda-required scenario lacks typed permission state")
+            case .rawBusy:
+                let model = EDPVaultViewModel(previewConfiguration: configuration)
+                try require(configuration.snapshot.devices.contains {
+                    $0.connected && $0.rawAccessState == .busy
+                }, "raw-busy scenario lacks typed busy state")
+                try require(!model.needsFullDiskAccess, "raw-busy incorrectly requested Full Disk Access")
+                try require(model.hasRawAccessBusyDevice, "raw-busy model did not expose busy state")
+                try require(model.rawAccessStatusText == "设备被系统占用", "raw-busy status text regressed")
             case .serviceStopped:
                 try require(configuration.serviceStatus == "已停止" && !configuration.serviceDesiredRunning, "service-stopped state mismatch")
             case .credentialMissing:
@@ -79,6 +89,9 @@ struct EDPUIAutomationMain {
         let credentialMissingModel = EDPVaultViewModel(
             previewConfiguration: EDPPreviewScenarioFactory.configuration(for: .credentialMissing)
         )
+        let rawBusyModel = EDPVaultViewModel(
+            previewConfiguration: EDPPreviewScenarioFactory.configuration(for: .rawBusy)
+        )
         guard let device = configuration.snapshot.devices.first else {
             throw EDPUIAutomationFailure(description: "healthy preview device missing")
         }
@@ -95,6 +108,7 @@ struct EDPUIAutomationMain {
             ("settings", AnyView(EDPSettingsView(model: model)), NSSize(width: 720, height: 620)),
             ("menu-bar", AnyView(EDPMenuBarView(model: model)), NSSize(width: 390, height: 640)),
             ("menu-bar-credential-missing", AnyView(EDPMenuBarView(model: credentialMissingModel)), NSSize(width: 390, height: 640)),
+            ("devices-raw-busy", AnyView(EDPDevicesView(model: rawBusyModel)), NSSize(width: 720, height: 620)),
         ]
 
         for (name, view, size) in pages {

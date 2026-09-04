@@ -35,6 +35,7 @@ APP="${PAYLOAD}/Applications/EDP Drive.app"
 SERVICE="${APP}/Contents/Library/LaunchServices/edp-drive-service"
 PACKAGE_INFO="${EXPANDED}/ZZ-EDP-Drive.pkg/PackageInfo"
 PREINSTALL="${EXPANDED}/ZZ-EDP-Drive.pkg/Scripts/preinstall"
+INSTALLER_MEDIA_PROBE="${EXPANDED}/ZZ-EDP-Drive.pkg/Scripts/edp-installer-media-probe"
 DAEMON_PLIST="${APP}/Contents/Library/LaunchDaemons/com.edp.drive.service.plist"
 LEGACY_DAEMON_PLIST="${PAYLOAD}/Library/LaunchDaemons/com.edp.drive.service.plist"
 for path in \
@@ -60,6 +61,13 @@ echo "RESULT=MACFUSE_ONLY_TRANSPORT_PACKAGED"
 for item in "${ROOT}/bin/"*; do
   /usr/bin/codesign --verify --strict "${item}"
 done
+[[ -x "${INSTALLER_MEDIA_PROBE}" ]]
+/usr/bin/codesign --verify --strict "${INSTALLER_MEDIA_PROBE}"
+/usr/bin/codesign -dv --verbose=4 "${INSTALLER_MEDIA_PROBE}" 2>&1 \
+  | /usr/bin/grep -F 'Identifier=com.edp.drive.installer-media-probe' >/dev/null
+/usr/bin/grep -Fq 'refuse_install_with_standard_edp_media' "${PREINSTALL}"
+/usr/bin/grep -Fq 'edp-installer-media-probe' "${PREINSTALL}"
+echo "RESULT=INSTALLER_STANDARD_EDP_MEDIA_GUARD_PACKAGED"
 
 [[ -x "${APP}/Contents/MacOS/EDP Drive" ]]
 /usr/bin/codesign --verify --strict "${APP}"

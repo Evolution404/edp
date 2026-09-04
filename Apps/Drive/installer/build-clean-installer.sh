@@ -161,6 +161,15 @@ CORE_SOURCES=(
   "${REPO_ROOT}/native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift"
 )
 
+INSTALLER_MEDIA_PROBE_STAGE="${BUILD_ROOT}/edp-installer-media-probe"
+xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  -framework CryptoKit -framework CoreFoundation -framework IOKit \
+  "${EDP_CORE_SWIFTC_FLAGS[@]}" \
+  "${CORE_SOURCES[@]}" \
+  "${REPO_ROOT}/installer/EDPInstallerMediaProbe.swift" \
+  -o "${INSTALLER_MEDIA_PROBE_STAGE}"
+sign_app_code --identifier com.edp.drive.installer-media-probe "${INSTALLER_MEDIA_PROBE_STAGE}"
+
 xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   -Xfrontend -disable-availability-checking \
   -framework CryptoKit -framework Security -framework CoreFoundation -framework IOKit \
@@ -325,7 +334,9 @@ SCRIPTS="${BUILD_ROOT}/scripts"
 mkdir -p "${SCRIPTS}"
 cp "${REPO_ROOT}/installer/scripts/native-preinstall" "${SCRIPTS}/preinstall"
 cp "${REPO_ROOT}/installer/scripts/native-postinstall" "${SCRIPTS}/postinstall"
-chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall"
+cp "${INSTALLER_MEDIA_PROBE_STAGE}" "${SCRIPTS}/edp-installer-media-probe"
+chmod 0755 "${SCRIPTS}/preinstall" "${SCRIPTS}/postinstall" \
+  "${SCRIPTS}/edp-installer-media-probe"
 
 APP_COMPONENT="${BUILD_ROOT}/components/ZZ-EDP-Drive.pkg"
 COMPONENT_PLIST="${BUILD_ROOT}/edp-component.plist"

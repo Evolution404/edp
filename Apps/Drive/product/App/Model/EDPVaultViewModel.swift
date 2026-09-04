@@ -45,8 +45,42 @@ final class EDPVaultViewModel: ObservableObject {
     private var connectionGeneration: UUID?
     private var serviceLifecycle: EDPServiceLifecycleState = .running
 
+    func rawAccessState(for device: EDPXPCDevice) -> EDPRawAccessState {
+        if let state = device.rawAccessState { return state }
+        return device.privilegedAccessReady ? .ready : .pending
+    }
+
     var needsFullDiskAccess: Bool {
-        snapshot.devices.contains { $0.connected && !$0.privilegedAccessReady }
+        snapshot.devices.contains {
+            $0.connected && rawAccessState(for: $0) == .permissionRequired
+        }
+    }
+
+    var hasRawAccessBusyDevice: Bool {
+        snapshot.devices.contains {
+            $0.connected && rawAccessState(for: $0) == .busy
+        }
+    }
+
+    var rawAccessReady: Bool {
+        let connected = snapshot.devices.filter(\.connected)
+        return !connected.isEmpty && connected.allSatisfy {
+            rawAccessState(for: $0) == .ready
+        }
+    }
+
+    var fullDiskAccessVerified: Bool {
+        snapshot.devices.contains {
+            guard $0.connected else { return false }
+            let state = rawAccessState(for: $0)
+            return state == .ready || state == .busy
+        }
+    }
+
+    var fullDiskAccessStatusText: String {
+        if needsFullDiskAccess { return "需要授权" }
+        if fullDiskAccessVerified { return "已授权" }
+        return "连接设备后验证"
     }
 
     var rawAccessHelperInstalled: Bool {
@@ -59,18 +93,29 @@ final class EDPVaultViewModel: ObservableObject {
 
     var rawAccessStatusText: String {
         guard rawAccessHelperInstalled else { return "组件未安装" }
+        let connected = snapshot.devices.filter(\.connected)
+        if connected.isEmpty {
+            if snapshot.devices.contains(where: { rawAccessState(for: $0) == .logicallyEjected }) {
+                return "已安全推出"
+            }
+            return "待连接 EDP U 盘验证"
+        }
         if needsFullDiskAccess { return "需要完全磁盘访问" }
-        if snapshot.devices.contains(where: { $0.connected && $0.privilegedAccessReady }) {
+        if hasRawAccessBusyDevice { return "设备被系统占用" }
+        if connected.contains(where: { rawAccessState(for: $0) == .unavailable }) {
+            return "Raw Access 不可用"
+        }
+        if connected.allSatisfy({ rawAccessState(for: $0) == .ready }) {
             return "已验证"
         }
-        return "待连接 EDP U 盘验证"
+        return "正在验证"
     }
 
     var setupReady: Bool {
         serviceStatus == "运行中"
             && transportRuntimeReady == true
             && rawAccessHelperInstalled
-            && snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
+            && rawAccessReady
     }
 
     init() {

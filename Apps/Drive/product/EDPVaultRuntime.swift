@@ -2631,7 +2631,7 @@ final class EDPServiceController: @unchecked Sendable {
                     if let rawFailure = EDPLifecycleFailure.recognizedRawAccessFailure(error) {
                         rawAccess.markFailure(
                             deviceID: disk.deviceID,
-                            detail: rawFailure.description
+                            failure: rawFailure
                         )
                         continue
                     }
@@ -2782,14 +2782,13 @@ final class EDPServiceController: @unchecked Sendable {
                 try eject.reconcileSuppressedGenerations(disks: disks)
                 rawAccess.prune(to: disks)
                 for disk in disks where !eject.isSuppressed(deviceID: disk.deviceID)
-                    && (rawAccess.readiness(deviceID: disk.deviceID) == nil
-                        || rawAccessLeaseLocked(for: disk) == nil) {
+                    && rawAccess.shouldAutoProbe(disk) {
                     rawAccessProbeAsyncLocked(for: disk, temporarilyUnmount: true) { [weak self] _, failure in
                         guard let self else { return }
                         self.onControllerQueue {
                             if let failure {
                                 NSLog(
-                                    "EDP Full Disk Access probe unavailable for %@: %@",
+                                    "EDP raw access probe unavailable for %@: %@",
                                     disk.deviceID,
                                     failure.description
                                 )
@@ -2980,6 +2979,27 @@ final class EDPServiceController: @unchecked Sendable {
                             lastError: automation.failureMessage(for: key(deviceID, kind.rawValue))
                         )
                     }
+                    let rawAccessState: EDPRawAccessState
+                    if eject.isSuppressed(deviceID: deviceID) {
+                        rawAccessState = .logicallyEjected
+                    } else if let disk {
+                        if rawAccess.readiness(deviceID: disk.deviceID) == true {
+                            rawAccessState = .ready
+                        } else if let failure = rawAccess.failure(deviceID: disk.deviceID) {
+                            switch failure.code {
+                            case .rawAccessPermission:
+                                rawAccessState = .permissionRequired
+                            case .rawAccessBusy:
+                                rawAccessState = .busy
+                            default:
+                                rawAccessState = .unavailable
+                            }
+                        } else {
+                            rawAccessState = .pending
+                        }
+                    } else {
+                        rawAccessState = .unavailable
+                    }
                     return EDPXPCDevice(
                         deviceID: deviceID,
                         metadataDeviceID: disk?.metadataDeviceID,
@@ -2991,9 +3011,8 @@ final class EDPServiceController: @unchecked Sendable {
                         labelOnlyID: disk?.labelOnlyID,
                         sizeBytes: disk?.sizeBytes ?? policy?.lastSizeBytes ?? 0,
                         connected: disk != nil,
-                        privilegedAccessReady: disk.map {
-                            rawAccess.readiness(deviceID: $0.deviceID) == true
-                        } ?? false,
+                        privilegedAccessReady: rawAccessState == .ready,
+                        rawAccessState: rawAccessState,
                         partitions: partitions
                     )
                 }
@@ -3229,10 +3248,12 @@ final class EDPServiceController: @unchecked Sendable {
                                 deviceID: disk.deviceID,
                                 partitionType: partitionType
                             ) ?? .unknown
-                            if code == .rawAccessPermission || code == .rawAccessUnavailable {
+                            if code == .rawAccessPermission
+                                || code == .rawAccessBusy
+                                || code == .rawAccessUnavailable {
                                 self.rawAccess.markFailure(
                                     deviceID: disk.deviceID,
-                                    detail: errorMessage
+                                    failure: EDPLifecycleFailure(code: code, detail: errorMessage)
                                 )
                             }
                             self.automation.recordFailure(
@@ -3459,13 +3480,22 @@ final class EDPServiceController: @unchecked Sendable {
             self.onControllerQueue {
                 let nextError = firstError ?? failure?.description
                 if let failure {
+                    let prefix: String
+                    switch failure.code {
+                    case .rawAccessPermission:
+                        prefix = "完全磁盘访问权限不足"
+                    case .rawAccessBusy:
+                        prefix = "EDP U 盘被系统占用"
+                    default:
+                        prefix = "Raw Access 不可用"
+                    }
                     self.addActivity(
-                        "完全磁盘访问不可用：\(failure.description)",
+                        "\(prefix)：\(failure.description)",
                         level: "error",
                         deviceID: disk.deviceID
                     )
                 } else {
-                    self.addActivity("完全磁盘访问已验证", deviceID: disk.deviceID)
+                    self.addActivity("Raw Access 已验证", deviceID: disk.deviceID)
                 }
                 self.refreshRawAccessNextLocked(
                     disks,

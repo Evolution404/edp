@@ -5,6 +5,7 @@ enum EDPPreviewScenario: String, CaseIterable {
     case noDevice = "no-device"
     case twoDevices = "two-devices"
     case fdaRequired = "fda-required"
+    case rawBusy = "raw-busy"
     case serviceStopped = "service-stopped"
     case credentialMissing = "credential-missing"
     case partitionError = "partition-error"
@@ -45,6 +46,7 @@ enum EDPPreviewScenarioFactory {
             size: 124_736_503_808,
             connected: true,
             rawReady: true,
+            rawState: .ready,
             boot: .mounted,
             exchange: .mounted,
             secure: .unmounted
@@ -60,6 +62,7 @@ enum EDPPreviewScenarioFactory {
             size: 64_000_000_000,
             connected: true,
             rawReady: true,
+            rawState: .ready,
             boot: .mounted,
             exchange: .unmounted,
             secure: .mounted
@@ -81,9 +84,13 @@ enum EDPPreviewScenarioFactory {
         case .twoDevices:
             devices = [primary, secondary]
         case .fdaRequired:
-            primary = replacing(primary, rawReady: false)
+            primary = replacing(primary, rawReady: false, rawState: .permissionRequired)
             devices = [primary]
             activities.insert(activity("需要完全磁盘访问", level: "warning", deviceID: primaryID), at: 0)
+        case .rawBusy:
+            primary = replacing(primary, rawReady: false, rawState: .busy)
+            devices = [primary]
+            activities.insert(activity("EDP U 盘被 macOS 文件系统占用", level: "warning", deviceID: primaryID), at: 0)
         case .serviceStopped:
             serviceStatus = "已停止"
             serviceDesiredRunning = false
@@ -184,6 +191,7 @@ enum EDPPreviewScenarioFactory {
         size: UInt64,
         connected: Bool,
         rawReady: Bool,
+        rawState: EDPRawAccessState,
         boot: EDPMountState,
         exchange: EDPMountState,
         secure: EDPMountState
@@ -199,6 +207,7 @@ enum EDPPreviewScenarioFactory {
             sizeBytes: size,
             connected: connected,
             privilegedAccessReady: rawReady,
+            rawAccessState: rawState,
             partitions: [
                 partition(type: .boot, state: boot, autoMount: true, credential: .notRequired),
                 partition(type: .exchange, state: exchange, autoMount: true, credential: .saved),
@@ -232,7 +241,8 @@ enum EDPPreviewScenarioFactory {
         _ source: EDPXPCDevice,
         bsdName: String? = nil,
         connected: Bool? = nil,
-        rawReady: Bool? = nil
+        rawReady: Bool? = nil,
+        rawState: EDPRawAccessState? = nil
     ) -> EDPXPCDevice {
         EDPXPCDevice(
             deviceID: source.deviceID,
@@ -245,6 +255,7 @@ enum EDPPreviewScenarioFactory {
             sizeBytes: source.sizeBytes,
             connected: connected ?? source.connected,
             privilegedAccessReady: rawReady ?? source.privilegedAccessReady,
+            rawAccessState: rawState ?? source.rawAccessState,
             partitions: source.partitions
         )
     }
@@ -274,6 +285,7 @@ enum EDPPreviewScenarioFactory {
             sizeBytes: source.sizeBytes,
             connected: source.connected,
             privilegedAccessReady: source.privilegedAccessReady,
+            rawAccessState: source.rawAccessState,
             partitions: source.partitions.map(transform)
         )
     }

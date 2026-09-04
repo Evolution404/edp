@@ -56,6 +56,15 @@ struct EDPXPCPartition: Codable, Hashable, Sendable, Identifiable {
     let lastError: String?
 }
 
+enum EDPRawAccessState: String, Codable, Hashable, Sendable {
+    case ready
+    case permissionRequired
+    case busy
+    case logicallyEjected
+    case unavailable
+    case pending
+}
+
 struct EDPXPCDevice: Codable, Hashable, Sendable, Identifiable {
     var id: String { deviceID }
     let deviceID: String
@@ -68,6 +77,7 @@ struct EDPXPCDevice: Codable, Hashable, Sendable, Identifiable {
     let sizeBytes: UInt64
     let connected: Bool
     let privilegedAccessReady: Bool
+    var rawAccessState: EDPRawAccessState? = nil
     let partitions: [EDPXPCPartition]
 
     var mounted: Bool { partitions.contains { $0.mountState == .mounted } }

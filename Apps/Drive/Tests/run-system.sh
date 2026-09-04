@@ -6,6 +6,7 @@ TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 APP_SERVICE_SUPPORT_RUNNER="${TEST_ROOT}/run-app-service-support.sh"
+INSTALLER_MEDIA_PROBE_RUNNER="${TEST_ROOT}/run-installer-media-probe.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
 APP_SERVICE_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/App/Service/EDPAppServiceSupport.swift"
 APP_SMOKE_SUPPORT_SOURCE="${ROOT}/Apps/Drive/product/App/Service/EDPXPCSmokeSupport.swift"
@@ -287,7 +288,26 @@ echo 'RESULT=DRIVE_SYSTEM_DEFAULT_POLICY_RATCHETS_OK'
 # peer signature check against the newly installed bundle and cannot control the
 # privileged service.
 PREINSTALL_SOURCE="${ROOT}/Apps/Drive/installer/scripts/native-preinstall"
+CLEAN_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
+NATIVE_INSTALLER_SOURCE="${ROOT}/Apps/Drive/installer/build-native-installer.sh"
+INSTALLER_PROBE_TEST_OUTPUT="$("${INSTALLER_MEDIA_PROBE_RUNNER}")"
+echo "${INSTALLER_PROBE_TEST_OUTPUT}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_INSTALLER_MEDIA_PROBE_OK' <<<"${INSTALLER_PROBE_TEST_OUTPUT}"
 /usr/bin/grep -Fq 'stop_running_drive_ui' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'refuse_install_with_standard_edp_media' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'INSTALLER_MEDIA_PROBE="${SCRIPT_DIR}/edp-installer-media-probe"' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'exit(42)' "${ROOT}/Apps/Drive/installer/EDPInstallerMediaProbe.swift"
+/usr/bin/grep -Fq 'SCENARIO=INSTALLER_MEDIA_PROBE_STANDARD_EDP_OK' <<<"${INSTALLER_PROBE_TEST_OUTPUT}"
+/usr/bin/grep -Fq 'SCENARIO=INSTALLER_MEDIA_PROBE_ORDINARY_USB_OK' <<<"${INSTALLER_PROBE_TEST_OUTPUT}"
+for installer_source in "${CLEAN_INSTALLER_SOURCE}" "${NATIVE_INSTALLER_SOURCE}"; do
+  /usr/bin/grep -Fq 'edp-installer-media-probe' "${installer_source}"
+  /usr/bin/grep -Fq 'com.edp.drive.installer-media-probe' "${installer_source}"
+done
+INSTALL_GUARD_LINE="$(/usr/bin/grep -nFx 'refuse_install_with_standard_edp_media' "${PREINSTALL_SOURCE}" | /usr/bin/cut -d: -f1)"
+STOP_UI_LINE="$(/usr/bin/grep -nFx 'stop_running_drive_ui' "${PREINSTALL_SOURCE}" | /usr/bin/tail -1 | /usr/bin/cut -d: -f1)"
+SERVICE_BOOTOUT_LINE="$(/usr/bin/grep -nF '/bin/launchctl bootout "system/${SERVICE_LABEL}"' "${PREINSTALL_SOURCE}" | /usr/bin/head -1 | /usr/bin/cut -d: -f1)"
+[[ "${INSTALL_GUARD_LINE}" =~ ^[0-9]+$ && "${STOP_UI_LINE}" =~ ^[0-9]+$ && "${SERVICE_BOOTOUT_LINE}" =~ ^[0-9]+$ ]]
+[[ "${INSTALL_GUARD_LINE}" -lt "${STOP_UI_LINE}" && "${STOP_UI_LINE}" -lt "${SERVICE_BOOTOUT_LINE}" ]]
 /usr/bin/grep -Fq 'DRIVE_UI_EXECUTABLE="/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'EDP Drive upgrade stopping the currently running foreground UI before bundle replacement.' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'recover_edp_storage_test_diskimages2_orphans' "${PREINSTALL_SOURCE}"
@@ -689,7 +709,11 @@ echo 'RESULT=DRIVE_SYSTEM_RAW_VALIDATION_DIAGNOSTICS_OK'
 /usr/bin/grep -Fq 'allowBusyRecovery: false' "${RAW_ACCESS_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'expectedRegistryEntryID: disk.registryEntryID' "${RAW_ACCESS_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'rawAccessGenerationMatchesLocked(candidate)' "${RUNTIME_SOURCE}"
-for scenario in S31 S32 S33 S34 S35; do
+/usr/bin/grep -Fq 'case rawAccessBusy' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'rawAccess.shouldAutoProbe(disk)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'registryGenerationByDeviceID' "${RAW_ACCESS_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'case .rawAccessBusy:' "${RAW_ACCESS_SOURCE}"
+for scenario in S31 S32 S33 S34 S35 S44; do
   /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
 done
 echo 'RESULT=DRIVE_SYSTEM_RAW_EBUSY_RECOVERY_OK'

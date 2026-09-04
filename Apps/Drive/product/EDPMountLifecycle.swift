@@ -3,6 +3,7 @@ import Foundation
 
 enum EDPLifecycleFailureCode: String, Equatable, Sendable {
     case rawAccessPermission
+    case rawAccessBusy
     case rawAccessUnavailable
     case deviceChanged
     case bridgeLaunchFailed
@@ -76,12 +77,15 @@ struct EDPLifecycleFailure: Error, Equatable, Sendable, CustomStringConvertible,
     }
 
     static func isRawAccessBusy(_ failure: EDPLifecycleFailure) -> Bool {
-        rawAccessTaggedCode(in: failure.detail) == Int(EBUSY)
+        failure.code == .rawAccessBusy || rawAccessTaggedCode(in: failure.detail) == Int(EBUSY)
     }
 
     static func recognizedRawAccessFailure(_ error: Error) -> EDPLifecycleFailure? {
         let nsError = error as NSError
         let detail = String(describing: error)
+        if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EBUSY) {
+            return EDPLifecycleFailure(code: .rawAccessBusy, detail: detail)
+        }
         if nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EPERM) {
             return EDPLifecycleFailure(code: .rawAccessPermission, detail: detail)
         }
@@ -92,6 +96,9 @@ struct EDPLifecycleFailure: Error, Equatable, Sendable, CustomStringConvertible,
         // complete numeric code: a validation code such as 1007 must never be
         // mistaken for EPERM merely because its decimal text begins with "1".
         let taggedCode = rawAccessTaggedCode(in: detail)
+        if taggedCode == Int(EBUSY) {
+            return EDPLifecycleFailure(code: .rawAccessBusy, detail: detail)
+        }
         if taggedCode == Int(EPERM)
             || detail.contains("Operation not permitted")
             || detail.contains("操作不被允许") {

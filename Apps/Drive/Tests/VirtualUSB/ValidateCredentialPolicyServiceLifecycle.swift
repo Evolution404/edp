@@ -2786,6 +2786,60 @@ struct ValidateCredentialPolicyServiceLifecycle {
         }
 
         do {
+            let openScript = RawAccessOpenScript([
+                "EDP_RAW_LEASE_OPEN_FAILED:16",
+                "EDP_RAW_LEASE_OPEN_FAILED:16",
+                "OK",
+            ])
+            let diskArbitration = FakeDiskArbitration()
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                diskArbitration: diskArbitration,
+                rawAccessLeaseOpener: { try openScript.open($0) }
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S44 initial EBUSY terminal state did not settle") {
+                openScript.count() == 2
+                    && diskArbitration.snapshotForceUnmountWholeCalls().count == 1
+            }
+            for _ in 0..<20 {
+                env.controller.reconcileSynchronouslyForTesting()
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+            let failedGeneration = try env.connectedDevice()
+            guard !failedGeneration.privilegedAccessReady,
+                  failedGeneration.rawAccessState == .busy,
+                  openScript.count() == 2,
+                  diskArbitration.snapshotForceUnmountWholeCalls().count == 1 else {
+                throw LifecycleValidationError(
+                    "S44 repeated reconcile retried terminal EBUSY for the same physical generation"
+                )
+            }
+
+            env.state.replace(
+                "disk90",
+                with: env.fixture,
+                registryEntryID: 0x9200,
+                usbRegistryEntryID: 0x9201
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S44 replacement generation did not clear terminal raw state") {
+                openScript.count() == 3
+                    && (try? env.connectedDevice().privilegedAccessReady) == true
+            }
+            let replacement = try env.connectedDevice()
+            guard replacement.rawAccessState == .ready,
+                  openScript.count() == 3,
+                  diskArbitration.snapshotForceUnmountWholeCalls().count == 1 else {
+                throw LifecycleValidationError(
+                    "S44 replacement generation inherited stale EBUSY state or repeated recovery"
+                )
+            }
+            print("SCENARIO=S44_OK raw_ebusy_terminal_per_generation_and_reinsert_resets_state")
+        }
+
+        do {
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,
                 insertDevice: true

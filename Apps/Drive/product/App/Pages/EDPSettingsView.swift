@@ -57,15 +57,14 @@ struct EDPSettingsView: View {
                     VStack(spacing: 12) {
                         settingsStatusRow(
                             title: "完全磁盘访问",
-                            value: model.rawAccessStatusText,
-                            ready: !model.needsFullDiskAccess
+                            value: model.fullDiskAccessStatusText,
+                            ready: model.fullDiskAccessVerified
                         )
                         Divider()
                         settingsStatusRow(
                             title: "Raw Access",
-                            value: model.snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
-                                ? "已就绪" : (model.needsFullDiskAccess ? "需要授权" : "等待设备验证"),
-                            ready: model.snapshot.devices.contains { $0.connected && $0.privilegedAccessReady }
+                            value: model.rawAccessStatusText,
+                            ready: model.rawAccessReady
                         )
                         Divider()
                         settingsStatusRow(
@@ -183,6 +182,9 @@ struct EDPSettingsView: View {
         }
         if model.needsFullDiskAccess {
             return "请为 EDP Drive 磁盘访问组件开启一次完全磁盘访问，然后重新检测权限。"
+        }
+        if model.hasRawAccessBusyDevice {
+            return "完全磁盘访问已经生效，但当前 EDP U 盘被 macOS 文件系统占用。请物理拔出并重新插入 U 盘后再试。"
         }
         return "完全磁盘访问会在连接标准 EDP 加密盘后进行验证；macFUSE Local 必须保持可用。"
     }

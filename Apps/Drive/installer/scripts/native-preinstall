@@ -3,6 +3,8 @@ set -euo pipefail
 
 SERVICE_LABEL="com.edp.drive.service"
 DRIVE_UI_EXECUTABLE="/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALLER_MEDIA_PROBE="${SCRIPT_DIR}/edp-installer-media-probe"
 # macOS keeps `ucomm` even when an exiting process has lost its original argv.
 # These are the kernel-truncated names for the product service/transport.
 SERVICE_UCOMM="edp-drive-servic"
@@ -587,6 +589,42 @@ recover_legacy_root_diskimages2_orphans() {
   /bin/rm -f "${info}"
   trap - EXIT
 }
+
+refuse_install_with_standard_edp_media() {
+  if [[ ! -x "${INSTALLER_MEDIA_PROBE}" ]]; then
+    echo "EDP Drive installer media probe is missing; refusing to restart the privileged service." >&2
+    exit 1
+  fi
+
+  local output status
+  set +e
+  output="$("${INSTALLER_MEDIA_PROBE}" 2>&1)"
+  status=$?
+  set -e
+  case "${status}" in
+    0)
+      return 0
+      ;;
+    42)
+      [[ -n "${output}" ]] && echo "${output}" >&2
+      echo "检测到仍物理连接的标准 EDP U 盘。请先物理拔出 EDP U 盘，再重新运行安装器。" >&2
+      echo "EDP Drive refuses installation while standard EDP media is attached because restarting the privileged service would drop its Disk Arbitration claim." >&2
+      exit 1
+      ;;
+    *)
+      [[ -n "${output}" ]] && echo "${output}" >&2
+      echo "无法安全确认当前 USB 介质状态；为避免中断 EDP 磁盘 claim，安装已停止。请拔出外置 U 盘后重试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# A service process restart necessarily destroys its Disk Arbitration session.
+# Never create that claim gap while standard EDP media is physically attached;
+# macOS FSKit can otherwise acquire a child partition before the replacement
+# service starts, leaving the whole raw disk EBUSY. The package carries its own
+# read-only classifier so this gate also works when upgrading from older Apps.
+refuse_install_with_standard_edp_media
 
 # Never replace the App bundle while an older foreground process is still
 # executing from it. macOS code-signing validation correctly rejects that stale

@@ -19,7 +19,8 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
     private var leases = [String: EDPRawAccessLease]()
     private var probeWaiters = [String: [EDPRawAccessLeaseCompletion]]()
     private var readyByDeviceID = [String: Bool]()
-    private var errorsByDeviceID = [String: String]()
+    private var failuresByDeviceID = [String: EDPLifecycleFailure]()
+    private var registryGenerationByDeviceID = [String: UInt64]()
 
     init(
         ownerQueue: DispatchQueue,
@@ -48,14 +49,29 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
         readyByDeviceID[deviceID]
     }
 
-    func markReady(deviceID: String) {
-        readyByDeviceID[deviceID] = true
-        errorsByDeviceID.removeValue(forKey: deviceID)
+    func shouldAutoProbe(_ disk: PhysicalDisk) -> Bool {
+        switch readiness(deviceID: disk.deviceID) {
+        case nil:
+            return true
+        case true:
+            return lease(for: disk) == nil
+        case false:
+            return false
+        }
     }
 
-    func markFailure(deviceID: String, detail: String) {
+    func markReady(deviceID: String) {
+        readyByDeviceID[deviceID] = true
+        failuresByDeviceID.removeValue(forKey: deviceID)
+    }
+
+    func markFailure(deviceID: String, failure: EDPLifecycleFailure) {
         readyByDeviceID[deviceID] = false
-        errorsByDeviceID[deviceID] = detail
+        failuresByDeviceID[deviceID] = failure
+    }
+
+    func failure(deviceID: String) -> EDPLifecycleFailure? {
+        failuresByDeviceID[deviceID]
     }
 
     func prune(to disks: [PhysicalDisk]) {
@@ -75,13 +91,25 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
             }
         }
 
+        for (deviceID, disk) in currentByDeviceID {
+            if let previousGeneration = registryGenerationByDeviceID[deviceID],
+               previousGeneration != disk.registryEntryID {
+                leases.removeValue(forKey: deviceID)?.invalidate()
+                readyByDeviceID.removeValue(forKey: deviceID)
+                failuresByDeviceID.removeValue(forKey: deviceID)
+                registryGenerationByDeviceID.removeValue(forKey: deviceID)
+            }
+        }
         leases = leases.filter { deviceID, lease in
             guard let disk = currentByDeviceID[deviceID] else { return false }
             return lease.registryEntryID == disk.registryEntryID && lease.rawPath == disk.rawPath
         }
         let authoritativeDeviceIDs = Set(currentByDeviceID.keys)
         readyByDeviceID = readyByDeviceID.filter { authoritativeDeviceIDs.contains($0.key) }
-        errorsByDeviceID = errorsByDeviceID.filter { authoritativeDeviceIDs.contains($0.key) }
+        failuresByDeviceID = failuresByDeviceID.filter { authoritativeDeviceIDs.contains($0.key) }
+        registryGenerationByDeviceID = registryGenerationByDeviceID.filter {
+            authoritativeDeviceIDs.contains($0.key)
+        }
     }
 
     func prepareForPhysicalEject(deviceID: String) {
@@ -89,7 +117,7 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
             lease.invalidate()
         }
         readyByDeviceID[deviceID] = false
-        errorsByDeviceID.removeValue(forKey: deviceID)
+        failuresByDeviceID.removeValue(forKey: deviceID)
     }
 
     func removeDevice(deviceID: String) {
@@ -97,14 +125,16 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
             lease.invalidate()
         }
         readyByDeviceID.removeValue(forKey: deviceID)
-        errorsByDeviceID.removeValue(forKey: deviceID)
+        failuresByDeviceID.removeValue(forKey: deviceID)
+        registryGenerationByDeviceID.removeValue(forKey: deviceID)
     }
 
     func invalidateAll() {
         for lease in leases.values { lease.invalidate() }
         leases.removeAll()
         readyByDeviceID.removeAll()
-        errorsByDeviceID.removeAll()
+        failuresByDeviceID.removeAll()
+        registryGenerationByDeviceID.removeAll()
     }
 
     func readyDeviceIDs() -> [String] {
@@ -112,7 +142,7 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
     }
 
     func errorsSnapshot() -> [String: String] {
-        errorsByDeviceID
+        failuresByDeviceID.mapValues { "\($0.code.rawValue): \($0.description)" }
     }
 
     func probeAsync(
@@ -310,6 +340,7 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
         lease: EDPRawAccessLease?,
         failure: EDPLifecycleFailure?
     ) {
+        registryGenerationByDeviceID[disk.deviceID] = disk.registryEntryID
         if let lease {
             leases[disk.deviceID] = lease
             markReady(deviceID: disk.deviceID)
@@ -317,7 +348,10 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
             leases.removeValue(forKey: disk.deviceID)
             markFailure(
                 deviceID: disk.deviceID,
-                detail: failure?.description ?? "raw access probe failed"
+                failure: failure ?? EDPLifecycleFailure(
+                    code: .rawAccessUnavailable,
+                    detail: "raw access probe failed"
+                )
             )
         }
         let callbacks = probeWaiters.removeValue(forKey: disk.deviceID) ?? []

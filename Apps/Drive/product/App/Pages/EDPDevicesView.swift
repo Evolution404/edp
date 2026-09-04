@@ -47,6 +47,18 @@ struct EDPDevicesView: View {
                         .disabled(model.isBusy)
                 }
                 .padding(EDPTheme.Spacing.sm)
+            } else if model.hasRawAccessBusyDevice {
+                EDPNoticeBanner(
+                    title: "设备被系统占用",
+                    message: "完全磁盘访问已经生效。这不是权限问题，请物理拔出并重新插入 EDP U 盘后再试。",
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    tone: .warning
+                ) {
+                    Button("重新检测") { model.refreshRawAccess() }
+                        .buttonStyle(.glass)
+                        .disabled(model.isBusy)
+                }
+                .padding(EDPTheme.Spacing.sm)
             }
 
             Group {

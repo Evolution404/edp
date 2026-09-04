@@ -137,12 +137,21 @@ func openPersistentRawAccess(
 
 func userFacingRawAccessFailure(_ error: Error) -> EDPLifecycleFailure {
     let failure = EDPLifecycleFailure.classifyRawAccess(error)
-    guard failure.code == .rawAccessPermission else { return failure }
-    return EDPLifecycleFailure(
-        code: .rawAccessPermission,
-        detail: "需要为“EDP Drive 磁盘访问”开启完全磁盘访问："
-            + "系统设置 → 隐私与安全性 → 完全磁盘访问"
-    )
+    switch failure.code {
+    case .rawAccessPermission:
+        return EDPLifecycleFailure(
+            code: .rawAccessPermission,
+            detail: "需要为“EDP Drive 磁盘访问”开启完全磁盘访问："
+                + "系统设置 → 隐私与安全性 → 完全磁盘访问"
+        )
+    case .rawAccessBusy:
+        return EDPLifecycleFailure(
+            code: .rawAccessBusy,
+            detail: "EDP U 盘当前被 macOS 文件系统占用。请物理拔出并重新插入 U 盘后再重试。"
+        )
+    default:
+        return failure
+    }
 }
 
 func rawMetadataSnapshot(for rawPath: String) throws -> EDPRawMetadataSnapshot {
