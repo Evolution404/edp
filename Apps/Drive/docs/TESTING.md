@@ -398,7 +398,32 @@ This layer is authoritative for:
 - credential/policy persistence;
 - physical safe eject when a real EDP USB is present.
 
-## 14. Physical test evidence rules
+## 14. Software USB re-enumeration test helper
+
+For repeated real-Lexar generation-change testing, use the test-only public `IOUSBHostDevice` reset path instead of repeatedly physically unplugging/replugging the device:
+
+```bash
+make drive-usb-reenumerate-tool
+Tools/drive-usb-reenumerate.sh 21c4:0cd1 15
+```
+
+The low-level helper is `artifacts/test-tools/edp-usb-reenumerate`. The wrapper requires exactly one matching VID/PID, pauses the EDP runtime to release the raw lease while keeping the service/Disk Arbitration owner alive, requests `IOUSBHostDevice resetWithError:` with macOS administrator authorization, waits for the old USB registry generation to disappear and one replacement generation to appear, resumes the runtime, then requires retained FDA raw access to recover without increasing `rawBusyRecoveryCount` or `forcedWholeUnmountCount`.
+
+This is **test infrastructure only**. Production and installer paths must never invoke the helper. The reset terminates/re-enumerates the USB IOService tree but does not remove USB VBUS power, so it is not evidence for firmware behavior that requires a true power cycle. Keep one final physical unplug/replug smoke for each release candidate; use software re-enumeration for iterative real-device regression between release gates.
+
+Hardware-free compile/self-test:
+
+```bash
+make drive-test-usb-reenumeration-tool
+```
+
+Expected marker:
+
+```text
+RESULT=DRIVE_USB_SOFTWARE_REENUMERATION_TOOL_OK
+```
+
+## 15. Physical test evidence rules
 
 A physical claim requires actual corresponding media.
 
@@ -419,7 +444,7 @@ unrecognizedEDP physical negative
 
 Do not substitute golden fixtures, virtual USB or sparse images for these physical negatives.
 
-## 15. Real-device safety rules
+## 16. Real-device safety rules
 
 Before every real-device action:
 
@@ -431,7 +456,7 @@ Before every real-device action:
 
 Known unrelated external storage such as the user’s SN750 must remain untouched.
 
-## 16. Release test order
+## 17. Release test order
 
 For a candidate code change:
 
@@ -446,7 +471,7 @@ For a candidate code change:
 
 Do not run local UI performance xctrace.
 
-## 17. Filesystem policy / NTFS ADR test consequences
+## 18. Filesystem policy / NTFS ADR test consequences
 
 `ADR-2026-09-03-ntfs-rw.md` is accepted and test behavior must follow it:
 
