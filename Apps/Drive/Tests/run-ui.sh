@@ -13,7 +13,8 @@ TOC_XML="${BUILD_ROOT}/trace-toc.xml"
 HITCH_XML="${BUILD_ROOT}/hitches.xml"
 HITCH_EVENT_XML="${BUILD_ROOT}/hitch-events.xml"
 UI_BOUNDED="${ROOT}/Apps/Drive/Tests/Storage/RunBounded.py"
-UI_XCTRACE_RECORD_TIMEOUT_SECONDS=120
+UI_XCTRACE_RECORD_TIMEOUT_SECONDS=45
+UI_XCTRACE_RECORD_ATTEMPTS=3
 UI_XCTRACE_EXPORT_TIMEOUT_SECONDS=30
 mkdir -p "${BUILD_ROOT}"
 cleanup() {
@@ -110,37 +111,82 @@ python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace list templates | grep -Fx 'Animation Hitches' >/dev/null
 echo 'UI_XCTRACE_LIST_END'
 echo 'UI_XCTRACE_RECORD_BEGIN'
-rm -f "${HITCH_GATE}" "${HITCH_LOG}" "${TRACE}"
-"${BIN}" --hitch-only --hitch-gate "${HITCH_GATE}" >"${HITCH_LOG}" 2>&1 &
-HITCH_PID=$!
-for _ in $(seq 1 200); do
-  if grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}" 2>/dev/null; then
+record_success=0
+for attempt in $(seq 1 "${UI_XCTRACE_RECORD_ATTEMPTS}"); do
+  HITCH_LOG="${BUILD_ROOT}/hitch-${attempt}.log"
+  HITCH_GATE="${BUILD_ROOT}/hitch-trace-started-${attempt}"
+  HITCH_NOTIFICATION="com.edp.drive.ui-hitch-trace-started.$$.${attempt}.${RANDOM}"
+  TRACE="${BUILD_ROOT}/sidebar-hitches-${attempt}.trace"
+  rm -f "${HITCH_GATE}" "${HITCH_LOG}" "${TRACE}"
+
+  echo "UI_XCTRACE_RECORD_ATTEMPT=${attempt}/${UI_XCTRACE_RECORD_ATTEMPTS}"
+  "${BIN}" --hitch-only --hitch-gate "${HITCH_GATE}" >"${HITCH_LOG}" 2>&1 &
+  HITCH_PID=$!
+  for _ in $(seq 1 200); do
+    if grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}" 2>/dev/null; then
+      break
+    fi
+    if ! kill -0 "${HITCH_PID}" 2>/dev/null; then
+      cat "${HITCH_LOG}" >&2 || true
+      echo "UI_HITCH_TARGET_EXITED_BEFORE_READY_ATTEMPT=${attempt}" >&2
+      break
+    fi
+    sleep 0.05
+  done
+
+  if ! grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"; then
+    if kill -0 "${HITCH_PID}" 2>/dev/null; then
+      kill -KILL "${HITCH_PID}" 2>/dev/null || true
+      wait "${HITCH_PID}" 2>/dev/null || true
+    fi
+    HITCH_PID=''
+    continue
+  fi
+
+  (
+    /usr/bin/notifyutil -1 "${HITCH_NOTIFICATION}" >/dev/null 2>&1
+    : >"${HITCH_GATE}"
+  ) &
+  NOTIFY_PID=$!
+
+  record_status=0
+  python3 "${UI_BOUNDED}" \
+    --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}" \
+    --kill-process-group \
+    xcrun xctrace record --quiet \
+      --template 'Animation Hitches' \
+      --output "${TRACE}" \
+      --time-limit 8s \
+      --no-prompt \
+      --notify-tracing-started "${HITCH_NOTIFICATION}" \
+      --attach "${HITCH_PID}" || record_status=$?
+
+  if [[ -n "${NOTIFY_PID:-}" ]] && kill -0 "${NOTIFY_PID}" 2>/dev/null; then
+    kill -KILL "${NOTIFY_PID}" 2>/dev/null || true
+  fi
+  wait "${NOTIFY_PID}" 2>/dev/null || true
+  NOTIFY_PID=''
+
+  if [[ "${record_status}" -eq 0 && -f "${HITCH_GATE}" && -e "${TRACE}" ]]; then
+    record_success=1
+    echo "UI_XCTRACE_RECORD_ATTEMPT_SUCCESS=${attempt}"
     break
   fi
-  if ! kill -0 "${HITCH_PID}" 2>/dev/null; then
-    cat "${HITCH_LOG}" >&2 || true
-    echo 'UI_HITCH_TARGET_EXITED_BEFORE_READY=1' >&2
-    exit 1
+
+  echo "UI_XCTRACE_RECORD_ATTEMPT_FAILED=${attempt} status=${record_status}" >&2
+  if kill -0 "${HITCH_PID}" 2>/dev/null; then
+    kill -KILL "${HITCH_PID}" 2>/dev/null || true
   fi
-  sleep 0.05
+  wait "${HITCH_PID}" 2>/dev/null || true
+  HITCH_PID=''
 done
-grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"
-(
-  /usr/bin/notifyutil -1 "${HITCH_NOTIFICATION}" >/dev/null 2>&1
-  : >"${HITCH_GATE}"
-) &
-NOTIFY_PID=$!
-python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}" \
-  xcrun xctrace record --quiet \
-    --template 'Animation Hitches' \
-    --output "${TRACE}" \
-    --time-limit 8s \
-    --no-prompt \
-    --notify-tracing-started "${HITCH_NOTIFICATION}" \
-    --attach "${HITCH_PID}"
+
+if [[ "${record_success}" -ne 1 ]]; then
+  echo 'UI_XCTRACE_RECORD_ALL_ATTEMPTS_FAILED=1' >&2
+  exit 1
+fi
 echo 'UI_XCTRACE_RECORD_END'
 
-[[ -f "${HITCH_GATE}" ]]
 for _ in $(seq 1 200); do
   if ! kill -0 "${HITCH_PID}" 2>/dev/null; then
     break
@@ -153,8 +199,6 @@ if kill -0 "${HITCH_PID}" 2>/dev/null; then
 fi
 wait "${HITCH_PID}"
 HITCH_PID=''
-wait "${NOTIFY_PID}"
-NOTIFY_PID=''
 grep -Fq 'UI_HITCH_TRACE_GATE_OPEN=1' "${HITCH_LOG}"
 grep -Fq 'RESULT=DRIVE_UI_HITCH_AUTOMATION_OK' "${HITCH_LOG}"
 

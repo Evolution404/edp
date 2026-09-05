@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 UI_RUNNER="${TEST_ROOT}/run-ui.sh"
+UI_BOUNDED="${TEST_ROOT}/Storage/RunBounded.py"
 APP_SERVICE_SUPPORT_RUNNER="${TEST_ROOT}/run-app-service-support.sh"
 INSTALLER_MEDIA_PROBE_RUNNER="${TEST_ROOT}/run-installer-media-probe.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
@@ -218,9 +219,14 @@ echo 'RESULT=DRIVE_SYSTEM_DISKIMAGES_HELPER_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'GITHUB_ACTIONS:-false' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
-/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_TIMEOUT_SECONDS=120' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_TIMEOUT_SECONDS=45' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_ATTEMPTS=3' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'UI_XCTRACE_EXPORT_TIMEOUT_SECONDS=30' "${UI_RUNNER}"
-[[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 1 ]]
+[[ "$(/usr/bin/grep -Fc -- '--kill-process-group' "${UI_RUNNER}")" -eq 1 ]]
+/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_ATTEMPT_SUCCESS=' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'UI_XCTRACE_RECORD_ALL_ATTEMPTS_FAILED=1' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'parser.add_argument("--kill-process-group", action="store_true")' "${UI_BOUNDED}"
+/usr/bin/grep -Fq 'os.killpg(process.pid, signal.SIGKILL)' "${UI_BOUNDED}"
 [[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 4 ]]
 for marker in LIST RECORD TOC_EXPORT FRAME_EXPORT EVENT_EXPORT; do
   /usr/bin/grep -Fq "UI_XCTRACE_${marker}_BEGIN" "${UI_RUNNER}"
