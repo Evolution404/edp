@@ -226,7 +226,12 @@ for marker in LIST RECORD TOC_EXPORT FRAME_EXPORT EVENT_EXPORT; do
   /usr/bin/grep -Fq "UI_XCTRACE_${marker}_BEGIN" "${UI_RUNNER}"
   /usr/bin/grep -Fq "UI_XCTRACE_${marker}_END" "${UI_RUNNER}"
 done
-/usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
+/usr/bin/grep -Fq -- '"${BIN}" --hitch-only --hitch-gate "${HITCH_GATE}"' "${UI_RUNNER}"
+/usr/bin/grep -Fq -- '--notify-tracing-started "${HITCH_NOTIFICATION}"' "${UI_RUNNER}"
+/usr/bin/grep -Fq -- '--attach "${HITCH_PID}"' "${UI_RUNNER}"
+! /usr/bin/grep -Fq -- '--target-stdout "${HITCH_LOG}"' "${UI_RUNNER}"
+! /usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'UI_HITCH_TRACE_GATE_OPEN=1' "${ROOT}/Apps/Drive/Tests/UI/ValidateUIAutomation.swift"
 /usr/bin/grep -Fq 'table[@schema="hitches-frame-lifetimes"]' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches"]' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'UI_HITCH_SAMPLE_SOURCE=' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"

@@ -285,6 +285,8 @@ xctrace list/export = 30 s
 
 These watchdogs bound Instruments startup/export. They do not change the 33ms performance threshold or the workload.
 
+The hitch target is started by the test runner itself and `xctrace` attaches to its PID. `xctrace --notify-tracing-started` opens an explicit gate before sidebar toggles begin. This avoids the macOS 26 runner's observed `xctrace --launch` stall while preserving the same 8-second trace and hitch threshold.
+
 A performance PASS requires:
 
 ```text

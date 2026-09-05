@@ -14,7 +14,12 @@ struct EDPUIAutomationMain {
         NSApplication.shared.finishLaunching()
         do {
             if CommandLine.arguments.contains("--hitch-only") {
-                try validateSidebarHitches(toggleCount: 6, warmupSeconds: 3)
+                let hitchGatePath = argumentValue(after: "--hitch-gate")
+                try validateSidebarHitches(
+                    toggleCount: 6,
+                    warmupSeconds: 3,
+                    startGatePath: hitchGatePath
+                )
                 print("RESULT=DRIVE_UI_HITCH_AUTOMATION_OK")
             } else {
                 try validatePreviewScenarios()
@@ -168,7 +173,8 @@ struct EDPUIAutomationMain {
 
     private static func validateSidebarHitches(
         toggleCount: Int,
-        warmupSeconds: TimeInterval
+        warmupSeconds: TimeInterval,
+        startGatePath: String?
     ) throws {
         let model = EDPVaultViewModel(
             previewConfiguration: EDPPreviewScenarioFactory.configuration(for: .healthyOneDevice)
@@ -184,6 +190,17 @@ struct EDPUIAutomationMain {
         }
         print("UI_HITCH_AUTOMATION_READY=1")
         fflush(stdout)
+        if let startGatePath {
+            let deadline = Date().addingTimeInterval(30)
+            while !FileManager.default.fileExists(atPath: startGatePath) {
+                guard Date() < deadline else {
+                    throw EDPUIAutomationFailure(description: "timed out waiting for xctrace start gate")
+                }
+                spin(seconds: 0.02)
+            }
+            print("UI_HITCH_TRACE_GATE_OPEN=1")
+            fflush(stdout)
+        }
         spin(seconds: warmupSeconds)
         print("UI_HITCH_TOGGLES_BEGIN_EPOCH=\(Date().timeIntervalSince1970)")
         fflush(stdout)
@@ -193,6 +210,14 @@ struct EDPUIAutomationMain {
         }
         print("UI_HITCH_TOGGLES_END_EPOCH=\(Date().timeIntervalSince1970)")
         fflush(stdout)
+    }
+
+    private static func argumentValue(after flag: String) -> String? {
+        guard let index = CommandLine.arguments.firstIndex(of: flag),
+              CommandLine.arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        return CommandLine.arguments[index + 1]
     }
 
     private static func validateSidebarGeometry(

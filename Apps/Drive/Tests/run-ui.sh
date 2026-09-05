@@ -6,6 +6,8 @@ BUILD_ROOT="${TMPDIR:-/tmp}/edp-drive-ui-regression-$$"
 BIN="${BUILD_ROOT}/validate-drive-ui"
 UI_LOG="${BUILD_ROOT}/ui.log"
 HITCH_LOG="${BUILD_ROOT}/hitch.log"
+HITCH_GATE="${BUILD_ROOT}/hitch-trace-started"
+HITCH_NOTIFICATION="com.edp.drive.ui-hitch-trace-started.$$.${RANDOM}"
 TRACE="${BUILD_ROOT}/sidebar-hitches.trace"
 TOC_XML="${BUILD_ROOT}/trace-toc.xml"
 HITCH_XML="${BUILD_ROOT}/hitches.xml"
@@ -15,6 +17,9 @@ UI_XCTRACE_RECORD_TIMEOUT_SECONDS=120
 UI_XCTRACE_EXPORT_TIMEOUT_SECONDS=30
 mkdir -p "${BUILD_ROOT}"
 cleanup() {
+  if [[ -n "${NOTIFY_PID:-}" ]] && kill -0 "${NOTIFY_PID}" 2>/dev/null; then
+    kill -KILL "${NOTIFY_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${HITCH_PID:-}" ]] && kill -0 "${HITCH_PID}" 2>/dev/null; then
     kill -KILL "${HITCH_PID}" 2>/dev/null || true
   fi
@@ -105,17 +110,52 @@ python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}" \
   xcrun xctrace list templates | grep -Fx 'Animation Hitches' >/dev/null
 echo 'UI_XCTRACE_LIST_END'
 echo 'UI_XCTRACE_RECORD_BEGIN'
+rm -f "${HITCH_GATE}" "${HITCH_LOG}" "${TRACE}"
+"${BIN}" --hitch-only --hitch-gate "${HITCH_GATE}" >"${HITCH_LOG}" 2>&1 &
+HITCH_PID=$!
+for _ in $(seq 1 200); do
+  if grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}" 2>/dev/null; then
+    break
+  fi
+  if ! kill -0 "${HITCH_PID}" 2>/dev/null; then
+    cat "${HITCH_LOG}" >&2 || true
+    echo 'UI_HITCH_TARGET_EXITED_BEFORE_READY=1' >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"
+(
+  /usr/bin/notifyutil -1 "${HITCH_NOTIFICATION}" >/dev/null 2>&1
+  : >"${HITCH_GATE}"
+) &
+NOTIFY_PID=$!
 python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_RECORD_TIMEOUT_SECONDS}" \
   xcrun xctrace record --quiet \
     --template 'Animation Hitches' \
     --output "${TRACE}" \
     --time-limit 8s \
     --no-prompt \
-    --target-stdout "${HITCH_LOG}" \
-    --launch -- "${BIN}" --hitch-only
+    --notify-tracing-started "${HITCH_NOTIFICATION}" \
+    --attach "${HITCH_PID}"
 echo 'UI_XCTRACE_RECORD_END'
 
-grep -Fq 'UI_HITCH_AUTOMATION_READY=1' "${HITCH_LOG}"
+[[ -f "${HITCH_GATE}" ]]
+for _ in $(seq 1 200); do
+  if ! kill -0 "${HITCH_PID}" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
+if kill -0 "${HITCH_PID}" 2>/dev/null; then
+  echo 'UI_HITCH_TARGET_DID_NOT_EXIT=1' >&2
+  exit 1
+fi
+wait "${HITCH_PID}"
+HITCH_PID=''
+wait "${NOTIFY_PID}"
+NOTIFY_PID=''
+grep -Fq 'UI_HITCH_TRACE_GATE_OPEN=1' "${HITCH_LOG}"
 grep -Fq 'RESULT=DRIVE_UI_HITCH_AUTOMATION_OK' "${HITCH_LOG}"
 
 echo 'UI_XCTRACE_TOC_EXPORT_BEGIN'
