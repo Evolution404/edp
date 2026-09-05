@@ -9,20 +9,22 @@ Updated: 2026-09-05
 Record before release testing:
 
 ```text
-Status: BLOCKED — 193ef5a eliminated EBUSY recovery but still allowed a transient system mount before whole-disk claim; replacement candidate pending exact-head CI/package/physical retest
+Status: RELEASE-READY — standard encrypted physical path and exact-head reboot gate PASS; missing negative physical media remain BLOCKED_BY_FIXTURE
 Branch: codex/ui-macos26-liquid-glass
+Release code/package HEAD: a2fb8745295adf9d84422f91802c868dd95ca16c
 Latest invalidated release HEAD: 193ef5a8cd53ed2547779c1bc30b6cdf1cbe56a2
 Version: 0.6.0
-Invalidated Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
-Invalidated Clean.pkg SHA-256: 8a96b8f5fa2cfac5503aa6b7fd0aa1fde3b1bc7ffbd48a40fab88ec5f1df4514
-Replacement exact-head GitHub Actions run: PENDING
-Physical acceptance: BLOCKED until a rebuilt replacement package proves no successful system mount of the physical boot child, rawBusyRecoveryCount=0 and forcedWholeUnmountCount=0, then re-runs claim-continuous runtime controls and safe eject
-Remaining mandatory gate: replacement exact-head CI 5/5 + signed package verifier + physical Lexar replug acceptance
+Release Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
+Release Clean.pkg SHA-256: 54eba1d6a1e9cb36555dafe58eeccd25740142af61207fa10fa6e2209eed843c
+Exact-head GitHub Actions run: 33960406329 — five core jobs 5/5 PASS
+Physical acceptance: PASS — fresh insertion mount approval dissented before any child mount success; Pause/Resume/Restart kept one service PID and zero recovery counters; safe eject suppression and physical reinsert PASS
+Exact-head reboot acceptance: PASS — booted 2026-09-05 18:44:02; before EDP Drive starts macOS may own/mount the FAT boot partition normally; after EDP Drive/XPC starts it unmounts the system volume, claims the whole EDP disk and restores retained raw access with zero recovery counters
+Remaining documented exceptions: ordinaryUSB / legacyNoPassword / currentNoPassword / unrecognizedEDP physical negatives are BLOCKED_BY_FIXTURE
 Date: 2026-09-05
 Tester: automated local + GitHub Actions + macOS upgrade + physical Lexar acceptance
 ```
 
-Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` can prevent that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closed that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner. On 2026-09-05, `7dda539` exposed a narrower insertion race: FSKit queued the child FAT mount before asynchronous whole-disk claim completed, forcing EBUSY recovery. `193ef5a` then armed a mount-denial gate before `DADiskClaim`, eliminating the EBUSY counters, but physical logs still showed `disk26s1` successfully mounted before the whole-media peek/claim path ran. The next replacement therefore makes the mount-approval callback itself synchronously classify the exact owning USB generation and deny only fully verified `standardEncrypted` media, independent of whole-disk peek ordering.
+Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` can prevent that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closed that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner. On 2026-09-05, `7dda539` exposed a narrower insertion race: FSKit queued the child FAT mount before asynchronous whole-disk claim completed, forcing EBUSY recovery. `193ef5a` then armed a mount-denial gate before `DADiskClaim`, eliminating the EBUSY counters, but physical logs still showed `disk26s1` successfully mounted before the whole-media peek/claim path ran. `a2fb874` closes that remaining race by synchronously classifying the exact owning USB generation inside mount approval itself; physical fresh insertion and physical reinsert both showed mount approval dissent before whole-disk claim, no child mount success, `rawBusyRecoveryCount=0`, and `forcedWholeUnmountCount=0`.
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 
@@ -290,6 +292,9 @@ With the candidate installed and credentials/policy saved:
 - [x] post-reboot root holder audit showed only `edp-drive-service` on `/dev/rdisk4`, with no `fskitd` child-partition holder.
 - [x] type2/type4 credentials and all three `autoMount=false` policies persisted across reboot/removal/reinsert.
 - [x] final post-reboot safe eject PASS; `privilegedAccessReady=false`, partitions unavailable, raw errors/busy recovery zero, and no EDP mount/process/raw-holder residue remained.
+- [x] exact-head `a2fb8745295adf9d84422f91802c868dd95ca16c` reboot completed at `2026-09-05 18:44:02`; because `com.edp.drive.service` is an on-demand Mach service with no `RunAtLoad`/`KeepAlive`, macOS owning/mounting the FAT boot partition before EDP Drive starts is expected. After EDP Drive/XPC startup, the service unmounted the system-owned boot volume, restored whole-device ownership/raw access, and left `rawBusyRecoveryCount=0` / `forcedWholeUnmountCount=0`.
+- [x] post-reboot `functional-all` PASS on `a2fb874`: type1 read-only remount PASS, type2/type4 RW persistence PASS, credentials/policy persisted, all three partitions ended unmounted.
+- [x] final `a2fb874` safe eject + residue audit PASS: no EDP volumes, no raw holder, no `edp-mfmount`/`diskimages2-attach` process residue, and `RESULT=FIRST_INSTALL_FULL_ACCEPTANCE_BASELINE_OK`.
 
 ## 15. Physical negative-media matrix
 
@@ -359,14 +364,15 @@ NTFS RW is not a prerequisite for this release. The accepted NTFS ADR uses nativ
 
 ## 19. Current known blockers
 
-As of 2026-09-04:
+As of 2026-09-05:
 
 ```text
 ordinaryUSB physical negative      BLOCKED_BY_FIXTURE
 legacyNoPassword physical negative BLOCKED_BY_FIXTURE
 currentNoPassword physical negative BLOCKED_BY_FIXTURE
 unrecognizedEDP physical negative  BLOCKED_BY_FIXTURE
-9b5a859 physical release gates      PASS
-9b5a859 exact-head reboot gate      PASS
+a2fb874 physical release gates      PASS
+a2fb874 exact-head reboot gate      PASS
+a2fb874 final safe-eject/residue    PASS
 NTFS RW ADR                         ACCEPTED A+C (native NTFS RO + writable ExFAT)
 ```
