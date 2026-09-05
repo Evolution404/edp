@@ -8,6 +8,7 @@ enum EDPLifecycleFailureCode: String, Equatable, Sendable {
     case deviceChanged
     case bridgeLaunchFailed
     case bridgeExtensionUnavailable
+    case bridgeExtensionRequiresApproval
     case bridgeTimeout
     case bridgeProcessExited
     case publicationFailed
@@ -49,12 +50,27 @@ struct EDPLifecycleFailure: Error, Equatable, Sendable, CustomStringConvertible,
             )
         }
         let normalized = (logDetail ?? "").lowercased()
-        if normalized.contains("mount(8) returned 69")
-            || normalized.contains("file system extension not found")
-            || normalized.contains("file system extension not enabled") {
+        // MFMountResultFileSystemExtensionRequiresApproval == 4. This is an
+        // OS-managed user-approval state, not a crashed FSKit host; restarting
+        // fskit_agent cannot grant approval and can perturb registration state.
+        if normalized.contains("direct_mfmount_async_result=4")
+            || normalized.contains("file system extension not enabled")
+            || normalized.contains("file system extension requires approval") {
+            return EDPLifecycleFailure(
+                code: .bridgeExtensionRequiresApproval,
+                detail: "macFUSE 文件系统扩展尚未启用，请在系统设置中批准后重试"
+                    + ((logDetail?.isEmpty == false) ? ": \(logDetail!)" : "")
+            )
+        }
+        // MFMountResultFileSystemExtensionNotFound == 3. macFUSE performs its
+        // own automatic registration before mounting; report this distinctly
+        // rather than trying to imitate its registration lifecycle here.
+        if normalized.contains("direct_mfmount_async_result=3")
+            || normalized.contains("mount(8) returned 69")
+            || normalized.contains("file system extension not found") {
             return EDPLifecycleFailure(
                 code: .bridgeExtensionUnavailable,
-                detail: "encrypted block bridge failed"
+                detail: "macFUSE 文件系统扩展未注册或不可用"
                     + ((logDetail?.isEmpty == false) ? ": \(logDetail!)" : "")
             )
         }
@@ -125,10 +141,12 @@ enum EDPFSKitMountRecoveryPolicy {
     ) -> Bool {
         guard !bridgeMounted else { return false }
         switch failure.code {
-        case .bridgeExtensionUnavailable:
-            return true
         case .bridgeTimeout:
             return transportStillRunning
+        case .bridgeExtensionUnavailable, .bridgeExtensionRequiresApproval:
+            // Registration/approval are owned by macFUSE + FSKit. A host
+            // restart is not an approval mechanism and must not be used here.
+            return false
         default:
             return false
         }

@@ -124,17 +124,17 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_DA_EJECT_OWNER_RECOVERY_OK'
 
-# Storage-only FSKit host recovery mirrors the production one-shot policy. It
-# must use real MNT_EXT_FSKIT mount detection, never restart the user agent while
-# any FSKit volume is active, and never grow into an unbounded retry loop.
+# Storage-only FSKit host recovery mirrors the production failure boundary. It
+# must use real MNT_EXT_FSKIT mount detection and is reserved for teardown/stuck
+# host recovery; extension registration/approval failures must never restart the
+# user agent or grow into a retry loop.
 FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c"
 /usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${FSKIT_GUARD_SOURCE}"
 ! /usr/bin/grep -Fq 'MNT_FORCE' "${FSKIT_GUARD_SOURCE}"
 ! /usr/bin/grep -Fq 'DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_CALL' "${FSKIT_GUARD_SOURCE}"
 /usr/bin/grep -Fq -- '--assert-no-fskit-mounts' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'command" == "/usr/libexec/fskit_agent"' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_FSKIT_HOST_RETRY=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_child_exit_bounded()' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_CHILD_EXIT_TIMEOUT=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_ADAPTER_BRIDGE_RECOVERY=' "${STORAGE_RUNNER}"
@@ -149,7 +149,8 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 /usr/bin/grep -Fq -- '--assert-no-mount-prefix' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq '/usr/sbin/diskutil info' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Eq '/sbin/mount([[:space:]]|$)' "${STORAGE_RUNNER}"
-! /usr/bin/grep -Fq 'while adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'STORAGE_FSKIT_HOST_RETRY=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'candidate="$(/usr/bin/mktemp "${output}.tmp.XXXXXX")"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq '/bin/mv -f "$candidate" "$output"' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq ': >"$output"' "${STORAGE_RUNNER}"
@@ -167,6 +168,10 @@ ASYNC_SHIM="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFM
 /usr/bin/grep -Fq '"nobrowse,volname=%s"' "${RAW_TRANSPORT}"
 /usr/bin/grep -Fq 'localVolume: true' "${TRANSPORT_PROVIDER}"
 /usr/bin/grep -Fq 'EDP_MFMOUNT_OPTIONS": "local,nobrowse"' "${TRANSPORT_PROVIDER}"
+/usr/bin/grep -Fq 'EDP_MFMOUNT_QUIET": "0"' "${TRANSPORT_PROVIDER}"
+/usr/bin/grep -Fq 'bool quiet = true;' "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'getenv("EDP_MFMOUNT_QUIET")' "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'MFMount(channel, mountpoint, options, quiet)' "${RAW_TRANSPORT}"
 /usr/bin/grep -Fq 'local,nobrowse,volname=%s' "${TRANSPORT_BUILD}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'RUNTIME_FRAMEWORKS="${MACFUSE_RUNTIME_FRAMEWORKS:-/Library/Filesystems/macfuse.fs/Contents/Frameworks}"' "${TRANSPORT_BUILD}"
 /usr/bin/grep -Fq -- '-Xlinker -rpath -Xlinker "${RUNTIME_FRAMEWORKS}"' "${TRANSPORT_BUILD}"
@@ -254,11 +259,11 @@ echo 'RESULT=DRIVE_SYSTEM_UI_SHELL_SPLIT_OK'
 ! /usr/bin/grep -Fq 'struct EDPActivityView: View' "${APP_SOURCE}"
 ! /usr/bin/grep -Fq 'struct EDPSettingsView: View' "${APP_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UI_PAGE_SPLIT_OK'
-/usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() async throws -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'edpMacFUSEInstallerPath' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq '"install", "--components", "file-system-extensions"' "${APP_SERVICE_SUPPORT_SOURCE}"
+/usr/bin/grep -Fq 'func macFUSELocalRuntimeReady() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() async throws -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq '"install", "--components", "file-system-extensions"' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
 /usr/bin/grep -Fq 'let edpDriveServicePath = edpDriveAppPath' "${APP_SERVICE_SUPPORT_SOURCE}"
-! /usr/bin/grep -Fq 'func ensureMacFUSELocalEnablement() async throws -> Bool' "${APP_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_UI_SERVICE_SUPPORT_SPLIT_OK'
 /usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_SOURCE}"
@@ -909,9 +914,9 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 
 # External/private production dependencies are explicit and bounded. The normal
 # DiskImages2 publish path uses the exact signed helper; hdiutil detach belongs
-# only to orphan scratch recovery. PluginKit stays in foreground App enablement,
-# never daemon mount/eject hot paths. User tools are typed, timeout-bounded, and
-# Task-cancellable, while every agent reset is fail-closed on active FSKit mounts.
+# only to orphan scratch recovery. FSKit approval is owned by macOS/macFUSE and
+# is never synthesized by PluginKit/plist writes during App launch. User tools
+# remain typed, timeout-bounded, and Task-cancellable.
 /usr/bin/grep -Fq 'enum EDPUserToolError: Error, LocalizedError, Sendable' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'timeout: Duration = .seconds(8)' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'withTaskCancellationHandler' "${APP_SERVICE_SUPPORT_SOURCE}"
@@ -920,7 +925,7 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 ! /usr/bin/grep -Fq 'waitUntilExit()' "${APP_SERVICE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq 'while process.isRunning' "${APP_SERVICE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq 'Task.sleep(for: .milliseconds(50))' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'try await ensureMacFUSELocalEnablement()' "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq 'ensureMacFUSELocalEnablement' "${APP_VIEW_MODEL_SOURCE}" "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'macFUSELocalRuntimeReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${RUNTIME_SOURCE}" "${MOUNT_LIFECYCLE_SOURCE}" "${PUBLISHER_SOURCE}"
@@ -956,13 +961,18 @@ echo 'RESULT=DRIVE_SYSTEM_EXTERNAL_DEPENDENCY_BOUNDARIES_OK'
 /usr/bin/grep -Fq 'func macFUSELocalRuntimeReady() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'transportRuntimeReady = macFUSELocalRuntimeReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'enabledModules.plist' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
-! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${APP_SERVICE_SUPPORT_SOURCE}"
+! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'FSClient' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
-/usr/bin/grep -Fq 'func noActiveFSKitMountsForAgentReset() -> Bool' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'let forceRegistration = noActiveFSKitMountsForAgentReset()' "${APP_SERVICE_SUPPORT_SOURCE}"
-/usr/bin/grep -Fq 'arguments.append("--force")' "${APP_SERVICE_SUPPORT_SOURCE}"
-echo 'RESULT=DRIVE_SYSTEM_FSKIT_OFFICIAL_INSTALLER_PATH_OK'
+! /usr/bin/grep -Fq 'noActiveFSKitMountsForAgentReset' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
+! /usr/bin/grep -Fq '"install", "--components", "file-system-extensions"' "${APP_SERVICE_SUPPORT_SOURCE}" "${APP_VIEW_MODEL_SOURCE}"
+/usr/bin/grep -Fq 'packageUpgradeAction == '\''clean'\''' "${CLEAN_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'packageUpgradeAction == '\''upgrade'\''' "${CLEAN_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'require-scripts="true"' "${CLEAN_INSTALLER_SOURCE}"
+/usr/bin/grep -Fq 'case bridgeExtensionRequiresApproval' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'direct_mfmount_async_result=4' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'case .bridgeExtensionUnavailable, .bridgeExtensionRequiresApproval:' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'EDP_MFMOUNT_QUIET": "0"' "${TRANSPORT_PROVIDER}"
+echo 'RESULT=DRIVE_SYSTEM_FSKIT_APPROVAL_OWNERSHIP_OK'
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_EVENT_DRIVEN_OK'
 echo 'RESULT=DRIVE_SYSTEM_NATIVE_RUNTIME_CONTROL_OK'
 

@@ -398,6 +398,26 @@ s = p.read_text()
 needle = '<installer-gui-script minSpecVersion="1">'
 if '<title>' not in s:
     s = s.replace(needle, needle + '\n    <title>EDP Drive + macFUSE FSKit</title>', 1)
+# Preserve the user's one-time FSKit approval across ordinary EDP upgrades.
+# Reinstalling an already-current macFUSE package re-registers its FSKit
+# extensions and can invalidate/perturb the OS-managed approval state. Apple's
+# Installer choice metadata already knows whether each receipt is clean,
+# installed, an upgrade, or a downgrade; install macFUSE only when absent or
+# when this bundled version is newer than the installed receipt.
+s = s.replace('require-scripts="false"', 'require-scripts="true"', 1)
+for choice_id in (
+    'io.macfuse.installer.components.core',
+    'io.macfuse.installer.components.preferencepane',
+):
+    old = f'<choice id="{choice_id}" visible="false">'
+    selected = (
+        f"choices['{choice_id}'].packageUpgradeAction == 'clean' || "
+        f"choices['{choice_id}'].packageUpgradeAction == 'upgrade'"
+    )
+    new = f'<choice id="{choice_id}" visible="false" selected="{selected}">'
+    if old not in s:
+        raise SystemExit(f'expected synthesized choice missing: {choice_id}')
+    s = s.replace(old, new, 1)
 p.write_text(s)
 PY
 

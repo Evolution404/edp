@@ -138,13 +138,6 @@ cleanup_crashed_local_mount() {
   return 1
 }
 
-adapter_log_is_transient_fskit_failure() {
-  local log_path="$1"
-  /usr/bin/grep -Eiq \
-    'mount\(8\) returned 69|File system extension not found|File system extension not enabled' \
-    "$log_path"
-}
-
 restart_console_fskit_agent_if_safe() {
   [[ -x "$FSKIT_GUARD_BIN" ]] || {
     echo "FSKit mount guard is unavailable" >&2
@@ -925,7 +918,7 @@ start_adapter() {
   printf '%s\n' "$bridge" >>"$ACTIVE_MOUNTS"
 
   local attempt adapter_pid ready_fifo ready_status
-  for attempt in 1 2; do
+  for attempt in 1; do
     : >"$adapter_log"
     ready_fifo="$WORK_DIR/ready-$tag-$attempt.fifo"
     /bin/rm -f "$ready_fifo"
@@ -972,13 +965,6 @@ start_adapter() {
       fi
     fi
     wait "$adapter_pid" >/dev/null 2>&1 || true
-
-    if (( attempt == 1 )) \
-      && adapter_log_is_transient_fskit_failure "$adapter_log" \
-      && restart_console_fskit_agent_if_safe; then
-      log "STORAGE_FSKIT_HOST_RETRY=$tag attempt=2"
-      continue
-    fi
 
     /usr/bin/tail -80 "$adapter_log" >&2 || true
     echo "macFUSE Local adapter did not become ready: $tag attempt=$attempt" >&2

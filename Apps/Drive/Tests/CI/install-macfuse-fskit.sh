@@ -25,29 +25,38 @@ if [[ ! -d /Library/Filesystems/macfuse.fs ]]; then
 fi
 
 APP="/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app"
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
-"${LSREGISTER}" -f -R -trusted "${APP}"
-while IFS= read -r extension; do
-  pluginkit -a "${extension}" || true
-done < <(find "${APP}/Contents" -maxdepth 5 -type d -name '*.appex' -print)
-pluginkit -a "${APP}" || true
-pluginkit -e use -i "${GENERIC_ID}" || true
-pluginkit -e use -i "${LOCAL_ID}" || true
+MACFUSE_BIN="${APP}/Contents/MacOS/macfuse"
+test -x "${MACFUSE_BIN}"
+# Use macFUSE's supported registration path. The hosted runner cannot click the
+# macOS File System Extensions approval UI, so the block below supplies only a
+# CI fixture for that user-owned approval state; production code must never
+# write this private plist or restart the system fskitd daemon.
+"${MACFUSE_BIN}" install --components file-system-extensions --force
 
 SETTINGS="${HOME}/Library/Group Containers/group.com.apple.fskit.settings/enabledModules.plist"
 mkdir -p "$(dirname "${SETTINGS}")"
 python3 - "${SETTINGS}" "${GENERIC_ID}" "${LOCAL_ID}" <<'PY'
-import plistlib, sys
-with open(sys.argv[1], 'wb') as handle:
-    plistlib.dump(sys.argv[2:], handle, fmt=plistlib.FMT_XML, sort_keys=False)
+import os, plistlib, sys
+path = sys.argv[1]
+modules = []
+if os.path.exists(path):
+    with open(path, 'rb') as handle:
+        value = plistlib.load(handle)
+    if isinstance(value, list):
+        modules = [item for item in value if isinstance(item, str)]
+for module_id in sys.argv[2:]:
+    if module_id not in modules:
+        modules.append(module_id)
+with open(path, 'wb') as handle:
+    plistlib.dump(modules, handle, fmt=plistlib.FMT_XML, sort_keys=False)
 PY
 chmod 600 "${SETTINGS}"
 
+# Restart only the disposable current-user agents so they reload the CI approval
+# fixture. Never kill/reset system fskitd; the storage suite's real MFMount is
+# the readiness authority and will fail if this setup did not converge.
 killall -9 fskit_agent extensionkitservice 2>/dev/null || true
-sudo killall -9 fskitd 2>/dev/null || true
-sleep 3
-pluginkit -m -p com.apple.fskit.fsmodule -A -D -vv >"${RUNNER_TEMP:-${TMPDIR:-/tmp}}/macfuse-plugins.txt" || true
-grep -Fq "+    ${LOCAL_ID}" "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/macfuse-plugins.txt"
+
 test -d /Library/Filesystems/macfuse.fs/Contents/Frameworks/MFMount.framework
 
-echo 'RESULT=DRIVE_CI_MACFUSE_LOCAL_READY'
+echo 'RESULT=DRIVE_CI_MACFUSE_LOCAL_APPROVAL_FIXTURE_READY'

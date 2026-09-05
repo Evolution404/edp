@@ -1498,25 +1498,38 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 logDetail: "MFMount: Failed to mount volume: mount(8) returned 69"
             )
             guard mount69Failure.code == .bridgeExtensionUnavailable,
-                  EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                  !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
                     failure: mount69Failure,
                     transportStillRunning: false,
                     bridgeMounted: false
                   ) else {
-                throw LifecycleValidationError("S11 mount(8)=69 was not classified recoverable")
+                throw LifecycleValidationError("S11 mount(8)=69 incorrectly triggered host recovery")
             }
 
             let missingExtensionFailure = EDPLifecycleFailure.classifyBridgeActivation(
                 timedOut: false,
-                logDetail: "File system extension not found"
+                logDetail: "DIRECT_MFMOUNT_ASYNC_RESULT=3 errno=0 File system extension not found"
             )
             guard missingExtensionFailure.code == .bridgeExtensionUnavailable,
-                  EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                  !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
                     failure: missingExtensionFailure,
                     transportStillRunning: false,
                     bridgeMounted: false
                   ) else {
-                throw LifecycleValidationError("S11 missing FSKit extension was not classified recoverable")
+                throw LifecycleValidationError("S11 missing FSKit extension incorrectly triggered host recovery")
+            }
+
+            let approvalFailure = EDPLifecycleFailure.classifyBridgeActivation(
+                timedOut: false,
+                logDetail: "DIRECT_MFMOUNT_ASYNC_RESULT=4 errno=0 File system extension not enabled"
+            )
+            guard approvalFailure.code == .bridgeExtensionRequiresApproval,
+                  !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                    failure: approvalFailure,
+                    transportStillRunning: false,
+                    bridgeMounted: false
+                  ) else {
+                throw LifecycleValidationError("S11 FSKit approval requirement incorrectly triggered host recovery")
             }
 
             let passwordFailure = EDPLifecycleFailure.classifyBridgeActivation(

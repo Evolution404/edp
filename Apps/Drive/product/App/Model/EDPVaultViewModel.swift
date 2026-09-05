@@ -146,27 +146,12 @@ final class EDPVaultViewModel: ObservableObject {
         refreshTransportRuntimeState()
         refresh()
         resumeRuntimeForAppLaunch()
-        Task { [weak self] in
-            let enablementError = await Task.detached(priority: .utility) { () async -> String? in
-                do {
-                    _ = try await ensureMacFUSELocalEnablement()
-                    return nil
-                } catch {
-                    return error.localizedDescription
-                }
-            }.value
-            guard let self else { return }
-            if let enablementError {
-                self.lastError = "macFUSE Local 注册失败：\(enablementError)"
-            }
-            // Runtime presence is a packaging invariant. FSKit enablement is
-            // deliberately not guessed from PluginKit, FSClient, or Apple's
-            // private settings plist; the next real MFMount is authoritative.
-            self.refreshTransportRuntimeState()
-            if self.transportRuntimeReady == true {
-                self.retryTransientAutomaticMounts()
-            }
-            self.refresh()
+        // Do not re-register macFUSE on every App launch. macFUSE performs
+        // automatic extension registration as part of MFMount, while the
+        // OS-managed approval state must survive ordinary EDP upgrades. The
+        // next real MFMount is the authority for registration/approval.
+        if transportRuntimeReady == true {
+            retryTransientAutomaticMounts()
         }
         Task { [weak self] in
             while !Task.isCancelled {

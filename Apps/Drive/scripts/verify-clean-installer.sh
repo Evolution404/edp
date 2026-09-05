@@ -28,6 +28,15 @@ for identifier in \
   com.edp.drive.runtime; do
   /usr/bin/grep -F "id=\"${identifier}\"" "${EXPANDED}/Distribution" >/dev/null
 done
+/usr/bin/grep -Fq 'require-scripts="true"' "${EXPANDED}/Distribution"
+for choice_id in \
+  io.macfuse.installer.components.core \
+  io.macfuse.installer.components.preferencepane; do
+  /usr/bin/grep -Fq \
+    "selected=\"choices['${choice_id}'].packageUpgradeAction == 'clean' || choices['${choice_id}'].packageUpgradeAction == 'upgrade'\"" \
+    "${EXPANDED}/Distribution"
+done
+echo "RESULT=MACFUSE_CURRENT_VERSION_REINSTALL_SKIPPED"
 
 PAYLOAD="${EXPANDED}/ZZ-EDP-Drive.pkg/Payload"
 ROOT="${PAYLOAD}/Library/Application Support/EDP Drive"
@@ -188,13 +197,16 @@ fi
   | /usr/bin/grep -F '/Applications/EDP Drive.app' >/dev/null
 /usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
   | /usr/bin/grep -F 'macfuse-local.appex' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
-  | /usr/bin/grep -F 'io.macfuse.app.fsmodule.macfuse-local' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
-  | /usr/bin/grep -F 'group.com.apple.fskit.settings' >/dev/null
-/usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
-  | /usr/bin/grep -F 'fskit_agent' >/dev/null
-echo "RESULT=CONSOLE_USER_MACFUSE_FSKIT_ENABLEMENT_PACKAGED"
+if /usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+   | /usr/bin/grep -F 'group.com.apple.fskit.settings' >/dev/null \
+   || /usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+      | /usr/bin/grep -F '/usr/libexec/fskit_agent' >/dev/null \
+   || /usr/bin/strings "${APP}/Contents/MacOS/EDP Drive" \
+      | /usr/bin/grep -F '/usr/bin/pluginkit' >/dev/null; then
+  echo "foreground App unexpectedly owns private FSKit enablement/reset state" >&2
+  exit 6
+fi
+echo "RESULT=MACFUSE_FSKIT_APPROVAL_LEFT_TO_SYSTEM"
 /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \
   | /usr/bin/grep -F 'raw read-only open failed' >/dev/null
 /usr/bin/strings "${ROOT}/bin/edp-raw-metadata" \

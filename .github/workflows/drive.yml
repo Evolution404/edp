@@ -49,6 +49,12 @@ jobs:
           grep -Fq 'retryTransientAutomaticMounts' Apps/Drive/product/EDPXPCProtocol.swift
           grep -Fq 'automation.failureCode(for: partitionKey) == .bridgeExtensionUnavailable' Apps/Drive/product/EDPVaultRuntime.swift
           ! grep -Fq 'failure.contains("File system extension' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'case bridgeExtensionRequiresApproval' Apps/Drive/product/EDPMountLifecycle.swift
+          grep -Fq 'direct_mfmount_async_result=4' Apps/Drive/product/EDPMountLifecycle.swift
+          grep -Fq 'EDP_MFMOUNT_QUIET": "0"' Apps/Drive/product/EDPTransportProvider.swift
+          grep -Fq 'packageUpgradeAction == '\''clean'\''' Apps/Drive/installer/build-clean-installer.sh
+          grep -Fq 'packageUpgradeAction == '\''upgrade'\''' Apps/Drive/installer/build-clean-installer.sh
+          ! grep -Fq 'ensureMacFUSELocalEnablement' Apps/Drive/product/App/Model/EDPVaultViewModel.swift Apps/Drive/product/App/Service/EDPAppServiceSupport.swift
           grep -Fq 'retryTransientAutomaticMounts()' Apps/Drive/product/App/Model/EDPVaultViewModel.swift
           test "$(grep -Fc 'retryTransientAutomaticMounts()' Apps/Drive/product/App/Model/EDPVaultViewModel.swift)" -ge 3
           grep -Fq 'remoteObjectProxyWithErrorHandler { @Sendable [weak self] error in' Apps/Drive/product/App/Model/EDPVaultViewModel.swift

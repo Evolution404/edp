@@ -214,20 +214,6 @@ func runUserTool(
     return text
 }
 
-func noActiveFSKitMountsForAgentReset() -> Bool {
-    var mounts: UnsafeMutablePointer<statfs>?
-    let count = getmntinfo(&mounts, MNT_NOWAIT)
-    guard count >= 0 else { return false }
-    if count == 0 { return true }
-    guard let mounts else { return false }
-    for index in 0..<Int(count) {
-        if (mounts[index].f_flags_ext & UInt32(MNT_EXT_FSKIT)) != 0 {
-            return false
-        }
-    }
-    return true
-}
-
 func macFUSELocalRuntimeReady() -> Bool {
     let genericModule = edpMacFUSEHostPath
         + "/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex"
@@ -239,25 +225,4 @@ func macFUSELocalRuntimeReady() -> Bool {
         && FileManager.default.fileExists(atPath: genericModule)
         && FileManager.default.fileExists(atPath: localModule)
         && FileManager.default.fileExists(atPath: framework)
-}
-
-/// macFUSE owns registration and FSKit-subsystem convergence for its bundled
-/// file-system extensions. Do not duplicate that private lifecycle with
-/// PlugInKit discovery or direct writes to FSKit's enabledModules.plist.
-/// macFUSE 5.1.2+ exposes this supported installer entry point, and 5.2+
-/// includes a workaround for FSKit/PluginKit re-registration races.
-func ensureMacFUSELocalEnablement() async throws -> Bool {
-    guard macFUSELocalRuntimeReady() else { return false }
-
-    var arguments = ["install", "--components", "file-system-extensions"]
-    let forceRegistration = noActiveFSKitMountsForAgentReset()
-    if forceRegistration {
-        arguments.append("--force")
-    }
-    _ = try await runUserTool(
-        edpMacFUSEInstallerPath,
-        arguments,
-        timeout: .seconds(15)
-    )
-    return forceRegistration
 }

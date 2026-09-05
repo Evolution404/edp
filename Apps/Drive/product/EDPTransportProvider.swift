@@ -398,7 +398,13 @@ enum EDPTransportProvider {
             return EDPTransportLaunchSpec(
                 executable: executable,
                 arguments: commonArguments,
-                environment: ["EDP_MFMOUNT_OPTIONS": "local,nobrowse"],
+                environment: [
+                    "EDP_MFMOUNT_OPTIONS": "local,nobrowse",
+                    // Product mounts are user-facing. Let macFUSE present its
+                    // official setup/approval guidance when FSKit requires it.
+                    // Test adapters omit this variable and remain quiet.
+                    "EDP_MFMOUNT_QUIET": "0",
+                ],
                 capabilities: capabilities
             )
         }

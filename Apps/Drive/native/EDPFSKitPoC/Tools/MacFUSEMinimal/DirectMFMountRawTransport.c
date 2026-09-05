@@ -680,8 +680,21 @@ int main(int argc, char **argv) {
         return 64;
     }
 
+    bool quiet = true;
+    const char *quiet_env = getenv("EDP_MFMOUNT_QUIET");
+    if (quiet_env != NULL) {
+        if (strcmp(quiet_env, "0") == 0) {
+            quiet = false;
+        } else if (strcmp(quiet_env, "1") != 0) {
+            fprintf(stderr, "invalid EDP_MFMOUNT_QUIET value: %s\n", quiet_env);
+            MFRelease(channel);
+            close(backing_fd);
+            return 64;
+        }
+    }
+
     errno = 0;
-    MFMountResult mount_result = MFMount(channel, mountpoint, options, true);
+    MFMountResult mount_result = MFMount(channel, mountpoint, options, quiet);
     int mount_errno = errno;
     fprintf(stderr,
             "DIRECT_MFMOUNT_RESULT=%d errno=%d options=%s\n",
