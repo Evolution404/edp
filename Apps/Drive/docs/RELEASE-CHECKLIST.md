@@ -93,8 +93,9 @@ Required jobs:
 - [x] `native` PASS.
 - [x] `regression-fast` PASS.
 - [x] `regression-virtual-usb` PASS.
-- [x] `regression-storage` PASS.
-- [x] `regression-ui-system` PASS.
+- [x] all seven `regression-storage-*` matrix cells PASS (`boot`, `exchange`, `secure`, `stress`, `crash`, `concurrency`, `contracts`).
+- [x] `regression-ui` PASS.
+- [x] `regression-system` PASS.
 
 ### Storage acceptance
 
@@ -109,7 +110,7 @@ Release storage log must include successful coverage of:
 - [x] failure contracts;
 - [x] storage macFUSE transport Swift6/C17 strict build;
 - [x] separate `native` job production daemon/App Swift6 strict build;
-- [x] `RESULT=DRIVE_STORAGE_E2E_OK`.
+- [x] all seven `RESULT=DRIVE_STORAGE_SHARD_*_OK` markers in the sharded release matrix. The monolithic `RESULT=DRIVE_STORAGE_E2E_OK` remains the nightly/sequential diagnostic marker.
 
 ### UI acceptance
 

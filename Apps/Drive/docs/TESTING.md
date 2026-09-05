@@ -323,27 +323,29 @@ make drive-test-virtual-usb
 
 Discovery, P16–P30, C/D, S01–S47, the 320,000-step property model and V01–V07 are linked into one `-Onone` regression executable. The production/runtime sources are therefore compiled once per job instead of once per validator; coverage and Swift 6 `-warnings-as-errors` remain unchanged.
 
-### `regression-storage`
+### `regression-storage-*`
 
-On macOS 26:
+Storage is a seven-cell macOS 26 matrix so independent synthetic DiskImages2/FSKit lifecycles run on separate hosted runners instead of serializing the whole CI wall clock:
 
-1. installs official macFUSE Local FSKit runtime;
-2. ordinary push/PR/manual runs default to `make drive-test-storage-smoke` (3 M10 cycles);
-3. a final manual release run selects workflow input `storage_profile=release`, which runs `make drive-test-storage` (5 M10 cycles);
-4. uploads storage logs.
+- `boot`: M01;
+- `exchange`: M02 and M04–M09;
+- `secure`: M03;
+- `stress`: M10;
+- `crash`: M12;
+- `concurrency`: M14;
+- `contracts`: failure contracts plus the macFUSE transport Swift6/C17 strict build.
 
-Timeout: 30 minutes. The smoke result is development evidence only; release acceptance requires the explicit 5-cycle release profile.
+Every cell installs the official macFUSE Local FSKit runtime and creates its own isolated synthetic fixture; no shard shares a mount, BSD generation or work directory with another shard. Ordinary push/PR/manual runs use 3 M10 cycles in the `stress` cell. A final manual release run selects `storage_profile=release`, which raises only that cell to the required 5 M10 cycles. The monolithic `make drive-test-storage` path remains available for nightly 100-cycle soak and sequential diagnostic reproduction.
 
-### `regression-ui-system`
+Timeout: 20 minutes per matrix cell. The smoke matrix is development evidence only; release acceptance requires all seven cells on the explicit 5-cycle release profile.
 
-Runs:
+### `regression-ui`
 
-```bash
-make drive-test-ui
-make drive-test-system
-```
+Runs `make drive-test-ui`, including the CI-only 33ms Instruments gate. Timeout: 20 minutes.
 
-Timeout: 20 minutes.
+### `regression-system`
+
+Runs `make drive-test-system` as an independent hardware-free ratchet job. Timeout: 10 minutes.
 
 ### `nightly-storage-stress`
 
@@ -372,8 +374,9 @@ Results:
 native                 PASS
 regression-fast        PASS
 regression-virtual-usb PASS
-regression-ui-system   PASS
-regression-storage     PASS
+regression-ui          PASS
+regression-system      PASS
+regression-storage-*   PASS (all matrix cells)
 ```
 
 The fixed-head `f734f43` UI/system job passed with the unchanged 33ms threshold; its UI evidence recorded `UI_HITCH_MAX_MS=0.000`, `UI_HITCH_COUNT_GT33MS=0` and `RESULT=DRIVE_UI_OK`.

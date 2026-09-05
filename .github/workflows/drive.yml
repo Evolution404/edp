@@ -315,46 +315,72 @@ jobs:
 
   regression-storage:
     if: github.event_name != 'schedule'
+    name: regression-storage-${{ matrix.shard }}
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [boot, exchange, secure, stress, crash, concurrency, contracts]
     steps:
       - uses: actions/checkout@v7
       - name: Prepare official macFUSE Local FSKit runtime
         run: Apps/Drive/Tests/CI/install-macfuse-fskit.sh
-      - name: Sparse-image storage M01-M14
+      - name: Sparse-image storage shard
         env:
           EDP_CI_STORAGE_PROFILE: ${{ inputs.storage_profile || 'smoke' }}
+          EDP_STORAGE_SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/drive-tests
+          loops=3
           if [[ "$EDP_CI_STORAGE_PROFILE" == "release" ]]; then
-            make drive-test-storage | tee artifacts/drive-tests/storage.log
-          else
-            make drive-test-storage-smoke | tee artifacts/drive-tests/storage.log
+            loops=5
           fi
+          EDP_STORAGE_PROFILE="$EDP_CI_STORAGE_PROFILE" \
+          EDP_STORAGE_LOOP_COUNT="$loops" \
+          EDP_STORAGE_PHASE="shard-$EDP_STORAGE_SHARD" \
+            Apps/Drive/Tests/run-storage.sh \
+            | tee "artifacts/drive-tests/storage-$EDP_STORAGE_SHARD.log"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: drive-storage-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/drive-tests/storage.log
+          name: drive-storage-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/storage-${{ matrix.shard }}.log
 
-  regression-ui-system:
+  regression-ui:
     if: github.event_name != 'schedule'
     runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - name: UI automation and release safety ratchets
+      - name: UI automation and performance gate
         run: |
           set -euo pipefail
           mkdir -p artifacts/drive-tests
           make drive-test-ui | tee artifacts/drive-tests/ui.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: drive-ui-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/ui.log
+
+  regression-system:
+    if: github.event_name != 'schedule'
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Release safety ratchets
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/drive-tests
           make drive-test-system | tee artifacts/drive-tests/system.log
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: drive-ui-system-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/drive-tests/*.log
+          name: drive-system-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/system.log
 
   nightly-storage-stress:
     if: github.event_name == 'schedule'

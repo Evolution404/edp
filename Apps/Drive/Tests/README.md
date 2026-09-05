@@ -56,7 +56,7 @@ cancellation priority, and publication ownership. Any failure reports the fixed
 seed, per-sequence seed, sequence index, and event trace for exact replay. It
 reads only immutable fixture files and never opens `/dev/rdisk*`.
 
-`drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. Both canonical profiles run 5 complete mount/attach/filesystem/unmount/eject/transport-remount cycles; same-partition remounts preserve real filesystem access but wait through the product-equivalent 3-second generation quiescence after exact teardown. The internal macFUSE Local bridge remains `local,nobrowse`; deadlock prevention comes from exact publication teardown, unique mount generations, and bounded quiescence rather than changing the bridge's established VFS semantics. The release profile keeps the stricter production-build/contract checks while accepting an explicit `EDP_STORAGE_LOOP_COUNT` override from 5–100 for optional soak runs. It verifies boot FAT16 at both
+`drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. The smoke profile runs 3 complete mount/attach/filesystem/unmount/eject/transport-remount M10 cycles; the release profile runs 5, and explicit soak runs may raise the release count to 100. Same-partition remounts preserve real filesystem access while exact publication teardown and unique mount generations provide the lifecycle boundary. The internal macFUSE Local bridge remains `local,nobrowse`; deadlock prevention comes from exact teardown rather than changing the bridge's established VFS semantics. It verifies boot FAT16 at both
 the native read-only mount and transport `EROFS` layers, encrypted persistence,
 Finder-style operations, large/random I/O, unmount failure propagation,
 transport crash recovery after the upper filesystem has quiesced, durability
@@ -82,9 +82,7 @@ signature validation uses Security.framework rather than `codesign`, daemon
 liveness uses SMAppService/XPC rather than `launchctl`, and VFS teardown uses
 `unmount(2)` rather than `/sbin/umount`.
 
-The phase targets are intentionally independent so CI can isolate failures.
-`drive-test-all` is the only aggregate target and runs every hardware-free gate.
-Normal storage validation uses 5 cycles. Longer soak runs may explicitly raise `EDP_STORAGE_LOOP_COUNT` up to 100 when a lifecycle change specifically warrants it; they are not a release-blocking default.
+The phase targets are intentionally independent so CI can isolate failures. Ordinary CI maps storage into seven independent synthetic shards (`boot`, `exchange`, `secure`, `stress`, `crash`, `concurrency`, `contracts`) on separate macOS runners; only the `stress` shard changes from 3 smoke cycles to 5 release cycles. `drive-test-all` remains the aggregate sequential target. Longer soak runs may explicitly raise `EDP_STORAGE_LOOP_COUNT` up to 100 when a lifecycle change specifically warrants it; they are not a release-blocking default.
 
 Canonical targets:
 

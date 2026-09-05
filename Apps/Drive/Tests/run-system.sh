@@ -1072,8 +1072,9 @@ done
 /usr/bin/grep -Fq 'make drive-test-ui' "${TESTING_DOC}"
 /usr/bin/grep -Fq 'make drive-test-system' "${TESTING_DOC}"
 /usr/bin/grep -Fq 'make drive-test-all' "${TESTING_DOC}"
-/usr/bin/grep -Fq '`regression-storage`' "${TESTING_DOC}"
-/usr/bin/grep -Fq '`regression-ui-system`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-storage-*`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-ui`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-system`' "${TESTING_DOC}"
 /usr/bin/grep -Fq '`nightly-storage-stress`' "${TESTING_DOC}"
 /usr/bin/grep -Fq 'BLOCKED_BY_FIXTURE' "${RELEASE_DOC}"
 /usr/bin/grep -Fq 'The accepted decision is `ADR-2026-09-03-ntfs-rw.md`: A + C' "${STATUS_DOC}"
@@ -1092,8 +1093,8 @@ echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 # GitHub deprecated Node.js 20 for JavaScript actions. Drive workflow actions
 # must stay on the official Node24-based major lines rather than relying on the
 # runner to force-migrate an older JavaScript runtime at execution time.
-[[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
-[[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 5 ]]
+[[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 7 ]]
+[[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
 ! /usr/bin/grep -Fq 'actions/checkout@v6' "${DRIVE_WORKFLOW}"
 ! /usr/bin/grep -Fq 'actions/upload-artifact@v4' "${DRIVE_WORKFLOW}"
 echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
@@ -1108,8 +1109,23 @@ echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
 /usr/bin/grep -Fq 'drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'storage_profile:' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'EDP_CI_STORAGE_PROFILE:' "${DRIVE_WORKFLOW}"
-/usr/bin/grep -Fq 'make drive-test-storage-smoke' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'shard: [boot, exchange, secure, stress, crash, concurrency, contracts]' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_STORAGE_SHARD:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_STORAGE_PHASE="shard-$EDP_STORAGE_SHARD"' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'regression-ui:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'regression-system:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'make drive-test-ui' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'make drive-test-system' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-storage' "${DRIVE_WORKFLOW}"
+for storage_shard_spec in \
+  'boot:BOOT' 'exchange:EXCHANGE' 'secure:SECURE' 'stress:STRESS' \
+  'crash:CRASH' 'concurrency:CONCURRENCY' 'contracts:CONTRACTS'; do
+  storage_shard="${storage_shard_spec%%:*}"
+  storage_marker="${storage_shard_spec##*:}"
+  /usr/bin/grep -Fq "shard-${storage_shard})" "${STORAGE_RUNNER}"
+  /usr/bin/grep -Fq "RESULT=DRIVE_STORAGE_SHARD_${storage_marker}_OK" "${STORAGE_RUNNER}"
+done
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_PARALLEL_SHARDS_OK'
 /usr/bin/grep -Fq 'EDP_ALLOW_LOCAL_STORAGE_E2E' "${STORAGE_RUNNER}" "${TESTING_DOC}"
 /usr/bin/grep -Fq 'synthetic FSKit/DiskImages2 teardown can stall Finder' "${STORAGE_RUNNER}" "${TESTING_DOC}"
 

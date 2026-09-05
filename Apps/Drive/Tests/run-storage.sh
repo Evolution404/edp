@@ -43,9 +43,9 @@ fi
 
 STORAGE_PHASE="${EDP_STORAGE_PHASE:-all}"
 case "$STORAGE_PHASE" in
-  all|prepare|core|stress|recovery|contracts|final) ;;
+  all|prepare|core|stress|recovery|contracts|final|shard-boot|shard-exchange|shard-secure|shard-stress|shard-crash|shard-concurrency|shard-contracts) ;;
   *)
-    echo "EDP_STORAGE_PHASE must be all, prepare, core, stress, recovery, contracts, or final" >&2
+    echo "EDP_STORAGE_PHASE must be all, prepare, core, stress, recovery, contracts, final, or shard-*" >&2
     exit 64
     ;;
 esac
@@ -60,10 +60,13 @@ if [[ -n "${EDP_STORAGE_WORK_DIR:-}" ]]; then
   }
   PRESERVE_WORK_DIR=1
 else
-  [[ "$STORAGE_PHASE" == all ]] || {
-    echo "phased storage execution requires EDP_STORAGE_WORK_DIR" >&2
-    exit 64
-  }
+  case "$STORAGE_PHASE" in
+    all|shard-boot|shard-exchange|shard-secure|shard-stress|shard-crash|shard-concurrency|shard-contracts) ;;
+    *)
+      echo "phased storage execution requires EDP_STORAGE_WORK_DIR" >&2
+      exit 64
+      ;;
+  esac
   WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/edp-storage-e2e.XXXXXX")"
   WORK_DIR="$(cd "$WORK_DIR" && pwd -P)"
   PRESERVE_WORK_DIR=0
@@ -1593,5 +1596,53 @@ case "$STORAGE_PHASE" in
     done
     assert_no_test_artifacts final
     log "RESULT=DRIVE_STORAGE_E2E_OK"
+    ;;
+  shard-boot)
+    build_tools
+    prepare_fixture
+    run_m01
+    assert_no_test_artifacts shard-boot
+    log "RESULT=DRIVE_STORAGE_SHARD_BOOT_OK"
+    ;;
+  shard-exchange)
+    build_tools
+    prepare_fixture
+    run_exchange_core
+    assert_no_test_artifacts shard-exchange
+    log "RESULT=DRIVE_STORAGE_SHARD_EXCHANGE_OK"
+    ;;
+  shard-secure)
+    build_tools
+    prepare_fixture
+    run_secure_core
+    assert_no_test_artifacts shard-secure
+    log "RESULT=DRIVE_STORAGE_SHARD_SECURE_OK"
+    ;;
+  shard-stress)
+    build_tools
+    prepare_fixture
+    run_m10
+    assert_no_test_artifacts shard-stress
+    log "RESULT=DRIVE_STORAGE_SHARD_STRESS_OK"
+    ;;
+  shard-crash)
+    build_tools
+    prepare_fixture
+    run_m12
+    assert_no_test_artifacts shard-crash
+    log "RESULT=DRIVE_STORAGE_SHARD_CRASH_OK"
+    ;;
+  shard-concurrency)
+    build_tools
+    prepare_fixture
+    run_m14
+    assert_no_test_artifacts shard-concurrency
+    log "RESULT=DRIVE_STORAGE_SHARD_CONCURRENCY_OK"
+    ;;
+  shard-contracts)
+    build_tools
+    validate_failure_and_build_contracts
+    assert_no_test_artifacts shard-contracts
+    log "RESULT=DRIVE_STORAGE_SHARD_CONTRACTS_OK"
     ;;
 esac
