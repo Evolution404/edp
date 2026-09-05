@@ -301,9 +301,9 @@ Workflow: `.github/workflows/drive.yml`
 
 ### `native`
 
-Builds EDPCore and compiles the production daemon / SwiftUI App under strict `-O`, Swift 6 and `-warnings-as-errors` settings. Golden/media/transport validators are not duplicated here; those contracts belong to `regression-fast`.
+Builds EDPCore and compiles the production daemon / SwiftUI App under strict `-O`, Swift 6 and `-warnings-as-errors` settings. On the same runner, `drive-test-system` and the storage contract shard run concurrently with the native compile after one shared EDPCore build.
 
-### `regression-fast`
+### Fast leg inside `regression-fast-virtual`
 
 Runs:
 
@@ -313,7 +313,7 @@ make drive-test-fast
 
 Native-core golden, metadata/media classification, transport lifecycle, bounded-VFS and product-model validators are linked into one `-Onone` test executable. The regression still runs EDPCore tests, strict App typecheck and block-publisher contracts, but avoids recompiling the same validator source set several times.
 
-### `regression-virtual-usb`
+### VirtualUSB leg inside `regression-fast-virtual`
 
 Runs:
 
@@ -323,29 +323,19 @@ make drive-test-virtual-usb
 
 Discovery, P16–P30, C/D, S01–S47, the 320,000-step property model and V01–V07 are linked into one `-Onone` regression executable. The production/runtime sources are therefore compiled once per job instead of once per validator; coverage and Swift 6 `-warnings-as-errors` remain unchanged.
 
-### `regression-storage-*`
+### Balanced five-way CI
 
-Storage is a seven-cell macOS 26 matrix so independent synthetic DiskImages2/FSKit lifecycles run on separate hosted runners instead of serializing the whole CI wall clock:
+GitHub currently schedules at most five macOS jobs from this workflow concurrently, so the ordinary/release gate is deliberately balanced into exactly five critical paths instead of creating a larger matrix that would queue:
 
-- `boot`: M01;
-- `exchange`: M02 and M04–M09;
-- `secure`: M03;
-- `stress`: M10;
-- `crash`: M12;
-- `concurrency`: M14;
-- `contracts`: failure contracts plus the macFUSE transport Swift6/C17 strict build.
+1. `native`: production daemon/App strict build while the hardware-free system ratchet and storage contracts run in parallel on the same runner;
+2. `regression-fast-virtual`: fast and full software VirtualUSB regressions run concurrently after one shared EDPCore build;
+3. `regression-ui`: deterministic UI plus the CI-only 33ms Instruments gate;
+4. `regression-storage-core`: isolated synthetic fixture covering M01, M02/M04–M09 and M03;
+5. `regression-storage-lifecycle`: a second isolated synthetic fixture covering M10, M12 and M14.
 
-Every cell installs the official macFUSE Local FSKit runtime and creates its own isolated synthetic fixture; no shard shares a mount, BSD generation or work directory with another shard. Ordinary push/PR/manual runs use 3 M10 cycles in the `stress` cell. A final manual release run selects `storage_profile=release`, which raises only that cell to the required 5 M10 cycles. The monolithic `make drive-test-storage` path remains available for nightly 100-cycle soak and sequential diagnostic reproduction.
+The two storage jobs prepare macFUSE and EDPCore concurrently, then use separate work directories and separate DiskImages2/FSKit generations. Ordinary push/PR/manual runs use 3 M10 cycles; a final manual `storage_profile=release` run raises the lifecycle path to 5 cycles. Storage contracts remain release-blocking inside `native`. The monolithic `make drive-test-storage` path remains for nightly 100-cycle soak and sequential diagnostic reproduction.
 
-Timeout: 20 minutes per matrix cell. The smoke matrix is development evidence only; release acceptance requires all seven cells on the explicit 5-cycle release profile.
-
-### `regression-ui`
-
-Runs `make drive-test-ui`, including the CI-only 33ms Instruments gate. Timeout: 20 minutes.
-
-### `regression-system`
-
-Runs `make drive-test-system` as an independent hardware-free ratchet job. Timeout: 10 minutes.
+Each critical path has its own timeout, but the optimization target is normal wall-clock completion at or below two minutes without reducing coverage or thresholds.
 
 ### `nightly-storage-stress`
 
@@ -371,12 +361,11 @@ Run:  33711677562
 Results:
 
 ```text
-native                 PASS
-regression-fast        PASS
-regression-virtual-usb PASS
-regression-ui          PASS
-regression-system      PASS
-regression-storage-*   PASS (all matrix cells)
+native                       PASS (includes system + storage contracts)
+regression-fast-virtual      PASS
+regression-ui                PASS
+regression-storage-core      PASS
+regression-storage-lifecycle PASS
 ```
 
 The fixed-head `f734f43` UI/system job passed with the unchanged 33ms threshold; its UI evidence recorded `UI_HITCH_MAX_MS=0.000`, `UI_HITCH_COUNT_GT33MS=0` and `RESULT=DRIVE_UI_OK`.

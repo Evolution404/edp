@@ -465,7 +465,7 @@ STORAGE_CONTRACT_SECTION="$(/usr/bin/awk '/^validate_failure_and_build_contracts
 /usr/bin/grep -Fq 'RESULT=DRIVE_STORAGE_TRANSPORT_SWIFT6_C17_STRICT_OK' <<<"${STORAGE_CONTRACT_SECTION}"
 ! /usr/bin/grep -Fq 'product/EDPVaultRuntime.swift' <<<"${STORAGE_CONTRACT_SECTION}"
 ! /usr/bin/grep -Fq 'edp-drive-service' <<<"${STORAGE_CONTRACT_SECTION}"
-/usr/bin/grep -Fq 'Compile native daemon and SwiftUI app' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'Compile native daemon with system and contracts' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'xcrun swiftc -O -swift-version 6 -warnings-as-errors' "${DRIVE_WORKFLOW}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_STRICT_BUILD_DEDUP_OK'
 
@@ -1072,9 +1072,10 @@ done
 /usr/bin/grep -Fq 'make drive-test-ui' "${TESTING_DOC}"
 /usr/bin/grep -Fq 'make drive-test-system' "${TESTING_DOC}"
 /usr/bin/grep -Fq 'make drive-test-all' "${TESTING_DOC}"
-/usr/bin/grep -Fq '`regression-storage-*`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-fast-virtual`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-storage-core`' "${TESTING_DOC}"
+/usr/bin/grep -Fq '`regression-storage-lifecycle`' "${TESTING_DOC}"
 /usr/bin/grep -Fq '`regression-ui`' "${TESTING_DOC}"
-/usr/bin/grep -Fq '`regression-system`' "${TESTING_DOC}"
 /usr/bin/grep -Fq '`nightly-storage-stress`' "${TESTING_DOC}"
 /usr/bin/grep -Fq 'BLOCKED_BY_FIXTURE' "${RELEASE_DOC}"
 /usr/bin/grep -Fq 'The accepted decision is `ADR-2026-09-03-ntfs-rw.md`: A + C' "${STATUS_DOC}"
@@ -1093,8 +1094,8 @@ echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 # GitHub deprecated Node.js 20 for JavaScript actions. Drive workflow actions
 # must stay on the official Node24-based major lines rather than relying on the
 # runner to force-migrate an older JavaScript runtime at execution time.
-[[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 7 ]]
-[[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
+[[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
+[[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 5 ]]
 ! /usr/bin/grep -Fq 'actions/checkout@v6' "${DRIVE_WORKFLOW}"
 ! /usr/bin/grep -Fq 'actions/upload-artifact@v4' "${DRIVE_WORKFLOW}"
 echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
@@ -1109,23 +1110,32 @@ echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
 /usr/bin/grep -Fq 'drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'storage_profile:' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'EDP_CI_STORAGE_PROFILE:' "${DRIVE_WORKFLOW}"
-/usr/bin/grep -Fq 'shard: [boot, exchange, secure, stress, crash, concurrency, contracts]' "${DRIVE_WORKFLOW}"
-/usr/bin/grep -Fq 'EDP_STORAGE_SHARD:' "${DRIVE_WORKFLOW}"
-/usr/bin/grep -Fq 'EDP_STORAGE_PHASE="shard-$EDP_STORAGE_SHARD"' "${DRIVE_WORKFLOW}"
+for ci_job in native regression-fast-virtual regression-storage-core regression-storage-lifecycle regression-ui; do
+  /usr/bin/grep -Fq "  ${ci_job}:" "${DRIVE_WORKFLOW}"
+done
+[[ "$(/usr/bin/grep -Ec '^  (native|regression-fast-virtual|regression-storage-core|regression-storage-lifecycle|regression-ui):' "${DRIVE_WORKFLOW}")" -eq 5 ]]
+! /usr/bin/grep -Fq '  regression-system:' "${DRIVE_WORKFLOW}"
+! /usr/bin/grep -Fq '  regression-virtual-usb:' "${DRIVE_WORKFLOW}"
+! /usr/bin/grep -Fq '  regression-fast:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'Fast and Virtual USB regressions in parallel' "${DRIVE_WORKFLOW}"
+[[ "$(/usr/bin/grep -Fc 'Prepare macFUSE and shared core in parallel' "${DRIVE_WORKFLOW}")" -eq 2 ]]
+/usr/bin/grep -Fq 'EDP_STORAGE_PHASE=shard-core' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_STORAGE_PHASE=shard-lifecycle' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_STORAGE_PHASE=shard-contracts' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_CORE_SKIP_BUILD=1 make drive-test-fast' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_CORE_SKIP_BUILD=1 make drive-test-virtual-usb' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'regression-ui:' "${DRIVE_WORKFLOW}"
-/usr/bin/grep -Fq 'regression-system:' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-ui' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-system' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-storage' "${DRIVE_WORKFLOW}"
-for storage_shard_spec in \
-  'boot:BOOT' 'exchange:EXCHANGE' 'secure:SECURE' 'stress:STRESS' \
-  'crash:CRASH' 'concurrency:CONCURRENCY' 'contracts:CONTRACTS'; do
+for storage_shard_spec in 'core:CORE' 'lifecycle:LIFECYCLE' 'contracts:CONTRACTS'; do
   storage_shard="${storage_shard_spec%%:*}"
   storage_marker="${storage_shard_spec##*:}"
   /usr/bin/grep -Fq "shard-${storage_shard})" "${STORAGE_RUNNER}"
   /usr/bin/grep -Fq "RESULT=DRIVE_STORAGE_SHARD_${storage_marker}_OK" "${STORAGE_RUNNER}"
 done
-echo 'RESULT=DRIVE_SYSTEM_STORAGE_PARALLEL_SHARDS_OK'
+/usr/bin/grep -Fq 'EDP_CORE_SKIP_BUILD:-0' "${ROOT}/Apps/Drive/scripts/prepare-shared-edp-core.sh"
+echo 'RESULT=DRIVE_SYSTEM_BALANCED_FIVE_WAY_CI_OK'
 /usr/bin/grep -Fq 'EDP_ALLOW_LOCAL_STORAGE_E2E' "${STORAGE_RUNNER}" "${TESTING_DOC}"
 /usr/bin/grep -Fq 'synthetic FSKit/DiskImages2 teardown can stall Finder' "${STORAGE_RUNNER}" "${TESTING_DOC}"
 

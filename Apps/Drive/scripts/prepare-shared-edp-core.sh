@@ -12,10 +12,12 @@ EDP_CORE_DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develo
   exit 2
 }
 
-DEVELOPER_DIR="${EDP_CORE_DEVELOPER_DIR}" /usr/bin/swift build \
-  --package-path "${EDP_CORE_ROOT}" \
-  -c release \
-  --product EDPCore >/dev/null
+if [[ "${EDP_CORE_SKIP_BUILD:-0}" != "1" ]]; then
+  DEVELOPER_DIR="${EDP_CORE_DEVELOPER_DIR}" /usr/bin/swift build \
+    --package-path "${EDP_CORE_ROOT}" \
+    -c release \
+    --product EDPCore >/dev/null
+fi
 
 EDP_CORE_RELEASE="${EDP_CORE_ROOT}/.build/arm64-apple-macosx/release"
 EDP_CORE_MODULES="${EDP_CORE_RELEASE}/Modules"

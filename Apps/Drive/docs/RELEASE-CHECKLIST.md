@@ -90,12 +90,11 @@ Trigger `.github/workflows/drive.yml` on the exact candidate HEAD with workflow 
 
 Required jobs:
 
-- [x] `native` PASS.
-- [x] `regression-fast` PASS.
-- [x] `regression-virtual-usb` PASS.
-- [x] all seven `regression-storage-*` matrix cells PASS (`boot`, `exchange`, `secure`, `stress`, `crash`, `concurrency`, `contracts`).
+- [x] `native` PASS, including the parallel `drive-test-system` ratchet and storage contracts.
+- [x] `regression-fast-virtual` PASS.
 - [x] `regression-ui` PASS.
-- [x] `regression-system` PASS.
+- [x] `regression-storage-core` PASS.
+- [x] `regression-storage-lifecycle` PASS.
 
 ### Storage acceptance
 
@@ -110,7 +109,7 @@ Release storage log must include successful coverage of:
 - [x] failure contracts;
 - [x] storage macFUSE transport Swift6/C17 strict build;
 - [x] separate `native` job production daemon/App Swift6 strict build;
-- [x] all seven `RESULT=DRIVE_STORAGE_SHARD_*_OK` markers in the sharded release matrix. The monolithic `RESULT=DRIVE_STORAGE_E2E_OK` remains the nightly/sequential diagnostic marker.
+- [x] `RESULT=DRIVE_STORAGE_SHARD_CORE_OK`, `RESULT=DRIVE_STORAGE_SHARD_LIFECYCLE_OK`, and `RESULT=DRIVE_STORAGE_SHARD_CONTRACTS_OK`. The monolithic `RESULT=DRIVE_STORAGE_E2E_OK` remains the nightly/sequential diagnostic marker.
 
 ### UI acceptance
 

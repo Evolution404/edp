@@ -82,7 +82,7 @@ signature validation uses Security.framework rather than `codesign`, daemon
 liveness uses SMAppService/XPC rather than `launchctl`, and VFS teardown uses
 `unmount(2)` rather than `/sbin/umount`.
 
-The phase targets are intentionally independent so CI can isolate failures. Ordinary CI maps storage into seven independent synthetic shards (`boot`, `exchange`, `secure`, `stress`, `crash`, `concurrency`, `contracts`) on separate macOS runners; only the `stress` shard changes from 3 smoke cycles to 5 release cycles. `drive-test-all` remains the aggregate sequential target. Longer soak runs may explicitly raise `EDP_STORAGE_LOOP_COUNT` up to 100 when a lifecycle change specifically warrants it; they are not a release-blocking default.
+The phase targets are intentionally independent so CI can isolate failures. Ordinary CI balances storage across two isolated macOS runners: `shard-core` covers M01/M02/M03/M04–M09, while `shard-lifecycle` covers M10/M12/M14; storage contracts run concurrently with the native build on a third runner. Only M10 changes from 3 smoke cycles to 5 release cycles. `drive-test-all` remains the aggregate sequential target. Longer soak runs may explicitly raise `EDP_STORAGE_LOOP_COUNT` up to 100 when a lifecycle change specifically warrants it; they are not a release-blocking default.
 
 Canonical targets:
 

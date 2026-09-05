@@ -43,7 +43,7 @@ fi
 
 STORAGE_PHASE="${EDP_STORAGE_PHASE:-all}"
 case "$STORAGE_PHASE" in
-  all|prepare|core|stress|recovery|contracts|final|shard-boot|shard-exchange|shard-secure|shard-stress|shard-crash|shard-concurrency|shard-contracts) ;;
+  all|prepare|core|stress|recovery|contracts|final|shard-core|shard-lifecycle|shard-boot|shard-exchange|shard-secure|shard-stress|shard-crash|shard-concurrency|shard-contracts) ;;
   *)
     echo "EDP_STORAGE_PHASE must be all, prepare, core, stress, recovery, contracts, final, or shard-*" >&2
     exit 64
@@ -61,7 +61,7 @@ if [[ -n "${EDP_STORAGE_WORK_DIR:-}" ]]; then
   PRESERVE_WORK_DIR=1
 else
   case "$STORAGE_PHASE" in
-    all|shard-boot|shard-exchange|shard-secure|shard-stress|shard-crash|shard-concurrency|shard-contracts) ;;
+    all|shard-core|shard-lifecycle|shard-boot|shard-exchange|shard-secure|shard-stress|shard-crash|shard-concurrency|shard-contracts) ;;
     *)
       echo "phased storage execution requires EDP_STORAGE_WORK_DIR" >&2
       exit 64
@@ -1193,6 +1193,7 @@ ensure_tools() {
 }
 
 build_tools() {
+  local include_failure_contracts="${1:-1}"
   log "=== Build storage E2E tools ==="
   xcrun clang -std=c17 -Wall -Wextra -Werror -fobjc-arc -fblocks \
     native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
@@ -1257,15 +1258,17 @@ PY
     -framework MFMount -framework CoreFoundation -framework DiskArbitration \
     -o "$ADAPTER_BIN"
 
-  xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-    -D EDP_REGRESSION_TESTS \
-    "${EDP_CORE_SWIFTC_FLAGS[@]}" \
-    "${core_sources[@]}" \
-    native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift \
-    Tests/VirtualUSB/EDPFaultPlan.swift \
-    Tests/VirtualUSB/EDPVirtualRawDevice.swift \
-    Tests/Storage/ValidateStorageFailureContracts.swift \
-    -o "$FAILURE_BIN"
+  if [[ "$include_failure_contracts" == "1" ]]; then
+    xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+      -D EDP_REGRESSION_TESTS \
+      "${EDP_CORE_SWIFTC_FLAGS[@]}" \
+      "${core_sources[@]}" \
+      native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift \
+      Tests/VirtualUSB/EDPFaultPlan.swift \
+      Tests/VirtualUSB/EDPVirtualRawDevice.swift \
+      Tests/Storage/ValidateStorageFailureContracts.swift \
+      -o "$FAILURE_BIN"
+  fi
   log "RESULT=DRIVE_STORAGE_TOOLS_BUILT_C17_SWIFT6_STRICT"
 }
 
@@ -1597,43 +1600,61 @@ case "$STORAGE_PHASE" in
     assert_no_test_artifacts final
     log "RESULT=DRIVE_STORAGE_E2E_OK"
     ;;
+  shard-core)
+    build_tools 0
+    prepare_fixture
+    run_m01
+    run_exchange_core
+    run_secure_core
+    assert_no_test_artifacts shard-core
+    log "RESULT=DRIVE_STORAGE_SHARD_CORE_OK"
+    ;;
+  shard-lifecycle)
+    build_tools 0
+    prepare_fixture
+    run_m10
+    run_m12
+    run_m14
+    assert_no_test_artifacts shard-lifecycle
+    log "RESULT=DRIVE_STORAGE_SHARD_LIFECYCLE_OK"
+    ;;
   shard-boot)
-    build_tools
+    build_tools 0
     prepare_fixture
     run_m01
     assert_no_test_artifacts shard-boot
     log "RESULT=DRIVE_STORAGE_SHARD_BOOT_OK"
     ;;
   shard-exchange)
-    build_tools
+    build_tools 0
     prepare_fixture
     run_exchange_core
     assert_no_test_artifacts shard-exchange
     log "RESULT=DRIVE_STORAGE_SHARD_EXCHANGE_OK"
     ;;
   shard-secure)
-    build_tools
+    build_tools 0
     prepare_fixture
     run_secure_core
     assert_no_test_artifacts shard-secure
     log "RESULT=DRIVE_STORAGE_SHARD_SECURE_OK"
     ;;
   shard-stress)
-    build_tools
+    build_tools 0
     prepare_fixture
     run_m10
     assert_no_test_artifacts shard-stress
     log "RESULT=DRIVE_STORAGE_SHARD_STRESS_OK"
     ;;
   shard-crash)
-    build_tools
+    build_tools 0
     prepare_fixture
     run_m12
     assert_no_test_artifacts shard-crash
     log "RESULT=DRIVE_STORAGE_SHARD_CRASH_OK"
     ;;
   shard-concurrency)
-    build_tools
+    build_tools 0
     prepare_fixture
     run_m14
     assert_no_test_artifacts shard-concurrency
