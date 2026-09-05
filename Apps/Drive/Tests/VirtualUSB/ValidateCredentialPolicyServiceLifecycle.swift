@@ -479,6 +479,7 @@ private final class FakeDiskArbitration: EDPDaemonDiskArbitrating, @unchecked Se
     private(set) var unmountWholeCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
     private(set) var forceUnmountWholeCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
     private(set) var ejectCalls = [(bsdName: String, expectedRegistryEntryID: UInt64?)]()
+    private var exclusiveClaimHeld = true
     private var nextForceUnmountError: RuntimeNativeError?
     private var nextForceUnmountCallbackHook: (@Sendable () -> Void)?
     private var nextEjectError: RuntimeNativeError?
@@ -494,6 +495,20 @@ private final class FakeDiskArbitration: EDPDaemonDiskArbitrating, @unchecked Se
 
     func allowAutomount(usbRegistryEntryID: UInt64) {
         lock.lock(); suppressed.remove(usbRegistryEntryID); lock.unlock()
+    }
+
+    func hasExclusiveClaim(_ bsdName: String, expectedRegistryEntryID: UInt64) -> Bool {
+        _ = bsdName
+        _ = expectedRegistryEntryID
+        lock.lock()
+        defer { lock.unlock() }
+        return exclusiveClaimHeld
+    }
+
+    func setExclusiveClaimHeld(_ held: Bool) {
+        lock.lock()
+        exclusiveClaimHeld = held
+        lock.unlock()
     }
 
     func unmountWholeAsync(
@@ -2772,11 +2787,12 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 )
             }
             try env.controller.resumeRuntime()
-            try waitForCondition("S42 runtime resume did not reacquire the same generation") {
-                openScript.count() == 2
-                    && (try? env.connectedDevice().privilegedAccessReady) == true
-            }
             let resumed = try env.connectedDevice()
+            guard openScript.count() == 2, resumed.privilegedAccessReady else {
+                throw LifecycleValidationError(
+                    "S42 runtime resume returned before raw access was restored"
+                )
+            }
             guard resumed.deviceID == original.deviceID,
                   resumed.bsdName == original.bsdName,
                   resumed.privilegedAccessReady else {
@@ -2787,11 +2803,12 @@ struct ValidateCredentialPolicyServiceLifecycle {
             print("SCENARIO=S42_OK runtime_pause_resume_releases_raw_without_service_shutdown")
 
             try env.controller.restartRuntime()
-            try waitForCondition("S43 in-process runtime restart did not reacquire raw access") {
-                openScript.count() == 3
-                    && (try? env.connectedDevice().privilegedAccessReady) == true
-            }
             let restarted = try env.connectedDevice()
+            guard openScript.count() == 3, restarted.privilegedAccessReady else {
+                throw LifecycleValidationError(
+                    "S43 runtime restart returned before raw access was restored"
+                )
+            }
             guard restarted.deviceID == original.deviceID,
                   restarted.bsdName == original.bsdName,
                   restarted.privilegedAccessReady else {
@@ -2854,6 +2871,47 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 )
             }
             print("SCENARIO=S44_OK raw_ebusy_terminal_per_generation_and_reinsert_resets_state")
+        }
+
+        do {
+            let openScript = RawAccessOpenScript(["OK", "OK"])
+            let diskArbitration = FakeDiskArbitration()
+            let env = try ControllerEnvironment.make(
+                fixtureDirectory: fixtureDirectory,
+                insertDevice: true,
+                diskArbitration: diskArbitration,
+                rawAccessLeaseOpener: { try openScript.open($0) }
+            )
+            env.controller.reconcileSynchronouslyForTesting()
+            try waitForCondition("S45 initial raw lease did not become ready") {
+                openScript.count() == 1
+                    && (try? env.connectedDevice().privilegedAccessReady) == true
+            }
+
+            diskArbitration.setExclusiveClaimHeld(false)
+            try expectThrows("S45 runtime pause unexpectedly released raw access without a claim") {
+                try env.controller.pauseRuntime()
+            }
+            let refused = try env.connectedDevice()
+            guard refused.connected,
+                  refused.privilegedAccessReady,
+                  openScript.count() == 1,
+                  diskArbitration.snapshotForceUnmountWholeCalls().isEmpty else {
+                throw LifecycleValidationError(
+                    "S45 claim-loss pause did not fail closed before releasing raw access"
+                )
+            }
+
+            diskArbitration.setExclusiveClaimHeld(true)
+            try env.controller.pauseRuntime()
+            try env.controller.resumeRuntime()
+            let resumed = try env.connectedDevice()
+            guard resumed.privilegedAccessReady, openScript.count() == 2 else {
+                throw LifecycleValidationError(
+                    "S45 runtime did not recover after the exclusive claim was restored"
+                )
+            }
+            print("SCENARIO=S45_OK runtime_pause_requires_live_exclusive_claim")
         }
 
         do {

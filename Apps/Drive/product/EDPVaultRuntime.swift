@@ -3924,6 +3924,31 @@ final class EDPServiceController: @unchecked Sendable {
         )
     }
 
+    private func continuousClaimFailureLocked() -> String? {
+        for disk in connectedDisks where !eject.isSuppressed(deviceID: disk.deviceID) {
+            guard diskArbitration.hasExclusiveClaim(
+                disk.bsdName,
+                expectedRegistryEntryID: disk.registryEntryID
+            ) else {
+                return "refusing runtime transition because the exact physical-disk Disk Arbitration claim is not held: \(disk.bsdName)"
+            }
+        }
+        return nil
+    }
+
+    private func restoreRuntimeRawAccessLocked(completion: @escaping EDPDaemonMountCompletion) {
+        reconcileLocked()
+        let disks = connectedDisks.filter {
+            !eject.isSuppressed(deviceID: $0.deviceID)
+        }
+        refreshRawAccessNextLocked(
+            disks,
+            index: 0,
+            firstError: nil,
+            completion: completion
+        )
+    }
+
     func pauseRuntimeAsync(completion: @escaping EDPDaemonMountCompletion) {
         queue.async { [weak self] in
             guard let self else {
@@ -3952,6 +3977,9 @@ final class EDPServiceController: @unchecked Sendable {
                     var finalError = errorMessage
                     if finalError == nil, !self.manager.mountedSummaries().isEmpty {
                         finalError = "one or more EDP sessions could not be safely unmounted"
+                    }
+                    if finalError == nil {
+                        finalError = self.continuousClaimFailureLocked()
                     }
                     if finalError == nil {
                         self.rawAccess.invalidateAll()
@@ -3989,8 +4017,7 @@ final class EDPServiceController: @unchecked Sendable {
             }
             self.runtimePaused = false
             self.addActivity("后台服务运行时已恢复")
-            self.reconcileLocked()
-            completion(nil)
+            self.restoreRuntimeRawAccessLocked(completion: completion)
         }
     }
 
@@ -4024,15 +4051,19 @@ final class EDPServiceController: @unchecked Sendable {
                         finalError = "one or more EDP sessions could not be safely unmounted"
                     }
                     if finalError == nil {
+                        finalError = self.continuousClaimFailureLocked()
+                    }
+                    if finalError == nil {
                         self.rawAccess.invalidateAll()
                         self.connectedDisks.removeAll()
                         self.addActivity("后台服务运行时已原地重启；Disk Arbitration claim 未断链")
                     }
                     self.runtimeTransitionInProgress = false
-                    if finalError == nil {
-                        self.reconcileLocked()
+                    guard finalError == nil else {
+                        completion(finalError)
+                        return
                     }
-                    completion(finalError)
+                    self.restoreRuntimeRawAccessLocked(completion: completion)
                 }
             }
         }

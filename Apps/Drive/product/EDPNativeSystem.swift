@@ -601,16 +601,9 @@ private func daEarlyClaimResultCallback(
     _ dissenter: DADissenter?,
     _ context: UnsafeMutableRawPointer?
 ) {
-    guard let dissenter,
-          let name = DADiskGetBSDName(disk) else { return }
-    let status = DADissenterGetStatus(dissenter)
-    let detail = DADissenterGetStatusString(dissenter).map { $0 as String } ?? "unknown"
-    NSLog(
-        "EDP early physical-disk claim refused for %@: status=%d %@",
-        String(cString: name),
-        status,
-        detail
-    )
+    guard let context else { return }
+    let controller = Unmanaged<EDPDiskArbitrationController>.fromOpaque(context).takeUnretainedValue()
+    controller.handleEarlyClaimResult(disk, dissenter: dissenter)
 }
 
 private func daEarlyPeekCallback(
@@ -625,6 +618,7 @@ private func daEarlyPeekCallback(
 protocol EDPDaemonDiskArbitrating: AnyObject, Sendable {
     func suppressAutomount(usbRegistryEntryID: UInt64)
     func allowAutomount(usbRegistryEntryID: UInt64)
+    func hasExclusiveClaim(_ bsdName: String, expectedRegistryEntryID: UInt64) -> Bool
     func unmountWholeAsync(
         _ bsdName: String,
         expectedRegistryEntryID: UInt64?,
@@ -650,6 +644,9 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
     private let completionQueue = DispatchQueue(label: "com.edp.drive.disk-arbitration-completion")
     private let earlyClaimClassifier: EDPEarlyDiskClaimClassifier?
     private var suppressedUSBRegistryEntryIDs = Set<UInt64>()
+    private var pendingEarlyClaimRegistryEntryIDs = Set<UInt64>()
+    private var earlyClaimedDisks = [UInt64: DADisk]()
+    private var earlyClaimTerminationMonitors = [UInt64: EDPIOMediaTerminationMonitor]()
     private var pendingOperations = [UUID: DAOperationBox]()
 
     init(earlyClaimClassifier: EDPEarlyDiskClaimClassifier? = nil) throws {
@@ -676,6 +673,17 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         DASessionSetDispatchQueue(session, queue)
     }
 
+    private func mediaRegistryEntryID(for disk: DADisk) -> UInt64? {
+        let media = DADiskCopyIOMedia(disk)
+        guard media != IO_OBJECT_NULL else { return nil }
+        defer { IOObjectRelease(media) }
+        var registryEntryID: UInt64 = 0
+        guard IORegistryEntryGetRegistryEntryID(media, &registryEntryID) == KERN_SUCCESS else {
+            return nil
+        }
+        return registryEntryID
+    }
+
     fileprivate func handleEarlyPeek(_ disk: DADisk) {
         guard let earlyClaimClassifier else { return }
         let media = DADiskCopyIOMedia(disk)
@@ -683,16 +691,120 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         defer { IOObjectRelease(media) }
         guard ioBool(ioRegistryProperty(media, "Whole")) == true,
               let name = DADiskGetBSDName(disk) else { return }
+        var registryEntryID: UInt64 = 0
+        guard IORegistryEntryGetRegistryEntryID(media, &registryEntryID) == KERN_SUCCESS else { return }
+
+        stateLock.lock()
+        if let retained = earlyClaimedDisks[registryEntryID], DADiskIsClaimed(retained) {
+            stateLock.unlock()
+            return
+        }
+        earlyClaimedDisks.removeValue(forKey: registryEntryID)
+        earlyClaimTerminationMonitors.removeValue(forKey: registryEntryID)
+        if pendingEarlyClaimRegistryEntryIDs.contains(registryEntryID) {
+            stateLock.unlock()
+            return
+        }
+        stateLock.unlock()
+
         let bsdName = String(cString: name)
         guard earlyClaimClassifier.shouldClaim(bsdName: bsdName) else { return }
+
+        stateLock.lock()
+        pendingEarlyClaimRegistryEntryIDs.insert(registryEntryID)
+        stateLock.unlock()
         DADiskClaim(
             disk,
             DADiskClaimOptions(kDADiskClaimOptionDefault),
             daEarlyClaimReleaseCallback,
             nil,
             daEarlyClaimResultCallback,
-            nil
+            Unmanaged.passUnretained(self).toOpaque()
         )
+    }
+
+    fileprivate func handleEarlyClaimResult(_ disk: DADisk, dissenter: DADissenter?) {
+        guard let registryEntryID = mediaRegistryEntryID(for: disk) else { return }
+        stateLock.lock()
+        pendingEarlyClaimRegistryEntryIDs.remove(registryEntryID)
+        stateLock.unlock()
+
+        guard dissenter == nil, DADiskIsClaimed(disk),
+              let name = DADiskGetBSDName(disk) else {
+            if let dissenter, let name = DADiskGetBSDName(disk) {
+                let status = DADissenterGetStatus(dissenter)
+                let detail = DADissenterGetStatusString(dissenter).map { $0 as String } ?? "unknown"
+                NSLog(
+                    "EDP early physical-disk claim refused for %@: status=%d %@",
+                    String(cString: name),
+                    status,
+                    detail
+                )
+            }
+            return
+        }
+
+        let bsdName = String(cString: name)
+        let generation = EDPIOMediaGeneration(
+            bsdName: bsdName,
+            registryEntryID: registryEntryID
+        )
+        let monitor: EDPIOMediaTerminationMonitor
+        do {
+            monitor = try EDPIOMediaTerminationMonitor(
+                generation: generation,
+                queue: queue
+            ) { [weak self] in
+                self?.retireEarlyClaim(registryEntryID: registryEntryID)
+            }
+        } catch {
+            // A claim without an exact retirement authority is unsafe. Release
+            // it immediately so runtime pause/restart will fail closed instead
+            // of depending on an untracked Disk Arbitration lifetime.
+            DADiskUnclaim(disk)
+            NSLog(
+                "EDP exact IOMedia monitor failed for claimed %@: %@",
+                bsdName,
+                String(describing: error)
+            )
+            return
+        }
+
+        let shouldRetainClaim = DADiskIsClaimed(disk)
+            && EDPIOKitMediaLifecycle.registryEntryExists(registryEntryID)
+        stateLock.lock()
+        if shouldRetainClaim {
+            // Keep both the exact DADisk claim object and its exact IOMedia
+            // termination monitor strongly retained. Closing the whole-disk raw
+            // fd during an in-process pause cannot open a claim gap.
+            earlyClaimedDisks[registryEntryID] = disk
+            earlyClaimTerminationMonitors[registryEntryID] = monitor
+        }
+        stateLock.unlock()
+        if !shouldRetainClaim {
+            DADiskUnclaim(disk)
+        }
+    }
+
+    private func retireEarlyClaim(registryEntryID: UInt64) {
+        stateLock.lock()
+        pendingEarlyClaimRegistryEntryIDs.remove(registryEntryID)
+        earlyClaimedDisks.removeValue(forKey: registryEntryID)
+        earlyClaimTerminationMonitors.removeValue(forKey: registryEntryID)
+        stateLock.unlock()
+    }
+
+    func hasExclusiveClaim(_ bsdName: String, expectedRegistryEntryID: UInt64) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let disk = earlyClaimedDisks[expectedRegistryEntryID],
+              DADiskIsClaimed(disk),
+              let name = DADiskGetBSDName(disk),
+              String(cString: name) == bsdName,
+              mediaRegistryEntryID(for: disk) == expectedRegistryEntryID else {
+            return false
+        }
+        return true
     }
 
     deinit {
