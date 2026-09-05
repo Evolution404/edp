@@ -6,6 +6,7 @@ TEST_ROOT="${ROOT}/Apps/Drive/Tests"
 STORAGE_RUNNER="${TEST_ROOT}/run-storage.sh"
 UI_RUNNER="${TEST_ROOT}/run-ui.sh"
 UI_BOUNDED="${TEST_ROOT}/Storage/RunBounded.py"
+DRIVE_WORKFLOW="${ROOT}/.github/workflows/drive.yml"
 APP_SERVICE_SUPPORT_RUNNER="${TEST_ROOT}/run-app-service-support.sh"
 INSTALLER_MEDIA_PROBE_RUNNER="${TEST_ROOT}/run-installer-media-probe.sh"
 APP_SOURCE="${ROOT}/Apps/Drive/product/App/EDPUSBVaultApp.swift"
@@ -105,11 +106,10 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 /usr/bin/grep -Fq '[[ "$revalidated_snapshot" == "$owner_snapshot" ]]' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--assert-process-path "$pid" /usr/libexec/diskimagesiod' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_POSTKILL_SNAPSHOT=' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_POSTKILL_GENERATION=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq '[[ -z "$devices" && "$final_snapshot" == "$owner_snapshot" ]]' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq '! /bin/kill -0 "$pid"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '[[ "$final_snapshot" == "$owner_snapshot" ]]' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq '[[ -z "$devices" ]]' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-still-alive' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'proc_pidpath(' "${DA_MOUNT_SOURCE}"
 ! /usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
@@ -443,6 +443,31 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_METADATA_ONLY_TEARDOWN_OK'
 /usr/bin/grep -Fq 'adapter-dead-owner-kill-' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_DEAD_OWNER_ADAPTER_RECOVERY_OK'
+
+# Storage DiskImages2 recovery must follow the exact owner process lifecycle.
+# Once the proven diskimagesiod PID is gone, metadata-only tombstones are
+# stabilized with exact snapshots instead of repeatedly polling hdiutil. A
+# changed generation or remaining system entity must still fail closed.
+STORAGE_RECOVERY_SECTION="$(/usr/bin/awk '/^recover_synthetic_publication\(\)/,/^fixture_publication_exists\(\)/' "${STORAGE_RUNNER}")"
+/usr/bin/grep -Fq 'wait_for_process_exit_quiet "$pid" 15' <<<"${STORAGE_RECOVERY_SECTION}"
+/usr/bin/grep -Fq 'wait_for_process_exit_quiet "$pid" 20' <<<"${STORAGE_RECOVERY_SECTION}"
+/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner' <<<"${STORAGE_RECOVERY_SECTION}"
+/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=system-entities-remained' <<<"${STORAGE_RECOVERY_SECTION}"
+! /usr/bin/grep -Fq 'wait_for_synthetic_publication_gone "$backing" 15' <<<"${STORAGE_RECOVERY_SECTION}"
+! /usr/bin/grep -Fq 'wait_for_synthetic_publication_gone "$backing" 20' <<<"${STORAGE_RECOVERY_SECTION}"
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_OWNER_EVENT_RECOVERY_OK'
+
+# Production daemon/App strict compilation belongs to the native CI job. The
+# storage contracts retain their own failure binary and macFUSE transport
+# Swift6/C17 strict build without recompiling the full daemon a second time.
+STORAGE_CONTRACT_SECTION="$(/usr/bin/awk '/^validate_failure_and_build_contracts\(\)/,/^for prohibited_pattern/' "${STORAGE_RUNNER}")"
+/usr/bin/grep -Fq 'installer/build-transport-backends.sh "$production_bin"' <<<"${STORAGE_CONTRACT_SECTION}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_STORAGE_TRANSPORT_SWIFT6_C17_STRICT_OK' <<<"${STORAGE_CONTRACT_SECTION}"
+! /usr/bin/grep -Fq 'product/EDPVaultRuntime.swift' <<<"${STORAGE_CONTRACT_SECTION}"
+! /usr/bin/grep -Fq 'edp-drive-service' <<<"${STORAGE_CONTRACT_SECTION}"
+/usr/bin/grep -Fq 'Compile native daemon and SwiftUI app' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'xcrun swiftc -O -swift-version 6 -warnings-as-errors' "${DRIVE_WORKFLOW}"
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_STRICT_BUILD_DEDUP_OK'
 
 # Mount/unmount/eject/shutdown lifecycle is intentionally single-path and
 # asynchronous. Never reintroduce polling sleeps or synchronous manager
@@ -1067,7 +1092,6 @@ echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 # GitHub deprecated Node.js 20 for JavaScript actions. Drive workflow actions
 # must stay on the official Node24-based major lines rather than relying on the
 # runner to force-migrate an older JavaScript runtime at execution time.
-DRIVE_WORKFLOW="${ROOT}/.github/workflows/drive.yml"
 [[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
 [[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 5 ]]
 ! /usr/bin/grep -Fq 'actions/checkout@v6' "${DRIVE_WORKFLOW}"

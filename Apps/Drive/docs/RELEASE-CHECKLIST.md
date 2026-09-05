@@ -107,7 +107,8 @@ Release storage log must include successful coverage of:
 - [x] M12;
 - [x] M14;
 - [x] failure contracts;
-- [x] production Swift6/C17 strict build;
+- [x] storage macFUSE transport Swift6/C17 strict build;
+- [x] separate `native` job production daemon/App Swift6 strict build;
 - [x] `RESULT=DRIVE_STORAGE_E2E_OK`.
 
 ### UI acceptance

@@ -167,7 +167,7 @@ The release suite currently covers:
 - M12 — transport-crash recoverable boundary + remount;
 - M14 — concurrent partition sessions;
 - failure contracts;
-- production Swift6/C17 strict compile.
+- macFUSE transport Swift6/C17 strict build. The full production daemon/App strict compile is owned once by the separate `native` CI job instead of being duplicated inside storage.
 
 Expected release marker:
 

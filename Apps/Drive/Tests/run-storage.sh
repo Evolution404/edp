@@ -343,86 +343,87 @@ recover_synthetic_publication() {
   }
 
   /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
-  if wait_for_synthetic_publication_gone "$backing" 15; then
-    echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=term' >&2
-    return 0
-  fi
-
-  local revalidated_snapshot=""
-  revalidated_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing")" || {
-    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=revalidation-missing" >&2
-    return 1
-  }
-  [[ "$revalidated_snapshot" == "$owner_snapshot" ]] || {
-    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=identity-changed" >&2
-    return 1
-  }
-  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || {
-    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=process-path-changed" >&2
-    return 1
-  }
-  /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-  if wait_for_synthetic_publication_gone "$backing" 20; then
-    echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=kill' >&2
-    return 0
-  fi
-
-  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
-    local process_state
-    process_state="$(/bin/ps -p "$pid" -o state=,stat=,command= 2>/dev/null | /usr/bin/xargs || true)"
-    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=alive pid=$pid state=${process_state:-unknown}" >&2
-    if "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null 2>&1; then
-      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_PATH=diskimagesiod' >&2
-    else
-      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_PATH=changed-or-unavailable' >&2
+  if ! wait_for_process_exit_quiet "$pid" 15; then
+    local revalidated_snapshot=""
+    revalidated_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
+    if [[ -z "$revalidated_snapshot" ]]; then
+      if synthetic_publication_exists "$backing"; then
+        echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=revalidation-missing" >&2
+        return 1
+      fi
+      echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=term-publication-gone' >&2
+      return 0
     fi
-  else
-    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=gone pid=$pid" >&2
-  fi
-
-  local final_snapshot="" final_pid="" final_devices=""
-  final_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
-  if [[ -n "$final_snapshot" ]]; then
-    IFS='|' read -r final_pid final_devices <<<"$final_snapshot"
-    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_SNAPSHOT=pid=$final_pid devices=${final_devices:-none}" >&2
-    if [[ "$final_pid" == "$pid" ]]; then
-      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_GENERATION=same' >&2
-    else
-      echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_GENERATION=changed' >&2
-    fi
-  else
-    echo 'STORAGE_DISKIMAGES_OWNER_POSTKILL_SNAPSHOT=unavailable' >&2
-  fi
-
-  # macOS 26 can retain a metadata-only hdiutil tombstone after the exact
-  # diskimagesiod owner is gone. Accept it only for an owner-only snapshot:
-  # no system entities, identical exact owner metadata, original PID absent,
-  # and the same state after a second bounded stabilization sample. A changed
-  # PID/entity generation remains fail-closed.
-  if [[ -z "$devices" && "$final_snapshot" == "$owner_snapshot" ]] \
-    && ! /bin/kill -0 "$pid" >/dev/null 2>&1; then
-    /bin/sleep 0.5
-    if /bin/kill -0 "$pid" >/dev/null 2>&1; then
-      echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-reused' >&2
+    [[ "$revalidated_snapshot" == "$owner_snapshot" ]] || {
+      echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=identity-changed" >&2
+      return 1
+    }
+    "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || {
+      echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=process-path-changed" >&2
+      return 1
+    }
+    /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
+    if ! wait_for_process_exit_quiet "$pid" 20; then
+      local process_state
+      process_state="$(/bin/ps -p "$pid" -o state=,stat=,command= 2>/dev/null | /usr/bin/xargs || true)"
+      echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=alive pid=$pid state=${process_state:-unknown}" >&2
       return 1
     fi
-    local stable_snapshot=""
-    stable_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
-    if [[ -z "$stable_snapshot" ]]; then
-      STORAGE_LAST_PUBLICATION_RECOVERY_MODE="dead-owner-metadata-disappeared"
-      echo 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=metadata-disappeared' >&2
-      return 0
+    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=gone pid=$pid" >&2
+  else
+    echo "STORAGE_DISKIMAGES_OWNER_TERM_PROCESS=gone pid=$pid" >&2
+  fi
+
+  local final_snapshot=""
+  final_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
+  if [[ -z "$final_snapshot" ]]; then
+    if synthetic_publication_exists "$backing"; then
+      echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=publication-remained-without-owner-snapshot' >&2
+      return 1
     fi
-    if [[ "$stable_snapshot" == "$owner_snapshot" ]]; then
-      STORAGE_LAST_PUBLICATION_RECOVERY_MODE="stable-dead-owner"
-      echo "STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner pid=$pid" >&2
-      return 0
-    fi
-    echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=generation-changed snapshot=$stable_snapshot" >&2
+    echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=owner-exit-publication-gone' >&2
+    return 0
+  fi
+
+  [[ "$final_snapshot" == "$owner_snapshot" ]] || {
+    echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=generation-changed snapshot=$final_snapshot" >&2
+    return 1
+  }
+  [[ -z "$devices" ]] || {
+    echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=system-entities-remained devices=$devices" >&2
+    return 1
+  }
+  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
+    echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-still-alive' >&2
     return 1
   fi
 
-  echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=owner-remained' >&2
+  # macOS 26 may retain only the hdiutil metadata record after the exact
+  # diskimagesiod process and all system entities are gone. Stabilize that exact
+  # owner snapshot once; do not repeatedly poll hdiutil after process death.
+  /bin/sleep 0.5
+  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
+    echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-reused' >&2
+    return 1
+  fi
+  local stable_snapshot=""
+  stable_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
+  if [[ -z "$stable_snapshot" ]]; then
+    if synthetic_publication_exists "$backing"; then
+      echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=metadata-invalid-after-stabilization' >&2
+      return 1
+    fi
+    STORAGE_LAST_PUBLICATION_RECOVERY_MODE="dead-owner-metadata-disappeared"
+    echo 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=metadata-disappeared' >&2
+    return 0
+  fi
+  if [[ "$stable_snapshot" == "$owner_snapshot" ]]; then
+    STORAGE_LAST_PUBLICATION_RECOVERY_MODE="stable-dead-owner"
+    echo "STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner pid=$pid" >&2
+    return 0
+  fi
+
+  echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=generation-changed snapshot=$stable_snapshot" >&2
   return 1
 }
 
@@ -912,6 +913,21 @@ wait_for_child_exit_bounded() {
   done
   state="$(/bin/ps -p "$pid" -o state=,stat=,command= 2>/dev/null | /usr/bin/xargs || true)"
   echo "STORAGE_CHILD_EXIT_TIMEOUT=$label pid=$pid state=${state:-unknown}" >&2
+  return 1
+}
+
+wait_for_process_exit_quiet() {
+  local pid="$1"
+  local timeout_tenths="$2"
+  local state=""
+  for _ in $(/usr/bin/seq 1 "$timeout_tenths"); do
+    if ! /bin/kill -0 "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    state="$(/bin/ps -p "$pid" -o state= 2>/dev/null | /usr/bin/xargs || true)"
+    [[ "$state" == Z* ]] && return 0
+    /bin/sleep 0.1
+  done
   return 1
 }
 
@@ -1496,60 +1512,9 @@ validate_failure_and_build_contracts() {
   "$FAILURE_BIN" 2>&1
   local production_bin="$BUILD_DIR/production"
   installer/build-transport-backends.sh "$production_bin"
-
-  local core_sources=(
-    native/EDPFSKitPoC/Extension/EDPRawIO.swift
-    native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
-    native/EDPFSKitPoC/Extension/EDPCrypto.swift
-    native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
-    native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
-    native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
-    native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
-  )
-  local product_sources=(
-    product/EDPCredentialStore.swift
-    product/EDPDevicePolicyStore.swift
-    product/EDPMacFUSERuntimePolicy.swift
-    product/EDPLifecycleScheduler.swift
-    product/EDPLifecycleJournal.swift
-    product/EDPRuntimeMetrics.swift
-    product/EDPTransportProvider.swift
-    product/EDPTransportRuntimePolicy.swift
-    product/EDPFinderVolumeDefaults.swift
-    product/EDPIOKitLifecycle.swift
-    product/EDPNativeSystem.swift
-    product/EDPBlockDevicePublisher.swift
-    product/EDPXPCProtocol.swift
-    product/EDPXPCSecurity.swift
-    product/EDPRuntimeSupport.swift
-    product/EDPRuntimeState.swift
-    product/EDPDeviceOperations.swift
-    product/EDPDeviceDiscoveryController.swift
-    product/EDPRawAccess.swift
-    product/EDPRawAccessCoordinator.swift
-    product/EDPAutomationState.swift
-    product/EDPActivityStore.swift
-    product/EDPEjectCoordinator.swift
-    product/EDPServiceLifecycleState.swift
-    product/EDPRecoveryCoordinator.swift
-    product/EDPMountLifecycle.swift
-    product/EDPMountSupport.swift
-    product/EDPXPCService.swift
-    product/EDPServiceMain.swift
-    product/EDPVaultRuntime.swift
-  )
-  local raw_validation_obj="$production_bin/EDPRawValidation.o"
-  local raw_broker_obj="$production_bin/EDPRawFDBroker.o"
-  /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "$raw_validation_obj"
-  /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawFDBroker.c -o "$raw_broker_obj"
-  xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-    -Xfrontend -disable-availability-checking \
-    -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit -framework CoreFoundation \
-    "${EDP_CORE_SWIFTC_FLAGS[@]}" \
-    "${core_sources[@]}" "${product_sources[@]}" \
-    "$raw_validation_obj" "$raw_broker_obj" \
-    -o "$production_bin/edp-drive-service"
-  log "RESULT=DRIVE_STORAGE_PRODUCTION_SWIFT6_C17_STRICT_OK"
+  [[ -x "$production_bin/edp-mfmount-local-readwrite" ]]
+  [[ -x "$production_bin/edp-mfmount-local-readonly" ]]
+  log "RESULT=DRIVE_STORAGE_TRANSPORT_SWIFT6_C17_STRICT_OK"
 }
 
 for prohibited_pattern in \
