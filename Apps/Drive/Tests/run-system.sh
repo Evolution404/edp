@@ -218,6 +218,8 @@ echo 'RESULT=DRIVE_SYSTEM_DISKIMAGES_HELPER_ALLOWLIST_OK'
 # execute deterministic UI structure checks, but must skip xctrace performance.
 /usr/bin/grep -Fq 'GITHUB_ACTIONS:-false' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ONLY_SKIPPED_LOCALLY' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'EDP_UI_PERF_REQUIRED:-1' "${UI_RUNNER}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_SMOKE_SKIPPED' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'UI_XCTRACE_RECORD_TIMEOUT_SECONDS=45' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'UI_XCTRACE_RECORD_ATTEMPTS=3' "${UI_RUNNER}"
@@ -1096,8 +1098,12 @@ echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 # runner to force-migrate an older JavaScript runtime at execution time.
 [[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
 [[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 5 ]]
+[[ "$(/usr/bin/grep -Fc 'actions/cache@v5' "${DRIVE_WORKFLOW}")" -eq 4 ]]
 ! /usr/bin/grep -Fq 'actions/checkout@v6' "${DRIVE_WORKFLOW}"
 ! /usr/bin/grep -Fq 'actions/upload-artifact@v4' "${DRIVE_WORKFLOW}"
+! /usr/bin/grep -Fq 'actions/cache@v4' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'Packages/EDPCore/.build/arm64-apple-macosx/release' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'hashFiles('\''Packages/EDPCore/Package.swift'\'', '\''Packages/EDPCore/Sources/**'\'')' "${DRIVE_WORKFLOW}"
 echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
 
 # Canonical top-level gates must remain wired and hardware-free by construction.
@@ -1125,6 +1131,8 @@ done
 /usr/bin/grep -Fq 'EDP_CORE_SKIP_BUILD=1 make drive-test-fast' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'EDP_CORE_SKIP_BUILD=1 make drive-test-virtual-usb' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'regression-ui:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_UI_PERF_REQUIRED:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq "inputs.storage_profile == 'release'" "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-ui' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-system' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-storage' "${DRIVE_WORKFLOW}"

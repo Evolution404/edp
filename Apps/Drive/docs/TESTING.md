@@ -266,9 +266,9 @@ Do not close unrelated user apps, change product animation behavior, or adjust t
 
 ### GitHub Actions
 
-Release-authoritative UI performance runs only on GitHub macOS 26 runner.
+Ordinary smoke CI still runs the complete deterministic UI render/layout/accessibility suite on GitHub, but sets `EDP_UI_PERF_REQUIRED=0` so hosted-runner Instruments stalls do not sit on every development critical path. The explicit manual `storage_profile=release` run sets `EDP_UI_PERF_REQUIRED=1` and remains the release-authoritative UI performance gate on a GitHub macOS 26 runner.
 
-Current gate is fixed:
+Current release gate is fixed:
 
 ```text
 20 sidebar toggles
@@ -325,7 +325,7 @@ Discovery, P16–P30, C/D, S01–S47, the 320,000-step property model and V01–
 
 ### Balanced five-way CI
 
-GitHub currently schedules at most five macOS jobs from this workflow concurrently, so the ordinary/release gate is deliberately balanced into exactly five critical paths instead of creating a larger matrix that would queue:
+GitHub currently schedules at most five macOS jobs from this workflow concurrently, so the ordinary/release gate is deliberately balanced into exactly five critical paths instead of creating a larger matrix that would queue. Four paths restore an exact `actions/cache@v5` EDPCore release cache keyed by runner OS/architecture, Swift compiler hash and EDPCore source hash; cache reuse is permitted only after the cached library already passes the normal `prepare-shared-edp-core.sh` artifact checks.
 
 1. `native`: production daemon/App strict build while the hardware-free system ratchet and storage contracts run in parallel on the same runner;
 2. `regression-fast-virtual`: fast and full software VirtualUSB regressions run concurrently after one shared EDPCore build;

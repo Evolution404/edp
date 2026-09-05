@@ -104,6 +104,12 @@ if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
   exit 0
 fi
 
+if [[ "${EDP_UI_PERF_REQUIRED:-1}" != "1" ]]; then
+  echo 'RESULT=DRIVE_UI_PERF_SMOKE_SKIPPED'
+  echo 'RESULT=DRIVE_UI_OK'
+  exit 0
+fi
+
 echo 'RESULT=DRIVE_UI_PERF_CI_ENVIRONMENT'
 command -v xcrun >/dev/null
 echo 'UI_XCTRACE_LIST_BEGIN'

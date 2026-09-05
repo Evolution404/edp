@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       storage_profile:
-        description: Storage validation strength for this manual run
+        description: Validation strength for this manual run
         required: true
         default: smoke
         type: choice
@@ -43,6 +43,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - name: Compute Swift cache key
+        run: |
+          set -euo pipefail
+          swift_key="$(xcrun swiftc --version | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+          echo "EDP_SWIFT_CACHE_KEY=$swift_key" >> "$GITHUB_ENV"
+      - uses: actions/cache@v5
+        id: edpcore-cache
+        with:
+          path: Packages/EDPCore/.build/arm64-apple-macosx/release
+          key: edpcore-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.EDP_SWIFT_CACHE_KEY }}-${{ hashFiles('Packages/EDPCore/Package.swift', 'Packages/EDPCore/Sources/**') }}
       - name: Verify monorepo and branding contract
         run: |
           set -euo pipefail
@@ -204,6 +214,9 @@ jobs:
             export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
             cd Apps/Drive
             REPO_ROOT="$PWD"
+            if [[ "${{ steps.edpcore-cache.outputs.cache-hit }}" == "true" ]]; then
+              export EDP_CORE_SKIP_BUILD=1
+            fi
             . scripts/prepare-shared-edp-core.sh
           ) &
           core_pid=$!
@@ -333,12 +346,25 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - name: Compute Swift cache key
+        run: |
+          set -euo pipefail
+          swift_key="$(xcrun swiftc --version | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+          echo "EDP_SWIFT_CACHE_KEY=$swift_key" >> "$GITHUB_ENV"
+      - uses: actions/cache@v5
+        id: edpcore-cache
+        with:
+          path: Packages/EDPCore/.build/arm64-apple-macosx/release
+          key: edpcore-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.EDP_SWIFT_CACHE_KEY }}-${{ hashFiles('Packages/EDPCore/Package.swift', 'Packages/EDPCore/Sources/**') }}
       - name: Prepare shared EDPCore once
         run: |
           set -euo pipefail
           export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
           cd Apps/Drive
           REPO_ROOT="$PWD"
+          if [[ "${{ steps.edpcore-cache.outputs.cache-hit }}" == "true" ]]; then
+            export EDP_CORE_SKIP_BUILD=1
+          fi
           . scripts/prepare-shared-edp-core.sh
       - name: Fast and Virtual USB regressions in parallel
         run: |
@@ -375,6 +401,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - name: Compute Swift cache key
+        run: |
+          set -euo pipefail
+          swift_key="$(xcrun swiftc --version | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+          echo "EDP_SWIFT_CACHE_KEY=$swift_key" >> "$GITHUB_ENV"
+      - uses: actions/cache@v5
+        id: edpcore-cache
+        with:
+          path: Packages/EDPCore/.build/arm64-apple-macosx/release
+          key: edpcore-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.EDP_SWIFT_CACHE_KEY }}-${{ hashFiles('Packages/EDPCore/Package.swift', 'Packages/EDPCore/Sources/**') }}
       - name: Prepare macFUSE and shared core in parallel
         run: |
           set -euo pipefail
@@ -386,6 +422,9 @@ jobs:
             export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
             cd Apps/Drive
             REPO_ROOT="$PWD"
+            if [[ "${{ steps.edpcore-cache.outputs.cache-hit }}" == "true" ]]; then
+              export EDP_CORE_SKIP_BUILD=1
+            fi
             . scripts/prepare-shared-edp-core.sh
           ) &
           core_pid=$!
@@ -420,6 +459,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - name: Compute Swift cache key
+        run: |
+          set -euo pipefail
+          swift_key="$(xcrun swiftc --version | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+          echo "EDP_SWIFT_CACHE_KEY=$swift_key" >> "$GITHUB_ENV"
+      - uses: actions/cache@v5
+        id: edpcore-cache
+        with:
+          path: Packages/EDPCore/.build/arm64-apple-macosx/release
+          key: edpcore-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.EDP_SWIFT_CACHE_KEY }}-${{ hashFiles('Packages/EDPCore/Package.swift', 'Packages/EDPCore/Sources/**') }}
       - name: Prepare macFUSE and shared core in parallel
         run: |
           set -euo pipefail
@@ -431,6 +480,9 @@ jobs:
             export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
             cd Apps/Drive
             REPO_ROOT="$PWD"
+            if [[ "${{ steps.edpcore-cache.outputs.cache-hit }}" == "true" ]]; then
+              export EDP_CORE_SKIP_BUILD=1
+            fi
             . scripts/prepare-shared-edp-core.sh
           ) &
           core_pid=$!
@@ -465,7 +517,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - name: UI automation and performance gate
+      - name: UI automation and release performance gate
+        env:
+          EDP_UI_PERF_REQUIRED: ${{ inputs.storage_profile == 'release' && '1' || '0' }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/drive-tests

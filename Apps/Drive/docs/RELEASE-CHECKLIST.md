@@ -86,7 +86,7 @@ An ad-hoc designated requirement of the form `cdhash H"..."` is a release failur
 
 ## 5. Fixed-head GitHub Actions gate
 
-Trigger `.github/workflows/drive.yml` on the exact candidate HEAD with workflow input `storage_profile=release`. Ordinary CI defaults to the faster 3-cycle storage smoke profile and does **not** satisfy this release gate.
+Trigger `.github/workflows/drive.yml` on the exact candidate HEAD with workflow input `storage_profile=release`. Ordinary CI defaults to the faster 3-cycle storage smoke profile and deterministic-only UI (`EDP_UI_PERF_REQUIRED=0`), so it does **not** satisfy this release gate. The release profile raises M10 to 5 cycles and requires the CI-only Instruments gate (`EDP_UI_PERF_REQUIRED=1`).
 
 Required jobs:
 
