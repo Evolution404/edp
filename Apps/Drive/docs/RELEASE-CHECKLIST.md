@@ -9,20 +9,20 @@ Updated: 2026-09-05
 Record before release testing:
 
 ```text
-Status: BLOCKED — 7dda539 fresh-insertion mount/claim race invalidated the package; replacement candidate pending exact-head CI/package/physical retest
+Status: BLOCKED — 193ef5a eliminated EBUSY recovery but still allowed a transient system mount before whole-disk claim; replacement candidate pending exact-head CI/package/physical retest
 Branch: codex/ui-macos26-liquid-glass
-Latest invalidated release HEAD: 7dda539c6d42b2727e96477280f7f9eccdb6cb6f
+Latest invalidated release HEAD: 193ef5a8cd53ed2547779c1bc30b6cdf1cbe56a2
 Version: 0.6.0
 Invalidated Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
-Invalidated Clean.pkg SHA-256: 2af9361d98363d7e797d70e4ad1dc8a0bb9d1423b912cced0698465b62073cdc
+Invalidated Clean.pkg SHA-256: 8a96b8f5fa2cfac5503aa6b7fd0aa1fde3b1bc7ffbd48a40fab88ec5f1df4514
 Replacement exact-head GitHub Actions run: PENDING
-Physical acceptance: BLOCKED until a rebuilt replacement package proves fresh insertion with rawBusyRecoveryCount=0 and forcedWholeUnmountCount=0, then re-runs claim-continuous runtime controls and safe eject
+Physical acceptance: BLOCKED until a rebuilt replacement package proves no successful system mount of the physical boot child, rawBusyRecoveryCount=0 and forcedWholeUnmountCount=0, then re-runs claim-continuous runtime controls and safe eject
 Remaining mandatory gate: replacement exact-head CI 5/5 + signed package verifier + physical Lexar replug acceptance
 Date: 2026-09-05
 Tester: automated local + GitHub Actions + macOS upgrade + physical Lexar acceptance
 ```
 
-Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` can prevent that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closed that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner. On 2026-09-05, the later `7dda539` upgrade candidate exposed a narrower insertion race: FSKit queued the child FAT mount before the asynchronous whole-disk claim completed, then EDP recovered only by force-whole-unmount (`rawBusyRecoveryCount=1`, `forcedWholeUnmountCount=1`). The replacement implementation therefore combines standard-EDP early claim with an exact verified USB-generation mount-approval gate that is armed before `DADiskClaim` returns.
+Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` can prevent that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closed that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner. On 2026-09-05, `7dda539` exposed a narrower insertion race: FSKit queued the child FAT mount before asynchronous whole-disk claim completed, forcing EBUSY recovery. `193ef5a` then armed a mount-denial gate before `DADiskClaim`, eliminating the EBUSY counters, but physical logs still showed `disk26s1` successfully mounted before the whole-media peek/claim path ran. The next replacement therefore makes the mount-approval callback itself synchronously classify the exact owning USB generation and deny only fully verified `standardEncrypted` media, independent of whole-disk peek ordering.
 
 The Git worktree must be clean and the package must be built from the exact recorded HEAD.
 

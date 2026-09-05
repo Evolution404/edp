@@ -2791,6 +2791,33 @@ struct ValidateCredentialPolicyServiceLifecycle {
         }
 
         do {
+            let state = EDPVirtualUSBState()
+            let fixture = try EDPVirtualDiskFactory.capturedDisk4(fixtureDirectory: fixtureDirectory)
+            state.insert(
+                fixture,
+                as: "disk94",
+                registryEntryID: 0x9400,
+                usbRegistryEntryID: 0x9401
+            )
+            let classifier = EDPEarlyDiskClaimClassifier(
+                mediaProvider: EDPVirtualWholeUSBMediaProvider(state: state),
+                metadataReader: EDPVirtualRawMetadataReader(state: state)
+            )
+            guard classifier.claimCandidate(usbRegistryEntryID: 0x9401)?.bsdName == "disk94" else {
+                throw LifecycleValidationError(
+                    "S47 child-mount fallback could not resolve the verified standard EDP whole media"
+                )
+            }
+            state.setMetadataFault(.readFailure("EIO: mount-approval fallback read failure"), for: "disk94")
+            guard classifier.claimCandidate(usbRegistryEntryID: 0x9401) == nil else {
+                throw LifecycleValidationError(
+                    "S47 mount-approval fallback did not fail open when metadata could not be verified"
+                )
+            }
+            print("SCENARIO=S47_OK child_mount_approval_can_classify_exact_standard_edp_generation")
+        }
+
+        do {
             let openScript = RawAccessOpenScript(["OK", "OK", "OK"])
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,

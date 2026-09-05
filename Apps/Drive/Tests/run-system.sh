@@ -807,11 +807,13 @@ echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
 # fskitd holding /dev/rdiskNs1 and force whole-disk EBUSY recovery.
 /usr/bin/grep -Fq 'struct EDPEarlyClaimMountGate: Sendable' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'struct EDPEarlyDiskClaimClassifier: Sendable' "${NATIVE_SYSTEM_SOURCE}"
-/usr/bin/grep -Fq 'resolved.mediaKind == .standardEncrypted && resolved.identity != nil' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'guard resolved.mediaKind == .standardEncrypted, resolved.identity != nil else {' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DARegisterDiskPeekCallback(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DARegisterDiskMountApprovalCallback(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'earlyClaimMountGate.protect(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'earlyClaimMountGate.deniesMount(usbRegistryEntryID:' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'claimCandidate(usbRegistryEntryID:' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'A child partition can reach mount approval before Disk Arbitration has' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DADiskClaim(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DADiskIsClaimed(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DADiskUnclaim(' "${NATIVE_SYSTEM_SOURCE}"
@@ -827,6 +829,10 @@ echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
 /usr/bin/grep -Fq 'EDP Drive owns this standard encrypted physical generation' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'SCENARIO=S41_OK' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
 /usr/bin/grep -Fq 'SCENARIO=S46_OK' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+/usr/bin/grep -Fq 'SCENARIO=S47_OK' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+MOUNT_APPROVAL_SECTION="$(/usr/bin/awk '/fileprivate func shouldDenyMount\(_ disk: DADisk\)/,/func suppressAutomount/' "${NATIVE_SYSTEM_SOURCE}")"
+/usr/bin/grep -Fq 'claimCandidate(' <<<"${MOUNT_APPROVAL_SECTION}"
+/usr/bin/grep -Fq 'usbRegistryEntryID: usbRegistryEntryID' <<<"${MOUNT_APPROVAL_SECTION}"
 EARLY_PEEK_SECTION="$(/usr/bin/awk '/fileprivate func handleEarlyPeek\(_ disk: DADisk\)/,/fileprivate func handleEarlyClaimResult/' "${NATIVE_SYSTEM_SOURCE}")"
 EARLY_MOUNT_GATE_LINE="$(/usr/bin/grep -nF 'earlyClaimMountGate.protect(' <<<"${EARLY_PEEK_SECTION}" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
 EARLY_CLAIM_LINE="$(/usr/bin/grep -nF 'DADiskClaim(' <<<"${EARLY_PEEK_SECTION}" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
@@ -834,6 +840,7 @@ EARLY_CLAIM_LINE="$(/usr/bin/grep -nF 'DADiskClaim(' <<<"${EARLY_PEEK_SECTION}" 
 ! /usr/bin/grep -Ei 'killall.*fskitd|pkill.*fskitd|SIG(KILL|TERM).*fskitd' "${RUNTIME_SOURCE}" "${NATIVE_SYSTEM_SOURCE}" "${RAW_ACCESS_COORDINATOR_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_EARLY_EDP_DISK_CLAIM_OK'
 echo 'RESULT=DRIVE_SYSTEM_EARLY_CLAIM_MOUNT_GAP_CLOSED'
+echo 'RESULT=DRIVE_SYSTEM_MOUNT_APPROVAL_PRE_PEEK_FALLBACK_OK'
 
 # Routine UI stop/start/restart must not terminate the privileged process while a
 # standard EDP generation is claimed. Pause/resume/restart quiesce mounts and raw

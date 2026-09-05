@@ -162,17 +162,34 @@ struct EDPEarlyDiskClaimClassifier: Sendable {
     let mediaProvider: any EDPWholeUSBMediaProviding
     let metadataReader: any EDPRawMetadataReading
 
+    func claimCandidate(bsdName: String) -> EDPWholeUSBMedia? {
+        validatedCandidate { $0.bsdName == bsdName }
+    }
+
+    func claimCandidate(usbRegistryEntryID: UInt64) -> EDPWholeUSBMedia? {
+        validatedCandidate { $0.usbRegistryEntryID == usbRegistryEntryID }
+    }
+
     func shouldClaim(bsdName: String) -> Bool {
-        guard let media = try? mediaProvider.allWholeUSBMedia().first(where: { $0.bsdName == bsdName }),
+        claimCandidate(bsdName: bsdName) != nil
+    }
+
+    private func validatedCandidate(
+        matching predicate: (EDPWholeUSBMedia) -> Bool
+    ) -> EDPWholeUSBMedia? {
+        guard let media = try? mediaProvider.allWholeUSBMedia().first(where: predicate),
               let metadata = try? metadataReader.snapshot(for: media),
               mediaProvider.registryEntryExists(media.registryEntryID),
               mediaProvider.registryEntryExists(media.usbRegistryEntryID),
-              let current = try? mediaProvider.allWholeUSBMedia().first(where: { $0.bsdName == bsdName }),
+              let current = try? mediaProvider.allWholeUSBMedia().first(where: { $0.bsdName == media.bsdName }),
               current == media else {
-            return false
+            return nil
         }
         let resolved = EDPPhysicalIdentityResolver.resolve(media: media, metadata: metadata)
-        return resolved.mediaKind == .standardEncrypted && resolved.identity != nil
+        guard resolved.mediaKind == .standardEncrypted, resolved.identity != nil else {
+            return nil
+        }
+        return media
     }
 }
 
@@ -852,10 +869,30 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
               let usbRegistryEntryID = EDPNativeDeviceDiscovery.usbRegistryEntryID(
                   forBSDName: String(cString: name)
               ) else { return false }
+
         stateLock.lock()
-        defer { stateLock.unlock() }
-        return suppressedUSBRegistryEntryIDs.contains(usbRegistryEntryID)
+        let alreadyDenied = suppressedUSBRegistryEntryIDs.contains(usbRegistryEntryID)
             || earlyClaimMountGate.deniesMount(usbRegistryEntryID: usbRegistryEntryID)
+        stateLock.unlock()
+        if alreadyDenied { return true }
+
+        // A child partition can reach mount approval before Disk Arbitration has
+        // delivered the whole-media peek callback. Classify the exact owning USB
+        // generation here as a fallback; only a fully revalidated standard EDP
+        // device is denied. Ordinary/unverified media remains fail-open.
+        guard let media = earlyClaimClassifier?.claimCandidate(
+            usbRegistryEntryID: usbRegistryEntryID
+        ) else {
+            return false
+        }
+
+        stateLock.lock()
+        earlyClaimMountGate.protect(
+            mediaRegistryEntryID: media.registryEntryID,
+            usbRegistryEntryID: usbRegistryEntryID
+        )
+        stateLock.unlock()
+        return true
     }
 
     func suppressAutomount(usbRegistryEntryID: UInt64) {
