@@ -210,6 +210,14 @@ struct EDPUIAutomationMain {
         }
         print("UI_HITCH_TOGGLES_END_EPOCH=\(Date().timeIntervalSince1970)")
         fflush(stdout)
+        // Keep the attach target alive beyond xctrace's 8-second time limit.
+        // Let Instruments terminate the recording first instead of racing a
+        // target exit while it is still finalizing compositor data.
+        print("UI_HITCH_TARGET_HOLD_BEGIN=1")
+        fflush(stdout)
+        spin(seconds: 6)
+        print("UI_HITCH_TARGET_HOLD_END=1")
+        fflush(stdout)
     }
 
     private static func argumentValue(after flag: String) -> String? {

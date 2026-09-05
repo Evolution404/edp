@@ -232,6 +232,8 @@ done
 ! /usr/bin/grep -Fq -- '--target-stdout "${HITCH_LOG}"' "${UI_RUNNER}"
 ! /usr/bin/grep -Fq -- '--launch -- "${BIN}" --hitch-only' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'UI_HITCH_TRACE_GATE_OPEN=1' "${ROOT}/Apps/Drive/Tests/UI/ValidateUIAutomation.swift"
+/usr/bin/grep -Fq 'UI_HITCH_TARGET_HOLD_BEGIN=1' "${ROOT}/Apps/Drive/Tests/UI/ValidateUIAutomation.swift"
+/usr/bin/grep -Fq 'spin(seconds: 6)' "${ROOT}/Apps/Drive/Tests/UI/ValidateUIAutomation.swift"
 /usr/bin/grep -Fq 'table[@schema="hitches-frame-lifetimes"]' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'table[@schema="hitches"]' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'UI_HITCH_SAMPLE_SOURCE=' "${ROOT}/Apps/Drive/Tests/UI/ParseAnimationHitches.py"
