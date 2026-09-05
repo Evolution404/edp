@@ -1,8 +1,7 @@
 import Dispatch
 import Foundation
 
-@main
-private enum ValidateBoundedVFS {
+enum ValidateBoundedVFS {
     private struct ValidationError: Error, CustomStringConvertible {
         let description: String
     }
@@ -28,7 +27,7 @@ private enum ValidateBoundedVFS {
         guard condition() else { throw ValidationError(description: message) }
     }
 
-    static func main() {
+    static func run() {
         do {
             let queue = DispatchQueue(label: "com.edp.drive.tests.event-vfs")
             let finished = DispatchSemaphore(value: 0)

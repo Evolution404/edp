@@ -842,11 +842,15 @@ struct ValidateCredentialPolicyServiceLifecycle {
             )
         }
         let fixtureDirectory = CommandLine.arguments[1]
+        try ValidateDiscoverySeam.run(fixtureDirectory: fixtureDirectory)
+        try ValidateVirtualPhysicalUSB.run(fixtureDirectory: fixtureDirectory)
         try validateCredentialAndPolicyScenarios(fixtureDirectory: fixtureDirectory)
         try validateDefaultPolicyScenarios(fixtureDirectory: fixtureDirectory)
         try validateServiceScenarios(fixtureDirectory: fixtureDirectory)
         try EDPLifecycleModelProperties.run()
+        try ValidateVirtualUSBIntegrationLab.run(fixtureDirectory: fixtureDirectory)
         print("RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK")
+        print("RESULT=DRIVE_VIRTUAL_USB_COMBINED_BINARY_OK")
     }
 
     private static func validateCredentialAndPolicyScenarios(fixtureDirectory: String) throws {

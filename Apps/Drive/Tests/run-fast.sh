@@ -16,6 +16,7 @@ REPO_ROOT="$PWD"
 
 CORE_SOURCES=(
   native/EDPFSKitPoC/Extension/EDPRawIO.swift
+  native/EDPFSKitPoC/Extension/EDPAlignedRead.swift
   native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
   native/EDPFSKitPoC/Extension/EDPCrypto.swift
   native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
@@ -24,68 +25,50 @@ CORE_SOURCES=(
   native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
 )
 
-run_and_require() {
-  local marker="$1"
-  local output="$2"
-  shift 2
-  "$@" | tee "$output"
-  grep -Fq "$marker" "$output"
-}
-
-xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-  -framework CryptoKit -framework Security \
+BINARY="$BUILD_ROOT/validate-fast-regression"
+xcrun swiftc -Onone -swift-version 6 -warnings-as-errors \
+  -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit -framework CoreFoundation \
   "${EDP_CORE_SWIFTC_FLAGS[@]}" \
   "${CORE_SOURCES[@]}" \
-  native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
-  -o "$BUILD_ROOT/validate-edp-native-core"
-run_and_require \
-  'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' \
-  "$BUILD_ROOT/native-core.txt" \
-  "$BUILD_ROOT/validate-edp-native-core" fixtures/golden/disks.json
-for scenario in P10 P11 P12 P13 P14 P15; do
-  grep -Fq "SCENARIO=${scenario}_OK" "$BUILD_ROOT/native-core.txt"
-done
-
-xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-  native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
-  native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
-  native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
-  -o "$BUILD_ROOT/validate-edp-media-classifier"
-run_and_require \
-  'REAL_STANDARD_CLASSIFICATION_OK=disk5' \
-  "$BUILD_ROOT/media-classifier.txt" \
-  "$BUILD_ROOT/validate-edp-media-classifier" fixtures/golden/disks.json
-
-grep -Fq 'MEDIA_CLASS_STANDARD_ENCRYPTED=OK' "$BUILD_ROOT/media-classifier.txt"
-grep -Fq 'MEDIA_CLASS_LEGACY_NOPWD=OK' "$BUILD_ROOT/media-classifier.txt"
-grep -Fq 'MEDIA_CLASS_CURRENT_NOPWD=OK' "$BUILD_ROOT/media-classifier.txt"
-grep -Fq 'MEDIA_CLASS_UNRECOGNIZED_EDP=OK' "$BUILD_ROOT/media-classifier.txt"
-grep -Fq 'MEDIA_CLASS_ORDINARY_USB=OK' "$BUILD_ROOT/media-classifier.txt"
-grep -Fq 'LBA4_ONLY_ID_NEGATIVE_CONTROLS=OK' "$BUILD_ROOT/media-classifier.txt"
-for scenario in P01 P02 P03 P04 P05 P06 P07 P08 P09; do
-  grep -Fq "SCENARIO=${scenario}_OK" "$BUILD_ROOT/media-classifier.txt"
-done
-
-xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   product/EDPLifecycleScheduler.swift \
   product/EDPTransportProvider.swift \
-  native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift \
-  -o "$BUILD_ROOT/validate-transport-lifecycle"
-run_and_require \
-  'RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK' \
-  "$BUILD_ROOT/transport-lifecycle.txt" \
-  "$BUILD_ROOT/validate-transport-lifecycle"
-grep -Fq 'RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK' "$BUILD_ROOT/transport-lifecycle.txt"
-
-xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+  product/EDPIOKitLifecycle.swift \
+  product/EDPNativeSystem.swift \
   product/EDPXPCProtocol.swift \
   product/EDPDevicePolicyStore.swift \
+  native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
+  native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
+  native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift \
+  native/EDPFSKitPoC/Tools/ValidateBoundedVFS.swift \
   product/Tests/ValidateProductModels.swift \
-  -o "$BUILD_ROOT/validate-product-models"
-run_and_require \
+  Tests/Fast/ValidateFastRegression.swift \
+  -o "$BINARY"
+
+OUTPUT="$($BINARY fixtures/golden/disks.json)"
+printf '%s\n' "$OUTPUT"
+
+grep -Fq 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' <<<"$OUTPUT"
+for scenario in P10 P11 P12 P13 P14 P15; do
+  grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
+done
+for marker in \
+  'REAL_STANDARD_CLASSIFICATION_OK=disk5' \
+  'MEDIA_CLASS_STANDARD_ENCRYPTED=OK' \
+  'MEDIA_CLASS_LEGACY_NOPWD=OK' \
+  'MEDIA_CLASS_CURRENT_NOPWD=OK' \
+  'MEDIA_CLASS_UNRECOGNIZED_EDP=OK' \
+  'MEDIA_CLASS_ORDINARY_USB=OK' \
+  'LBA4_ONLY_ID_NEGATIVE_CONTROLS=OK' \
+  'RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK' \
+  'RESULT=TRANSPORT_LIFECYCLE_VIRTUAL_CLOCK_OK' \
+  'RESULT=BOUNDED_VFS_UNMOUNT_GUARD_OK' \
   'RESULT=EDP_PRODUCT_MODELS_OK' \
-  "$BUILD_ROOT/product-models.txt" \
-  "$BUILD_ROOT/validate-product-models"
+  'RESULT=DRIVE_FAST_COMBINED_BINARY_OK'; do
+  grep -Fq "$marker" <<<"$OUTPUT"
+done
+for scenario in P01 P02 P03 P04 P05 P06 P07 P08 P09; do
+  grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
+done
 
 echo 'RESULT=DRIVE_CORE_OK'
 echo 'RESULT=DRIVE_IDENTITY_OK'

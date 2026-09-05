@@ -11,6 +11,7 @@ REPO_ROOT="$PWD"
 
 CORE_SOURCES=(
   native/EDPFSKitPoC/Extension/EDPRawIO.swift
+  native/EDPFSKitPoC/Extension/EDPAlignedRead.swift
   native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
   native/EDPFSKitPoC/Extension/EDPCrypto.swift
   native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
@@ -69,7 +70,7 @@ RAW_BROKER_OBJ="$BUILD_DIR/EDPRawFDBroker.o"
 /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawValidation.c -o "$RAW_VALIDATION_OBJ"
 /usr/bin/cc -O2 -Wall -Wextra -Iproduct -c product/EDPRawFDBroker.c -o "$RAW_BROKER_OBJ"
 
-xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+xcrun swiftc -Onone -swift-version 6 -warnings-as-errors \
   -D EDP_REGRESSION_TESTS \
   -Xfrontend -disable-availability-checking \
   -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit -framework CoreFoundation \
@@ -77,12 +78,22 @@ xcrun swiftc -O -swift-version 6 -warnings-as-errors \
   "${CORE_SOURCES[@]}" \
   "${PRODUCT_SOURCES[@]}" \
   "${VIRTUAL_USB_SOURCES[@]}" \
+  Tests/VirtualUSB/ValidateDiscoverySeam.swift \
+  Tests/VirtualUSB/ValidateVirtualPhysicalUSB.swift \
+  Tests/VirtualUSB/ValidateVirtualUSBIntegrationLab.swift \
   Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift \
   "$RAW_VALIDATION_OBJ" "$RAW_BROKER_OBJ" \
   -o "$BINARY"
 
 OUTPUT="$($BINARY fixtures/real_disks/disk4 2>&1)"
 printf '%s\n' "$OUTPUT"
+grep -Fq 'SCENARIO=TEST_C_INJECTED_DISCOVERY_OK' <<<"$OUTPUT"
+grep -Fq 'SCENARIO=TEST_C_METADATA_READER_FAILURE_ISOLATED' <<<"$OUTPUT"
+grep -Fq 'RESULT=DRIVE_DISCOVERY_SEAM_OK' <<<"$OUTPUT"
+for scenario in $(seq 16 30); do
+  grep -Fq "SCENARIO=P${scenario}_OK" <<<"$OUTPUT"
+done
+grep -Fq 'RESULT=DRIVE_VIRTUAL_PHYSICAL_USB_OK' <<<"$OUTPUT"
 for scenario in C01 C02 C03 C04 C05 C06 C07 C08; do
   grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
 done
@@ -96,4 +107,10 @@ grep -Fq 'SCENARIO=M11_OK' <<<"$OUTPUT"
 grep -Fq 'MODEL_SEQUENCES=10000' <<<"$OUTPUT"
 grep -Fq 'RESULT=DRIVE_LIFECYCLE_MODEL_PROPERTIES_OK' <<<"$OUTPUT"
 grep -Fq 'RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK' <<<"$OUTPUT"
+for scenario in V01 V02 V03 V04 V05 V06 V07; do
+  grep -Fq "SCENARIO=${scenario}_OK" <<<"$OUTPUT"
+done
+grep -Fq 'RESULT=DRIVE_VIRTUAL_USB_INTEGRATION_LAB_OK' <<<"$OUTPUT"
+grep -Fq 'RESULT=DRIVE_VIRTUAL_USB_COMBINED_BINARY_OK' <<<"$OUTPUT"
+printf '%s\n' 'RESULT=DRIVE_FULLY_SOFTWARE_VIRTUAL_USB_OK'
 printf '%s\n' 'RESULT=DRIVE_SERVICE_LIFECYCLE_OK'

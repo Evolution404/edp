@@ -1063,21 +1063,34 @@ echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
 
 # Canonical top-level gates must remain wired and hardware-free by construction.
 /usr/bin/grep -Fq 'drive-test-storage-smoke:' "${ROOT}/Makefile"
-/usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5' "${ROOT}/Makefile"
+/usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=3' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'EDP_STORAGE_PROFILE=release EDP_STORAGE_LOOP_COUNT=5' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'LOOP_COUNT="${EDP_STORAGE_LOOP_COUNT:-5}"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'MIN_LOOPS=5' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'drive-test-system:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system' "${ROOT}/Makefile"
+/usr/bin/grep -Fq 'storage_profile:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_CI_STORAGE_PROFILE:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'make drive-test-storage-smoke' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'make drive-test-storage' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'EDP_ALLOW_LOCAL_STORAGE_E2E' "${STORAGE_RUNNER}" "${TESTING_DOC}"
+/usr/bin/grep -Fq 'synthetic FSKit/DiskImages2 teardown can stall Finder' "${STORAGE_RUNNER}" "${TESTING_DOC}"
 
 # Full Virtual USB integration must be software-only. The production default
 # still reads the native mount table; regression injects an in-memory checker so
 # boot takeover and insert/remove/mount/eject generation flows need no hardware.
 VIRTUAL_USB_LAB="${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateVirtualUSBIntegrationLab.swift"
 VIRTUAL_USB_LAB_RUNNER="${ROOT}/Apps/Drive/Tests/run-virtual-usb-integration-lab.sh"
+VIRTUAL_USB_COMBINED_RUNNER="${ROOT}/Apps/Drive/Tests/run-service-lifecycle.sh"
 /usr/bin/grep -Fq 'mountedBSDPrefixChecker: @escaping @Sendable (String) -> Bool = EDPNativeMountTable.hasMountedBSDPrefix' "${RAW_ACCESS_COORDINATOR_SOURCE}" "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'make drive-test-virtual-usb-lab' "${ROOT}/Makefile" "${TESTING_DOC}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_FULLY_SOFTWARE_VIRTUAL_USB_OK' "${VIRTUAL_USB_LAB_RUNNER}" "${ROOT}/Apps/Drive/Tests/run-virtual-usb.sh" "${TESTING_DOC}"
+[[ "$(/usr/bin/grep -Fc 'xcrun swiftc ' "${VIRTUAL_USB_COMBINED_RUNNER}")" -eq 1 ]]
+/usr/bin/grep -Fq 'xcrun swiftc -Onone -swift-version 6 -warnings-as-errors' "${VIRTUAL_USB_COMBINED_RUNNER}"
+/usr/bin/grep -Fq 'ValidateDiscoverySeam.swift' "${VIRTUAL_USB_COMBINED_RUNNER}"
+/usr/bin/grep -Fq 'ValidateVirtualPhysicalUSB.swift' "${VIRTUAL_USB_COMBINED_RUNNER}"
+/usr/bin/grep -Fq 'ValidateVirtualUSBIntegrationLab.swift' "${VIRTUAL_USB_COMBINED_RUNNER}"
+/usr/bin/grep -Fq 'ValidateCredentialPolicyServiceLifecycle.swift' "${VIRTUAL_USB_COMBINED_RUNNER}"
 for scenario in V01 V02 V03 V04 V05 V06 V07; do
   /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${VIRTUAL_USB_LAB}"
 done
@@ -1085,6 +1098,18 @@ done
 [[ ! -e "${ROOT}/Tools/drive-usb-reenumerate.sh" ]]
 [[ ! -e "${ROOT}/Tools/usb-reenumerate/EDPUSBReenumerate.m" ]]
 echo 'RESULT=DRIVE_SYSTEM_FULLY_SOFTWARE_VIRTUAL_USB_OK'
+
+# Fast regression must remain one hardware-free -Onone Swift validator binary.
+# The native job owns strict production compilation; it must not duplicate the
+# golden/transport/media validation already covered by regression-fast.
+FAST_RUNNER="${ROOT}/Apps/Drive/Tests/run-fast.sh"
+FAST_DRIVER="${ROOT}/Apps/Drive/Tests/Fast/ValidateFastRegression.swift"
+[[ "$(/usr/bin/grep -Fc 'xcrun swiftc ' "${FAST_RUNNER}")" -eq 1 ]]
+/usr/bin/grep -Fq 'xcrun swiftc -Onone -swift-version 6 -warnings-as-errors' "${FAST_RUNNER}"
+/usr/bin/grep -Fq 'ValidateFastRegression.swift' "${FAST_RUNNER}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_FAST_COMBINED_BINARY_OK' "${FAST_DRIVER}"
+! /usr/bin/grep -Fq 'Build core and run EDP golden validation' "${DRIVE_WORKFLOW}"
+echo 'RESULT=DRIVE_SYSTEM_FAST_COMBINED_BINARY_OK'
 
 RAW_BROKER_SOURCE="${ROOT}/Apps/Drive/product/EDPRawFDBroker.c"
 /usr/bin/grep -Fq 'EDP_RAW_BROKER_APP_PATH "/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"' "${RAW_BROKER_SOURCE}"

@@ -43,13 +43,8 @@ private struct ValidationFailure: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
-@main
 struct ValidateDiscoverySeam {
-    static func main() throws {
-        guard CommandLine.arguments.count == 2 else {
-            throw ValidationFailure("usage: validate-discovery-seam <real_disks/disk4>")
-        }
-
+    static func run(fixtureDirectory: String) throws {
         let media = EDPWholeUSBMedia(
             bsdName: "disk42",
             sizeBytes: 124_736_503_808,
@@ -67,7 +62,7 @@ struct ValidateDiscoverySeam {
         var diagnostics = [String]()
         let disks = try EDPPhysicalDiskDiscovery(
             mediaProvider: provider,
-            metadataReader: FixtureMetadataReader(fixtureDirectory: CommandLine.arguments[1])
+            metadataReader: FixtureMetadataReader(fixtureDirectory: fixtureDirectory)
         ).discover { diagnostics.append($0) }
 
         guard disks.count == 1, let disk = disks.first else {

@@ -7,6 +7,13 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 
 cd "$DRIVE_ROOT"
 REPO_ROOT="$PWD"
+
+if [[ "${CI:-}" != "true" && "${EDP_ALLOW_LOCAL_STORAGE_E2E:-0}" != "1" ]]; then
+  echo "Refusing local desktop storage E2E: synthetic FSKit/DiskImages2 teardown can stall Finder." >&2
+  echo "Run this suite in GitHub Actions, or set EDP_ALLOW_LOCAL_STORAGE_E2E=1 only in an isolated local test environment." >&2
+  exit 64
+fi
+
 . scripts/prepare-shared-edp-core.sh
 
 STORAGE_PROFILE="${EDP_STORAGE_PROFILE:-release}"

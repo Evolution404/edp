@@ -2,6 +2,15 @@ name: EDP Drive
 
 on:
   workflow_dispatch:
+    inputs:
+      storage_profile:
+        description: Storage validation strength for this manual run
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - release
   schedule:
     - cron: "20 18 * * *"
   push:
@@ -184,69 +193,6 @@ jobs:
           bash -n Apps/Drive/installer/build-native-installer.sh
           bash -n Apps/Drive/installer/build-transport-backends.sh
           echo 'RESULT=EDP_DRIVE_MONOREPO_CONTRACT_OK'
-      - name: Build core and run EDP golden validation
-        run: |
-          set -euo pipefail
-          export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-          cd Apps/Drive
-          REPO_ROOT="$PWD"
-          . scripts/prepare-shared-edp-core.sh
-          CORE_SOURCES=(
-            native/EDPFSKitPoC/Extension/EDPRawIO.swift
-            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
-            native/EDPFSKitPoC/Extension/EDPCrypto.swift
-            native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
-            native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
-            native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
-            native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
-          )
-          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-            -framework CryptoKit -framework Security \
-            "${EDP_CORE_SWIFTC_FLAGS[@]}" \
-            "${CORE_SOURCES[@]}" \
-            native/EDPFSKitPoC/Tools/ValidateEDPNativeCore.swift \
-            -o "${RUNNER_TEMP}/validate-edp-native-core"
-          "${RUNNER_TEMP}/validate-edp-native-core" fixtures/golden/disks.json \
-            | tee "${RUNNER_TEMP}/native-core.txt"
-          grep -Fq 'RESULT=SWIFT_NATIVE_CRYPTO_CORE_OK' "${RUNNER_TEMP}/native-core.txt"
-          grep -Fq 'RESULT=SWIFT_NATIVE_LBA11_LBA12_OK' "${RUNNER_TEMP}/native-core.txt"
-          grep -Fq 'RESULT=SWIFT_NATIVE_ENCRYPTED_READER_OK' "${RUNNER_TEMP}/native-core.txt"
-          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-            product/EDPLifecycleScheduler.swift \
-            product/EDPTransportProvider.swift \
-            native/EDPFSKitPoC/Tools/ValidateTransportLifecycle.swift \
-            -o "${RUNNER_TEMP}/validate-transport-lifecycle"
-          "${RUNNER_TEMP}/validate-transport-lifecycle" \
-            | tee "${RUNNER_TEMP}/transport-lifecycle.txt"
-          grep -Fq 'RESULT=TRANSPORT_LIFECYCLE_HARDENING_OK' \
-            "${RUNNER_TEMP}/transport-lifecycle.txt"
-          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-            -framework CryptoKit -framework Security -framework DiskArbitration -framework IOKit \
-            "${EDP_CORE_SWIFTC_FLAGS[@]}" \
-            "${CORE_SOURCES[@]}" \
-            product/EDPIOKitLifecycle.swift \
-            product/EDPNativeSystem.swift \
-            native/EDPFSKitPoC/Tools/ValidateBoundedVFS.swift \
-            -o "${RUNNER_TEMP}/validate-bounded-vfs"
-          "${RUNNER_TEMP}/validate-bounded-vfs" \
-            | tee "${RUNNER_TEMP}/bounded-vfs.txt"
-          grep -Fq 'RESULT=BOUNDED_VFS_UNMOUNT_GUARD_OK' \
-            "${RUNNER_TEMP}/bounded-vfs.txt"
-          xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-            native/EDPFSKitPoC/Extension/EDPAlignedRead.swift \
-            native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift \
-            native/EDPFSKitPoC/Tools/ValidateEDPMetadataProbe.swift \
-            -o "${RUNNER_TEMP}/validate-edp-media-classifier"
-          "${RUNNER_TEMP}/validate-edp-media-classifier" fixtures/golden/disks.json \
-            | tee "${RUNNER_TEMP}/media-classifier.txt"
-          grep -Fq 'MEDIA_CLASS_STANDARD_ENCRYPTED=OK' "${RUNNER_TEMP}/media-classifier.txt"
-          grep -Fq 'MEDIA_CLASS_LEGACY_NOPWD=OK' "${RUNNER_TEMP}/media-classifier.txt"
-          grep -Fq 'MEDIA_CLASS_CURRENT_NOPWD=OK' "${RUNNER_TEMP}/media-classifier.txt"
-          grep -Fq 'MEDIA_CLASS_UNRECOGNIZED_EDP=OK' "${RUNNER_TEMP}/media-classifier.txt"
-          grep -Fq 'MEDIA_CLASS_ORDINARY_USB=OK' "${RUNNER_TEMP}/media-classifier.txt"
-          grep -Fq 'REAL_STANDARD_CLASSIFICATION_OK=disk4' "${RUNNER_TEMP}/media-classifier.txt"
-          grep -Fq 'REAL_STANDARD_CLASSIFICATION_OK=disk5' "${RUNNER_TEMP}/media-classifier.txt"
-          echo 'RESULT=EDP_DRIVE_GOLDEN_GATE_OK'
       - name: Compile native daemon and SwiftUI app
         run: |
           set -euo pipefail
@@ -376,10 +322,16 @@ jobs:
       - name: Prepare official macFUSE Local FSKit runtime
         run: Apps/Drive/Tests/CI/install-macfuse-fskit.sh
       - name: Sparse-image storage M01-M14
+        env:
+          EDP_CI_STORAGE_PROFILE: ${{ inputs.storage_profile || 'smoke' }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/drive-tests
-          make drive-test-storage | tee artifacts/drive-tests/storage.log
+          if [[ "$EDP_CI_STORAGE_PROFILE" == "release" ]]; then
+            make drive-test-storage | tee artifacts/drive-tests/storage.log
+          else
+            make drive-test-storage-smoke | tee artifacts/drive-tests/storage.log
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:

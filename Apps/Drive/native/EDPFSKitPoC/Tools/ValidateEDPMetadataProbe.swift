@@ -1,6 +1,5 @@
 import Foundation
 
-@main
 struct ValidateEDPMetadataProbe {
     enum ValidationError: Error, CustomStringConvertible {
         case usage
@@ -41,12 +40,7 @@ struct ValidateEDPMetadataProbe {
         }
     }
 
-    static func main() throws {
-        guard CommandLine.arguments.count == 2 else {
-            throw ValidationError.usage
-        }
-
-        let goldenPath = CommandLine.arguments[1]
+    static func run(goldenPath: String) throws {
         try validateAlignmentMath()
         try validateAlignmentProperties()
         try validateAlignmentErrorPaths()

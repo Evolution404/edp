@@ -8,9 +8,8 @@ private func require(_ condition: @autoclosure () -> Bool, _ message: String) th
     guard condition() else { throw ValidationFailure(description: message) }
 }
 
-@main
-private enum ValidateProductModels {
-    static func main() throws {
+enum ValidateProductModels {
+    static func run() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("edp-policy-test-\(UUID().uuidString)", isDirectory: true)
         let store = try EDPDevicePolicyStore(

@@ -146,7 +146,9 @@ make drive-test-storage
 
 Both require the macFUSE Local FSKit runtime. GitHub Actions installs the official runtime before running the suite.
 
-Current release profile uses `EDP_STORAGE_LOOP_COUNT=5`.
+On an interactive local desktop, `run-storage.sh` refuses to run by default because synthetic FSKit/DiskImages2 teardown can stall Finder. Storage E2E is CI-authoritative. An isolated local test environment may opt in explicitly with `EDP_ALLOW_LOCAL_STORAGE_E2E=1`; do not use that override on the user's normal desktop session.
+
+The smoke profile uses `EDP_STORAGE_LOOP_COUNT=3` for ordinary PR/development CI. The release profile remains `EDP_STORAGE_LOOP_COUNT=5`, and the scheduled stress job remains 100 cycles. Final release candidates must explicitly select the release profile; the faster smoke profile does not satisfy the release checklist.
 
 ### Covered scenarios
 
@@ -297,7 +299,7 @@ Workflow: `.github/workflows/drive.yml`
 
 ### `native`
 
-Builds core and compiles native daemon / SwiftUI App under strict settings.
+Builds EDPCore and compiles the production daemon / SwiftUI App under strict `-O`, Swift 6 and `-warnings-as-errors` settings. Golden/media/transport validators are not duplicated here; those contracts belong to `regression-fast`.
 
 ### `regression-fast`
 
@@ -307,6 +309,8 @@ Runs:
 make drive-test-fast
 ```
 
+Native-core golden, metadata/media classification, transport lifecycle, bounded-VFS and product-model validators are linked into one `-Onone` test executable. The regression still runs EDPCore tests, strict App typecheck and block-publisher contracts, but avoids recompiling the same validator source set several times.
+
 ### `regression-virtual-usb`
 
 Runs:
@@ -315,15 +319,18 @@ Runs:
 make drive-test-virtual-usb
 ```
 
+Discovery, P16–P30, C/D, S01–S47, the 320,000-step property model and V01–V07 are linked into one `-Onone` regression executable. The production/runtime sources are therefore compiled once per job instead of once per validator; coverage and Swift 6 `-warnings-as-errors` remain unchanged.
+
 ### `regression-storage`
 
 On macOS 26:
 
 1. installs official macFUSE Local FSKit runtime;
-2. runs `make drive-test-storage`;
-3. uploads storage logs.
+2. ordinary push/PR/manual runs default to `make drive-test-storage-smoke` (3 M10 cycles);
+3. a final manual release run selects workflow input `storage_profile=release`, which runs `make drive-test-storage` (5 M10 cycles);
+4. uploads storage logs.
 
-Timeout: 30 minutes.
+Timeout: 30 minutes. The smoke result is development evidence only; release acceptance requires the explicit 5-cycle release profile.
 
 ### `regression-ui-system`
 

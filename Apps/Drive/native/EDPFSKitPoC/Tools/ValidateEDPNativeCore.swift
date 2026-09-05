@@ -165,7 +165,6 @@ private final class SparseRawWritable: EDPRawWritable {
     }
 }
 
-@main
 struct ValidateEDPNativeCore {
     private struct DeterministicRNG {
         private var state: UInt64
@@ -180,11 +179,8 @@ struct ValidateEDPNativeCore {
         }
     }
 
-    static func main() throws {
-        guard CommandLine.arguments.count == 2 else {
-            throw ValidationFailure.message("usage: ValidateEDPNativeCore <fixtures/golden/disks.json>")
-        }
-        let goldenURL = URL(fileURLWithPath: CommandLine.arguments[1])
+    static func run(goldenPath: String) throws {
+        let goldenURL = URL(fileURLWithPath: goldenPath)
         let rootData = try Data(contentsOf: goldenURL)
         guard let root = try JSONSerialization.jsonObject(with: rootData) as? [String: Any],
               let disks = root["disks"] as? [[String: Any]] else {

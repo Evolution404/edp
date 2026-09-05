@@ -213,9 +213,8 @@ private final class FakeManagedProcess: EDPManagedProcess {
     }
 }
 
-@main
-private enum ValidateTransportLifecycle {
-    static func main() throws {
+enum ValidateTransportLifecycle {
+    static func run() throws {
         try validateAlreadyExited()
         try validateTerminateFallback()
         try validateForceTerminateFallback()

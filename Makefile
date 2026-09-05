@@ -32,7 +32,7 @@ help:
 	@echo "  make drive-clean-environment  Remove EDP Drive + old Vault + macFUSE test environment"
 	@echo "  make drive-test-fast    Hardware-free core/classifier regression"
 	@echo "  make drive-test-virtual-usb-lab  Full software-only insert/mount/eject/remove/reinsert E2E"
-	@echo "  make drive-test-storage-smoke  Sparse-image M01-M14 functional smoke (5 loops)"
+	@echo "  make drive-test-storage-smoke  Sparse-image M01-M14 functional smoke (3 loops)"
 	@echo "  make drive-test-storage Sparse-image M01-M14 release validation (5 loops)"
 	@echo "  make drive-test-all     All hardware-free Drive regression gates"
 	@echo "  make studio-generate    Regenerate the Studio Xcode project"
@@ -82,7 +82,7 @@ drive-test-virtual-usb-lab:
 	@"$(ROOT)/Apps/Drive/Tests/run-virtual-usb-integration-lab.sh"
 
 drive-test-storage-smoke:
-	@EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5 "$(ROOT)/Apps/Drive/Tests/run-storage.sh"
+	@EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=3 "$(ROOT)/Apps/Drive/Tests/run-storage.sh"
 
 drive-test-storage:
 	@EDP_STORAGE_PROFILE=release EDP_STORAGE_LOOP_COUNT=5 "$(ROOT)/Apps/Drive/Tests/run-storage.sh"

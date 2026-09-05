@@ -498,15 +498,10 @@ private final class VirtualUSBIntegrationLab {
     }
 }
 
-@main
 struct ValidateVirtualUSBIntegrationLab {
-    static func main() throws {
-        guard CommandLine.arguments.count == 2 else {
-            throw VirtualUSBLabError("usage: validate-virtual-usb-integration-lab <real_disks/disk4>")
-        }
-
+    static func run(fixtureDirectory: String) throws {
         let lab = try VirtualUSBIntegrationLab(
-            fixtureDirectory: CommandLine.arguments[1],
+            fixtureDirectory: fixtureDirectory,
             bootWithSystemMountedDevice: true
         )
 

@@ -5,15 +5,10 @@ private struct VirtualUSBValidationError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
-@main
 struct ValidateVirtualPhysicalUSB {
-    static func main() throws {
-        guard CommandLine.arguments.count == 2 else {
-            throw VirtualUSBValidationError("usage: validate-virtual-physical-usb <real_disks/disk4>")
-        }
-
+    static func run(fixtureDirectory: String) throws {
         let fixtureA = try EDPVirtualDiskFactory.capturedDisk4(
-            fixtureDirectory: CommandLine.arguments[1]
+            fixtureDirectory: fixtureDirectory
         )
         let fixtureB = try EDPVirtualDiskFactory.changingOnlyID(fixtureA, to: 3_164_177_654)
         let baselineIdentity = try discoverSingle(
