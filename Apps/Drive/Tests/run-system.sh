@@ -799,14 +799,19 @@ for scenario in S36 S37 S38 S39 S40; do
 done
 echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
 
-# Standard encrypted EDP media must be claimed during the Disk Arbitration peek
-# phase, before macOS starts automatic FSKit probing. This closes the physical
-# replug race where fskitd can retain /dev/rdiskNs1 and make the whole-disk RW
-# raw lease fail with EBUSY. Classification remains standard-EDP-only; no daemon
-# hot-path workaround may kill/reset fskitd globally.
+# Standard encrypted EDP media is classified during the Disk Arbitration peek
+# phase and claimed for exclusive ownership. Apple documents mount approval as
+# the authority for preventing automatic mounts, so the verified USB generation
+# must also enter the mount-denial gate before the asynchronous DADiskClaim
+# result arrives. This closes the queued child-volume mount race that can leave
+# fskitd holding /dev/rdiskNs1 and force whole-disk EBUSY recovery.
+/usr/bin/grep -Fq 'struct EDPEarlyClaimMountGate: Sendable' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'struct EDPEarlyDiskClaimClassifier: Sendable' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'resolved.mediaKind == .standardEncrypted && resolved.identity != nil' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DARegisterDiskPeekCallback(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'DARegisterDiskMountApprovalCallback(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'earlyClaimMountGate.protect(' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'earlyClaimMountGate.deniesMount(usbRegistryEntryID:' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DADiskClaim(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DADiskIsClaimed(' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'DADiskUnclaim(' "${NATIVE_SYSTEM_SOURCE}"
@@ -821,8 +826,14 @@ echo 'RESULT=DRIVE_SYSTEM_SAFE_EJECT_SUPPRESSION_OK'
 /usr/bin/grep -Fq 'func hasExclusiveClaim(_ bsdName: String, expectedRegistryEntryID: UInt64) -> Bool' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'EDP Drive owns this standard encrypted physical generation' "${NATIVE_SYSTEM_SOURCE}"
 /usr/bin/grep -Fq 'SCENARIO=S41_OK' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+/usr/bin/grep -Fq 'SCENARIO=S46_OK' "${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateCredentialPolicyServiceLifecycle.swift"
+EARLY_PEEK_SECTION="$(/usr/bin/awk '/fileprivate func handleEarlyPeek\(_ disk: DADisk\)/,/fileprivate func handleEarlyClaimResult/' "${NATIVE_SYSTEM_SOURCE}")"
+EARLY_MOUNT_GATE_LINE="$(/usr/bin/grep -nF 'earlyClaimMountGate.protect(' <<<"${EARLY_PEEK_SECTION}" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
+EARLY_CLAIM_LINE="$(/usr/bin/grep -nF 'DADiskClaim(' <<<"${EARLY_PEEK_SECTION}" | /usr/bin/head -n1 | /usr/bin/cut -d: -f1)"
+[[ -n "${EARLY_MOUNT_GATE_LINE}" && -n "${EARLY_CLAIM_LINE}" && "${EARLY_MOUNT_GATE_LINE}" -lt "${EARLY_CLAIM_LINE}" ]]
 ! /usr/bin/grep -Ei 'killall.*fskitd|pkill.*fskitd|SIG(KILL|TERM).*fskitd' "${RUNTIME_SOURCE}" "${NATIVE_SYSTEM_SOURCE}" "${RAW_ACCESS_COORDINATOR_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_EARLY_EDP_DISK_CLAIM_OK'
+echo 'RESULT=DRIVE_SYSTEM_EARLY_CLAIM_MOUNT_GAP_CLOSED'
 
 # Routine UI stop/start/restart must not terminate the privileged process while a
 # standard EDP generation is claimed. Pause/resume/restart quiesce mounts and raw

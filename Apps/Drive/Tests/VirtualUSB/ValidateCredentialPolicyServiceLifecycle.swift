@@ -2764,6 +2764,33 @@ struct ValidateCredentialPolicyServiceLifecycle {
         }
 
         do {
+            var gate = EDPEarlyClaimMountGate()
+            let mediaRegistryEntryID: UInt64 = 0x9400
+            let usbRegistryEntryID: UInt64 = 0x9401
+            guard !gate.deniesMount(usbRegistryEntryID: usbRegistryEntryID) else {
+                throw LifecycleValidationError(
+                    "S46 unverified media was denied before early-claim protection"
+                )
+            }
+            gate.protect(
+                mediaRegistryEntryID: mediaRegistryEntryID,
+                usbRegistryEntryID: usbRegistryEntryID
+            )
+            guard gate.deniesMount(usbRegistryEntryID: usbRegistryEntryID) else {
+                throw LifecycleValidationError(
+                    "S46 pending early claim left a child-volume automount gap"
+                )
+            }
+            gate.retire(mediaRegistryEntryID: mediaRegistryEntryID)
+            guard !gate.deniesMount(usbRegistryEntryID: usbRegistryEntryID) else {
+                throw LifecycleValidationError(
+                    "S46 failed/retired claim did not release child-volume automount"
+                )
+            }
+            print("SCENARIO=S46_OK pending_early_claim_denies_child_automount_until_retired")
+        }
+
+        do {
             let openScript = RawAccessOpenScript(["OK", "OK", "OK"])
             let env = try ControllerEnvironment.make(
                 fixtureDirectory: fixtureDirectory,

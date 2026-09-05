@@ -142,6 +142,22 @@ protocol EDPRawMetadataReading: Sendable {
     func snapshot(for media: EDPWholeUSBMedia) throws -> EDPRawMetadataSnapshot
 }
 
+struct EDPEarlyClaimMountGate: Sendable {
+    private var usbRegistryEntryIDByMediaRegistryEntryID = [UInt64: UInt64]()
+
+    mutating func protect(mediaRegistryEntryID: UInt64, usbRegistryEntryID: UInt64) {
+        usbRegistryEntryIDByMediaRegistryEntryID[mediaRegistryEntryID] = usbRegistryEntryID
+    }
+
+    mutating func retire(mediaRegistryEntryID: UInt64) {
+        usbRegistryEntryIDByMediaRegistryEntryID.removeValue(forKey: mediaRegistryEntryID)
+    }
+
+    func deniesMount(usbRegistryEntryID: UInt64) -> Bool {
+        usbRegistryEntryIDByMediaRegistryEntryID.values.contains(usbRegistryEntryID)
+    }
+}
+
 struct EDPEarlyDiskClaimClassifier: Sendable {
     let mediaProvider: any EDPWholeUSBMediaProviding
     let metadataReader: any EDPRawMetadataReading
@@ -569,7 +585,7 @@ private func daMountApprovalCallback(
     let dissenter = DADissenterCreate(
         kCFAllocatorDefault,
         DAReturn(kDAReturnNotPermitted),
-        "EDP Drive safely ejected this device" as CFString
+        "EDP Drive controls automatic mounting for this device" as CFString
     )
     return Unmanaged.passRetained(dissenter)
 }
@@ -644,6 +660,7 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
     private let completionQueue = DispatchQueue(label: "com.edp.drive.disk-arbitration-completion")
     private let earlyClaimClassifier: EDPEarlyDiskClaimClassifier?
     private var suppressedUSBRegistryEntryIDs = Set<UInt64>()
+    private var earlyClaimMountGate = EDPEarlyClaimMountGate()
     private var pendingEarlyClaimRegistryEntryIDs = Set<UInt64>()
     private var earlyClaimedDisks = [UInt64: DADisk]()
     private var earlyClaimTerminationMonitors = [UInt64: EDPIOMediaTerminationMonitor]()
@@ -690,7 +707,8 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         guard media != IO_OBJECT_NULL else { return }
         defer { IOObjectRelease(media) }
         guard ioBool(ioRegistryProperty(media, "Whole")) == true,
-              let name = DADiskGetBSDName(disk) else { return }
+              let name = DADiskGetBSDName(disk),
+              let usbRegistryEntryID = usbAncestorIdentity(of: media)?.registryEntryID else { return }
         var registryEntryID: UInt64 = 0
         guard IORegistryEntryGetRegistryEntryID(media, &registryEntryID) == KERN_SUCCESS else { return }
 
@@ -712,6 +730,14 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
 
         stateLock.lock()
         pendingEarlyClaimRegistryEntryIDs.insert(registryEntryID)
+        // Disk Arbitration documents mount approval, not peek callbacks alone,
+        // as the authority for preventing automatic mounts. Protect the exact
+        // verified USB generation before the asynchronous DADiskClaim result is
+        // delivered so a queued child-volume mount cannot win that gap.
+        earlyClaimMountGate.protect(
+            mediaRegistryEntryID: registryEntryID,
+            usbRegistryEntryID: usbRegistryEntryID
+        )
         stateLock.unlock()
         DADiskClaim(
             disk,
@@ -731,6 +757,9 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
 
         guard dissenter == nil, DADiskIsClaimed(disk),
               let name = DADiskGetBSDName(disk) else {
+            stateLock.lock()
+            earlyClaimMountGate.retire(mediaRegistryEntryID: registryEntryID)
+            stateLock.unlock()
             if let dissenter, let name = DADiskGetBSDName(disk) {
                 let status = DADissenterGetStatus(dissenter)
                 let detail = DADissenterGetStatusString(dissenter).map { $0 as String } ?? "unknown"
@@ -761,6 +790,9 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
             // A claim without an exact retirement authority is unsafe. Release
             // it immediately so runtime pause/restart will fail closed instead
             // of depending on an untracked Disk Arbitration lifetime.
+            stateLock.lock()
+            earlyClaimMountGate.retire(mediaRegistryEntryID: registryEntryID)
+            stateLock.unlock()
             DADiskUnclaim(disk)
             NSLog(
                 "EDP exact IOMedia monitor failed for claimed %@: %@",
@@ -780,6 +812,9 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
             earlyClaimedDisks[registryEntryID] = disk
             earlyClaimTerminationMonitors[registryEntryID] = monitor
         }
+        if !shouldRetainClaim {
+            earlyClaimMountGate.retire(mediaRegistryEntryID: registryEntryID)
+        }
         stateLock.unlock()
         if !shouldRetainClaim {
             DADiskUnclaim(disk)
@@ -789,6 +824,7 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
     private func retireEarlyClaim(registryEntryID: UInt64) {
         stateLock.lock()
         pendingEarlyClaimRegistryEntryIDs.remove(registryEntryID)
+        earlyClaimMountGate.retire(mediaRegistryEntryID: registryEntryID)
         earlyClaimedDisks.removeValue(forKey: registryEntryID)
         earlyClaimTerminationMonitors.removeValue(forKey: registryEntryID)
         stateLock.unlock()
@@ -819,6 +855,7 @@ final class EDPDiskArbitrationController: EDPDaemonDiskArbitrating, @unchecked S
         stateLock.lock()
         defer { stateLock.unlock() }
         return suppressedUSBRegistryEntryIDs.contains(usbRegistryEntryID)
+            || earlyClaimMountGate.deniesMount(usbRegistryEntryID: usbRegistryEntryID)
     }
 
     func suppressAutomount(usbRegistryEntryID: UInt64) {
