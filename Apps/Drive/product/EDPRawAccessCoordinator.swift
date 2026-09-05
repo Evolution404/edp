@@ -9,6 +9,7 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
     private let leaseOpener: EDPRawAccessLeaseOpening
     private let openerRunsOffOwnerQueue: Bool
     private let metrics: EDPRuntimeMetrics
+    private let mountedBSDPrefixChecker: @Sendable (String) -> Bool
     private let rawAccessQueue = DispatchQueue(
         label: "com.edp.drive.raw-access",
         qos: .userInitiated
@@ -27,13 +28,15 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
         diskArbitration: any EDPDaemonDiskArbitrating,
         leaseOpener: @escaping EDPRawAccessLeaseOpening,
         openerRunsOffOwnerQueue: Bool,
-        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics()
+        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics(),
+        mountedBSDPrefixChecker: @escaping @Sendable (String) -> Bool = EDPNativeMountTable.hasMountedBSDPrefix
     ) {
         self.ownerQueue = ownerQueue
         self.diskArbitration = diskArbitration
         self.leaseOpener = leaseOpener
         self.openerRunsOffOwnerQueue = openerRunsOffOwnerQueue
         self.metrics = metrics
+        self.mountedBSDPrefixChecker = mountedBSDPrefixChecker
     }
 
     func lease(for disk: PhysicalDisk) -> EDPRawAccessLease? {
@@ -173,7 +176,7 @@ final class EDPRawAccessCoordinator: @unchecked Sendable {
         }
 
         guard temporarilyUnmount,
-              EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) else {
+              mountedBSDPrefixChecker(disk.bsdName) else {
             openLease()
             return
         }

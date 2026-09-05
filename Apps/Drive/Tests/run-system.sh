@@ -1070,6 +1070,22 @@ echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
 /usr/bin/grep -Fq 'drive-test-system:' "${ROOT}/Makefile"
 /usr/bin/grep -Fq 'drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system' "${ROOT}/Makefile"
 
+# Full Virtual USB integration must be software-only. The production default
+# still reads the native mount table; regression injects an in-memory checker so
+# boot takeover and insert/remove/mount/eject generation flows need no hardware.
+VIRTUAL_USB_LAB="${ROOT}/Apps/Drive/Tests/VirtualUSB/ValidateVirtualUSBIntegrationLab.swift"
+VIRTUAL_USB_LAB_RUNNER="${ROOT}/Apps/Drive/Tests/run-virtual-usb-integration-lab.sh"
+/usr/bin/grep -Fq 'mountedBSDPrefixChecker: @escaping @Sendable (String) -> Bool = EDPNativeMountTable.hasMountedBSDPrefix' "${RAW_ACCESS_COORDINATOR_SOURCE}" "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'make drive-test-virtual-usb-lab' "${ROOT}/Makefile" "${TESTING_DOC}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_FULLY_SOFTWARE_VIRTUAL_USB_OK' "${VIRTUAL_USB_LAB_RUNNER}" "${ROOT}/Apps/Drive/Tests/run-virtual-usb.sh" "${TESTING_DOC}"
+for scenario in V01 V02 V03 V04 V05 V06 V07; do
+  /usr/bin/grep -Fq "SCENARIO=${scenario}_OK" "${VIRTUAL_USB_LAB}"
+done
+! /usr/bin/grep -E 'diskutil|IOUSBHost|/dev/rdisk|/dev/disk[0-9]' "${VIRTUAL_USB_LAB}" "${VIRTUAL_USB_LAB_RUNNER}"
+[[ ! -e "${ROOT}/Tools/drive-usb-reenumerate.sh" ]]
+[[ ! -e "${ROOT}/Tools/usb-reenumerate/EDPUSBReenumerate.m" ]]
+echo 'RESULT=DRIVE_SYSTEM_FULLY_SOFTWARE_VIRTUAL_USB_OK'
+
 RAW_BROKER_SOURCE="${ROOT}/Apps/Drive/product/EDPRawFDBroker.c"
 /usr/bin/grep -Fq 'EDP_RAW_BROKER_APP_PATH "/Applications/EDP Drive.app/Contents/MacOS/EDP Drive"' "${RAW_BROKER_SOURCE}"
 /usr/bin/grep -Fq 'SCM_RIGHTS' "${RAW_BROKER_SOURCE}"

@@ -2680,6 +2680,7 @@ final class EDPServiceController: @unchecked Sendable {
     private let credentialVerifier: EDPCredentialVerifying
     private let metrics: EDPRuntimeMetrics
     private let automation = EDPAutomationState()
+    private let mountedBSDPrefixChecker: @Sendable (String) -> Bool
     private let serviceLifecycle = EDPServiceLifecycleState()
     private let queue = DispatchQueue(label: "com.edp.drive.controller")
     private let queueKey = DispatchSpecificKey<UInt8>()
@@ -2699,11 +2700,13 @@ final class EDPServiceController: @unchecked Sendable {
         rawAccessLeaseOpener: EDPRawAccessLeaseOpening? = nil,
         credentialVerifier: EDPCredentialVerifying? = nil,
         metrics: EDPRuntimeMetrics = EDPRuntimeMetrics(),
+        mountedBSDPrefixChecker: @escaping @Sendable (String) -> Bool = EDPNativeMountTable.hasMountedBSDPrefix,
         ejectSuppressionPath: String? = nil,
         performLegacyRuntimeMigration: Bool = true
     ) throws {
         self.mediaProvider = mediaProvider
         self.metrics = metrics
+        self.mountedBSDPrefixChecker = mountedBSDPrefixChecker
         queue.setSpecific(key: queueKey, value: 1)
         self.discovery = EDPDeviceDiscoveryController(
             mediaProvider: mediaProvider,
@@ -2746,7 +2749,8 @@ final class EDPServiceController: @unchecked Sendable {
             diskArbitration: effectiveDiskArbitration,
             leaseOpener: effectiveRawAccessLeaseOpener,
             openerRunsOffOwnerQueue: rawAccessOpenerRunsOffControllerQueue,
-            metrics: metrics
+            metrics: metrics,
+            mountedBSDPrefixChecker: mountedBSDPrefixChecker
         )
         let effectiveEjectSuppressionPath = ejectSuppressionPath
             ?? (performLegacyRuntimeMigration ? logicalEjectSuppressionPath : nil)
@@ -3061,7 +3065,7 @@ final class EDPServiceController: @unchecked Sendable {
                 let records = try store.load().records
                 for disk in disks {
                     if eject.isSuppressed(deviceID: disk.deviceID) {
-                        if EDPNativeMountTable.hasMountedBSDPrefix(disk.bsdName) {
+                        if mountedBSDPrefixChecker(disk.bsdName) {
                             diskArbitration.unmountWholeAsync(
                                 disk.bsdName,
                                 expectedRegistryEntryID: disk.registryEntryID

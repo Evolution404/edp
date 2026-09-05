@@ -66,4 +66,8 @@ printf '%s\n' "$SERVICE_OUTPUT"
 grep -Fq 'RESULT=DRIVE_CREDENTIAL_POLICY_SERVICE_OK' <<<"$SERVICE_OUTPUT"
 grep -Fq 'RESULT=DRIVE_SERVICE_LIFECYCLE_OK' <<<"$SERVICE_OUTPUT"
 
+LAB_OUTPUT="$(Tests/run-virtual-usb-integration-lab.sh)"
+printf '%s\n' "$LAB_OUTPUT"
+grep -Fq 'RESULT=DRIVE_FULLY_SOFTWARE_VIRTUAL_USB_OK' <<<"$LAB_OUTPUT"
+
 printf '%s\n' 'RESULT=DRIVE_VIRTUAL_USB_OK'

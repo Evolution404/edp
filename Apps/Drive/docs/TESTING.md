@@ -71,7 +71,7 @@ Command:
 make drive-test-virtual-usb
 ```
 
-Authoritative for hardware-free lifecycle semantics such as:
+Authoritative for hardware-free lifecycle semantics. The suite now also invokes the full software-only Virtual USB Lab, so routine insert/mount/eject/remove/reinsert regression requires no real USB hardware.
 
 - stale `diskN` reuse refusal;
 - replacement generation refusal;
@@ -88,7 +88,33 @@ Authoritative for hardware-free lifecycle semantics such as:
 - S41 early Disk Arbitration claim classification: verified `standardEncrypted` media is eligible for the pre-FSKit whole-disk claim, while metadata failure/nonstandard media fails open to macOS;
 - S42 claim-continuous runtime pause/resume: pause releases managed raw state without process shutdown, and resume reacquires the same physical generation;
 - S43 in-process runtime restart: teardown/reconcile reuses the same service/DA owner rather than creating a claim gap;
-- fixed-seed lifecycle property model.
+- fixed-seed lifecycle property model;
+- full software-only USB integration flow V01–V07: simulated OS automount before Drive start, Drive takeover, active-service mount-approval denial + claim, partition 1/2/4 mount/unmount, runtime pause/resume/restart, safe eject, physical-generation removal/reinsert with a different `diskN`, abrupt unplug while mounted, and non-EDP fail-open behavior.
+
+### Full software-only Virtual USB Lab
+
+Direct command:
+
+```bash
+make drive-test-virtual-usb-lab
+```
+
+The lab uses the captured EDP metadata fixture plus in-memory `EDPVirtualUSBState`, a virtual Disk Arbitration owner/mount table and a virtual mount manager. It executes the real `EDPServiceController`; only hardware/OS edges are injected. It does **not** enumerate `/dev/diskN`, does not invoke `diskutil`, does not use `IOUSBHost`, and does not require any external storage device.
+
+A small production-default testability seam injects the `hasMountedBSDPrefix` check. Production still defaults to `EDPNativeMountTable.hasMountedBSDPrefix`; the lab injects its own in-memory mount table. This allows the same raw-access takeover path to exercise “macOS had already mounted the boot child before Drive started” without creating a real mount.
+
+Expected markers:
+
+```text
+SCENARIO=V01_OK boot_system_automount_then_edp_takeover_without_physical_usb
+SCENARIO=V02_OK fresh_insert_mount_approval_dissent_claim_raw_ready
+SCENARIO=V03_OK virtual_partition_1_2_4_mount_unmount
+SCENARIO=V04_OK virtual_pause_resume_restart_same_generation
+SCENARIO=V05_OK virtual_safe_eject_remove_reinsert_new_generation
+SCENARIO=V06_OK abrupt_virtual_unplug_while_mounted_cleans_session_and_recovers
+SCENARIO=V07_OK non_edp_virtual_usb_fail_open_to_system
+RESULT=DRIVE_FULLY_SOFTWARE_VIRTUAL_USB_OK
+```
 
 Important distinction:
 
@@ -97,7 +123,7 @@ S31–S35 prove the **contract** of raw EBUSY recovery. They do not prove a phys
 Expected high-level markers include:
 
 ```text
-SCENARIO=S01_OK ... SCENARIO=S43_OK
+SCENARIO=S01_OK ... SCENARIO=S47_OK
 MODEL_SEQUENCES=10000
 MODEL_STEPS=320000
 RESULT=DRIVE_LIFECYCLE_MODEL_PROPERTIES_OK
@@ -398,32 +424,7 @@ This layer is authoritative for:
 - credential/policy persistence;
 - physical safe eject when a real EDP USB is present.
 
-## 14. Software USB re-enumeration test helper
-
-For repeated real-Lexar generation-change testing, use the test-only public `IOUSBHostDevice` reset path instead of repeatedly physically unplugging/replugging the device:
-
-```bash
-make drive-usb-reenumerate-tool
-Tools/drive-usb-reenumerate.sh 21c4:0cd1 15
-```
-
-The low-level helper is `artifacts/test-tools/edp-usb-reenumerate`. The wrapper requires exactly one matching VID/PID, pauses the EDP runtime to release the raw lease while keeping the service/Disk Arbitration owner alive, requests `IOUSBHostDevice resetWithError:` with macOS administrator authorization, waits for the old USB registry generation to disappear and one replacement generation to appear, resumes the runtime, then requires retained FDA raw access to recover without increasing `rawBusyRecoveryCount` or `forcedWholeUnmountCount`.
-
-This is **test infrastructure only**. Production and installer paths must never invoke the helper. The reset terminates/re-enumerates the USB IOService tree but does not remove USB VBUS power, so it is not evidence for firmware behavior that requires a true power cycle. Keep one final physical unplug/replug smoke for each release candidate; use software re-enumeration for iterative real-device regression between release gates.
-
-Hardware-free compile/self-test:
-
-```bash
-make drive-test-usb-reenumeration-tool
-```
-
-Expected marker:
-
-```text
-RESULT=DRIVE_USB_SOFTWARE_REENUMERATION_TOOL_OK
-```
-
-## 15. Physical test evidence rules
+## 14. Physical test evidence rules
 
 A physical claim requires actual corresponding media.
 
@@ -444,7 +445,7 @@ unrecognizedEDP physical negative
 
 Do not substitute golden fixtures, virtual USB or sparse images for these physical negatives.
 
-## 16. Real-device safety rules
+## 15. Real-device safety rules
 
 Before every real-device action:
 
@@ -456,7 +457,7 @@ Before every real-device action:
 
 Known unrelated external storage such as the user’s SN750 must remain untouched.
 
-## 17. Release test order
+## 16. Release test order
 
 For a candidate code change:
 
@@ -471,7 +472,7 @@ For a candidate code change:
 
 Do not run local UI performance xctrace.
 
-## 18. Filesystem policy / NTFS ADR test consequences
+## 17. Filesystem policy / NTFS ADR test consequences
 
 `ADR-2026-09-03-ntfs-rw.md` is accepted and test behavior must follow it:
 

@@ -13,8 +13,8 @@ STUDIO_PROJECT := $(ROOT)/Apps/Studio/native/EDPStudioNative/EDPStudioNative.xco
 
 .PHONY: help status check build core-test drive-check drive-build drive-ui-status drive-stop drive-restart \
 	drive-ui-package drive-ui-install drive-ui-deploy drive-installer drive-release-installer drive-env-status drive-clean-environment \
-	drive-test-fast drive-test-identity drive-test-virtual-usb drive-test-storage-smoke drive-test-storage drive-test-ui drive-test-system drive-test-all \
-	drive-usb-reenumerate-tool drive-test-usb-reenumeration-tool studio-generate studio-build
+	drive-test-fast drive-test-identity drive-test-virtual-usb drive-test-virtual-usb-lab drive-test-storage-smoke drive-test-storage drive-test-ui drive-test-system drive-test-all \
+	studio-generate studio-build
 
 help:
 	@echo "EDP common targets"
@@ -31,11 +31,10 @@ help:
 	@echo "  make drive-env-status   Read-only EDP Drive/macFUSE environment audit"
 	@echo "  make drive-clean-environment  Remove EDP Drive + old Vault + macFUSE test environment"
 	@echo "  make drive-test-fast    Hardware-free core/classifier regression"
+	@echo "  make drive-test-virtual-usb-lab  Full software-only insert/mount/eject/remove/reinsert E2E"
 	@echo "  make drive-test-storage-smoke  Sparse-image M01-M14 functional smoke (5 loops)"
 	@echo "  make drive-test-storage Sparse-image M01-M14 release validation (5 loops)"
 	@echo "  make drive-test-all     All hardware-free Drive regression gates"
-	@echo "  make drive-usb-reenumerate-tool  Build test-only public IOUSBHost re-enumeration helper"
-	@echo "  make drive-test-usb-reenumeration-tool  Compile/self-test USB re-enumeration tooling without touching hardware"
 	@echo "  make studio-generate    Regenerate the Studio Xcode project"
 	@echo "  make studio-build       Build Studio Release without signing"
 	@echo "  make status             Show branch and recent commits"
@@ -79,6 +78,9 @@ drive-test-identity: drive-test-fast
 drive-test-virtual-usb:
 	@"$(ROOT)/Apps/Drive/Tests/run-virtual-usb.sh"
 
+drive-test-virtual-usb-lab:
+	@"$(ROOT)/Apps/Drive/Tests/run-virtual-usb-integration-lab.sh"
+
 drive-test-storage-smoke:
 	@EDP_STORAGE_PROFILE=smoke EDP_STORAGE_LOOP_COUNT=5 "$(ROOT)/Apps/Drive/Tests/run-storage.sh"
 
@@ -88,18 +90,7 @@ drive-test-storage:
 drive-test-ui:
 	@"$(ROOT)/Apps/Drive/Tests/run-ui.sh"
 
-drive-usb-reenumerate-tool:
-	@mkdir -p "$(ARTIFACTS)/test-tools"
-	@DEVELOPER_DIR="$(DEVELOPER_DIR)" xcrun clang \
-		-fobjc-arc -fblocks -Wall -Wextra -Werror \
-		-framework Foundation -framework IOKit -framework IOUSBHost \
-		"$(ROOT)/Tools/usb-reenumerate/EDPUSBReenumerate.m" \
-		-o "$(ARTIFACTS)/test-tools/edp-usb-reenumerate"
-
-drive-test-usb-reenumeration-tool:
-	@"$(ROOT)/Apps/Drive/Tests/run-usb-reenumeration-tool.sh"
-
-drive-test-system: drive-test-usb-reenumeration-tool
+drive-test-system:
 	@"$(ROOT)/Apps/Drive/Tests/run-system.sh"
 
 drive-test-all: drive-test-fast drive-test-virtual-usb drive-test-storage drive-test-ui drive-test-system
