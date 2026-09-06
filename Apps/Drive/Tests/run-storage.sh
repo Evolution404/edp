@@ -692,8 +692,31 @@ attach_image() {
   )"
   attached_bsd="${attached_device#/dev/}"
   [[ -n "$attached_bsd" && -b "/dev/$attached_bsd" ]]
-  assert_synthetic_device "$attached_bsd" "$backing"
-  # hdiutil can return the BSD name a few milliseconds before the raw device is
+  if ! assert_synthetic_device "$attached_bsd" "$backing"; then
+    echo "DISKUTIL_IMAGE_IDENTITY_ASSERT_FAILED tag=$tag bsd=$attached_bsd backing=$backing" >&2
+    echo "DISKUTIL_IMAGE_ATTACH_PLIST_BEGIN" >&2
+    /usr/bin/plutil -p "$attach_log" >&2 || /bin/cat "$attach_log" >&2 || true
+    echo "DISKUTIL_IMAGE_ATTACH_PLIST_END" >&2
+    local diskutil_info_log="$LOG_ROOT/diskutil-image-info-$tag.plist"
+    if bounded 5 /usr/sbin/diskutil image info --plist "$backing" >"$diskutil_info_log" 2>/dev/null; then
+      echo "DISKUTIL_IMAGE_INFO_PLIST_BEGIN" >&2
+      /usr/bin/plutil -p "$diskutil_info_log" >&2 || /bin/cat "$diskutil_info_log" >&2 || true
+      echo "DISKUTIL_IMAGE_INFO_PLIST_END" >&2
+    fi
+    local hdiutil_info_log="$LOG_ROOT/hdiutil-info-$tag.plist"
+    if capture_hdiutil_info "$hdiutil_info_log" 3 >/dev/null 2>&1; then
+      echo "HDIUTIL_INFO_PLIST_BEGIN" >&2
+      /usr/bin/plutil -p "$hdiutil_info_log" >&2 || true
+      echo "HDIUTIL_INFO_PLIST_END" >&2
+    fi
+    if /usr/bin/head -c 512 "/dev/r$attached_bsd" >/dev/null 2>&1; then
+      echo "DISKUTIL_IMAGE_RAW_READABLE_BEFORE_LEGACY_IDENTITY_ASSERT=YES" >&2
+    else
+      echo "DISKUTIL_IMAGE_RAW_READABLE_BEFORE_LEGACY_IDENTITY_ASSERT=NO" >&2
+    fi
+    return 1
+  fi
+  # The image publisher can return the BSD name a few milliseconds before the raw device is
   # openable. Exact backing + DiskImages2 provenance already proves this is
   # synthetic; use a direct raw-read readiness check instead of
   # diskutil metadata queries, which can enter an uninterruptible FSKit wait.
