@@ -9,20 +9,20 @@ Updated: 2026-09-06
 Record before release testing:
 
 ```text
-Status: AUTOMATED RELEASE GATES PASS / CLEAN-INSTALL VERIFIED — exact-head standard encrypted physical path and reboot gate still pending; missing negative physical media remain BLOCKED_BY_FIXTURE
+Status: AUTOMATED RELEASE GATES PASS / CLEAN-INSTALL VERIFIED / STANDARD-EDP PHYSICAL CORE PATH PASS — credentialed type2/type4 and reboot gate still pending; missing negative physical media remain BLOCKED_BY_FIXTURE
 Branch: codex/ui-macos26-liquid-glass
-Release code/package HEAD: 84507259ec35f3ade234ab31f2caa256115dc124
-Latest invalidated release HEAD: 193ef5a8cd53ed2547779c1bc30b6cdf1cbe56a2
+Release code/package HEAD: a7667d003279e31c1fd932b9180f32bd427c0bc0
+Latest invalidated release HEAD: 4ed0325c5f393375e7f8ffb3bf44afcb778e3d11
 Version: 0.6.0
 Release Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
-Release Clean.pkg SHA-256: 322ce7aff9f18a680f62d6675a5e951a1e0e9bb681a8d1cc8a04984409ef8117
-Exact-head GitHub Actions run: 34029328625 — all release jobs PASS; M10 5/5, M12 and M14 PASS; UI probe A complete with 0 hitches >33 ms, probe B infrastructure failure before trace completion, probe C correctly skipped
-Clean-install acceptance: PASS — full EDP/macFUSE cleanup, exact package install, App/service strict signatures, LaunchDaemon load, XPC roundtrip and version 0.6.0 snapshot PASS with no external physical disk attached
-Physical acceptance: PENDING on current HEAD; prior 9b5a859 physical acceptance remains historical baseline only
-Exact-head reboot acceptance: PENDING on current HEAD; prior 9b5a859 reboot acceptance remains historical baseline only
+Release Clean.pkg SHA-256: e1abc47aa69a463e37a2046cfe06bdd2729ae3072141dfbe0daf52d578c230f8
+Exact-head GitHub Actions run: 34031734671 — native, fast+VirtualUSB, deterministic UI, storage core, storage lifecycle M10-M14 and the 33 ms UI release gate all PASS; conditional perf C skipped because A/B supplied sufficient evidence
+Clean-install acceptance: PASS — exact package installed with service/XPC/macFUSE FSKit health intact; installed --help/-h both exit 0 with identical output and no App/UI lifecycle startup
+Physical acceptance: PARTIAL PASS on current HEAD — fresh standard Lexar identity/claim/raw-ready PASS; type1 FAT16 RO mount PASS; the old immediate-unmount FAIL/PASS alternation became 8/8 mount PASS + 8/8 immediate ordinary-unmount PASS after a single bounded healthy-teardown retry was added; safe eject and residue audit PASS with rawBusyRecoveryCount=0 and forcedWholeUnmountCount=0. Type2/type4 remain unverified because factory cleanup intentionally removed their saved credentials.
+Exact-head reboot acceptance: PENDING by explicit user instruction; do not reboot until authorized
 Remaining documented exceptions: ordinaryUSB / legacyNoPassword / currentNoPassword / unrecognizedEDP physical negatives are BLOCKED_BY_FIXTURE
 Date: 2026-09-06
-Tester: automated local + GitHub Actions; current-head physical/reboot acceptance pending
+Tester: automated local + GitHub Actions + current-head physical Lexar core-path acceptance; credentialed partitions/reboot pending
 ```
 
 Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` can prevent that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closed that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner. On 2026-09-05, `7dda539` exposed a narrower insertion race: FSKit queued the child FAT mount before asynchronous whole-disk claim completed, forcing EBUSY recovery. `193ef5a` then armed a mount-denial gate before `DADiskClaim`, eliminating the EBUSY counters, but physical logs still showed `disk26s1` successfully mounted before the whole-media peek/claim path ran. `a2fb874` closes that remaining race by synchronously classifying the exact owning USB generation inside mount approval itself; physical fresh insertion and physical reinsert both showed mount approval dissent before whole-disk claim, no child mount success, `rawBusyRecoveryCount=0`, and `forcedWholeUnmountCount=0`.

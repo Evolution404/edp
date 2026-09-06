@@ -34,13 +34,15 @@
 
 - [x] `f703621` 将健康 transport 正常 teardown 从 `umount -f` 收口为 bounded ordinary VFS unmount，继续以 exact IOMedia generation termination 为完成边界；metadata-only hdiutil tombstone 不再误报为 live device leak。
 - [x] `8450725` 将 release-only xctrace gate 收口为 fresh-runner A/B，并仅在 A/B 都未产生完整 hitch count 时启动第三个 fresh runner C；20 toggles、8 s trace、33 ms 阈值均未放宽。
-- [x] exact-head `84507259ec35f3ade234ab31f2caa256115dc124` / GitHub Actions run `34029328625` 全部 PASS：native、fast+VirtualUSB、deterministic UI、UI release gate、storage core、storage lifecycle 全绿。
-- [x] release storage 证据：M10 5/5 无 mount/device/process/fd leak；M12 crash/remount PASS；M14 exchange/boot/secure 均 ordinary VFS unmount `status=0` 并完成 adapter teardown；此前 forced-unmount M14 secure wedge 未复现。
-- [x] UI release 证据：probe A 完整 trace，`UI_HITCH_COUNT_GT33MS=0`；probe B 在 trace 完成前发生 xctrace infrastructure failure；由于 A 已提供权威证据，probe C 正确 skipped，aggregator PASS。
-- [x] exact-head Clean.pkg 已构建并通过 strict release verifier：`artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`322ce7aff9f18a680f62d6675a5e951a1e0e9bb681a8d1cc8a04984409ef8117`。
-- [x] 本机已执行完整 EDP/macFUSE 环境清理并确认 `RESULT=DRIVE_ENVIRONMENT_CLEAN`；安装上述 exact package 后 App/service 自动启动，LaunchDaemon、签名、XPC roundtrip、version 0.6.0 snapshot 均 PASS，且验证时无外接物理盘。
-- [ ] 当前 HEAD 标准加密真实 EDP 盘最小 release acceptance：fresh insert/claim/raw ready → mount → normal unmount/safe eject → no residue → physical reinsert。
-- [ ] 当前 HEAD mandatory reboot gate：重启后 service/FDA/FSKit/device claim/mount/eject 状态复核。
+- [x] `4ed0325` 补齐真正 side-effect-free 的 `--help` / `-h`：命令行分支在 `EDPVaultViewModel` / App UI 生命周期初始化前直接输出并 exit 0；本地与 GitHub native 动态测试均 PASS，安装后二进制也验证两者输出一致。
+- [x] `a7667d0` 修复实盘新建 hidden bridge 的 immediate-unmount race：健康、非 force、require exact IOMedia generation termination 的 transport teardown 在第一次 ordinary `/sbin/umount` 非零且 bridge 仍 mounted 时，仅允许 100 ms 后再做一次 ordinary unmount；force 路径、system-host reset/self-unmount 均未引入。
+- [x] exact-head `a7667d003279e31c1fd932b9180f32bd427c0bc0` / GitHub Actions run `34031734671` 全部 PASS：native、fast+VirtualUSB、deterministic UI、UI release gate、storage core、storage lifecycle M10-M14 全绿。
+- [x] release storage 证据仍保持：M10 5/5 无 mount/device/process/fd leak；M12 crash/remount PASS；M14 concurrent sessions PASS；新增 `RESULT=VFS_ORDINARY_UNMOUNT_SINGLE_RETRY_POLICY_OK` 锁定最多一次健康 ordinary-unmount retry。
+- [x] exact-head Clean.pkg 已重新构建并通过 strict release verifier：`artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`e1abc47aa69a463e37a2046cfe06bdd2729ae3072141dfbe0daf52d578c230f8`，并已安装到验收 Mac。
+- [x] 当前 HEAD 标准加密 Lexar physical core path：fresh insertion 五因素身份/claim/raw ready PASS，无 `fskitd` child raw holder；type1 FAT16 RO mount PASS；旧包可复现的 `FAIL/PASS/FAIL/PASS/FAIL` immediate-unmount 序列在 `a7667d0` 上变为 **8/8 mount PASS + 8/8 immediate ordinary-unmount PASS**；最近 8 次均 `transportTeardownComplete`，无 hidden mount/transport residue，`rawBusyRecoveryCount=0`、`forcedWholeUnmountCount=0`。
+- [x] 当前 HEAD product safe eject PASS：`privilegedAccessReady=false`，无 EDP mount、transport 或 raw holder，recovery counters 仍为 0。
+- [ ] 当前 HEAD credentialed type2/type4 physical acceptance：factory cleanup 后真实密码未重新保存，因此暂不宣称三分区完整验收。
+- [ ] 当前 HEAD mandatory reboot gate：用户明确要求暂不重启；只有获得明确授权后才执行。
 
 ## Phase A — Sidebar 33 ms 性能收口
 
