@@ -19,10 +19,14 @@
 
 #if defined(__APPLE__)
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
+extern int EDPDirectMFMountFinalizeTeardown(MFChannelRef channel,
+                                            const char *mountpoint) __attribute__((weak_import));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak_import));
 
 #else
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
+extern int EDPDirectMFMountFinalizeTeardown(MFChannelRef channel,
+                                            const char *mountpoint) __attribute__((weak));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 
 #endif
@@ -733,6 +737,9 @@ int main(int argc, char **argv) {
                 fprintf(stderr,
                         "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d\n",
                         teardown_active ? 1 : 0);
+                if (teardown_active) {
+                    break;
+                }
                 continue;
             }
             if (errno == ENODEV) {
@@ -783,8 +790,22 @@ int main(int argc, char **argv) {
         if (!channel_closed && exit_code == 0) {
             exit_code = 6;
         }
+    } else if (EDPDirectMFMountFinalizeTeardown != NULL) {
+        int teardown_result = EDPDirectMFMountFinalizeTeardown(channel, mountpoint);
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_FINALIZE_TEARDOWN_RESULT=%d mountpoint=%s\n",
+                teardown_result,
+                mountpoint);
+        if (teardown_result != 0 && exit_code == 0) {
+            exit_code = 7;
+        }
     } else {
-        fprintf(stderr, "DIRECT_MFMOUNT_CHANNEL_CLOSE_OWNED_BY_TEARDOWN=1\n");
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_FINALIZE_TEARDOWN_UNAVAILABLE=1 mountpoint=%s\n",
+                mountpoint);
+        if (exit_code == 0) {
+            exit_code = 7;
+        }
     }
 
     MFRelease(channel);

@@ -1040,7 +1040,7 @@ PY
     native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift \
     "$BUILD_DIR/fixture-adapter.o" "$BUILD_DIR/async-shim.o" \
     -F"$frameworks" -Xlinker -rpath -Xlinker "$frameworks" \
-    -framework MFMount -framework CoreFoundation \
+    -framework MFMount -framework CoreFoundation -framework DiskArbitration \
     -o "$ADAPTER_BIN"
 
   if [[ "$include_failure_contracts" == "1" ]]; then
@@ -1229,7 +1229,10 @@ run_m10() {
     unmount_path "$mountpoint"
     eject_image "$bsd" "$bridge/volume.raw"
     stop_adapter "$pid" "$bridge" "m10-$iteration"
-    assert_no_test_artifacts "M10-$iteration"
+    if ! assert_no_test_artifacts "M10-$iteration"; then
+      echo "M10 teardown leaked resources at iteration $iteration" >&2
+      return 1
+    fi
     local current_fds
     current_fds="$(/usr/sbin/lsof -p $$ 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
     (( current_fds > max_fds )) && max_fds="$current_fds"
