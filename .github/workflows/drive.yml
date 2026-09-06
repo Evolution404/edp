@@ -162,7 +162,7 @@ jobs:
           grep -Fq 'runBoundedProcess' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'timeout: 15' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'EDPBlockDevicePublisherFactory.make(' Apps/Drive/product/EDPVaultRuntime.swift
-          grep -Fq 'case .hdiutilCompatibility:' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          grep -Fq 'case .diskutilImageCompatibility:' Apps/Drive/product/EDPBlockDevicePublisher.swift
           ! grep -Fq 'Darwin.kill(ownerGeneration.pid' Apps/Drive/product/EDPBlockDevicePublisher.swift
           ! grep -Fq 'Darwin.kill(currentOwner.pid' Apps/Drive/product/EDPBlockDevicePublisher.swift
           ! grep -Fq 'waitForPublicationToDisappearAsync' Apps/Drive/product/EDPBlockDevicePublisher.swift
