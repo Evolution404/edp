@@ -578,16 +578,6 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         )
     }
 
-    private func recoverFSKitHostIfSafeAsync(
-        completion: @escaping @Sendable (Bool) -> Void
-    ) {
-        metrics.increment(.fskitAgentRecovery)
-        EDPFSKitHostRecovery.restartConsoleAgentIfSafeAsync(
-            on: lifecycleQueue,
-            completion: completion
-        )
-    }
-
     private func cancelMountOperation(_ sessionKey: String) {
         cancelledMountOperations.insert(sessionKey)
         if let operation = activeMountOperationBoxes[sessionKey] {
@@ -1676,34 +1666,9 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         allowHostRecoveryDuringStop: Bool,
         failure: EDPLifecycleFailure
     ) {
-        let recoverStuckProcessAsync: EDPTransportRecoveryRequest? = allowHostRecoveryDuringStop
-            ? { [weak self, operation] completion in
-                guard let self,
-                      !self.cancelledMountOperations.contains(operation.sessionKey) else {
-                    completion(false)
-                    return
-                }
-                self.recordMountJournal(
-                    operation,
-                    event: "hostRecoveryStarted",
-                    ownedResources: ["transport"]
-                )
-                self.recoverFSKitHostIfSafeAsync { [weak self, operation] recovered in
-                    guard let self else {
-                        completion(false)
-                        return
-                    }
-                    self.recordMountJournal(
-                        operation,
-                        event: recovered ? "hostRecoveryComplete" : "hostRecoveryFailure",
-                        ownedResources: ["transport"],
-                        diagnosticCode: recovered ? nil : .teardownFailed
-                    )
-                    completion(recovered)
-                }
-            }
-            : nil
-
+        // FSKit host lifecycle belongs to macOS. Teardown may terminate only
+        // EDP-owned transport processes; it never restarts or kills system FSKit
+        // agents as a recovery mechanism.
         recordMountJournal(
             operation,
             event: "transportTeardownStarted",
@@ -1722,8 +1687,8 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 }
             },
             isMounted: { EDPNativeMountTable.isMountpoint($0) },
-            recoverStuckProcessAsync: recoverStuckProcessAsync
-        ) { [weak self, operation] stopRecoveredHost, hostRecoveryAttempted, stopError in
+            recoverStuckProcessAsync: nil
+        ) { [weak self, operation] _, _, stopError in
             guard let self else { return }
             let finishCleanup: @Sendable () -> Void = { [weak self, operation] in
                 guard let self else { return }
@@ -1732,9 +1697,6 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                         operation,
                         attempt: attempt,
                         bridgeMount: bridgeMount,
-                        transportSession: transportSession,
-                        stopRecoveredHost: stopRecoveredHost,
-                        hostRecoveryAttempted: hostRecoveryAttempted,
                         stopError: stopError,
                         failure: failure
                     )
@@ -1756,9 +1718,6 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         _ operation: EDPFSKitMountOperationBox,
         attempt: Int,
         bridgeMount: String,
-        transportSession: EDPTransportSession,
-        stopRecoveredHost: Bool,
-        hostRecoveryAttempted: Bool,
         stopError: String?,
         failure: EDPLifecycleFailure
     ) {
@@ -1777,42 +1736,15 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
             diagnosticCode: failure.code
         )
 
-        continueStoppedTransportCleanup(
-            operation,
-            attempt: attempt,
-            transportSession: transportSession,
-            stopRecoveredHost: stopRecoveredHost,
-            hostRecoveryAttempted: hostRecoveryAttempted
-        )
+        continueStoppedTransportCleanup(operation, attempt: attempt)
     }
 
     private func continueStoppedTransportCleanup(
         _ operation: EDPFSKitMountOperationBox,
-        attempt: Int,
-        transportSession: EDPTransportSession,
-        stopRecoveredHost: Bool,
-        hostRecoveryAttempted: Bool
+        attempt: Int
     ) {
         if cancelledMountOperations.contains(operation.sessionKey) {
             executeMountAction(operation.machine.cancel(), operation: operation)
-            return
-        }
-
-        if hostRecoveryAttempted {
-            let action = operation.machine.cleanupFinished(
-                attempt,
-                hostAlreadyRecovered: stopRecoveredHost && !transportSession.isRunning
-            )
-            if case .restartHost = action {
-                // A recovery callback was already attempted by stopAsync. Never
-                // consume a second global fskit_agent restart here.
-                executeMountAction(
-                    operation.machine.hostRecoveryFinished(false),
-                    operation: operation
-                )
-            } else {
-                executeMountAction(action, operation: operation)
-            }
             return
         }
 
@@ -1821,20 +1753,18 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
             hostAlreadyRecovered: false
         )
         if case .restartHost = action {
-            recordMountJournal(operation, event: "hostRecoveryStarted")
-            recoverFSKitHostIfSafeAsync { [weak self, operation, transportSession] recoveredHost in
-                guard let self, !operation.finished else { return }
-                let recovered = recoveredHost && !transportSession.isRunning
-                self.recordMountJournal(
-                    operation,
-                    event: recovered ? "hostRecoveryComplete" : "hostRecoveryFailure",
-                    diagnosticCode: recovered ? nil : .teardownFailed
-                )
-                self.executeMountAction(
-                    operation.machine.hostRecoveryFinished(recovered),
-                    operation: operation
-                )
-            }
+            // EDP never manipulates macOS FSKit host processes. Preserve the
+            // original typed failure and let a later transient retry start a
+            // fresh mount attempt after the OS has recovered its own service.
+            recordMountJournal(
+                operation,
+                event: "systemOwnedFSKitRecoveryDeferred",
+                diagnosticCode: .teardownFailed
+            )
+            executeMountAction(
+                operation.machine.hostRecoveryFinished(false),
+                operation: operation
+            )
             return
         }
         executeMountAction(action, operation: operation)
@@ -2318,13 +2248,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 }
             },
             isMounted: { EDPNativeMountTable.isMountpoint($0) },
-            recoverStuckProcessAsync: { [weak self] completion in
-                guard let self else {
-                    completion(false)
-                    return
-                }
-                self.recoverFSKitHostIfSafeAsync(completion: completion)
-            }
+            recoverStuckProcessAsync: nil
         ) { [weak self] _, _, errorMessage in
             guard let self else { return }
             if let errorMessage {
@@ -3760,13 +3684,15 @@ final class EDPServiceController: @unchecked Sendable {
                     let partitionKey = key(disk.deviceID, type)
                     guard !automation.isManualUnmountSuppressed(partitionKey),
                           automation.failureMessage(for: partitionKey) != nil,
-                          automation.failureCode(for: partitionKey) == .bridgeExtensionUnavailable else {
+                          let failureCode = automation.failureCode(for: partitionKey),
+                          failureCode == .bridgeExtensionUnavailable || failureCode == .bridgeTimeout else {
                         continue
                     }
                     automation.clearFailure(for: partitionKey)
+                    metrics.increment(.fskitTransientRetry)
                     clearedAny = true
                     addActivity(
-                        "macFUSE FSKit 已恢复，重试自动挂载",
+                        "FSKit 挂载环境已恢复，重试自动挂载",
                         deviceID: disk.deviceID,
                         partitionType: type
                     )

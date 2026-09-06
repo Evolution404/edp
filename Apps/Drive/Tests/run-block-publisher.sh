@@ -12,6 +12,8 @@ BINARY="$BUILD_DIR/validate-macfuse-scratch-cleanup"
 METRICS_BINARY="$BUILD_DIR/validate-runtime-metrics"
 
 xcrun swiftc -Onone -swift-version 6 -warnings-as-errors \
+  product/EDPXPCProtocol.swift \
+  product/EDPActivityStore.swift \
   product/EDPRuntimeMetrics.swift \
   product/Tests/ValidateRuntimeMetrics.swift \
   -o "$METRICS_BINARY"
@@ -19,6 +21,7 @@ xcrun swiftc -Onone -swift-version 6 -warnings-as-errors \
 METRICS_OUTPUT="$($METRICS_BINARY 2>&1)"
 printf '%s\n' "$METRICS_OUTPUT"
 grep -Fq 'RESULT=DRIVE_RUNTIME_METRICS_CONTRACT_OK' <<<"$METRICS_OUTPUT"
+grep -Fq 'RESULT=DRIVE_ACTIVITY_STORE_SENDABLE_CONTRACT_OK' <<<"$METRICS_OUTPUT"
 
 xcrun swiftc -Onone -swift-version 6 -warnings-as-errors -D EDP_REGRESSION_TESTS \
   -framework IOKit \

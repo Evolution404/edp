@@ -383,6 +383,10 @@ jobs:
         with:
           path: Packages/EDPCore/.build/arm64-apple-macosx/release
           key: edpcore-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.EDP_SWIFT_CACHE_KEY }}-${{ hashFiles('Packages/EDPCore/Package.swift', 'Packages/EDPCore/Sources/**') }}
+      - uses: actions/cache@v5
+        with:
+          path: .cache/edp-storage-filesystem-seeds-v1
+          key: edp-storage-filesystem-seeds-v1-${{ runner.os }}-${{ runner.arch }}
       - name: Prepare macFUSE and shared core in parallel
         run: |
           set -euo pipefail
@@ -406,6 +410,7 @@ jobs:
       - name: Storage core M01-M09
         env:
           EDP_CI_STORAGE_PROFILE: ${{ inputs.storage_profile || 'smoke' }}
+          EDP_STORAGE_FILESYSTEM_SEED_DIR: ${{ github.workspace }}/.cache/edp-storage-filesystem-seeds-v1
         run: |
           set -euo pipefail
           mkdir -p artifacts/drive-tests
@@ -441,6 +446,10 @@ jobs:
         with:
           path: Packages/EDPCore/.build/arm64-apple-macosx/release
           key: edpcore-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.EDP_SWIFT_CACHE_KEY }}-${{ hashFiles('Packages/EDPCore/Package.swift', 'Packages/EDPCore/Sources/**') }}
+      - uses: actions/cache@v5
+        with:
+          path: .cache/edp-storage-filesystem-seeds-v1
+          key: edp-storage-filesystem-seeds-v1-${{ runner.os }}-${{ runner.arch }}
       - name: Prepare macFUSE and shared core in parallel
         run: |
           set -euo pipefail
@@ -464,6 +473,7 @@ jobs:
       - name: Storage lifecycle M10-M14
         env:
           EDP_CI_STORAGE_PROFILE: ${{ inputs.storage_profile || 'smoke' }}
+          EDP_STORAGE_FILESYSTEM_SEED_DIR: ${{ github.workspace }}/.cache/edp-storage-filesystem-seeds-v1
         run: |
           set -euo pipefail
           mkdir -p artifacts/drive-tests

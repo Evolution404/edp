@@ -340,17 +340,11 @@ SERVICE_BOOTOUT_LINE="$(/usr/bin/grep -nF '/bin/launchctl bootout "system/${SERV
 /usr/bin/grep -Fq 'exact backing + device identity' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'found macFUSE scratch ${device} with stale helper record' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'A live, exact diskimages-helper scratch can be detached independently of' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'The only operation that can disturb unrelated FSKit volumes is recycling' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'Never act on the recorded PID by itself.' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'recover_stale_console_fskit_agent' "${PREINSTALL_SOURCE}"
-# Global FSKit mount refusal belongs only inside fskit_agent recovery. A live
-# exact 4 KiB scratch helper must remain directly detachable even while an
-# unrelated ExFAT/FSKit volume is mounted.
-[[ "$(/usr/bin/grep -Fc "/sbin/mount | /usr/bin/grep -Fq 'fskit'" "${PREINSTALL_SOURCE}")" -eq 1 ]]
-DIRECT_DETACH_LINE="$(/usr/bin/grep -nF '/usr/bin/hdiutil detach "${device}" -force' "${PREINSTALL_SOURCE}" | /usr/bin/cut -d: -f1)"
-STALE_RECOVERY_LINE="$(/usr/bin/grep -nF 'if recover_stale_console_fskit_agent; then' "${PREINSTALL_SOURCE}" | /usr/bin/cut -d: -f1 | /usr/bin/tail -1)"
-[[ "${DIRECT_DETACH_LINE}" =~ ^[0-9]+$ && "${STALE_RECOVERY_LINE}" =~ ^[0-9]+$ && "${DIRECT_DETACH_LINE}" -lt "${STALE_RECOVERY_LINE}" ]]
-! /usr/bin/grep -Fq 'refused to recover macFUSE scratch while an FSKit filesystem is mounted' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'EDP never restarts or kills macOS FSKit host' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'system-owned FSKit' "${PREINSTALL_SOURCE}"
+! /usr/bin/grep -Fq 'recover_stale_console_fskit_agent' "${PREINSTALL_SOURCE}"
+! /usr/bin/grep -Fq '/usr/libexec/fskit_agent' "${PREINSTALL_SOURCE}"
+! /usr/bin/grep -Fq 'kill -KILL "${agent_pid}"' "${PREINSTALL_SOURCE}"
 ! /usr/bin/grep -Fq 'refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'run_bounded() {' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'run_bounded 8 /usr/bin/hdiutil info -plist' "${PREINSTALL_SOURCE}"
@@ -779,14 +773,13 @@ echo 'RESULT=DRIVE_SYSTEM_SERVICE_MAIN_SPLIT_OK'
 /usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${MOUNT_LIFECYCLE_SOURCE}"
 /usr/bin/grep -Fq 'recognizedRawAccessFailure' "${MOUNT_LIFECYCLE_SOURCE}"
 /usr/bin/grep -Fq 'struct EDPFSKitMountLifecycleMachine' "${MOUNT_LIFECYCLE_SOURCE}"
-/usr/bin/grep -Fq 'enum EDPFSKitHostRecovery' "${MOUNT_LIFECYCLE_SOURCE}"
-/usr/bin/grep -Fq 'restartConsoleAgentIfSafeAsync(' "${MOUNT_LIFECYCLE_SOURCE}"
-/usr/bin/grep -Fq 'process.terminationHandler' "${MOUNT_LIFECYCLE_SOURCE}"
+! /usr/bin/grep -Fq 'EDPFSKitHostRecovery' "${MOUNT_LIFECYCLE_SOURCE}" "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq '/usr/bin/pkill' "${MOUNT_LIFECYCLE_SOURCE}" "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'fskit_agent' "${MOUNT_LIFECYCLE_SOURCE}" "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'EDPNativeBoundedProcess.run' "${MOUNT_LIFECYCLE_SOURCE}"
 ! /usr/bin/grep -Fq 'enum EDPLifecycleFailureCode' "${RUNTIME_SOURCE}"
-! /usr/bin/grep -Fq 'enum EDPFSKitHostRecovery' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'func lastFailureCode(deviceID:' "${RUNTIME_SOURCE}"
-/usr/bin/grep -Fq 'automation.failureCode(for: partitionKey) == .bridgeExtensionUnavailable' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'failureCode == .bridgeExtensionUnavailable || failureCode == .bridgeTimeout' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'failure.contains("File system extension' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Fq 'errorMessage.contains("EDP_RAW_' "${RUNTIME_SOURCE}"
 echo 'RESULT=DRIVE_SYSTEM_TYPED_LIFECYCLE_ERRORS_OK'
@@ -958,7 +951,7 @@ echo 'RESULT=DRIVE_SYSTEM_LIFECYCLE_JOURNAL_OK'
 for key in \
   rawBusyRecoveryCount \
   forcedWholeUnmountCount \
-  fskitAgentRecoveryCount \
+  fskitTransientRetryCount \
   diskImagesAttachRecoveryCount \
   diskImagesDetachRecoveryCount \
   mountRetryCount \
@@ -968,7 +961,8 @@ done
 /usr/bin/grep -Fq '"runtimeMetrics": metrics.snapshot().jsonObject' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'metrics.increment(.rawBusyRecovery)' "${RAW_ACCESS_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'metrics.increment(.forcedWholeUnmount)' "${RAW_ACCESS_COORDINATOR_SOURCE}"
-/usr/bin/grep -Fq 'metrics.increment(.fskitAgentRecovery)' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'metrics.increment(.fskitTransientRetry)' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'fskitAgentRecoveryCount' "${RUNTIME_METRICS_SOURCE}" "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'metrics.increment(.diskImagesAttachRecovery)' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'metrics.increment(.diskImagesDetachRecovery)' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'metrics.increment(.mountRetry)' "${RUNTIME_SOURCE}"
@@ -1043,7 +1037,7 @@ echo 'RESULT=DRIVE_SYSTEM_EXTERNAL_DEPENDENCY_BOUNDARIES_OK'
 /usr/bin/grep -Fq 'require-scripts="true"' "${CLEAN_INSTALLER_SOURCE}"
 /usr/bin/grep -Fq 'case bridgeExtensionRequiresApproval' "${MOUNT_LIFECYCLE_SOURCE}"
 /usr/bin/grep -Fq 'direct_mfmount_async_result=4' "${MOUNT_LIFECYCLE_SOURCE}"
-/usr/bin/grep -Fq 'case .bridgeExtensionUnavailable, .bridgeExtensionRequiresApproval:' "${MOUNT_LIFECYCLE_SOURCE}"
+/usr/bin/grep -Fq 'case .bridgeTimeout, .bridgeExtensionUnavailable, .bridgeExtensionRequiresApproval:' "${MOUNT_LIFECYCLE_SOURCE}"
 /usr/bin/grep -Fq 'EDP_MFMOUNT_QUIET": "0"' "${TRANSPORT_PROVIDER}"
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_APPROVAL_OWNERSHIP_OK'
 echo 'RESULT=DRIVE_SYSTEM_FSKIT_ENABLEMENT_EVENT_DRIVEN_OK'
@@ -1098,12 +1092,20 @@ echo 'RESULT=DRIVE_SYSTEM_NTFS_ADR_OK'
 # runner to force-migrate an older JavaScript runtime at execution time.
 [[ "$(/usr/bin/grep -Fc 'actions/checkout@v7' "${DRIVE_WORKFLOW}")" -eq 6 ]]
 [[ "$(/usr/bin/grep -Fc 'actions/upload-artifact@v7' "${DRIVE_WORKFLOW}")" -eq 5 ]]
-[[ "$(/usr/bin/grep -Fc 'actions/cache@v5' "${DRIVE_WORKFLOW}")" -eq 4 ]]
+[[ "$(/usr/bin/grep -Fc 'actions/cache@v5' "${DRIVE_WORKFLOW}")" -eq 6 ]]
 ! /usr/bin/grep -Fq 'actions/checkout@v6' "${DRIVE_WORKFLOW}"
 ! /usr/bin/grep -Fq 'actions/upload-artifact@v4' "${DRIVE_WORKFLOW}"
 ! /usr/bin/grep -Fq 'actions/cache@v4' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'Packages/EDPCore/.build/arm64-apple-macosx/release' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'hashFiles('\''Packages/EDPCore/Package.swift'\'', '\''Packages/EDPCore/Sources/**'\'')' "${DRIVE_WORKFLOW}"
+[[ "$(/usr/bin/grep -Fc 'edp-storage-filesystem-seeds-v1-' "${DRIVE_WORKFLOW}")" -eq 2 ]]
+[[ "$(/usr/bin/grep -Fc 'EDP_STORAGE_FILESYSTEM_SEED_DIR:' "${DRIVE_WORKFLOW}")" -eq 2 ]]
+/usr/bin/grep -Fq 'storage_seed_set_valid() {' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'clone_storage_seed_file() {' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'filesystem_format_completed "$boot" '\''MS-DOS FAT16'\''' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'filesystem_format_completed "$exchange" ExFAT' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'filesystem_format_completed "$secure" ExFAT' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_STORAGE_FILESYSTEM_SEEDS_REUSED' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_GITHUB_ACTIONS_NODE24_OK'
 
 # Canonical top-level gates must remain wired and hardware-free by construction.

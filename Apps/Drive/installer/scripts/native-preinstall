@@ -114,38 +114,6 @@ wait_for_ucomm_to_exit() {
   return 1
 }
 
-recover_stale_console_fskit_agent() {
-  # Only recover the exact no-mount stale-host state observed with macFUSE
-  # Local. Never restart the user's FSKit agent while any FSKit filesystem is
-  # still mounted, and never touch the root fskitd daemon.
-  if /sbin/mount | /usr/bin/grep -Fq 'fskit'; then
-    return 1
-  fi
-
-  local console_uid agent_pid agent_uid agent_command
-  console_uid="$(/usr/bin/stat -f '%u' /dev/console 2>/dev/null || true)"
-  [[ "${console_uid}" =~ ^[0-9]+$ && "${console_uid}" -gt 0 ]] || return 1
-
-  agent_pid="$(/bin/ps -axo pid=,uid=,command= \
-    | /usr/bin/awk -v uid="${console_uid}" '$2 == uid && $3 == "/usr/libexec/fskit_agent" { print $1; exit }')"
-  [[ "${agent_pid}" =~ ^[0-9]+$ && "${agent_pid}" -gt 1 ]] || return 1
-
-  agent_uid="$(/bin/ps -p "${agent_pid}" -o uid= 2>/dev/null | /usr/bin/xargs || true)"
-  agent_command="$(/bin/ps -p "${agent_pid}" -o command= 2>/dev/null | /usr/bin/xargs || true)"
-  [[ "${agent_uid}" == "${console_uid}" && "${agent_command}" == "/usr/libexec/fskit_agent" ]] || return 1
-
-  echo "EDP Drive upgrade restarting stale console-user fskit_agent (${agent_pid})."
-  /bin/kill -KILL "${agent_pid}" >/dev/null 2>&1 || return 1
-  local i
-  for ((i = 0; i < 100; i++)); do
-    if ! /bin/kill -0 "${agent_pid}" >/dev/null 2>&1; then
-      return 0
-    fi
-    /bin/sleep 0.1
-  done
-  return 1
-}
-
 stop_unmounted_processes() {
   local process_name="$1"
   local description="$2"
@@ -163,12 +131,6 @@ stop_unmounted_processes() {
   [[ -n "${pids}" ]] || return 0
   /bin/kill -KILL ${pids} >/dev/null 2>&1 || true
   if wait_for_ucomm_to_exit "${process_name}" 50; then
-    return 0
-  fi
-
-  if [[ "${process_name}" == "${TRANSPORT_UCOMM}" ]] \
-    && recover_stale_console_fskit_agent \
-    && wait_for_ucomm_to_exit "${process_name}" 100; then
     return 0
   fi
 
@@ -493,11 +455,8 @@ recover_macfuse_scratch_orphans() {
     fi
 
     # A live, exact diskimages-helper scratch can be detached independently of
-    # unrelated FSKit filesystems. Do not block this safe direct-detach path just
-    # because another volume (for example an external ExFAT disk) uses FSKit.
-    # The only operation that can disturb unrelated FSKit volumes is recycling
-    # fskit_agent; recover_stale_console_fskit_agent() already fail-closes when
-    # any FSKit mount is active.
+    # unrelated FSKit filesystems. EDP never restarts or kills macOS FSKit host
+    # processes during installer recovery.
     if validate_diskimages_helper_pid "${pid}"; then
       echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
       run_bounded 12 /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
@@ -520,9 +479,9 @@ recover_macfuse_scratch_orphans() {
     fi
 
     # macOS can keep the 4 KiB scratch IOMedia alive after diskimages-helper has
-    # exited, leaving hdiutil's hdid-pid field stale. In the exact no-mount
-    # state, recycle only the console user's fskit_agent and then re-prove the
-    # same backing + device tuple. Never act on the recorded PID by itself.
+    # exited, leaving hdiutil's hdid-pid field stale. That system-owned FSKit
+    # state is not recoverable by EDP; only re-prove the exact backing/device
+    # tuple and fail closed if the orphan remains.
     run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
     refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
     if [[ -z "${refreshed_pid}" ]]; then
@@ -533,12 +492,6 @@ recover_macfuse_scratch_orphans() {
     fi
 
     if ! validate_diskimages_helper_pid "${pid}"; then
-      # Stale-helper recovery may recycle the console user's fskit_agent. That
-      # helper performs its own global FSKit-mount guard and refuses the recycle
-      # while any unrelated FSKit filesystem is active.
-      if recover_stale_console_fskit_agent; then
-        wait_for_device_to_disappear "${device#/dev/}" 100 || true
-      fi
       run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
       refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
       if [[ -z "${refreshed_pid}" ]]; then

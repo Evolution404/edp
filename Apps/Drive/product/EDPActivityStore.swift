@@ -2,6 +2,7 @@ import Foundation
 
 final class EDPActivityStore: @unchecked Sendable {
     private let capacity: Int
+    private let lock = NSLock()
     private var activities = [EDPXPCActivity]()
 
     init(capacity: Int = 200) {
@@ -14,20 +15,26 @@ final class EDPActivityStore: @unchecked Sendable {
         deviceID: String? = nil,
         partitionType: UInt32? = nil
     ) {
-        activities.insert(EDPXPCActivity(
+        let activity = EDPXPCActivity(
             id: UUID(),
             timestamp: ISO8601DateFormatter().string(from: Date()),
             level: level,
             deviceID: deviceID,
             partitionType: partitionType,
             message: message
-        ), at: 0)
+        )
+        lock.lock()
+        activities.insert(activity, at: 0)
         if activities.count > capacity {
             activities.removeLast(activities.count - capacity)
         }
+        lock.unlock()
     }
 
     func snapshot() -> [EDPXPCActivity] {
-        activities
+        lock.lock()
+        let result = activities
+        lock.unlock()
+        return result
     }
 }

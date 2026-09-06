@@ -1504,12 +1504,12 @@ struct ValidateCredentialPolicyServiceLifecycle {
                 logDetail: nil
             )
             guard timeoutFailure.code == .bridgeTimeout,
-                  EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
+                  !EDPFSKitMountRecoveryPolicy.shouldRecoverBridgeActivation(
                     failure: timeoutFailure,
                     transportStillRunning: true,
                     bridgeMounted: false
                   ) else {
-                throw LifecycleValidationError("S11 timed-out live transport was not classified recoverable")
+                throw LifecycleValidationError("S11 timed-out transport incorrectly requested FSKit host intervention")
             }
 
             let mount69Failure = EDPLifecycleFailure.classifyBridgeActivation(
@@ -1582,7 +1582,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
             ) else {
                 throw LifecycleValidationError("S11 active bridge incorrectly triggered FSKit recovery")
             }
-            print("SCENARIO=S11_OK typed_fskit_recovery_classifier_is_narrow")
+            print("SCENARIO=S11_OK typed_fskit_fail_closed_classifier")
         }
 
         do {

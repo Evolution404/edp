@@ -325,15 +325,15 @@ Discovery, P16–P30, C/D, S01–S47, the 320,000-step property model and V01–
 
 ### Balanced five-way CI
 
-GitHub currently schedules at most five macOS jobs from this workflow concurrently, so the ordinary/release gate is deliberately balanced into exactly five critical paths instead of creating a larger matrix that would queue. Four paths restore an exact `actions/cache@v5` EDPCore release cache keyed by runner OS/architecture, Swift compiler hash and EDPCore source hash; cache reuse is permitted only after the cached library already passes the normal `prepare-shared-edp-core.sh` artifact checks.
+GitHub currently schedules at most five macOS jobs from this workflow concurrently, so the ordinary/release gate is deliberately balanced into exactly five critical paths instead of creating a larger matrix that would queue. Four paths restore an exact `actions/cache@v5` EDPCore release cache keyed by runner OS/architecture, Swift compiler hash and EDPCore source hash; cache reuse is permitted only after the cached library already passes the normal `prepare-shared-edp-core.sh` artifact checks. The two storage paths also restore a versioned cache containing only validated, preformatted blank FAT16/ExFAT filesystem seeds. Each seed is cloned into the job's private work directory before use; the cached files are never encrypted or mutated by a storage scenario.
 
 1. `native`: production daemon/App strict build while the hardware-free system ratchet runs in parallel on the same runner;
 2. `regression-fast-virtual`: fast and full software VirtualUSB regressions run concurrently after one shared EDPCore build;
-3. `regression-ui`: deterministic UI plus the CI-only 33ms Instruments gate;
+3. `regression-ui`: deterministic UI on smoke runs; explicit release runs additionally enforce the unchanged CI-only 33ms Instruments gate;
 4. `regression-storage-core`: isolated synthetic fixture covering M01, M02/M04–M09 and M03;
 5. `regression-storage-lifecycle`: a second isolated synthetic fixture covering M10, M12 and M14 while storage failure/transport contracts compile and execute in parallel with the I/O-heavy lifecycle work.
 
-The two storage jobs prepare macFUSE and EDPCore concurrently, then use separate work directories and separate DiskImages2/FSKit generations. Ordinary push/PR/manual runs use 3 M10 cycles; a final manual `storage_profile=release` run raises the lifecycle path to 5 cycles. Storage contracts remain release-blocking inside `native`. The monolithic `make drive-test-storage` path remains for nightly 100-cycle soak and sequential diagnostic reproduction.
+The two storage jobs prepare macFUSE and EDPCore concurrently, then use separate work directories and separate DiskImages2/FSKit generations. On a filesystem-seed cache hit they skip only the synthetic FAT16/ExFAT formatting prelude; the full encrypted EDP fixture is rebuilt for every run. Ordinary push/PR/manual runs use 3 M10 cycles; a final manual `storage_profile=release` run raises the lifecycle path to 5 cycles. Storage failure/transport contracts remain release-blocking inside `regression-storage-lifecycle`. The monolithic `make drive-test-storage` path remains for nightly 100-cycle soak and sequential diagnostic reproduction.
 
 Each critical path has its own timeout, but the optimization target is normal wall-clock completion at or below two minutes without reducing coverage or thresholds.
 

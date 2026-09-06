@@ -99,6 +99,7 @@ BOOT_RAW="$WORK_DIR/boot-fat16.raw"
 EXCHANGE_RAW="$WORK_DIR/exchange-exfat.raw"
 SECURE_RAW="$WORK_DIR/secure-exfat.raw"
 EDP_IMAGE="$WORK_DIR/virtual-disk4.edp"
+FILESYSTEM_SEED_DIR="${EDP_STORAGE_FILESYSTEM_SEED_DIR:-}"
 
 printf '0000aaaa' >"$PASSWORD_FILE"
 chmod 0600 "$PASSWORD_FILE"
@@ -1285,11 +1286,56 @@ PY
   log "RESULT=DRIVE_STORAGE_TOOLS_BUILT_C17_SWIFT6_STRICT"
 }
 
+clone_storage_seed_file() {
+  local source="$1"
+  local destination="$2"
+  /bin/rm -f "$destination"
+  if /bin/cp -c "$source" "$destination" >/dev/null 2>&1; then
+    return 0
+  fi
+  /bin/cp "$source" "$destination"
+}
+
+storage_seed_set_valid() {
+  local seed_dir="$1"
+  local boot="$seed_dir/boot-fat16.raw"
+  local exchange="$seed_dir/exchange-exfat.raw"
+  local secure="$seed_dir/secure-exfat.raw"
+  [[ -f "$boot" && ! -L "$boot" && "$(/usr/bin/stat -f %z "$boot")" == "$BOOT_SIZE" ]] || return 1
+  [[ -f "$exchange" && ! -L "$exchange" && "$(/usr/bin/stat -f %z "$exchange")" == "$RW_FS_SIZE" ]] || return 1
+  [[ -f "$secure" && ! -L "$secure" && "$(/usr/bin/stat -f %z "$secure")" == "$RW_FS_SIZE" ]] || return 1
+  filesystem_format_completed "$boot" 'MS-DOS FAT16' || return 1
+  filesystem_format_completed "$exchange" ExFAT || return 1
+  filesystem_format_completed "$secure" ExFAT || return 1
+}
+
+restore_storage_filesystem_seeds() {
+  [[ -n "$FILESYSTEM_SEED_DIR" ]] || return 1
+  storage_seed_set_valid "$FILESYSTEM_SEED_DIR" || return 1
+  clone_storage_seed_file "$FILESYSTEM_SEED_DIR/boot-fat16.raw" "$BOOT_RAW"
+  clone_storage_seed_file "$FILESYSTEM_SEED_DIR/exchange-exfat.raw" "$EXCHANGE_RAW"
+  clone_storage_seed_file "$FILESYSTEM_SEED_DIR/secure-exfat.raw" "$SECURE_RAW"
+  log "RESULT=DRIVE_STORAGE_FILESYSTEM_SEEDS_REUSED"
+}
+
+save_storage_filesystem_seeds() {
+  [[ -n "$FILESYSTEM_SEED_DIR" ]] || return 0
+  mkdir -p "$FILESYSTEM_SEED_DIR"
+  clone_storage_seed_file "$BOOT_RAW" "$FILESYSTEM_SEED_DIR/boot-fat16.raw"
+  clone_storage_seed_file "$EXCHANGE_RAW" "$FILESYSTEM_SEED_DIR/exchange-exfat.raw"
+  clone_storage_seed_file "$SECURE_RAW" "$FILESYSTEM_SEED_DIR/secure-exfat.raw"
+  storage_seed_set_valid "$FILESYSTEM_SEED_DIR"
+  log "RESULT=DRIVE_STORAGE_FILESYSTEM_SEEDS_READY"
+}
+
 prepare_fixture() {
   log "=== Prepare sparse whole-device EDP fixture ==="
-  format_raw_filesystem "$BOOT_RAW" "$BOOT_SIZE" 'MS-DOS FAT16' EDPBOOT boot
-  format_raw_filesystem "$EXCHANGE_RAW" "$RW_FS_SIZE" ExFAT EDPXCHG exchange
-  format_raw_filesystem "$SECURE_RAW" "$RW_FS_SIZE" ExFAT EDPSECURE secure
+  if ! restore_storage_filesystem_seeds; then
+    format_raw_filesystem "$BOOT_RAW" "$BOOT_SIZE" 'MS-DOS FAT16' EDPBOOT boot
+    format_raw_filesystem "$EXCHANGE_RAW" "$RW_FS_SIZE" ExFAT EDPXCHG exchange
+    format_raw_filesystem "$SECURE_RAW" "$RW_FS_SIZE" ExFAT EDPSECURE secure
+    save_storage_filesystem_seeds
+  fi
 
   /usr/bin/python3 Tests/Storage/PrepareBootFilesystemFixture.py \
     --fixture-dir "$FIXTURE_DIR" --boot-volume "$BOOT_RAW" \
