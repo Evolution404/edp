@@ -19,10 +19,12 @@
 
 #if defined(__APPLE__)
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
+extern bool EDPDirectMFMountReceiveExitAllowed(void) __attribute__((weak_import));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak_import));
 
 #else
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
+extern bool EDPDirectMFMountReceiveExitAllowed(void) __attribute__((weak));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 
 #endif
@@ -728,12 +730,15 @@ int main(int argc, char **argv) {
         MFMessageRef message = MFChannelCopyNextMessage(channel);
         if (message == NULL) {
             if (errno == EINTR) {
-                bool teardown_interrupted = EDPDirectMFMountTeardownActive != NULL &&
+                bool teardown_active = EDPDirectMFMountTeardownActive != NULL &&
                     EDPDirectMFMountTeardownActive();
+                bool exit_allowed = EDPDirectMFMountReceiveExitAllowed != NULL &&
+                    EDPDirectMFMountReceiveExitAllowed();
                 fprintf(stderr,
-                        "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d\n",
-                        teardown_interrupted ? 1 : 0);
-                if (teardown_interrupted) {
+                        "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d exit_allowed=%d\n",
+                        teardown_active ? 1 : 0,
+                        exit_allowed ? 1 : 0);
+                if (teardown_active && exit_allowed) {
                     break;
                 }
                 continue;

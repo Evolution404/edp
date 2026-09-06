@@ -34,10 +34,15 @@ struct da_unmount_context {
 extern void EDPDirectMFMountSignalReady(void);
 
 static atomic_bool g_teardown_active = false;
+static atomic_bool g_receive_exit_allowed = false;
 static atomic_bool g_transport_released = false;
 
 bool EDPDirectMFMountTeardownActive(void) {
     return atomic_load_explicit(&g_teardown_active, memory_order_acquire);
+}
+
+bool EDPDirectMFMountReceiveExitAllowed(void) {
+    return atomic_load_explicit(&g_receive_exit_allowed, memory_order_acquire);
 }
 
 void EDPDirectMFMountMarkTransportReleased(void) {
@@ -201,6 +206,7 @@ static void *termination_wait_worker(void *opaque) {
      * interrupt the receive side so the server thread can close the channel and
      * release EDP-owned resources. */
     atomic_store_explicit(&g_teardown_active, true, memory_order_release);
+    atomic_store_explicit(&g_receive_exit_allowed, false, memory_order_release);
     atomic_store_explicit(&g_transport_released, false, memory_order_release);
     fprintf(stderr,
             "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d mountpoint=%s\n",
@@ -213,10 +219,16 @@ static void *termination_wait_worker(void *opaque) {
                 "DIRECT_MFMOUNT_DA_UNMOUNT_FAILED=%d mountpoint=%s\n",
                 unmount_result,
                 args->mountpoint);
+        atomic_store_explicit(&g_receive_exit_allowed, false, memory_order_release);
         atomic_store_explicit(&g_teardown_active, false, memory_order_release);
         destroy_termination_args(args);
         return NULL;
     }
+
+    atomic_store_explicit(&g_receive_exit_allowed, true, memory_order_release);
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_RECEIVE_EXIT_ALLOWED=1 mountpoint=%s\n",
+            args->mountpoint);
 
     errno = 0;
     bool interrupted = MFChannelInterrupt(args->channel);
@@ -237,6 +249,7 @@ static void *termination_wait_worker(void *opaque) {
             "DIRECT_MFMOUNT_TRANSPORT_RELEASED=%d mountpoint=%s\n",
             transport_released ? 1 : 0,
             args->mountpoint);
+    atomic_store_explicit(&g_receive_exit_allowed, false, memory_order_release);
     atomic_store_explicit(&g_teardown_active, false, memory_order_release);
     destroy_termination_args(args);
     return NULL;

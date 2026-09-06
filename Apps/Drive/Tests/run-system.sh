@@ -174,7 +174,9 @@ ASYNC_SHIM="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFM
 ! /usr/bin/grep -Fq 'EDPDirectMFMountPrepareProcessExit' "${ASYNC_SHIM}" "${RAW_TRANSPORT}"
 /usr/bin/grep -Fq 'MFChannelInterrupt(args->channel)' "${ASYNC_SHIM}"
 /usr/bin/grep -Fq 'DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=' "${ASYNC_SHIM}"
-/usr/bin/grep -Fq 'DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d' "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d exit_allowed=%d' "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'EDPDirectMFMountReceiveExitAllowed' "${ASYNC_SHIM}" "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'DIRECT_MFMOUNT_RECEIVE_EXIT_ALLOWED=1' "${ASYNC_SHIM}"
 /usr/bin/grep -Fq 'EDPDirectMFMountMarkTransportReleased' "${ASYNC_SHIM}" "${RAW_TRANSPORT}"
 /usr/bin/grep -Fq 'DIRECT_MFMOUNT_SERVER_TRANSPORT_RELEASED=1' "${RAW_TRANSPORT}"
 echo 'RESULT=DRIVE_SYSTEM_TRANSPORT_PUBLIC_TEARDOWN_ONLY_OK'
