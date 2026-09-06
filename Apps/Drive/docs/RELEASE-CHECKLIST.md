@@ -368,15 +368,15 @@ NTFS RW is not a prerequisite for this release. The accepted NTFS ADR uses nativ
 
 ## 19. Current known blockers
 
-As of 2026-09-05:
+As of 2026-09-06:
 
 ```text
 ordinaryUSB physical negative      BLOCKED_BY_FIXTURE
 legacyNoPassword physical negative BLOCKED_BY_FIXTURE
 currentNoPassword physical negative BLOCKED_BY_FIXTURE
 unrecognizedEDP physical negative  BLOCKED_BY_FIXTURE
-a2fb874 physical release gates      PASS
-a2fb874 exact-head reboot gate      PASS
-a2fb874 final safe-eject/residue    PASS
+a7667d0 physical release gates      PASS
+a7667d0 exact-head reboot gate      PASS
+a7667d0 final safe-eject/residue    PASS
 NTFS RW ADR                         ACCEPTED A+C (native NTFS RO + writable ExFAT)
 ```
