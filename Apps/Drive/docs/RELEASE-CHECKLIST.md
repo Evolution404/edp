@@ -86,14 +86,14 @@ An ad-hoc designated requirement of the form `cdhash H"..."` is a release failur
 
 ## 5. Fixed-head GitHub Actions gate
 
-Trigger `.github/workflows/drive.yml` on the exact candidate HEAD with workflow input `storage_profile=release`. Ordinary CI defaults to the faster 3-cycle storage smoke profile and deterministic-only UI (`EDP_UI_PERF_REQUIRED=0`), so it does **not** satisfy this release gate. The release profile raises M10 to 5 cycles and starts two independent fresh-runner CI-only Instruments probes. `regression-ui-release-gate` must accept at least one complete trace with the unchanged 33 ms parser.
+Trigger `.github/workflows/drive.yml` on the exact candidate HEAD with workflow input `storage_profile=release`. Ordinary CI defaults to the faster 3-cycle storage smoke profile and deterministic-only UI (`EDP_UI_PERF_REQUIRED=0`), so it does **not** satisfy this release gate. The release profile raises M10 to 5 cycles and starts two independent fresh-runner CI-only Instruments probes. If both fail before producing any complete hitch trace, a third fresh-runner probe starts once. `regression-ui-release-gate` must accept at least one complete trace with the unchanged 33 ms parser.
 
 Required jobs:
 
 - [x] `native` PASS, including the parallel `drive-test-system` ratchet.
 - [x] `regression-fast-virtual` PASS.
 - [x] `regression-ui` deterministic PASS.
-- [x] `regression-ui-release-gate` PASS after at least one of `regression-ui-perf-a` / `regression-ui-perf-b` produces a complete 33 ms pass.
+- [x] `regression-ui-release-gate` PASS after at least one of `regression-ui-perf-a` / `regression-ui-perf-b` / conditional `regression-ui-perf-c` produces a complete 33 ms pass. Probe C is valid only when A and B both failed before emitting a complete hitch count.
 - [x] `regression-storage-core` PASS.
 - [x] `regression-storage-lifecycle` PASS, including storage failure/transport contracts.
 

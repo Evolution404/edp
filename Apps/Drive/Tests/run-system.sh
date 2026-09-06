@@ -1205,9 +1205,15 @@ done
 /usr/bin/grep -Fq "EDP_UI_PERF_REQUIRED: '0'" "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'regression-ui-perf-a:' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'regression-ui-perf-b:' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'regression-ui-perf-c:' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'regression-ui-release-gate:' "${DRIVE_WORKFLOW}"
-[[ "$(/usr/bin/grep -Fc 'EDP_UI_XCTRACE_RECORD_ATTEMPTS=1' "${DRIVE_WORKFLOW}")" -eq 2 ]]
+[[ "$(/usr/bin/grep -Fc 'EDP_UI_XCTRACE_RECORD_ATTEMPTS=1' "${DRIVE_WORKFLOW}")" -eq 3 ]]
+[[ "$(/usr/bin/grep -Fc 'trace_complete: ${{ steps.perf.outputs.trace_complete }}' "${DRIVE_WORKFLOW}")" -eq 3 ]]
 /usr/bin/grep -Fq "needs: [regression-ui-perf-a, regression-ui-perf-b]" "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq "needs: [regression-ui-perf-a, regression-ui-perf-b, regression-ui-perf-c]" "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq "needs.regression-ui-perf-a.outputs.trace_complete != 'true'" "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq "needs.regression-ui-perf-b.outputs.trace_complete != 'true'" "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'needs.regression-ui-perf-c.outputs.perf_pass' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'RESULT=DRIVE_UI_RELEASE_FRESH_RUNNER_GATE_OK' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq "inputs.storage_profile == 'release'" "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-ui' "${DRIVE_WORKFLOW}"

@@ -520,6 +520,7 @@ jobs:
     timeout-minutes: 8
     outputs:
       perf_pass: ${{ steps.perf.outputs.perf_pass }}
+      trace_complete: ${{ steps.perf.outputs.trace_complete }}
     steps:
       - uses: actions/checkout@v7
       - name: Release UI performance probe A
@@ -530,6 +531,11 @@ jobs:
           status=0
           EDP_UI_PERF_REQUIRED=1 EDP_UI_XCTRACE_RECORD_ATTEMPTS=1 \
             make drive-test-ui | tee artifacts/drive-tests/ui-perf-a.log || status=${PIPESTATUS[0]}
+          if grep -Eq '^UI_HITCH_COUNT_GT33MS=[0-9]+$' artifacts/drive-tests/ui-perf-a.log; then
+            echo 'trace_complete=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'trace_complete=false' >> "$GITHUB_OUTPUT"
+          fi
           if [[ "$status" -eq 0 ]] \
             && grep -Fq 'UI_HITCH_COUNT_GT33MS=0' artifacts/drive-tests/ui-perf-a.log \
             && grep -Fq 'RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO' artifacts/drive-tests/ui-perf-a.log \
@@ -550,6 +556,7 @@ jobs:
     timeout-minutes: 8
     outputs:
       perf_pass: ${{ steps.perf.outputs.perf_pass }}
+      trace_complete: ${{ steps.perf.outputs.trace_complete }}
     steps:
       - uses: actions/checkout@v7
       - name: Release UI performance probe B
@@ -560,6 +567,11 @@ jobs:
           status=0
           EDP_UI_PERF_REQUIRED=1 EDP_UI_XCTRACE_RECORD_ATTEMPTS=1 \
             make drive-test-ui | tee artifacts/drive-tests/ui-perf-b.log || status=${PIPESTATUS[0]}
+          if grep -Eq '^UI_HITCH_COUNT_GT33MS=[0-9]+$' artifacts/drive-tests/ui-perf-b.log; then
+            echo 'trace_complete=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'trace_complete=false' >> "$GITHUB_OUTPUT"
+          fi
           if [[ "$status" -eq 0 ]] \
             && grep -Fq 'UI_HITCH_COUNT_GT33MS=0' artifacts/drive-tests/ui-perf-b.log \
             && grep -Fq 'RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO' artifacts/drive-tests/ui-perf-b.log \
@@ -574,16 +586,54 @@ jobs:
           name: drive-ui-perf-b-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/drive-tests/ui-perf-b.log
 
+  regression-ui-perf-c:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.storage_profile == 'release' && needs.regression-ui-perf-a.outputs.trace_complete != 'true' && needs.regression-ui-perf-b.outputs.trace_complete != 'true' }}
+    needs: [regression-ui-perf-a, regression-ui-perf-b]
+    runs-on: macos-26
+    timeout-minutes: 8
+    outputs:
+      perf_pass: ${{ steps.perf.outputs.perf_pass }}
+      trace_complete: ${{ steps.perf.outputs.trace_complete }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Release UI performance probe C after two infrastructure failures
+        id: perf
+        run: |
+          set -uo pipefail
+          mkdir -p artifacts/drive-tests
+          status=0
+          EDP_UI_PERF_REQUIRED=1 EDP_UI_XCTRACE_RECORD_ATTEMPTS=1 \
+            make drive-test-ui | tee artifacts/drive-tests/ui-perf-c.log || status=${PIPESTATUS[0]}
+          if grep -Eq '^UI_HITCH_COUNT_GT33MS=[0-9]+$' artifacts/drive-tests/ui-perf-c.log; then
+            echo 'trace_complete=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'trace_complete=false' >> "$GITHUB_OUTPUT"
+          fi
+          if [[ "$status" -eq 0 ]] \
+            && grep -Fq 'UI_HITCH_COUNT_GT33MS=0' artifacts/drive-tests/ui-perf-c.log \
+            && grep -Fq 'RESULT=DRIVE_UI_ANIMATION_HITCHES_ZERO' artifacts/drive-tests/ui-perf-c.log \
+            && grep -Fq 'RESULT=DRIVE_UI_OK' artifacts/drive-tests/ui-perf-c.log; then
+            echo 'perf_pass=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'perf_pass=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: drive-ui-perf-c-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/drive-tests/ui-perf-c.log
+
   regression-ui-release-gate:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.storage_profile == 'release' }}
-    needs: [regression-ui-perf-a, regression-ui-perf-b]
+    needs: [regression-ui-perf-a, regression-ui-perf-b, regression-ui-perf-c]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Require one complete 33 ms performance trace
         run: |
           test '${{ needs.regression-ui-perf-a.outputs.perf_pass }}' = 'true' \
-            || test '${{ needs.regression-ui-perf-b.outputs.perf_pass }}' = 'true'
+            || test '${{ needs.regression-ui-perf-b.outputs.perf_pass }}' = 'true' \
+            || test '${{ needs.regression-ui-perf-c.outputs.perf_pass }}' = 'true'
           echo 'RESULT=DRIVE_UI_RELEASE_FRESH_RUNNER_GATE_OK'
 
   nightly-storage-stress:
