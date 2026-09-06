@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MACFUSE_VERSION="${MACFUSE_VERSION:-5.3.3}"
-MACFUSE_DMG_SHA256="${MACFUSE_DMG_SHA256:-7a0b7b66c0e7f8932707d1215dc9cf486e178d097ae0a2dcdf17d8530566aa15}"
+MACFUSE_VERSION="${MACFUSE_VERSION:-5.3.2}"
+MACFUSE_DMG_SHA256="${MACFUSE_DMG_SHA256:-9328a8cd0b893b4347097270d6605408630dd764ddca275256959dc0e9a07936}"
 MACFUSE_DMG_URL="${MACFUSE_DMG_URL:-https://github.com/macfuse/macfuse/releases/download/macfuse-${MACFUSE_VERSION}/macfuse-${MACFUSE_VERSION}.dmg}"
 LOCAL_ID="io.macfuse.app.fsmodule.macfuse-local"
 GENERIC_ID="io.macfuse.app.fsmodule.macfuse"
