@@ -20,10 +20,12 @@
 #if defined(__APPLE__)
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
 extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak_import));
+extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak_import));
 
 #else
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
 extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak));
+extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 
 #endif
 
@@ -34,40 +36,6 @@ extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak));
 #define RAW_NODE_ID 2ULL
 #define RAW_FILE_NAME "volume.raw"
 #define DIRECT_MAX_IO (4U * 1024U * 1024U)
-
-static atomic_int g_process_exit_backing_fd = -1;
-static atomic_bool g_process_exit_read_only = true;
-
-int EDPDirectMFMountPrepareProcessExit(void) {
-    int backing_fd = atomic_load_explicit(
-        &g_process_exit_backing_fd,
-        memory_order_acquire
-    );
-    bool read_only = atomic_load_explicit(
-        &g_process_exit_read_only,
-        memory_order_acquire
-    );
-    if (backing_fd < 0 || read_only) {
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_PROCESS_EXIT_FLUSH=not-required readonly=%d fd=%d\n",
-                read_only ? 1 : 0,
-                backing_fd);
-        return 0;
-    }
-
-    errno = 0;
-    int result;
-    do {
-        result = fsync(backing_fd);
-    } while (result != 0 && errno == EINTR);
-    int saved_errno = errno;
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_PROCESS_EXIT_FLUSH=result=%d errno=%d fd=%d\n",
-            result,
-            saved_errno,
-            backing_fd);
-    return result == 0 ? 0 : (saved_errno == 0 ? EIO : saved_errno);
-}
 
 void EDPDirectMFMountSignalReady(void) {
     const char *ready_fd_text = getenv("EDP_MFMOUNT_READY_FD");
@@ -689,17 +657,6 @@ int main(int argc, char **argv) {
         perror("open backing");
         return 1;
     }
-    atomic_store_explicit(
-        &g_process_exit_backing_fd,
-        backing_fd,
-        memory_order_release
-    );
-    atomic_store_explicit(
-        &g_process_exit_read_only,
-        read_only,
-        memory_order_release
-    );
-
     struct stat st;
     if (fstat(backing_fd, &st) != 0 || st.st_size < 0) {
         perror("fstat backing");
@@ -773,6 +730,14 @@ int main(int argc, char **argv) {
         MFMessageRef message = MFChannelCopyNextMessage(channel);
         if (message == NULL) {
             if (errno == EINTR) {
+                bool teardown_interrupted = EDPDirectMFMountTeardownActive != NULL &&
+                    EDPDirectMFMountTeardownActive();
+                fprintf(stderr,
+                        "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d\n",
+                        teardown_interrupted ? 1 : 0);
+                if (teardown_interrupted) {
+                    break;
+                }
                 continue;
             }
             if (errno == ENODEV) {
@@ -812,30 +777,24 @@ int main(int argc, char **argv) {
         if (exit_code == 0) exit_code = 5;
     }
 
-    if (lifecycle_teardown) {
-        /* The signal worker already closed the channel after Disk Arbitration
-         * unmounted the exact source. Drop only this thread's remaining
-         * ownership; the process-level teardown no longer waits on a host
-         * recovery or private deactivation path. */
-        MFRelease(channel);
-        close(backing_fd);
-        atomic_store_explicit(
-            &g_process_exit_backing_fd,
-            -1,
-            memory_order_release
-        );
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_SERVER_EXIT_AFTER_CHANNEL_CLOSE=1 teardown_complete=%d\n",
-                EDPDirectMFMountTeardownComplete() ? 1 : 0);
-    } else {
-        MFChannelClose(channel);
-        MFRelease(channel);
-        close(backing_fd);
-        atomic_store_explicit(
-            &g_process_exit_backing_fd,
-            -1,
-            memory_order_release
-        );
+    errno = 0;
+    bool channel_closed = MFChannelClose(channel);
+    int channel_close_errno = errno;
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d lifecycle=%d\n",
+            channel_closed ? 1 : 0,
+            channel_close_errno,
+            lifecycle_teardown ? 1 : 0);
+    if (!channel_closed && exit_code == 0) {
+        exit_code = 6;
+    }
+
+    MFRelease(channel);
+    close(backing_fd);
+
+    if (lifecycle_teardown && EDPDirectMFMountMarkTransportReleased != NULL) {
+        EDPDirectMFMountMarkTransportReleased();
+        fprintf(stderr, "DIRECT_MFMOUNT_SERVER_TRANSPORT_RELEASED=1\n");
     }
     fprintf(stderr, "DIRECT_MFMOUNT_EXIT=%d\n", exit_code);
     return exit_code;

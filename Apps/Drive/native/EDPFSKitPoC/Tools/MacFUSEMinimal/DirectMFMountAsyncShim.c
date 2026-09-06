@@ -34,10 +34,10 @@ struct da_unmount_context {
 };
 
 extern void EDPDirectMFMountSignalReady(void);
-extern int EDPDirectMFMountPrepareProcessExit(void);
 
 static atomic_bool g_teardown_active = false;
 static atomic_bool g_teardown_complete = false;
+static atomic_bool g_transport_released = false;
 
 bool EDPDirectMFMountTeardownActive(void) {
     return atomic_load_explicit(&g_teardown_active, memory_order_acquire);
@@ -45,6 +45,10 @@ bool EDPDirectMFMountTeardownActive(void) {
 
 bool EDPDirectMFMountTeardownComplete(void) {
     return atomic_load_explicit(&g_teardown_complete, memory_order_acquire);
+}
+
+void EDPDirectMFMountMarkTransportReleased(void) {
+    atomic_store_explicit(&g_transport_released, true, memory_order_release);
 }
 
 static char *copy_string(const char *source) {
@@ -150,9 +154,23 @@ static bool wait_for_da_operation(struct da_unmount_context *context) {
 static bool wait_for_mount_table_removal(const char *mountpoint,
                                          const char *source);
 
+static bool wait_for_transport_release(void) {
+    struct timespec delay = {
+        .tv_sec = 0,
+        .tv_nsec = 100 * 1000 * 1000,
+    };
+    for (int attempt = 0; attempt < 100; attempt++) {
+        if (atomic_load_explicit(&g_transport_released,
+                                 memory_order_acquire)) {
+            return true;
+        }
+        nanosleep(&delay, NULL);
+    }
+    return false;
+}
+
 static int unmount_source_with_disk_arbitration(const char *source,
-                                                const char *mountpoint,
-                                                MFChannelRef *channel) {
+                                                const char *mountpoint) {
     const char *expected_bsd_name = source + strlen("/dev/");
     DASessionRef session = DASessionCreate(kCFAllocatorDefault);
     if (session == NULL) {
@@ -240,40 +258,14 @@ static int unmount_source_with_disk_arbitration(const char *source,
         return EBUSY;
     }
 
-    /* Disk Arbitration success is the filesystem teardown authority. Never
-     * follow it with a synchronous unmount(2): that call can enter an
-     * uninterruptible VFS wait while FSKit is deactivating. Close only EDP's
-     * own MFChannel and let process exit release the remaining transport
-     * resources. */
-    errno = 0;
-    bool closed = MFChannelClose(*channel);
-    int saved_errno = errno;
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d\n",
-            closed ? 1 : 0,
-            saved_errno);
-    if (!closed) {
-        DASessionUnscheduleFromRunLoop(session, run_loop,
-                                       kCFRunLoopDefaultMode);
-        CFRelease(disk);
-        CFRelease(session);
-        return saved_errno == 0 ? EIO : saved_errno;
-    }
-
-    MFRelease(*channel);
-    *channel = NULL;
-
-    bool mount_gone = wait_for_mount_table_removal(mountpoint, source);
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_MOUNT_TABLE_GONE_AFTER_DA=%d source=%s\n",
-            mount_gone ? 1 : 0,
-            source);
-
+    /* Disk Arbitration success is the filesystem teardown authority. Keep the
+     * channel open while DA performs teardown so the server can answer FUSE
+     * requests such as DESTROY. The signal worker interrupts the idle receive
+     * loop only after DA has acknowledged the unmount. */
     DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
     CFRelease(disk);
     CFRelease(session);
-
-    return mount_gone ? 0 : EBUSY;
+    return 0;
 }
 
 static bool wait_for_mount_table_removal(const char *mountpoint,
@@ -322,18 +314,18 @@ static void *termination_wait_worker(void *opaque) {
             source,
             args->mountpoint);
 
-    /* Disk Arbitration owns filesystem teardown. After it acknowledges the
-     * exact source, close only EDP's MFChannel and terminate this EDP-owned
-     * adapter process; never wait on or control the system FSKit host. */
+    /* Disk Arbitration owns filesystem teardown. Keep servicing FUSE traffic
+     * until DA acknowledges the exact source, then use the public macFUSE
+     * MFChannelInterrupt API to wake the otherwise idle receive loop. */
     atomic_store_explicit(&g_teardown_active, true, memory_order_release);
     atomic_store_explicit(&g_teardown_complete, false, memory_order_release);
+    atomic_store_explicit(&g_transport_released, false, memory_order_release);
     fprintf(stderr,
             "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d\n",
             signal_number);
     int unmount_result = unmount_source_with_disk_arbitration(
         source,
-        args->mountpoint,
-        &args->channel
+        args->mountpoint
     );
     if (unmount_result != 0) {
         atomic_store_explicit(&g_teardown_complete, true,
@@ -347,18 +339,40 @@ static void *termination_wait_worker(void *opaque) {
         return NULL;
     }
 
-    atomic_store_explicit(&g_teardown_complete, true, memory_order_release);
-    atomic_store_explicit(&g_teardown_active, false, memory_order_release);
-
-    int flush_result = EDPDirectMFMountPrepareProcessExit();
+    errno = 0;
+    bool interrupted = MFChannelInterrupt(args->channel);
+    int interrupt_errno = errno;
     fprintf(stderr,
-            "DIRECT_MFMOUNT_EDP_PROCESS_EXIT=1 flush_status=%d source=%s mountpoint=%s\n",
-            flush_result,
+            "DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=%d errno=%d source=%s\n",
+            interrupted ? 1 : 0,
+            interrupt_errno,
+            source);
+    if (!interrupted) {
+        atomic_store_explicit(&g_teardown_complete, true,
+                              memory_order_release);
+        atomic_store_explicit(&g_teardown_active, false,
+                              memory_order_release);
+        destroy_termination_args(args);
+        return NULL;
+    }
+
+    bool transport_released = wait_for_transport_release();
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_TRANSPORT_RELEASED=%d source=%s\n",
+            transport_released ? 1 : 0,
+            source);
+    bool mount_gone = transport_released &&
+        wait_for_mount_table_removal(args->mountpoint, source);
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_MOUNT_TABLE_GONE=%d source=%s mountpoint=%s\n",
+            mount_gone ? 1 : 0,
             source,
             args->mountpoint);
+
+    atomic_store_explicit(&g_teardown_complete, true, memory_order_release);
+    atomic_store_explicit(&g_teardown_active, false, memory_order_release);
     destroy_termination_args(args);
-    fflush(stderr);
-    _exit(flush_result == 0 ? 0 : 5);
+    return NULL;
 }
 
 static int start_termination_waiter(MFChannelRef channel,

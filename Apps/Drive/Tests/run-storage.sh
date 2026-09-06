@@ -1451,12 +1451,30 @@ case "$STORAGE_PHASE" in
     ) >"$contracts_log" 2>&1 &
     contracts_pid=$!
     lifecycle_status=0
-    run_m10 || lifecycle_status=$?
+    set +e
+    (
+      set -e
+      run_m10
+    )
+    lifecycle_status=$?
+    set -e
     if (( lifecycle_status == 0 )); then
-      run_m12 || lifecycle_status=$?
+      set +e
+      (
+        set -e
+        run_m12
+      )
+      lifecycle_status=$?
+      set -e
     fi
     if (( lifecycle_status == 0 )); then
-      run_m14 || lifecycle_status=$?
+      set +e
+      (
+        set -e
+        run_m14
+      )
+      lifecycle_status=$?
+      set -e
     fi
     contracts_status=0
     wait "$contracts_pid" || contracts_status=$?
