@@ -18,17 +18,9 @@
 #include <unistd.h>
 
 #if defined(__APPLE__)
-extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
-extern int EDPDirectMFMountFinalizeTeardown(MFChannelRef channel,
-                                            const char *mountpoint) __attribute__((weak_import));
-extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak_import));
-
+extern bool EDPDirectMFMountShutdownRequested(void) __attribute__((weak_import));
 #else
-extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
-extern int EDPDirectMFMountFinalizeTeardown(MFChannelRef channel,
-                                            const char *mountpoint) __attribute__((weak));
-extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
-
+extern bool EDPDirectMFMountShutdownRequested(void) __attribute__((weak));
 #endif
 
 #ifndef ENOATTR
@@ -601,20 +593,13 @@ static int dispatch_message(struct direct_state *state, MFMessageRef message) {
             break;
         case FUSE_DESTROY:
             fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_RECEIVED=1\n");
-            /* macFUSE Local's FSVolume.deactivate() sends Request.destroy via
-             * Channel.process(..., timeout: .zero) and awaits a reply before
-             * it closes the channel and asks the mount daemon to deactivate
-             * the virtual device.  Returning from dispatch without a FUSE
-             * reply deadlocks VFS unmount against Local deactivation. */
+            /* macFUSE Local waits for the FUSE_DESTROY reply before retiring
+             * the mount. Always acknowledge it and let the server loop end;
+             * process signals are never allowed to substitute for VFS teardown. */
             result = send_payload(state->channel, in->unique, NULL, 0);
             if (result == 0) {
                 fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_REPLIED=1\n");
-                if (EDPDirectMFMountTeardownActive != NULL &&
-                    EDPDirectMFMountTeardownActive()) {
-                    fprintf(stderr, "DIRECT_MFMOUNT_DESTROY_DEFERRED=1\n");
-                } else {
-                    state->running = false;
-                }
+                state->running = false;
             }
             break;
         case FUSE_MKDIR:
@@ -732,12 +717,12 @@ int main(int argc, char **argv) {
         MFMessageRef message = MFChannelCopyNextMessage(channel);
         if (message == NULL) {
             if (errno == EINTR) {
-                bool teardown_active = EDPDirectMFMountTeardownActive != NULL &&
-                    EDPDirectMFMountTeardownActive();
+                bool shutdown_requested = EDPDirectMFMountShutdownRequested != NULL &&
+                    EDPDirectMFMountShutdownRequested();
                 fprintf(stderr,
-                        "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d\n",
-                        teardown_active ? 1 : 0);
-                if (teardown_active) {
+                        "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 shutdown=%d\n",
+                        shutdown_requested ? 1 : 0);
+                if (shutdown_requested) {
                     break;
                 }
                 continue;
@@ -771,50 +756,24 @@ int main(int argc, char **argv) {
             state.fsync_total_us,
             state.fsync_max_us);
 
-    bool lifecycle_teardown = EDPDirectMFMountTeardownActive != NULL &&
-        EDPDirectMFMountTeardownActive();
-
     if (!state.read_only && fsync(backing_fd) != 0) {
         perror("fsync backing");
         if (exit_code == 0) exit_code = 5;
     }
 
-    if (!lifecycle_teardown) {
-        errno = 0;
-        bool channel_closed = MFChannelClose(channel);
-        int channel_close_errno = errno;
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d lifecycle=0\n",
-                channel_closed ? 1 : 0,
-                channel_close_errno);
-        if (!channel_closed && exit_code == 0) {
-            exit_code = 6;
-        }
-    } else if (EDPDirectMFMountFinalizeTeardown != NULL) {
-        int teardown_result = EDPDirectMFMountFinalizeTeardown(channel, mountpoint);
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_FINALIZE_TEARDOWN_RESULT=%d mountpoint=%s\n",
-                teardown_result,
-                mountpoint);
-        if (teardown_result != 0 && exit_code == 0) {
-            exit_code = 7;
-        }
-    } else {
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_FINALIZE_TEARDOWN_UNAVAILABLE=1 mountpoint=%s\n",
-                mountpoint);
-        if (exit_code == 0) {
-            exit_code = 7;
-        }
+    errno = 0;
+    bool channel_closed = MFChannelClose(channel);
+    int channel_close_errno = errno;
+    fprintf(stderr,
+            "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d\n",
+            channel_closed ? 1 : 0,
+            channel_close_errno);
+    if (!channel_closed && exit_code == 0) {
+        exit_code = 6;
     }
 
     MFRelease(channel);
     close(backing_fd);
-
-    if (lifecycle_teardown && EDPDirectMFMountMarkTransportReleased != NULL) {
-        EDPDirectMFMountMarkTransportReleased();
-        fprintf(stderr, "DIRECT_MFMOUNT_SERVER_TRANSPORT_RELEASED=1\n");
-    }
     fprintf(stderr, "DIRECT_MFMOUNT_EXIT=%d\n", exit_code);
     return exit_code;
 }

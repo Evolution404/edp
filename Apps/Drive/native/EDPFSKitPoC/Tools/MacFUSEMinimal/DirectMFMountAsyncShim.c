@@ -1,9 +1,6 @@
 #include <MFMount/MFMount.h>
-#include <CoreFoundation/CoreFoundation.h>
-#include <DiskArbitration/DiskArbitration.h>
 
 #include <errno.h>
-#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -12,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
-#include <time.h>
 #include <unistd.h>
 
 struct async_mount_args {
@@ -28,22 +24,12 @@ struct termination_wait_args {
     sigset_t signals;
 };
 
-struct da_unmount_context {
-    bool completed;
-    DAReturn status;
-};
-
 extern void EDPDirectMFMountSignalReady(void);
 
-static atomic_bool g_teardown_active = false;
-static atomic_bool g_transport_released = false;
+static atomic_bool g_shutdown_requested = false;
 
-bool EDPDirectMFMountTeardownActive(void) {
-    return atomic_load_explicit(&g_teardown_active, memory_order_acquire);
-}
-
-void EDPDirectMFMountMarkTransportReleased(void) {
-    atomic_store_explicit(&g_transport_released, true, memory_order_release);
+bool EDPDirectMFMountShutdownRequested(void) {
+    return atomic_load_explicit(&g_shutdown_requested, memory_order_acquire);
 }
 
 static char *copy_string(const char *source) {
@@ -78,264 +64,64 @@ static void destroy_termination_args(struct termination_wait_args *args) {
     free(args);
 }
 
-static bool wait_for_transport_release(void) {
-    struct timespec delay = {
-        .tv_sec = 0,
-        .tv_nsec = 100 * 1000 * 1000,
-    };
-    for (int attempt = 0; attempt < 450; attempt++) {
-        if (atomic_load_explicit(&g_transport_released,
-                                 memory_order_acquire)) {
-            return true;
-        }
-        nanosleep(&delay, NULL);
-    }
-    return false;
-}
-
-static int copy_mount_source(const char *mountpoint,
-                             char *source,
-                             size_t source_size) {
+static bool mountpoint_is_mounted(const char *mountpoint) {
     struct statfs *mounts = NULL;
     int count = getmntinfo(&mounts, MNT_NOWAIT);
     if (count <= 0) {
-        return errno == 0 ? EIO : errno;
-    }
-
-    for (int index = 0; index < count; index++) {
-        if (strcmp(mounts[index].f_mntonname, mountpoint) != 0) {
-            continue;
-        }
-        const char *candidate = mounts[index].f_mntfromname;
-        if (strncmp(candidate, "/dev/disk", strlen("/dev/disk")) != 0) {
-            return ENODEV;
-        }
-        int length = snprintf(source, source_size, "%s", candidate);
-        if (length < 0 || (size_t)length >= source_size) {
-            return ENAMETOOLONG;
-        }
-        return 0;
-    }
-    return ENOENT;
-}
-
-static bool mount_source_is_present(const char *mountpoint,
-                                    const char *source) {
-    struct statfs *mounts = NULL;
-    int count = getmntinfo(&mounts, MNT_NOWAIT);
-    if (count <= 0) {
+        /* Fail closed if the mount table cannot be read. A termination signal
+         * must never become an implicit live-filesystem teardown path. */
         return true;
     }
     for (int index = 0; index < count; index++) {
-        if (strcmp(mounts[index].f_mntonname, mountpoint) == 0 ||
-            strcmp(mounts[index].f_mntfromname, source) == 0) {
+        if (strcmp(mounts[index].f_mntonname, mountpoint) == 0) {
             return true;
         }
     }
     return false;
-}
-
-static void da_unmount_callback(DADiskRef disk,
-                                DADissenterRef dissenter,
-                                void *opaque) {
-    (void)disk;
-    struct da_unmount_context *context = opaque;
-    context->status = dissenter == NULL
-        ? kDAReturnSuccess
-        : DADissenterGetStatus(dissenter);
-    context->completed = true;
-    CFRunLoopStop(CFRunLoopGetCurrent());
-}
-
-static bool wait_for_da_unmount(struct da_unmount_context *context) {
-    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 30.0;
-    while (!context->completed) {
-        CFTimeInterval remaining = deadline - CFAbsoluteTimeGetCurrent();
-        if (remaining <= 0.0) {
-            break;
-        }
-        CFRunLoopRunInMode(
-            kCFRunLoopDefaultMode,
-            remaining < 1.0 ? remaining : 1.0,
-            true
-        );
-    }
-    return context->completed;
-}
-
-int EDPDirectMFMountFinalizeTeardown(MFChannelRef channel,
-                                     const char *mountpoint) {
-    if (channel == NULL || mountpoint == NULL) {
-        return EINVAL;
-    }
-
-    char source[PATH_MAX];
-    int source_result = copy_mount_source(mountpoint, source, sizeof(source));
-    if (source_result != 0) {
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_FINALIZE_SOURCE_FAILED=%d mountpoint=%s\n",
-                source_result,
-                mountpoint);
-        return source_result;
-    }
-
-    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
-    if (session == NULL) {
-        return ENOMEM;
-    }
-    CFRunLoopRef run_loop = CFRunLoopGetCurrent();
-    DASessionScheduleWithRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-
-    CFURLRef volume_url = CFURLCreateFromFileSystemRepresentation(
-        kCFAllocatorDefault,
-        (const UInt8 *)mountpoint,
-        strlen(mountpoint),
-        true
-    );
-    if (volume_url == NULL) {
-        DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-        CFRelease(session);
-        return ENOMEM;
-    }
-    DADiskRef disk = DADiskCreateFromVolumePath(
-        kCFAllocatorDefault,
-        session,
-        volume_url
-    );
-    CFRelease(volume_url);
-    if (disk == NULL) {
-        DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-        CFRelease(session);
-        return ENODEV;
-    }
-
-    const char *actual_bsd_name = DADiskGetBSDName(disk);
-    const char *expected_bsd_name = source + strlen("/dev/");
-    if (actual_bsd_name == NULL || strcmp(actual_bsd_name, expected_bsd_name) != 0) {
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_FINALIZE_SOURCE_MISMATCH=1 expected=%s actual=%s\n",
-                expected_bsd_name,
-                actual_bsd_name == NULL ? "<null>" : actual_bsd_name);
-        CFRelease(disk);
-        DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-        CFRelease(session);
-        return EXDEV;
-    }
-
-    /* Match macFUSE 5.3.3's exited-session path: once the receive loop has
-     * observed the requested interrupt, close the public MFChannel first and
-     * then force-unmount the retained DADiskRef. Do not call unmount(2) and do
-     * not reach into macFUSE or FSKit host internals. */
-    errno = 0;
-    bool closed = MFChannelClose(channel);
-    int close_errno = errno;
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_FINALIZE_CHANNEL_CLOSE_RESULT=%d errno=%d source=%s\n",
-            closed ? 1 : 0,
-            close_errno,
-            source);
-    if (!closed) {
-        CFRelease(disk);
-        DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-        CFRelease(session);
-        return close_errno == 0 ? EIO : close_errno;
-    }
-
-    struct da_unmount_context context = {
-        .completed = false,
-        .status = kDAReturnError,
-    };
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_FINALIZE_DA_FORCE_UNMOUNT_REQUESTED=1 source=%s\n",
-            source);
-    DADiskUnmount(
-        disk,
-        kDADiskUnmountOptionForce,
-        da_unmount_callback,
-        &context
-    );
-    bool completed = wait_for_da_unmount(&context);
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_FINALIZE_DA_FORCE_UNMOUNT_STATUS=%#x completed=%d source=%s\n",
-            (unsigned int)context.status,
-            completed ? 1 : 0,
-            source);
-
-    CFRelease(disk);
-    DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-    CFRelease(session);
-
-    if (!completed || context.status != kDAReturnSuccess) {
-        return EBUSY;
-    }
-
-    struct timespec delay = {
-        .tv_sec = 0,
-        .tv_nsec = 100 * 1000 * 1000,
-    };
-    for (int attempt = 0; attempt < 100; attempt++) {
-        if (!mount_source_is_present(mountpoint, source)) {
-            fprintf(stderr,
-                    "DIRECT_MFMOUNT_FINALIZE_MOUNT_GONE=1 source=%s mountpoint=%s\n",
-                    source,
-                    mountpoint);
-            return 0;
-        }
-        nanosleep(&delay, NULL);
-    }
-
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_FINALIZE_MOUNT_GONE=0 source=%s mountpoint=%s\n",
-            source,
-            mountpoint);
-    return EBUSY;
 }
 
 static void *termination_wait_worker(void *opaque) {
     struct termination_wait_args *args = opaque;
-    int signal_number = 0;
-    int wait_result = sigwait(&args->signals, &signal_number);
-    if (wait_result != 0) {
+
+    for (;;) {
+        int signal_number = 0;
+        int wait_result = sigwait(&args->signals, &signal_number);
+        if (wait_result != 0) {
+            fprintf(stderr, "DIRECT_MFMOUNT_SIGWAIT_FAILED=%d\n", wait_result);
+            destroy_termination_args(args);
+            return NULL;
+        }
+
+        /* Production owns VFS teardown. Refuse process termination while the
+         * bridge is still mounted: killing the transport first can leave a
+         * host-owned stale FSKit mount that public APIs cannot safely recover.
+         * Once the bridge is gone, interrupt only EDP's receive loop so normal
+         * resource release can complete. */
+        if (mountpoint_is_mounted(args->mountpoint)) {
+            fprintf(stderr,
+                    "DIRECT_MFMOUNT_SIGNAL_REFUSED_LIVE_MOUNT=%d mountpoint=%s\n",
+                    signal_number,
+                    args->mountpoint);
+            continue;
+        }
+
+        atomic_store_explicit(&g_shutdown_requested, true, memory_order_release);
         fprintf(stderr,
-                "DIRECT_MFMOUNT_SIGWAIT_FAILED=%d\n",
-                wait_result);
+                "DIRECT_MFMOUNT_TERMINATION_AFTER_UNMOUNT=%d mountpoint=%s\n",
+                signal_number,
+                args->mountpoint);
+
+        errno = 0;
+        bool interrupted = MFChannelInterrupt(args->channel);
+        int interrupt_errno = errno;
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=%d errno=%d mountpoint=%s\n",
+                interrupted ? 1 : 0,
+                interrupt_errno,
+                args->mountpoint);
         destroy_termination_args(args);
         return NULL;
     }
-
-    /* Match macFUSE 5.3.3 signal handling: the signal thread only interrupts
-     * receive-side blocking. The regular server thread performs the actual
-     * channel close + Disk Arbitration force-unmount after leaving its receive
-     * loop. */
-    atomic_store_explicit(&g_teardown_active, true, memory_order_release);
-    atomic_store_explicit(&g_transport_released, false, memory_order_release);
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d mountpoint=%s\n",
-            signal_number,
-            args->mountpoint);
-
-    errno = 0;
-    bool interrupted = MFChannelInterrupt(args->channel);
-    int interrupt_errno = errno;
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=%d errno=%d mountpoint=%s\n",
-            interrupted ? 1 : 0,
-            interrupt_errno,
-            args->mountpoint);
-    if (!interrupted) {
-        atomic_store_explicit(&g_teardown_active, false, memory_order_release);
-        destroy_termination_args(args);
-        return NULL;
-    }
-
-    bool transport_released = wait_for_transport_release();
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_TRANSPORT_RELEASED=%d mountpoint=%s\n",
-            transport_released ? 1 : 0,
-            args->mountpoint);
-    atomic_store_explicit(&g_teardown_active, false, memory_order_release);
-    destroy_termination_args(args);
-    return NULL;
 }
 
 static int start_termination_waiter(MFChannelRef channel,
@@ -399,9 +185,7 @@ static void *mount_worker(void *opaque) {
         (void)MFChannelClose(args->channel);
     } else {
         /* EDPAsyncMFMount returns immediately after spawning this worker, so
-         * only the real framework MFMount completion here is authoritative for
-         * filesystem readiness.  Signal the parent now; FUSE INIT alone can
-         * still precede the Local mount becoming usable at volume.raw. */
+         * only real framework MFMount completion is authoritative readiness. */
         EDPDirectMFMountSignalReady();
     }
 

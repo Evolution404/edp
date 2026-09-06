@@ -67,7 +67,7 @@ xcrun swiftc -parse-as-library -O -swift-version 6 -warnings-as-errors \
   "${REPO_ROOT}/native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift" \
   "${BUILD_ROOT}/adapter.o" "${BUILD_ROOT}/async-shim.o" \
   -F"${FRAMEWORKS}" -Xlinker -rpath -Xlinker "${RUNTIME_FRAMEWORKS}" \
-  -framework MFMount -framework CoreFoundation -framework DiskArbitration \
+  -framework MFMount -framework CoreFoundation \
   -o "${OUTPUT_BIN}/edp-mfmount-local-readwrite"
 cp "${OUTPUT_BIN}/edp-mfmount-local-readwrite" "${OUTPUT_BIN}/edp-mfmount-local-readonly"
 chmod 0755 "${OUTPUT_BIN}/edp-mfmount-local-readonly"
