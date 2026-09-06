@@ -166,6 +166,8 @@ ASYNC_SHIM="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFM
 ! /usr/bin/grep -Fq 'xpc_connection_create_mach_service' "${ASYNC_SHIM}"
 ! /usr/bin/grep -Fq 'device/deactivate' "${ASYNC_SHIM}"
 ! /usr/bin/grep -Fq 'DIRECT_MFMOUNT_MACFUSE_DEACTIVATE' "${ASYNC_SHIM}"
+! /usr/bin/grep -Fq 'DiskArbitration' "${ASYNC_SHIM}"
+! /usr/bin/grep -Fq -- '-framework DiskArbitration' "${TRANSPORT_BUILD}"
 ! /usr/bin/grep -Fq 'EDPDirectMFMountPrepareProcessExit' "${ASYNC_SHIM}" "${RAW_TRANSPORT}"
 /usr/bin/grep -Fq 'MFChannelInterrupt(args->channel)' "${ASYNC_SHIM}"
 /usr/bin/grep -Fq 'DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=' "${ASYNC_SHIM}"

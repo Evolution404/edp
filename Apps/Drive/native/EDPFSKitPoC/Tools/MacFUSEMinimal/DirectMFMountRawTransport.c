@@ -19,12 +19,10 @@
 
 #if defined(__APPLE__)
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
-extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak_import));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak_import));
 
 #else
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
-extern bool EDPDirectMFMountTeardownComplete(void) __attribute__((weak));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 
 #endif
@@ -769,7 +767,6 @@ int main(int argc, char **argv) {
             state.fsync_max_us);
 
     bool lifecycle_teardown = EDPDirectMFMountTeardownActive != NULL &&
-        EDPDirectMFMountTeardownComplete != NULL &&
         EDPDirectMFMountTeardownActive();
 
     if (!state.read_only && fsync(backing_fd) != 0) {
