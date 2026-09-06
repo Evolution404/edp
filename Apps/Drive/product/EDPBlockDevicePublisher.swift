@@ -40,13 +40,13 @@ protocol EDPBlockDevicePublisher: AnyObject, Sendable {
 }
 
 enum EDPBlockPublicationBackend: String, Sendable {
-    case hdiutilCompatibility = "hdiutil-compatibility"
+    case diskutilImageCompatibility = "diskutil-image-compatibility"
     case diskImageKitHostAttachment = "diskimagekit-host-attachment"
 }
 
 /// Central policy seam for host block-device publication.
 ///
-/// `hdiutil` is the macOS 26 compatibility provider. macOS 27 introduces
+/// `diskutil image` is the macOS 26 compatibility provider. macOS 27 introduces
 /// DiskImageKit, but the currently documented API does not expose host IOMedia
 /// attachment. Keep that future backend explicit without pretending an API
 /// exists: it may be selected only after a public host-attachment capability is
@@ -60,7 +60,7 @@ enum EDPBlockDevicePublisherFactory {
            diskImageKitHostAttachmentAvailable {
             return .diskImageKitHostAttachment
         }
-        return .hdiutilCompatibility
+        return .diskutilImageCompatibility
     }
 
     static func make(
@@ -69,8 +69,8 @@ enum EDPBlockDevicePublisherFactory {
         metrics: EDPRuntimeMetrics = EDPRuntimeMetrics()
     ) throws -> any EDPBlockDevicePublisher {
         switch selectedBackend() {
-        case .hdiutilCompatibility:
-            return EDPHdiutilBlockDevicePublisher(
+        case .diskutilImageCompatibility:
+            return EDPDiskutilImageBlockDevicePublisher(
                 binaryRoot: binaryRoot,
                 diskArbitration: diskArbitration,
                 metrics: metrics
@@ -845,8 +845,8 @@ private final class EDPPublicationTerminationOperation: @unchecked Sendable {
     }
 }
 
-final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked Sendable {
-    private let hdiutilPath = "/usr/bin/hdiutil"
+final class EDPDiskutilImageBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked Sendable {
+    private let diskutilPath = "/usr/sbin/diskutil"
     private let consoleLauncherPath: String
     private let diskArbitration: any EDPDaemonDiskArbitrating
     private let metrics: EDPRuntimeMetrics
@@ -873,9 +873,9 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
             }
             return nil
         }
-        guard FileManager.default.isExecutableFile(atPath: hdiutilPath) else {
+        guard FileManager.default.isExecutableFile(atPath: diskutilPath) else {
             operationQueue.async {
-                completion(nil, "Apple hdiutil is unavailable: \(self.hdiutilPath)")
+                completion(nil, "Apple diskutil is unavailable: \(self.diskutilPath)")
             }
             return nil
         }
@@ -896,20 +896,19 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
         }
 
         // The macFUSE Local transport and volume.raw are owned by the logged-in
-        // console user. Use Apple's documented hdiutil frontend rather than
-        // linking or dynamically loading the private DiskImages2 framework.
-        // `-nomount` publishes the raw image as IOMedia without asking the OS to
-        // mount a filesystem; the exact IOKit generation remains our lifecycle
-        // authority after publication.
+        // console user. Use Apple's documented diskutil image frontend rather
+        // than hdiutil or any private DiskImages2 API. `--noMount` publishes the
+        // image as IOMedia without asking the OS to mount a filesystem; the exact
+        // IOKit generation remains our lifecycle authority after publication.
         return runBoundedProcessAsync(
             on: operationQueue,
             executable: consoleLauncherPath,
             arguments: [
                 String(identity.0), String(identity.1), "--",
-                hdiutilPath, "attach", "-nomount", "-readwrite", "-plist", path,
+                diskutilPath, "image", "attach", "--plist", "--noMount", path,
             ],
             timeout: 15,
-            label: "console-user hdiutil raw attach"
+            label: "console-user diskutil image attach"
         ) { result, errorMessage in
             if let errorMessage {
                 completion(nil, errorMessage)
@@ -918,25 +917,13 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
             guard let result, result.status == 0 else {
                 let status = result?.status ?? -1
                 let detail = result.map { String(decoding: $0.stderr, as: UTF8.self) } ?? ""
-                completion(nil, "hdiutil raw attach failed (\(status)): \(detail)")
+                completion(nil, "diskutil image attach failed (\(status)): \(detail)")
                 return
             }
 
-            guard let root = try? PropertyListSerialization.propertyList(
-                from: result.stdout,
-                options: [],
-                format: nil
-            ) as? [String: Any],
-            let entities = root["system-entities"] as? [[String: Any]] else {
-                completion(nil, "hdiutil attach returned an invalid property list")
-                return
-            }
-            let wholeDevices = entities
-                .compactMap { $0["dev-entry"] as? String }
-                .compactMap { Self.wholeBSDName(fromDevicePath: $0) }
-            guard let bsdName = wholeDevices.first,
+            guard let bsdName = Self.uniqueWholeBSDName(fromDiskutilAttachPlist: result.stdout),
                   let generation = EDPIOKitMediaLifecycle.mediaGeneration(forBSDName: bsdName) else {
-                completion(nil, "hdiutil did not publish a stable whole IOMedia generation")
+                completion(nil, "diskutil image attach did not publish a unique stable whole IOMedia generation")
                 return
             }
             completion(
@@ -967,8 +954,8 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
 
             // Normal product sessions capture the exact synthetic IOMedia
             // registry generation at publication time.  That generation's IOKit
-            // termination event is the teardown authority; do not poll hdiutil
-            // or sleep waiting for a guessed quiescence interval.
+            // termination event is the teardown authority; do not poll legacy
+            // disk-image metadata or sleep waiting for a guessed quiescence interval.
             if let registryEntryID = device.registryEntryID {
                 EDPPublicationTerminationOperation(
                     queue: self.operationQueue,
@@ -1090,7 +1077,7 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
         }
         if let ejectError {
             NSLog(
-                "EDP exact-generation eject for %@ reported %@; trying bounded public hdiutil detach",
+                "EDP exact-generation eject for %@ reported %@; trying bounded public diskutil eject",
                 backingPath,
                 ejectError
             )
@@ -1104,7 +1091,7 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
             completion(
                 terminated
                     ? nil
-                    : "exact disk image IOMedia generation remained after public detach for \(backingPath)"
+                    : "exact disk image IOMedia generation remained after public eject for \(backingPath)"
             )
         }.start(afterArming: { [weak self] in
             guard let self,
@@ -1113,15 +1100,15 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
             }
             _ = runBoundedProcessAsync(
                 on: self.operationQueue,
-                executable: self.hdiutilPath,
-                arguments: ["detach", "/dev/\(device.bsdName)", "-force"],
+                executable: self.diskutilPath,
+                arguments: ["eject", device.bsdName],
                 timeout: 8,
-                label: "hdiutil exact-generation detach"
+                label: "diskutil exact-generation eject"
             ) { result, errorMessage in
                 if let errorMessage {
-                    NSLog("EDP hdiutil detach failed for %@: %@", backingPath, errorMessage)
+                    NSLog("EDP diskutil eject failed for %@: %@", backingPath, errorMessage)
                 } else if let result, result.status != 0 {
-                    NSLog("EDP hdiutil detach exited %d for %@", result.status, backingPath)
+                    NSLog("EDP diskutil eject exited %d for %@", result.status, backingPath)
                 }
             }
         })
@@ -1265,12 +1252,54 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
         return nil
     }
 
-    private static func wholeBSDName(fromDevicePath path: String) -> String? {
-        let prefix = "/dev/disk"
-        guard path.hasPrefix(prefix) else { return nil }
-        let suffix = path.dropFirst(prefix.count)
+    private static func uniqueWholeBSDName(fromDiskutilAttachPlist data: Data) -> String? {
+        guard let propertyList = try? PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        ) else {
+            return nil
+        }
+        var names = Set<String>()
+        collectWholeBSDNames(from: propertyList, into: &names)
+        guard names.count == 1 else { return nil }
+        return names.first
+    }
+
+    private static func collectWholeBSDNames(from value: Any, into names: inout Set<String>) {
+        if let string = value as? String {
+            if let bsdName = wholeBSDName(fromDiskutilToken: string) {
+                names.insert(bsdName)
+            }
+            return
+        }
+        if let dictionary = value as? [String: Any] {
+            for (key, nestedValue) in dictionary {
+                if let bsdName = wholeBSDName(fromDiskutilToken: key) {
+                    names.insert(bsdName)
+                }
+                collectWholeBSDNames(from: nestedValue, into: &names)
+            }
+            return
+        }
+        if let array = value as? [Any] {
+            for nestedValue in array {
+                collectWholeBSDNames(from: nestedValue, into: &names)
+            }
+        }
+    }
+
+    private static func wholeBSDName(fromDiskutilToken token: String) -> String? {
+        let candidate = token.hasPrefix("/dev/") ? String(token.dropFirst(5)) : token
+        guard candidate.hasPrefix("disk") else { return nil }
+        let suffix = candidate.dropFirst(4)
         guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return nil }
-        return "disk\(suffix)"
+        return candidate
+    }
+
+    private static func wholeBSDName(fromDevicePath path: String) -> String? {
+        guard path.hasPrefix("/dev/") else { return nil }
+        return wholeBSDName(fromDiskutilToken: path)
     }
 
     private static func isSyntheticBSDDevicePath(_ path: String) -> Bool {
@@ -1296,7 +1325,11 @@ final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked 
 }
 
 #if EDP_REGRESSION_TESTS
-extension EDPHdiutilBlockDevicePublisher {
+extension EDPDiskutilImageBlockDevicePublisher {
+    static func regressionUniqueWholeBSDName(fromDiskutilAttachPlist data: Data) -> String? {
+        uniqueWholeBSDName(fromDiskutilAttachPlist: data)
+    }
+
     static func regressionStableDeadOwnerOnlyRetirement(
         originalPID: Int32,
         originalOwnerUID: UInt32,

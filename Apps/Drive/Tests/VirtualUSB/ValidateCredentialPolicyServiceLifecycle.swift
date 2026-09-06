@@ -1243,7 +1243,7 @@ struct ValidateCredentialPolicyServiceLifecycle {
 
         do {
             let fakeDA = FakeDiskArbitration()
-            let publisher = EDPHdiutilBlockDevicePublisher(
+            let publisher = EDPDiskutilImageBlockDevicePublisher(
                 binaryRoot: "/nonexistent-edp-runtime",
                 diskArbitration: fakeDA
             )

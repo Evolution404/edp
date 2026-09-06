@@ -135,7 +135,7 @@ real EDP USB
   -> EDPBlockReadable
   -> macFUSE 5.x (backend=fskit)
   -> hidden volume.raw
-  -> Apple /usr/bin/hdiutil attach -nomount -readwrite -plist
+  -> Apple /usr/sbin/diskutil image attach --plist --noMount
   -> /dev/diskN / IOMedia
   -> macOS native filesystem stack
   -> Finder
@@ -143,13 +143,13 @@ real EDP USB
 
 EDP Drive **不自行实现 exFAT/APFS/FAT/NTFS 等任何具体文件系统**。应用只负责 raw-device 生命周期、挂载和系统集成；EDP metadata、身份/密码校验、key derivation 与 SM4 由 monorepo 的 `Packages/EDPCore` 统一提供。
 
-块设备发布通过 `EDPBlockDevicePublisher` provider 边界实现。当前 macOS 26 compatibility provider 使用 Apple 公共 `hdiutil` CLI：`attach -nomount -readwrite -plist` 创建 IOMedia，正常 teardown 先由 Disk Arbitration eject，超时后仅在 exact IOKit registry generation 仍匹配时调用 bounded `hdiutil detach -force`。macOS 27+ 的长期候选是 DiskImageKit，但只有 Apple 提供公开 host-IOMedia attachment 能力并由 EDP 实现、验证后才允许 provider factory 切换；在此之前 macOS 27 仍使用 compatibility provider。产品永久禁止回退到 `PrivateFrameworks/DiskImages2.framework` / private Objective-C selector，也不向 Apple `diskimagesiod`/`fskit_agent` 发送恢复信号。产品不使用 DriverKit block-storage entitlement、不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
+块设备发布通过 `EDPBlockDevicePublisher` provider 边界实现。当前 macOS 26 compatibility provider 使用 Apple 公共 `diskutil image attach --plist --noMount` 创建 IOMedia，正常 teardown 先由 Disk Arbitration eject，超时后仅在 exact IOKit registry generation 仍匹配时调用 bounded `diskutil eject`。macOS 27+ 的长期候选是 DiskImageKit，但只有 Apple 提供公开 host-IOMedia attachment 能力并由 EDP 实现、验证后才允许 provider factory 切换；在此之前 macOS 27 仍使用 `diskutil-image-compatibility`。`hdiutil` 只暂留在 legacy persisted-session / macFUSE scratch metadata reconciliation，不参与正常 mount/unmount。产品永久禁止回退到 `PrivateFrameworks/DiskImages2.framework` / private Objective-C selector，也不向 Apple `diskimagesiod`/`fskit_agent` 发送恢复信号。产品不使用 DriverKit block-storage entitlement、不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
 
 ## 已完成的读写 E2E
 
 ### 1. macFUSE FSKit + native filesystem 历史块桥证明
 
-GitHub Actions run `32848875297` 在 macOS 26.5.2 / Apple Silicon / macFUSE 5.3.3 上完整跑通。该历史 PoC 当时使用 private DiskImages2 helper；当前产品和活跃回归已经迁移到 Apple 公共 `hdiutil` 路径：
+GitHub Actions run `32848875297` 在 macOS 26.5.2 / Apple Silicon / macFUSE 5.3.3 上完整跑通。该历史 PoC 当时使用 private DiskImages2 helper；当前产品和活跃回归已经迁移到 Apple 公共 `diskutil image` 路径，并由 run `34012596455` 完整跑通 M01–M14：
 
 ```text
 random-access backing

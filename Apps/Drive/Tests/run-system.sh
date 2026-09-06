@@ -208,7 +208,8 @@ echo 'RESULT=DRIVE_SYSTEM_RELEASE_SIGNING_GATE_OK'
 # which is easy to miss in ordinary smoke testing.
 /usr/bin/grep -Fq 'edp-mfmount-local-readwrite' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 /usr/bin/grep -Fq 'edp-mfmount-local-readonly' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
-/usr/bin/grep -Fq '"/usr/bin/hdiutil"' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
+/usr/bin/grep -Fq '"/usr/sbin/diskutil"' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
+! /usr/bin/grep -Fq '"/usr/bin/hdiutil"' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 ! /usr/bin/grep -Fq 'diskimages2-attach' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
 echo 'RESULT=DRIVE_SYSTEM_PUBLIC_DISK_IMAGE_TOOL_ALLOWLIST_OK'
@@ -550,8 +551,8 @@ done
 echo 'RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK'
 
 # Production disk-image publication is event-driven on exact synthetic IOMedia
-# generations. It uses documented hdiutil attach/detach options and never treats
-# an Apple disk-image helper PID as a recovery authority or signal target.
+# generations. Normal publish/unpublish uses public diskutil image/eject commands
+# and never treats an Apple disk-image helper PID as recovery authority.
 ! /usr/bin/grep -Fq 'Thread.sleep' "${PUBLISHER_SOURCE}"
 ! /usr/bin/grep -Fq 'waitUntilExit()' "${PUBLISHER_SOURCE}"
 ! /usr/bin/grep -Fq 'waitForPublicationToDisappearAsync' "${PUBLISHER_SOURCE}"
@@ -563,8 +564,8 @@ echo 'RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK'
 ! /usr/bin/grep -Fq '/usr/libexec/diskimagesiod' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'private final class EDPExactResourceTerminationWaiter' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'registryEntryID: generation.registryEntryID' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'label: "hdiutil exact-generation detach"' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'arguments: ["detach", "/dev/\(device.bsdName)", "-force"]' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'label: "diskutil exact-generation eject"' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'arguments: ["eject", device.bsdName]' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'EDPIOMediaTerminationMonitor' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'EDPIOKitMediaLifecycle.registryEntryExists' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'func cleanupNewOrphansAsync(' "${PUBLISHER_SOURCE}"
@@ -995,20 +996,21 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 ! /usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${RUNTIME_SOURCE}" "${MOUNT_LIFECYCLE_SOURCE}" "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'enum EDPBlockPublicationBackend: String, Sendable' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'case hdiutilCompatibility = "hdiutil-compatibility"' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'case diskutilImageCompatibility = "diskutil-image-compatibility"' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'case diskImageKitHostAttachment = "diskimagekit-host-attachment"' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'operatingSystemVersion.majorVersion >= 27' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'diskImageKitHostAttachmentAvailable: Bool = false' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'blockPublisher = try EDPBlockDevicePublisherFactory.make(' "${RUNTIME_SOURCE}"
-! /usr/bin/grep -Fq 'blockPublisher = EDPHdiutilBlockDevicePublisher(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'blockPublisher = EDPDiskutilImageBlockDevicePublisher(' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'BLOCK_PUBLICATION_BACKEND=' "${ROOT}/Apps/Drive/product/EDPServiceMain.swift"
 /usr/bin/grep -Fq 'BLOCK_PUBLICATION_DISKIMAGEKIT_HOST_ATTACH=AWAITING_PUBLIC_API' "${ROOT}/Apps/Drive/product/EDPServiceMain.swift"
-HDIUTIL_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPHdiutilBlockDevicePublisher/{found=1} found {print}' "${PUBLISHER_SOURCE}")"
-/usr/bin/grep -Fq 'private let hdiutilPath = "/usr/bin/hdiutil"' <<<"${HDIUTIL_PUBLISHER_SECTION}"
-/usr/bin/grep -Fq 'hdiutilPath, "attach", "-nomount", "-readwrite", "-plist", path' <<<"${HDIUTIL_PUBLISHER_SECTION}"
-! /usr/bin/grep -Fq 'diskimage-class=CRawDiskImage' <<<"${HDIUTIL_PUBLISHER_SECTION}"
-/usr/bin/grep -Fq 'arguments: ["info", "-plist"]' <<<"${HDIUTIL_PUBLISHER_SECTION}"
-/usr/bin/grep -Fq 'runHdiutilAsync(["detach", device, "-force"])' "${PUBLISHER_SOURCE}"
+DISKUTIL_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPDiskutilImageBlockDevicePublisher/{found=1} found {print}' "${PUBLISHER_SOURCE}")"
+/usr/bin/grep -Fq 'private let diskutilPath = "/usr/sbin/diskutil"' <<<"${DISKUTIL_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'diskutilPath, "image", "attach", "--plist", "--noMount", path' <<<"${DISKUTIL_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'arguments: ["eject", device.bsdName]' <<<"${DISKUTIL_PUBLISHER_SECTION}"
+! /usr/bin/grep -Fq '"attach", "-nomount"' <<<"${DISKUTIL_PUBLISHER_SECTION}"
+! /usr/bin/grep -Fq 'diskimage-class=CRawDiskImage' <<<"${DISKUTIL_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'arguments: ["info", "-plist"]' <<<"${DISKUTIL_PUBLISHER_SECTION}"
 ! /usr/bin/grep -Fq 'diskimages2-attach' "${PUBLISHER_SOURCE}" "${ROOT}/Apps/Drive/installer/build-native-installer.sh" "${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
 ! test -e "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/DiskImages2Attach.m"
 ! /usr/bin/grep -Fq 'DiskImages2Attach.m' "${ROOT}/Apps/Drive/installer/build-native-installer.sh" "${ROOT}/Apps/Drive/installer/build-clean-installer.sh" "${STORAGE_RUNNER}"
@@ -1106,10 +1108,10 @@ done
 /usr/bin/grep -Fq 'Do not restore `ntfs-3g`.' "${NTFS_ADR_DOC}"
 /usr/bin/grep -Fq 'NTFS RW is **not a blocker** for the current EDP Drive release candidate.' "${NTFS_ADR_DOC}"
 /usr/bin/grep -Fq 'Status: Accepted' "${PUBLICATION_ADR_DOC}"
-/usr/bin/grep -Fq 'macOS 26: `hdiutil-compatibility`.' "${PUBLICATION_ADR_DOC}"
+/usr/bin/grep -Fq 'macOS 26: `diskutil-image-compatibility`.' "${PUBLICATION_ADR_DOC}"
 /usr/bin/grep -Fq '`diskimagekit-host-attachment` is a reserved future backend identifier only' "${PUBLICATION_ADR_DOC}"
 /usr/bin/grep -Fq 'Private DiskImages2 APIs are permanently prohibited' "${PUBLICATION_ADR_DOC}"
-/usr/bin/grep -Fq 'hdiutil-compatibility' "${STATUS_DOC}" "${ARCHITECTURE_DOC}"
+/usr/bin/grep -Fq 'diskutil-image-compatibility' "${STATUS_DOC}" "${ARCHITECTURE_DOC}"
 /usr/bin/grep -Fq 'DiskImageKit' "${STATUS_DOC}" "${ARCHITECTURE_DOC}"
 ! /usr/bin/grep -Fq 'NTFS RW ADR                         NOT YET DECIDED' "${RELEASE_DOC}"
 /usr/bin/grep -Fq 'Historical Document Index' "${HISTORICAL_DOC}"

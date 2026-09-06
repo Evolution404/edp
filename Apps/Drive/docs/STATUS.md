@@ -93,7 +93,7 @@ standard EDP physical USB
   -> type 1 plaintext slice OR type 2/4 SM4 transparent block view
   -> macFUSE Local FSKit transport
   -> hidden volume.raw
-  -> /usr/bin/hdiutil attach -nomount -readwrite -plist
+  -> /usr/sbin/diskutil image attach --plist --noMount
   -> synthetic /dev/diskN IOMedia
   -> Disk Arbitration
   -> Apple native filesystem stack
@@ -191,17 +191,17 @@ Whole-device eject is single-flight and generation-aware. After successful safe 
 
 ### Disk image publication
 
-Production must not load `PrivateFrameworks/DiskImages2.framework` or call private DiskImages2 Objective-C classes/selectors. Host publication is behind `EDPBlockDevicePublisherFactory`; the currently implemented backend is explicitly named `hdiutil-compatibility`, not the long-term architecture.
+Production must not load `PrivateFrameworks/DiskImages2.framework` or call private DiskImages2 Objective-C classes/selectors. Host publication is behind `EDPBlockDevicePublisherFactory`; the currently implemented backend is explicitly named `diskutil-image-compatibility`, not the long-term architecture.
 
 Current compatibility command:
 
 ```text
-hdiutil attach -nomount -readwrite -plist <volume.raw>
+diskutil image attach --plist --noMount <volume.raw>
 ```
 
-The resulting whole IOMedia registry generation is captured immediately and becomes the teardown authority. Normal teardown uses Disk Arbitration eject first. If that bounded operation fails while the exact generation is still present, EDP may run bounded `hdiutil detach <exact /dev/diskN> -force`; it never TERM/KILLs `diskimagesiod`. `hdiutil info -plist` remains only for legacy persisted-session and narrowly scoped scratch metadata reconciliation.
+The resulting whole IOMedia registry generation is captured immediately and becomes the teardown authority. Normal teardown uses Disk Arbitration eject first. If that bounded operation fails while the exact generation is still present, EDP may run bounded `diskutil eject <diskN>` only after exact-generation revalidation. `hdiutil info -plist` remains only for legacy persisted-session and narrowly scoped scratch metadata reconciliation; it is not part of the normal mount/unmount path.
 
-macOS 27+ introduces DiskImageKit as the future provider candidate. EDP must not select that backend merely because the framework exists: provider selection stays on `hdiutil-compatibility` until a documented host-IOMedia attachment capability is implemented and positively tested. Private DiskImages2 is permanently excluded as a fallback.
+macOS 27+ introduces DiskImageKit as the future provider candidate. EDP must not select that backend merely because the framework exists: provider selection stays on `diskutil-image-compatibility` until a documented host-IOMedia attachment capability is implemented and positively tested. Private DiskImages2 is permanently excluded as a fallback. GitHub Actions run `34012596455` proves the diskutil-image path across M01–M14 on macOS 26.
 
 ### pluginkit / user FSKit registration
 

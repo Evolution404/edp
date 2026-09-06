@@ -150,7 +150,7 @@ Encrypted partitions use `Packages/EDPCore` for transparent block translation an
 EDP logical block view
   -> macFUSE Local FSKit transport
   -> hidden volume.raw
-  -> /usr/bin/hdiutil attach -nomount -readwrite -plist
+  -> /usr/sbin/diskutil image attach --plist --noMount
   -> synthetic IOMedia
   -> Disk Arbitration
   -> Apple filesystem stack
@@ -179,28 +179,28 @@ Current policy:
 
 ```text
 macOS 26
-  -> hdiutil compatibility provider
+  -> diskutil image compatibility provider
 
 macOS 27+
   -> DiskImageKit host-attachment provider only after a public host-IOMedia API is implemented and positively validated
-  -> otherwise hdiutil compatibility provider
+  -> otherwise diskutil image compatibility provider
 ```
 
 Private DiskImages2 APIs are permanently forbidden and are not a fallback backend.
 
 ### 8.2 macOS 26 compatibility provider
 
-The current provider invokes Apple `/usr/bin/hdiutil` through the exact console-exec allowlist using only documented options:
+The current provider invokes Apple `/usr/sbin/diskutil` through the exact console-exec allowlist using its public image subcommand:
 
 ```text
-hdiutil attach -nomount -readwrite -plist <volume.raw>
+diskutil image attach --plist --noMount <volume.raw>
 ```
 
 The returned plist identifies the whole `/dev/diskN`; EDP immediately resolves its IOKit registryEntryID and never treats the reusable BSD name as lifecycle authority.
 
 ### 8.3 Teardown and compatibility metadata
 
-Normal teardown requests exact-generation Disk Arbitration eject. If the same IOMedia generation remains, a bounded `hdiutil detach /dev/diskN -force` is allowed after immediate generation revalidation. EDP never signals or kills Apple `diskimagesiod`/disk-image helper processes. `hdiutil info -plist` is restricted to legacy persisted-session and narrowly scoped scratch metadata reconciliation.
+Normal teardown requests exact-generation Disk Arbitration eject. If the same IOMedia generation remains, a bounded `diskutil eject <diskN>` is allowed only after immediate generation revalidation. EDP never signals or kills Apple `diskimagesiod`/disk-image helper processes. `hdiutil info -plist` is restricted to legacy persisted-session and narrowly scoped scratch metadata reconciliation and is not part of the normal publication lifecycle.
 
 Production and active regression code must not load `PrivateFrameworks/DiskImages2.framework` or call private DiskImages2 classes/selectors.
 

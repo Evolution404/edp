@@ -133,15 +133,15 @@ private enum ValidateMacFUSEScratchCleanup {
             EDPBlockDevicePublisherFactory.selectedBackend(
                 operatingSystemVersion: OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0),
                 diskImageKitHostAttachmentAvailable: false
-            ) == .hdiutilCompatibility,
-            "macOS 26 must use the hdiutil compatibility publication backend"
+            ) == .diskutilImageCompatibility,
+            "macOS 26 must use the diskutil image compatibility publication backend"
         )
         try require(
             EDPBlockDevicePublisherFactory.selectedBackend(
                 operatingSystemVersion: OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0),
                 diskImageKitHostAttachmentAvailable: false
-            ) == .hdiutilCompatibility,
-            "macOS 27 must remain on hdiutil until a public DiskImageKit host-attachment capability exists"
+            ) == .diskutilImageCompatibility,
+            "macOS 27 must remain on diskutil image until a public DiskImageKit host-attachment capability exists"
         )
         try require(
             EDPBlockDevicePublisherFactory.selectedBackend(
@@ -154,10 +154,40 @@ private enum ValidateMacFUSEScratchCleanup {
             EDPBlockDevicePublisherFactory.selectedBackend(
                 operatingSystemVersion: OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0),
                 diskImageKitHostAttachmentAvailable: true
-            ) == .hdiutilCompatibility,
+            ) == .diskutilImageCompatibility,
             "DiskImageKit host attachment must never be selected below macOS 27"
         )
         print("RESULT=BLOCK_PUBLICATION_PROVIDER_POLICY_OK")
+
+        let diskutilAttachPlist = try PropertyListSerialization.data(
+            fromPropertyList: [
+                "device": "/dev/disk8",
+                "entities": [
+                    ["device": "disk8s1"],
+                    ["content": "Apple_HFS"],
+                ],
+            ],
+            format: .xml,
+            options: 0
+        )
+        try require(
+            EDPDiskutilImageBlockDevicePublisher.regressionUniqueWholeBSDName(
+                fromDiskutilAttachPlist: diskutilAttachPlist
+            ) == "disk8",
+            "diskutil image attach plist must resolve exactly one whole BSD disk"
+        )
+        let ambiguousDiskutilAttachPlist = try PropertyListSerialization.data(
+            fromPropertyList: ["devices": ["disk8", "/dev/disk9"]],
+            format: .xml,
+            options: 0
+        )
+        try require(
+            EDPDiskutilImageBlockDevicePublisher.regressionUniqueWholeBSDName(
+                fromDiskutilAttachPlist: ambiguousDiskutilAttachPlist
+            ) == nil,
+            "ambiguous diskutil image attach plist must fail closed"
+        )
+        print("RESULT=DISKUTIL_IMAGE_ATTACH_PLIST_CONTRACT_OK")
 
         let valid = try candidate()
         try require(valid.isOrphanCleanupCandidate, "known macFUSE scratch signature must match")
@@ -206,7 +236,7 @@ private enum ValidateMacFUSEScratchCleanup {
                     "empty hdiutil image list must remain empty")
 
         try require(
-            EDPHdiutilBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
+            EDPDiskutilImageBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
                 originalPID: 7065,
                 originalOwnerUID: 501,
                 originalDevices: [],
@@ -218,7 +248,7 @@ private enum ValidateMacFUSEScratchCleanup {
             "stable dead owner-only hdiutil metadata tombstone must be retireable"
         )
         try require(
-            !EDPHdiutilBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
+            !EDPDiskutilImageBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
                 originalPID: 7065,
                 originalOwnerUID: 501,
                 originalDevices: [],
@@ -230,7 +260,7 @@ private enum ValidateMacFUSEScratchCleanup {
             "hdiutil owner PID change must fail closed"
         )
         try require(
-            !EDPHdiutilBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
+            !EDPDiskutilImageBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
                 originalPID: 7065,
                 originalOwnerUID: 501,
                 originalDevices: [],
@@ -242,7 +272,7 @@ private enum ValidateMacFUSEScratchCleanup {
             "hdiutil owner UID change must fail closed"
         )
         try require(
-            !EDPHdiutilBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
+            !EDPDiskutilImageBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
                 originalPID: 7065,
                 originalOwnerUID: 501,
                 originalDevices: [],
@@ -254,7 +284,7 @@ private enum ValidateMacFUSEScratchCleanup {
             "hdiutil tombstone with live entity metadata must fail closed"
         )
         try require(
-            !EDPHdiutilBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
+            !EDPDiskutilImageBlockDevicePublisher.regressionStableDeadOwnerOnlyRetirement(
                 originalPID: 7065,
                 originalOwnerUID: 501,
                 originalDevices: [],
