@@ -722,7 +722,8 @@ echo 'RESULT=DRIVE_SYSTEM_SERVICE_LIFECYCLE_STATE_SPLIT_OK'
 # Failed-eject recovery is a separate orchestration boundary: it releases eject
 # suppression, revalidates the original whole-USB generation, reacquires raw
 # access once, restores boot policy, and then reports the original failure.
-/usr/bin/grep -Fq 'final class EDPRecoveryCoordinator' "${RECOVERY_COORDINATOR_SOURCE}"
+/usr/bin/grep -Fq 'final class EDPRecoveryCoordinator: Sendable' "${RECOVERY_COORDINATOR_SOURCE}"
+! /usr/bin/grep -Fq 'EDPRecoveryCoordinator: @unchecked Sendable' "${RECOVERY_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'func recoverFailedEject(' "${RECOVERY_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'wholeUSBMediaStillMatches(' "${RECOVERY_COORDINATOR_SOURCE}"
 /usr/bin/grep -Fq 'ejectCoordinator.releaseActive(deviceID:' "${RECOVERY_COORDINATOR_SOURCE}"
@@ -907,6 +908,8 @@ echo 'RESULT=DRIVE_SYSTEM_CLAIM_CONTINUOUS_RUNTIME_CONTROL_OK'
 # and mount-drain success are event-driven; only their timeout branches consume
 # the virtual clock and must never regress to wall-clock Date()/asyncAfter logic.
 /usr/bin/grep -Fq 'protocol EDPLifecycleScheduling' "${SCHEDULER_SOURCE}"
+/usr/bin/grep -Fq 'final class EDPDispatchLifecycleScheduler: EDPLifecycleScheduling, Sendable' "${SCHEDULER_SOURCE}"
+! /usr/bin/grep -Fq 'EDPDispatchLifecycleScheduler: EDPLifecycleScheduling, @unchecked Sendable' "${SCHEDULER_SOURCE}"
 /usr/bin/grep -Fq 'DispatchTime.now().uptimeNanoseconds' "${SCHEDULER_SOURCE}"
 /usr/bin/grep -Fq 'scheduler.schedule(on: lifecycleQueue, after: 8)' "${RUNTIME_SOURCE}"
 /usr/bin/grep -Fq 'scheduler.schedule(on: lifecycleQueue, after: timeoutSeconds)' "${RUNTIME_SOURCE}"

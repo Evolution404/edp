@@ -8,7 +8,7 @@ typealias EDPRawRecoveryProbe = @Sendable (
 typealias EDPRecoveryAction = @Sendable (PhysicalDisk) -> Void
 typealias EDPRecoveryFailureRecorder = @Sendable (PhysicalDisk, String) -> Void
 
-final class EDPRecoveryCoordinator: @unchecked Sendable {
+final class EDPRecoveryCoordinator: Sendable {
     private let mediaProvider: any EDPWholeUSBMediaProviding
     private let ejectCoordinator: EDPEjectCoordinator
 

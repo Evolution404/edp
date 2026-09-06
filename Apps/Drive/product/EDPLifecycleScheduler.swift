@@ -22,7 +22,7 @@ extension EDPLifecycleScheduling {
     }
 }
 
-final class EDPDispatchLifecycleScheduler: EDPLifecycleScheduling, @unchecked Sendable {
+final class EDPDispatchLifecycleScheduler: EDPLifecycleScheduling, Sendable {
     static let shared = EDPDispatchLifecycleScheduler()
 
     private init() {}
