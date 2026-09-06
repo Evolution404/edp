@@ -148,7 +148,7 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
                 .resolvingSymlinksInPath().deletingLastPathComponent().path
         }
         diskArbitration = try EDPDiskArbitrationController()
-        blockPublisher = EDPDiskImages2Publisher(
+        blockPublisher = try EDPBlockDevicePublisherFactory.make(
             binaryRoot: binaryRoot,
             diskArbitration: diskArbitration,
             metrics: metrics

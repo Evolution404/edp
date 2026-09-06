@@ -5,7 +5,6 @@ WORK_DIR="${RUNNER_TEMP:-/tmp}/edp-crypto-di2-readwrite"
 MOUNT_POINT="${EDP_RW_MOUNT_POINT:-/Volumes/edp-crypto-readwrite}"
 PLAIN_IMAGE="${WORK_DIR}/plain.img"
 CIPHER_IMAGE="${WORK_DIR}/cipher.img"
-ATTACH_BIN="${WORK_DIR}/diskimages2-attach"
 ENCRYPT_BIN="${WORK_DIR}/prepare-encrypted-image"
 SWIFT_LIB="${WORK_DIR}/libEDPReadWriteBridge.dylib"
 FUSE_BIN="${WORK_DIR}/edp-readwrite-fuse"
@@ -25,6 +24,13 @@ mkdir -p "${WORK_DIR}"
 : >"${ATTACH_LOG}"
 
 log() { printf '%s\n' "$*" | tee -a "${REPORT_FILE}"; }
+
+attach_raw_image() {
+  local backing="$1"
+  local plist="$2"
+  /usr/bin/hdiutil attach -nomount -readwrite -plist "$backing" >"$plist"
+  /usr/bin/plutil -extract 'system-entities.0.dev-entry' raw -o - "$plist"
+}
 
 cleanup() {
   if [[ -n "${DECRYPTED_BSD}" ]]; then
@@ -69,10 +75,11 @@ stop_fuse() {
 
 attach_decrypted() {
   : >"${ATTACH_LOG}"
-  "${ATTACH_BIN}" "${MOUNT_POINT}/volume.raw" \
-    | tee "${ATTACH_LOG}" | tee -a "${REPORT_FILE}"
-  DECRYPTED_BSD="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "${ATTACH_LOG}" | /usr/bin/tail -1)"
-  [[ -n "${DECRYPTED_BSD}" && -b "/dev/${DECRYPTED_BSD}" ]]
+  local decrypted_path
+  decrypted_path="$(attach_raw_image "${MOUNT_POINT}/volume.raw" "${ATTACH_LOG}")"
+  /bin/cat "${ATTACH_LOG}" >>"${REPORT_FILE}"
+  [[ "${decrypted_path}" =~ ^/dev/disk[0-9]+$ && -b "${decrypted_path}" ]]
+  DECRYPTED_BSD="${decrypted_path#/dev/}"
 
   local disk_info
   disk_info="$(/usr/sbin/diskutil info "${DECRYPTED_BSD}")"
@@ -93,12 +100,12 @@ attach_decrypted() {
 
 eject_decrypted() {
   /usr/sbin/diskutil unmountDisk "${DECRYPTED_BSD}" | tee -a "${REPORT_FILE}"
-  /usr/sbin/diskutil eject "${DECRYPTED_BSD}" | tee -a "${REPORT_FILE}"
+  /usr/bin/hdiutil detach "/dev/${DECRYPTED_BSD}" -force | tee -a "${REPORT_FILE}"
   DECRYPTED_BSD=""
   DECRYPTED_VOLUME_BSD=""
 }
 
-log "=== EDP encrypted read/write block -> DiskImages2 -> native ExFAT ==="
+log "=== EDP encrypted read/write block -> public hdiutil -> native ExFAT ==="
 log "macOS=$(/usr/bin/sw_vers -productVersion)"
 log "arch=$(/usr/bin/uname -m)"
 log "libfuse=$(pkg-config --modversion fuse)"
@@ -107,10 +114,6 @@ if [[ ! -d "${MOUNT_POINT}" || ! -w "${MOUNT_POINT}" ]]; then
   log "FAIL=WRITABLE_FSKIT_MOUNTPOINT_REQUIRED:${MOUNT_POINT}"
   exit 73
 fi
-
-/usr/bin/clang -fobjc-arc -fblocks \
-  native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
-  -framework Foundation -o "${ATTACH_BIN}"
 
 xcrun swiftc -O \
   native/EDPFSKitPoC/Extension/EDPCrypto.swift \
@@ -142,13 +145,13 @@ done
 log "RESULT=EDP_READWRITE_BRIDGE_TOOLS_BUILT"
 
 /usr/bin/truncate -s $((128 * 1024 * 1024)) "${PLAIN_IMAGE}"
-"${ATTACH_BIN}" "${PLAIN_IMAGE}" >"${WORK_DIR}/attach-plain.log"
-PLAIN_BSD="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "${WORK_DIR}/attach-plain.log" | /usr/bin/tail -1)"
-[[ -n "${PLAIN_BSD}" && -b "/dev/${PLAIN_BSD}" ]]
+PLAIN_PATH="$(attach_raw_image "${PLAIN_IMAGE}" "${WORK_DIR}/attach-plain.log")"
+[[ "${PLAIN_PATH}" =~ ^/dev/disk[0-9]+$ && -b "${PLAIN_PATH}" ]]
+PLAIN_BSD="${PLAIN_PATH#/dev/}"
 /usr/sbin/diskutil eraseDisk ExFAT "${TEST_VOLUME}" MBRFormat "${PLAIN_BSD}" \
   | tee -a "${REPORT_FILE}"
 /usr/sbin/diskutil unmountDisk "${PLAIN_BSD}" >/dev/null
-/usr/sbin/diskutil eject "${PLAIN_BSD}" >/dev/null
+/usr/bin/hdiutil detach "/dev/${PLAIN_BSD}" -force >/dev/null
 PLAIN_BSD=""
 log "RESULT=NATIVE_EXFAT_WRITE_FIXTURE_PREPARED"
 

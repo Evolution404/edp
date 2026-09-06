@@ -29,7 +29,7 @@ protocol EDPCancellableOperation: AnyObject, Sendable {
 
 /// Explicitly writable publication boundary used by the existing read/write
 /// product path. Both publication and teardown are callback-based so the mount
-/// lifecycle queue never waits for DiskImages2, hdiutil, or Disk Arbitration.
+/// lifecycle queue never waits for hdiutil, IOMedia teardown, or Disk Arbitration.
 protocol EDPBlockDevicePublisher: AnyObject, Sendable {
     @discardableResult
     func publishWritableImageAsync(
@@ -37,6 +37,50 @@ protocol EDPBlockDevicePublisher: AnyObject, Sendable {
         completion: @escaping EDPBlockDevicePublishCompletion
     ) -> (any EDPCancellableOperation)?
     func unpublishAsync(_ device: EDPPublishedBlockDevice, completion: @escaping EDPBlockDeviceCompletion)
+}
+
+enum EDPBlockPublicationBackend: String, Sendable {
+    case hdiutilCompatibility = "hdiutil-compatibility"
+    case diskImageKitHostAttachment = "diskimagekit-host-attachment"
+}
+
+/// Central policy seam for host block-device publication.
+///
+/// `hdiutil` is the macOS 26 compatibility provider. macOS 27 introduces
+/// DiskImageKit, but the currently documented API does not expose host IOMedia
+/// attachment. Keep that future backend explicit without pretending an API
+/// exists: it may be selected only after a public host-attachment capability is
+/// implemented and positively probed.
+enum EDPBlockDevicePublisherFactory {
+    static func selectedBackend(
+        operatingSystemVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion,
+        diskImageKitHostAttachmentAvailable: Bool = false
+    ) -> EDPBlockPublicationBackend {
+        if operatingSystemVersion.majorVersion >= 27,
+           diskImageKitHostAttachmentAvailable {
+            return .diskImageKitHostAttachment
+        }
+        return .hdiutilCompatibility
+    }
+
+    static func make(
+        binaryRoot: String,
+        diskArbitration: any EDPDaemonDiskArbitrating,
+        metrics: EDPRuntimeMetrics = EDPRuntimeMetrics()
+    ) throws -> any EDPBlockDevicePublisher {
+        switch selectedBackend() {
+        case .hdiutilCompatibility:
+            return EDPHdiutilBlockDevicePublisher(
+                binaryRoot: binaryRoot,
+                diskArbitration: diskArbitration,
+                metrics: metrics
+            )
+        case .diskImageKitHostAttachment:
+            throw EDPBlockDevicePublisherError(
+                "DiskImageKit host attachment was selected without a public host-IOMedia provider implementation"
+            )
+        }
+    }
 }
 
 struct EDPBlockDevicePublisherError: Error, CustomStringConvertible, Sendable {
@@ -58,7 +102,7 @@ private func publisherConsoleIdentity() throws -> (uid_t, gid_t) {
     guard stat("/dev/console", &status) == 0,
           status.st_uid != 0,
           getpwuid(status.st_uid) != nil else {
-        throw EDPBlockDevicePublisherError("no authenticated console user is available for DiskImages2 publication")
+        throw EDPBlockDevicePublisherError("no authenticated console user is available for disk-image publication")
     }
     return (status.st_uid, status.st_gid)
 }
@@ -72,97 +116,23 @@ private func processExecutablePath(_ pid: pid_t) -> String? {
     return String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
 }
 
-private struct EDPProcessGeneration: Equatable, Sendable {
-    let pid: pid_t
-    let startedSeconds: UInt64
-    let startedMicroseconds: UInt64
-    let executablePath: String
-}
-
-private func processGeneration(_ pid: pid_t) -> EDPProcessGeneration? {
-    guard pid > 1, let executablePath = processExecutablePath(pid) else { return nil }
-    var info = proc_bsdinfo()
-    let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
-    let copied = withUnsafeMutablePointer(to: &info) { pointer in
-        proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, pointer, expectedSize)
-    }
-    guard copied == expectedSize else { return nil }
-    return EDPProcessGeneration(
-        pid: pid,
-        startedSeconds: info.pbi_start_tvsec,
-        startedMicroseconds: info.pbi_start_tvusec,
-        executablePath: executablePath
-    )
-}
-
-private final class EDPProcessExitMonitor: @unchecked Sendable {
-    private let queue: DispatchQueue
-    private let generation: EDPProcessGeneration
-    private let completion: @Sendable () -> Void
-    private var source: (any DispatchSourceProcess)?
-    private var finished = false
-
-    init(
-        generation: EDPProcessGeneration,
-        queue: DispatchQueue,
-        completion: @escaping @Sendable () -> Void
-    ) {
-        self.queue = queue
-        self.generation = generation
-        self.completion = completion
-
-        let source = DispatchSource.makeProcessSource(
-            identifier: generation.pid,
-            eventMask: .exit,
-            queue: queue
-        )
-        source.setEventHandler { [weak self] in self?.finish() }
-        self.source = source
-        source.resume()
-
-        // Close the arm/check race and fail safe on PID reuse. A different
-        // start time means the exact owner generation already exited, even if
-        // the numeric PID has since been recycled.
-        if processGeneration(generation.pid) != generation {
-            queue.async { [weak self] in self?.finish() }
-        }
-    }
-
-    deinit {
-        source?.cancel()
-    }
-
-    private func finish() {
-        guard !finished else { return }
-        finished = true
-        source?.cancel()
-        source = nil
-        completion()
-    }
-}
-
 private final class EDPExactResourceTerminationWaiter: @unchecked Sendable {
     private let queue: DispatchQueue
-    private let process: EDPProcessGeneration?
     private let media: [EDPIOMediaGeneration]
     private let timeout: TimeInterval
     private let completion: EDPBooleanCompletion
-    private var processMonitor: EDPProcessExitMonitor?
     private var mediaMonitors = [UInt64: EDPIOMediaTerminationMonitor]()
     private var remainingMedia = Set<UInt64>()
-    private var processExited = false
     private var finished = false
     private var keepAlive: EDPExactResourceTerminationWaiter?
 
     init(
         queue: DispatchQueue,
-        process: EDPProcessGeneration?,
         media: [EDPIOMediaGeneration],
         timeout: TimeInterval,
         completion: @escaping EDPBooleanCompletion
     ) {
         self.queue = queue
-        self.process = process
         self.media = media
         self.timeout = timeout
         self.completion = completion
@@ -173,18 +143,6 @@ private final class EDPExactResourceTerminationWaiter: @unchecked Sendable {
             guard !finished else { return }
             keepAlive = self
             remainingMedia = Set(media.map(\.registryEntryID))
-            if let process {
-                processMonitor = EDPProcessExitMonitor(
-                    generation: process,
-                    queue: queue
-                ) { [weak self] in
-                    guard let self else { return }
-                    self.processExited = true
-                    self.completeIfTerminal()
-                }
-            } else {
-                processExited = true
-            }
 
             do {
                 for generation in media {
@@ -209,25 +167,19 @@ private final class EDPExactResourceTerminationWaiter: @unchecked Sendable {
                 self.finish(false)
             }
 
-            if let process,
-               processGeneration(process.pid) != process {
-                processExited = true
-            } else {
-                action?()
-            }
+            action?()
             completeIfTerminal()
         }
     }
 
     private func completeIfTerminal() {
-        guard processExited, remainingMedia.isEmpty else { return }
+        guard remainingMedia.isEmpty else { return }
         finish(true)
     }
 
     private func finish(_ success: Bool) {
         guard !finished else { return }
         finished = true
-        processMonitor = nil
         mediaMonitors.removeAll()
         completion(success)
         keepAlive = nil
@@ -572,7 +524,7 @@ enum EDPMacFUSEScratchImageCleanup {
     /// Recovers one persisted macFUSE Local bridge after its transport process
     /// crashed before the normal signal-driven teardown could close MFChannel.
     /// The mountpoint and its exact /dev/diskN source must still match a narrow
-    /// 4 KiB macFUSE scratch image candidate before its helper can be signalled.
+    /// 4 KiB macFUSE scratch image candidate before public hdiutil detach is attempted.
     static func cleanupOrphanAsync(
         mountedAt mountpoint: String,
         completion: @escaping EDPBooleanCompletion
@@ -708,53 +660,11 @@ enum EDPMacFUSEScratchImageCleanup {
                 return
             }
 
-            // hdiutil can report EBUSY for the exact failure mode this path handles.
-            // Revalidate the tuple immediately before signalling the helper so PID
-            // reuse or an unrelated disk image can never turn into a kill target.
-            stillMatchesAsync(image) { matches in
-                guard matches else {
-                    NSLog("EDP refused to signal changed macFUSE scratch helper for %@", device)
-                    completion()
-                    return
-                }
-                _ = Darwin.kill(image.helperPID, SIGTERM)
-                waitUntilGoneAsync(device, timeout: 0.75) { gone in
-                    if gone {
-                        NSLog("EDP cleaned orphan macFUSE scratch device %@ after helper SIGTERM", device)
-                        completion()
-                        return
-                    }
-                    stillMatchesAsync(image) { matchesAfterTerm in
-                        guard matchesAfterTerm else {
-                            completion()
-                            return
-                        }
-                        _ = Darwin.kill(image.helperPID, SIGKILL)
-                        waitUntilGoneAsync(device, timeout: 1.0) { killed in
-                            if killed {
-                                NSLog("EDP cleaned orphan macFUSE scratch device %@ after helper SIGKILL", device)
-                            } else {
-                                NSLog("EDP macFUSE scratch device remained after forced cleanup: %@", device)
-                            }
-                            completion()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static func stillMatchesAsync(
-        _ expected: EDPMacFUSEScratchImage,
-        completion: @escaping EDPBooleanCompletion
-    ) {
-        currentImagesAsync { images, _ in
-            completion((images ?? []).contains {
-                $0.identity == expected.identity
-                    && $0.helperPID == expected.helperPID
-                    && $0.devices == expected.devices
-                    && $0.isOrphanCleanupCandidate
-            })
+            // The helper belongs to macOS, not EDP. A failed public detach is
+            // therefore a fail-closed cleanup result; never signal or kill the
+            // Apple disk-image helper as a recovery mechanism.
+            NSLog("EDP macFUSE scratch detach failed for %@; leaving system-owned helper untouched", device)
+            completion()
         }
     }
 
@@ -872,7 +782,7 @@ private final class EDPPublicationTerminationOperation: @unchecked Sendable {
             }
             guard current.registryEntryID == generation.registryEntryID else {
                 finish(
-                    "DiskImages2 IOMedia generation changed for \(generation.bsdName); refusing stale teardown"
+                    "disk-image IOMedia generation changed for \(generation.bsdName); refusing stale teardown"
                 )
                 return
             }
@@ -884,7 +794,7 @@ private final class EDPPublicationTerminationOperation: @unchecked Sendable {
                     self?.finish(nil)
                 }
             } catch {
-                finish("DiskImages2 IOMedia termination monitor failed: \(error)")
+                finish("disk-image IOMedia termination monitor failed: \(error)")
                 return
             }
 
@@ -912,7 +822,7 @@ private final class EDPPublicationTerminationOperation: @unchecked Sendable {
                     return
                 }
                 self.startFallback(
-                    "exact DiskImages2 IOMedia generation did not terminate after eject"
+                    "exact disk-image IOMedia generation did not terminate after eject"
                 )
             }
         }
@@ -935,8 +845,8 @@ private final class EDPPublicationTerminationOperation: @unchecked Sendable {
     }
 }
 
-final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendable {
-    private let helperPath: String
+final class EDPHdiutilBlockDevicePublisher: EDPBlockDevicePublisher, @unchecked Sendable {
+    private let hdiutilPath = "/usr/bin/hdiutil"
     private let consoleLauncherPath: String
     private let diskArbitration: any EDPDaemonDiskArbitrating
     private let metrics: EDPRuntimeMetrics
@@ -947,7 +857,6 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         diskArbitration: any EDPDaemonDiskArbitrating,
         metrics: EDPRuntimeMetrics = EDPRuntimeMetrics()
     ) {
-        helperPath = binaryRoot + "/diskimages2-attach"
         consoleLauncherPath = binaryRoot + "/edp-console-exec"
         self.diskArbitration = diskArbitration
         self.metrics = metrics
@@ -964,9 +873,9 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
             }
             return nil
         }
-        guard FileManager.default.isExecutableFile(atPath: helperPath) else {
+        guard FileManager.default.isExecutableFile(atPath: hdiutilPath) else {
             operationQueue.async {
-                completion(nil, "DiskImages2 adapter helper is missing: \(self.helperPath)")
+                completion(nil, "Apple hdiutil is unavailable: \(self.hdiutilPath)")
             }
             return nil
         }
@@ -987,17 +896,20 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         }
 
         // The macFUSE Local transport and volume.raw are owned by the logged-in
-        // console user. Publishing in that user session preserves the TEST-F-
-        // proven IOMedia lifecycle without blocking the mount lifecycle queue.
+        // console user. Use Apple's documented hdiutil frontend rather than
+        // linking or dynamically loading the private DiskImages2 framework.
+        // `-nomount` publishes the raw image as IOMedia without asking the OS to
+        // mount a filesystem; the exact IOKit generation remains our lifecycle
+        // authority after publication.
         return runBoundedProcessAsync(
             on: operationQueue,
             executable: consoleLauncherPath,
             arguments: [
                 String(identity.0), String(identity.1), "--",
-                helperPath, "--writable-noautomount", path,
+                hdiutilPath, "attach", "-nomount", "-readwrite", "-plist", path,
             ],
             timeout: 15,
-            label: "console-user DiskImages2 writable attach"
+            label: "console-user hdiutil raw attach"
         ) { result, errorMessage in
             if let errorMessage {
                 completion(nil, errorMessage)
@@ -1006,16 +918,25 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
             guard let result, result.status == 0 else {
                 let status = result?.status ?? -1
                 let detail = result.map { String(decoding: $0.stderr, as: UTF8.self) } ?? ""
-                completion(nil, "DiskImages2 adapter failed (\(status)): \(detail)")
+                completion(nil, "hdiutil raw attach failed (\(status)): \(detail)")
                 return
             }
 
-            let text = String(decoding: result.stdout, as: UTF8.self)
-            guard let bsdName = text.split(separator: "\n")
-                .first(where: { $0.hasPrefix("DI_BSD_NAME=") })?
-                .split(separator: "=", maxSplits: 1).last.map(String.init),
-                let generation = EDPIOKitMediaLifecycle.mediaGeneration(forBSDName: bsdName) else {
-                completion(nil, "DiskImages2 adapter did not publish a stable IOMedia generation")
+            guard let root = try? PropertyListSerialization.propertyList(
+                from: result.stdout,
+                options: [],
+                format: nil
+            ) as? [String: Any],
+            let entities = root["system-entities"] as? [[String: Any]] else {
+                completion(nil, "hdiutil attach returned an invalid property list")
+                return
+            }
+            let wholeDevices = entities
+                .compactMap { $0["dev-entry"] as? String }
+                .compactMap { Self.wholeBSDName(fromDevicePath: $0) }
+            guard let bsdName = wholeDevices.first,
+                  let generation = EDPIOKitMediaLifecycle.mediaGeneration(forBSDName: bsdName) else {
+                completion(nil, "hdiutil did not publish a stable whole IOMedia generation")
                 return
             }
             completion(
@@ -1040,7 +961,7 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
             }
             guard let backingPath = device.backingPath,
                   self.isEDPTransportBackingPath(backingPath) else {
-                completion("DiskImages2 publication is missing its EDP backing identity")
+                completion("disk-image publication is missing its EDP backing identity")
                 return
             }
 
@@ -1105,8 +1026,11 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
                 return
             }
             if candidate.devicePaths.isEmpty {
-                self.recoverPublicationAsync(candidate, backingPath: backingPath) { recovered in
-                    completion(recovered ? nil : "DiskImages2 publication owner did not exit for \(backingPath)")
+                self.confirmDeadOwnerOnlyRetirementAsync(
+                    candidate,
+                    backingPath: backingPath
+                ) { retired in
+                    completion(retired ? nil : "disk image publication remains system-owned for \(backingPath)")
                 }
                 return
             }
@@ -1151,43 +1075,56 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         ejectError: String?,
         completion: @escaping EDPBlockDeviceCompletion
     ) {
-        publicationAsync(backingPath: backingPath) { [weak self] candidate, lookupError in
-            guard let self else {
-                completion("block publisher was released")
+        metrics.increment(.diskImagesDetachRecovery)
+        guard let registryEntryID = device.registryEntryID else {
+            completion("disk image recovery requires an exact IOMedia generation")
+            return
+        }
+        let expectedGeneration = EDPIOMediaGeneration(
+            bsdName: device.bsdName,
+            registryEntryID: registryEntryID
+        )
+        guard EDPIOKitMediaLifecycle.mediaGeneration(forBSDName: device.bsdName) == expectedGeneration else {
+            completion("disk image generation changed for \(device.bsdName); refusing stale detach")
+            return
+        }
+        if let ejectError {
+            NSLog(
+                "EDP exact-generation eject for %@ reported %@; trying bounded public hdiutil detach",
+                backingPath,
+                ejectError
+            )
+        }
+
+        EDPExactResourceTerminationWaiter(
+            queue: operationQueue,
+            media: [expectedGeneration],
+            timeout: 3.0
+        ) { terminated in
+            completion(
+                terminated
+                    ? nil
+                    : "exact disk image IOMedia generation remained after public detach for \(backingPath)"
+            )
+        }.start(afterArming: { [weak self] in
+            guard let self,
+                  EDPIOKitMediaLifecycle.mediaGeneration(forBSDName: device.bsdName) == expectedGeneration else {
                 return
             }
-            if let lookupError {
-                completion(lookupError)
-                return
-            }
-            guard let candidate else {
-                completion(nil)
-                return
-            }
-            if let ejectError {
-                NSLog(
-                    "EDP DiskImages2 exact-generation eject for %@ reported %@; entering recovery",
-                    backingPath,
-                    ejectError
-                )
-            }
-            if !candidate.devicePaths.isEmpty {
-                let expectedDevicePath = "/dev/\(device.bsdName)"
-                guard candidate.devicePaths.contains(expectedDevicePath) else {
-                    completion(
-                        "DiskImages2 recovery identity changed for \(backingPath); refusing stale owner recovery"
-                    )
-                    return
+            _ = runBoundedProcessAsync(
+                on: self.operationQueue,
+                executable: self.hdiutilPath,
+                arguments: ["detach", "/dev/\(device.bsdName)", "-force"],
+                timeout: 8,
+                label: "hdiutil exact-generation detach"
+            ) { result, errorMessage in
+                if let errorMessage {
+                    NSLog("EDP hdiutil detach failed for %@: %@", backingPath, errorMessage)
+                } else if let result, result.status != 0 {
+                    NSLog("EDP hdiutil detach exited %d for %@", result.status, backingPath)
                 }
             }
-            self.recoverPublicationAsync(candidate, backingPath: backingPath) { recovered in
-                completion(
-                    recovered
-                        ? nil
-                        : "DiskImages2 publication remained after exact-generation teardown for \(backingPath)"
-                )
-            }
-        }
+        })
     }
 
     private struct DiskImagesPublication: Equatable {
@@ -1241,218 +1178,6 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
                 )
             )
         }
-    }
-
-    private func recoverPublicationAsync(
-        _ candidate: DiskImagesPublication,
-        backingPath: String,
-        completion: @escaping EDPBooleanCompletion
-    ) {
-        metrics.increment(.diskImagesDetachRecovery)
-        guard geteuid() == 0 else {
-            completion(false)
-            return
-        }
-
-        // Revalidate the exact hdiutil owner snapshot once before signalling
-        // anything. Recovery never uses a time delay as an ownership signal.
-        publicationAsync(backingPath: backingPath) { [weak self] current, errorMessage in
-            guard let self else {
-                completion(false)
-                return
-            }
-            guard errorMessage == nil else {
-                completion(false)
-                return
-            }
-            guard let current else {
-                completion(true)
-                return
-            }
-            guard current == candidate else {
-                completion(false)
-                return
-            }
-
-            guard let ownerGeneration = processGeneration(candidate.pid) else {
-                self.waitForOwnerlessPublicationRetirement(
-                    candidate,
-                    backingPath: backingPath,
-                    timeout: 2.0,
-                    completion: completion
-                )
-                return
-            }
-            guard ownerGeneration.executablePath == "/usr/libexec/diskimagesiod" else {
-                completion(false)
-                return
-            }
-
-            let waiter = EDPExactResourceTerminationWaiter(
-                queue: self.operationQueue,
-                process: ownerGeneration,
-                media: self.exactMediaGenerations(for: candidate),
-                timeout: 1.5
-            ) { [weak self] terminated in
-                guard let self else {
-                    completion(false)
-                    return
-                }
-                if terminated {
-                    completion(true)
-                    return
-                }
-                self.escalatePublicationRecovery(
-                    candidate,
-                    ownerGeneration: ownerGeneration,
-                    backingPath: backingPath,
-                    completion: completion
-                )
-            }
-            waiter.start(afterArming: {
-                guard processGeneration(ownerGeneration.pid) == ownerGeneration else { return }
-                _ = Darwin.kill(ownerGeneration.pid, SIGTERM)
-            })
-        }
-    }
-
-    private func escalatePublicationRecovery(
-        _ candidate: DiskImagesPublication,
-        ownerGeneration: EDPProcessGeneration,
-        backingPath: String,
-        completion: @escaping EDPBooleanCompletion
-    ) {
-        publicationAsync(backingPath: backingPath) { [weak self] revalidated, errorMessage in
-            guard let self else {
-                completion(false)
-                return
-            }
-            guard errorMessage == nil else {
-                completion(false)
-                return
-            }
-            guard let revalidated else {
-                completion(true)
-                return
-            }
-            guard revalidated == candidate else {
-                completion(false)
-                return
-            }
-
-            guard let currentOwner = processGeneration(revalidated.pid) else {
-                self.waitForOwnerlessPublicationRetirement(
-                    revalidated,
-                    backingPath: backingPath,
-                    timeout: 2.0,
-                    completion: completion
-                )
-                return
-            }
-            guard currentOwner == ownerGeneration,
-                  currentOwner.executablePath == "/usr/libexec/diskimagesiod" else {
-                completion(false)
-                return
-            }
-
-            let waiter = EDPExactResourceTerminationWaiter(
-                queue: self.operationQueue,
-                process: currentOwner,
-                media: self.exactMediaGenerations(for: revalidated),
-                timeout: 2.0
-            ) { [weak self] terminated in
-                guard let self else {
-                    completion(false)
-                    return
-                }
-                if terminated {
-                    completion(true)
-                    return
-                }
-                self.publicationAsync(backingPath: backingPath) { postKill, postKillError in
-                    guard postKillError == nil else {
-                        completion(false)
-                        return
-                    }
-                    guard let postKill else {
-                        completion(true)
-                        return
-                    }
-                    guard postKill == revalidated else {
-                        completion(false)
-                        return
-                    }
-                    self.waitForOwnerlessPublicationRetirement(
-                        postKill,
-                        backingPath: backingPath,
-                        timeout: 0,
-                        completion: completion
-                    )
-                }
-            }
-            waiter.start(afterArming: {
-                guard processGeneration(currentOwner.pid) == currentOwner else { return }
-                _ = Darwin.kill(currentOwner.pid, SIGKILL)
-            })
-        }
-    }
-
-    private func waitForOwnerlessPublicationRetirement(
-        _ candidate: DiskImagesPublication,
-        backingPath: String,
-        timeout: TimeInterval,
-        completion: @escaping EDPBooleanCompletion
-    ) {
-        guard processGeneration(candidate.pid) == nil else {
-            completion(false)
-            return
-        }
-        let media = exactMediaGenerations(for: candidate)
-        guard !media.isEmpty else {
-            confirmDeadOwnerOnlyRetirementAsync(
-                candidate,
-                backingPath: backingPath,
-                completion: completion
-            )
-            return
-        }
-        guard timeout > 0 else {
-            completion(false)
-            return
-        }
-        EDPExactResourceTerminationWaiter(
-            queue: operationQueue,
-            process: nil,
-            media: media,
-            timeout: timeout
-        ) { [weak self] terminated in
-            guard let self, terminated else {
-                completion(false)
-                return
-            }
-            self.confirmDeadOwnerOnlyRetirementAsync(
-                candidate,
-                backingPath: backingPath,
-                completion: completion
-            )
-        }.start()
-    }
-
-    private func exactMediaGenerations(
-        for publication: DiskImagesPublication
-    ) -> [EDPIOMediaGeneration] {
-        var seen = Set<UInt64>()
-        var generations = [EDPIOMediaGeneration]()
-        for path in publication.devicePaths {
-            guard path.hasPrefix("/dev/") else { continue }
-            let bsdName = String(path.dropFirst(5))
-            guard let generation = EDPIOKitMediaLifecycle.mediaGeneration(forBSDName: bsdName),
-                  seen.insert(generation.registryEntryID).inserted else {
-                continue
-            }
-            generations.append(generation)
-        }
-        return generations
     }
 
     private func publicationAsync(
@@ -1540,6 +1265,14 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
         return nil
     }
 
+    private static func wholeBSDName(fromDevicePath path: String) -> String? {
+        let prefix = "/dev/disk"
+        guard path.hasPrefix(prefix) else { return nil }
+        let suffix = path.dropFirst(prefix.count)
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return nil }
+        return "disk\(suffix)"
+    }
+
     private static func isSyntheticBSDDevicePath(_ path: String) -> Bool {
         let prefix = "/dev/disk"
         guard path.hasPrefix(prefix) else { return false }
@@ -1563,7 +1296,7 @@ final class EDPDiskImages2Publisher: EDPBlockDevicePublisher, @unchecked Sendabl
 }
 
 #if EDP_REGRESSION_TESTS
-extension EDPDiskImages2Publisher {
+extension EDPHdiutilBlockDevicePublisher {
     static func regressionStableDeadOwnerOnlyRetirement(
         originalPID: Int32,
         originalOwnerUID: UInt32,

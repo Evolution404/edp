@@ -221,11 +221,6 @@ echo "Building macFUSE Local transport..."
 MACFUSE_FRAMEWORKS="${MACFUSE_BUILD_FRAMEWORKS}" \
   "${REPO_ROOT}/installer/build-transport-backends.sh" "${RUNTIME_STAGE}/bin"
 
-/usr/bin/clang -fobjc-arc -fblocks \
-  "${REPO_ROOT}/native/EDPFSKitPoC/Tools/DiskImages2Attach.m" \
-  -framework Foundation \
-  -o "${RUNTIME_STAGE}/bin/diskimages2-attach"
-
 /usr/bin/cc -O2 -Wall -Wextra -I"${REPO_ROOT}/product" \
   "${REPO_ROOT}/product/EDPConsoleExec.c" \
   "${REPO_ROOT}/product/EDPRawValidation.c" \

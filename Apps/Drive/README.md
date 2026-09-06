@@ -135,7 +135,7 @@ real EDP USB
   -> EDPBlockReadable
   -> macFUSE 5.x (backend=fskit)
   -> hidden volume.raw
-  -> Private DiskImages2
+  -> Apple /usr/bin/hdiutil attach -nomount -readwrite -plist
   -> /dev/diskN / IOMedia
   -> macOS native filesystem stack
   -> Finder
@@ -143,18 +143,18 @@ real EDP USB
 
 EDP Drive **不自行实现 exFAT/APFS/FAT/NTFS 等任何具体文件系统**。应用只负责 raw-device 生命周期、挂载和系统集成；EDP metadata、身份/密码校验、key derivation 与 SM4 由 monorepo 的 `Packages/EDPCore` 统一提供。
 
-产品正常 DiskImages2 attach 不使用 `hdiutil`，而走固定 `diskimages2-attach` helper；`hdiutil info -plist` 仅允许作为 bounded publication identity/recovery metadata，`hdiutil detach -force` 仅允许在窄化的 scratch-orphan recovery 中使用。产品不使用 DriverKit block-storage entitlement、不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
+块设备发布通过 `EDPBlockDevicePublisher` provider 边界实现。当前 macOS 26 compatibility provider 使用 Apple 公共 `hdiutil` CLI：`attach -nomount -readwrite -plist` 创建 IOMedia，正常 teardown 先由 Disk Arbitration eject，超时后仅在 exact IOKit registry generation 仍匹配时调用 bounded `hdiutil detach -force`。macOS 27+ 的长期候选是 DiskImageKit，但只有 Apple 提供公开 host-IOMedia attachment 能力并由 EDP 实现、验证后才允许 provider factory 切换；在此之前 macOS 27 仍使用 compatibility provider。产品永久禁止回退到 `PrivateFrameworks/DiskImages2.framework` / private Objective-C selector，也不向 Apple `diskimagesiod`/`fskit_agent` 发送恢复信号。产品不使用 DriverKit block-storage entitlement、不使用 macFUSE kernel backend，也不要求关闭 SIP 或降低 Apple Silicon 启动安全策略。
 
 ## 已完成的读写 E2E
 
-### 1. macFUSE FSKit + DiskImages2 块桥
+### 1. macFUSE FSKit + native filesystem 历史块桥证明
 
-GitHub Actions run `32848875297` 在 macOS 26.5.2 / Apple Silicon / macFUSE 5.3.3 上完整跑通：
+GitHub Actions run `32848875297` 在 macOS 26.5.2 / Apple Silicon / macFUSE 5.3.3 上完整跑通。该历史 PoC 当时使用 private DiskImages2 helper；当前产品和活跃回归已经迁移到 Apple 公共 `hdiutil` 路径：
 
 ```text
 random-access backing
   -> macFUSE FSKit volume.raw
-  -> Private DiskImages2
+  -> disk-image publication
   -> /dev/disk8
   -> Apple native ExFAT
   -> file write/read
@@ -267,7 +267,7 @@ real EDP USB
 - `EDPFileRawDevice` exact `pread` / `pwrite` / sync adapter；
 - 3,200 deterministic property/random cases + golden/negative tests。
 
-Private DiskImages2 使用集中在 bridge 中并通过 runtime class/selector probe 调用；不兼容时必须 fail closed。
+当前生产和活跃回归不得引用 `PrivateFrameworks/DiskImages2.framework`、`DICommonAttach`、`DIAttachParams` 或 private selector；系统 ratchet 对这些依赖保持 fail-closed 禁止。
 
 ## 永久系统级回归
 
@@ -275,7 +275,6 @@ Private DiskImages2 使用集中在 bridge 中并通过 runtime class/selector p
 .github/workflows/macfuse-diskimages2-poc.yml
 .github/workflows/edp-crypto-diskimages2-readonly.yml
 
-native/EDPFSKitPoC/Tools/DiskImages2Attach.m
 native/EDPFSKitPoC/Tools/EDPReadOnlyBlockCBridge.swift
 native/EDPFSKitPoC/Tools/EDPReadOnlyFuseBridge.c
 native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift

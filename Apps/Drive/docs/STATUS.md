@@ -19,7 +19,7 @@ EDP Drive is a native macOS 26+ menu-bar application. The production product is:
 - XPC + Disk Arbitration + IOKit + Security framework;
 - `Packages/EDPCore` for EDP metadata / identity / crypto;
 - official macFUSE Local FSKit runtime as the only transport backend;
-- Private DiskImages2 publication to Apple native filesystem stacks;
+- Apple public `hdiutil` raw-image publication to native filesystem stacks;
 - no Tauri/WebView, FUSE-T, ntfs-3g, authopen, DriverKit block workaround, or custom filesystem implementation.
 
 Installed topology:
@@ -93,7 +93,7 @@ standard EDP physical USB
   -> type 1 plaintext slice OR type 2/4 SM4 transparent block view
   -> macFUSE Local FSKit transport
   -> hidden volume.raw
-  -> Private DiskImages2 publication
+  -> /usr/bin/hdiutil attach -nomount -readwrite -plist
   -> synthetic /dev/diskN IOMedia
   -> Disk Arbitration
   -> Apple native filesystem stack
@@ -179,17 +179,9 @@ macOS 26 testing proved this state cannot safely use synchronous forced teardown
 
 Production therefore fails closed when the lower transport has exited while the upper user filesystem remains mounted. It does not enter a synchronous VFS unmount syscall in that state.
 
-### DiskImages2 stale owner tombstone
+### Legacy hdiutil metadata tombstone
 
-macOS 26 may retain an `hdiutil` owner record after the exact `diskimagesiod` process has exited. It is treated as retired only when all of the following hold:
-
-- exact expected backing path;
-- owner-only publication (`devicePaths.isEmpty`);
-- exact owner snapshot remains identical across bounded stabilization;
-- recorded owner PID has no executable process;
-- no PID / UID / entity generation change appears.
-
-Any identity or generation change remains fail-closed.
+Old persisted sessions may encounter an `hdiutil info -plist` record after its IOMedia has already disappeared. This compatibility path never signals the recorded system helper. A record is treated as retired only when the exact expected backing path has no device entities, the owner snapshot remains identical on immediate revalidation, and the recorded PID no longer resolves to an executable process. Any PID / UID / entity change remains fail-closed.
 
 ### Safe eject
 
@@ -197,26 +189,19 @@ Whole-device eject is single-flight and generation-aware. After successful safe 
 
 ## 9. External and private dependency boundaries
 
-### DiskImages2
+### Disk image publication
 
-Formal attach uses only the fixed private helper:
+Production must not load `PrivateFrameworks/DiskImages2.framework` or call private DiskImages2 Objective-C classes/selectors. Host publication is behind `EDPBlockDevicePublisherFactory`; the currently implemented backend is explicitly named `hdiutil-compatibility`, not the long-term architecture.
+
+Current compatibility command:
 
 ```text
-/Library/Application Support/EDP Drive/bin/diskimages2-attach
+hdiutil attach -nomount -readwrite -plist <volume.raw>
 ```
 
-through exact `EDPConsoleExec` allowlisting.
+The resulting whole IOMedia registry generation is captured immediately and becomes the teardown authority. Normal teardown uses Disk Arbitration eject first. If that bounded operation fails while the exact generation is still present, EDP may run bounded `hdiutil detach <exact /dev/diskN> -force`; it never TERM/KILLs `diskimagesiod`. `hdiutil info -plist` remains only for legacy persisted-session and narrowly scoped scratch metadata reconciliation.
 
-### hdiutil
-
-Production does **not** use `hdiutil` as the normal DiskImages2 attach path.
-
-Allowed production uses are bounded:
-
-- `hdiutil info -plist` for publication identity/recovery metadata;
-- `hdiutil detach -force` only for the narrowly scoped macFUSE scratch-orphan recovery path in installer cleanup.
-
-The preinstall script routes these calls through bounded TERM/KILL control; system ratchets reject direct unbounded production `hdiutil` calls.
+macOS 27+ introduces DiskImageKit as the future provider candidate. EDP must not select that backend merely because the framework exists: provider selection stays on `hdiutil-compatibility` until a documented host-IOMedia attachment capability is implemented and positively tested. Private DiskImages2 is permanently excluded as a fallback.
 
 ### pluginkit / user FSKit registration
 
@@ -224,13 +209,9 @@ The preinstall script routes these calls through bounded TERM/KILL control; syst
 
 Foreground external-tool calls are async, typed, 8-second bounded, and Task-cancellable.
 
-### fskit_agent / extensionkitservice reset
+### FSKit host ownership
 
-Agent reset is recovery/configuration-only and fail-closed:
-
-- foreground App refuses reset while **any** FSKit mount is active;
-- daemon recovery requires root, exact console user, and no active FSKit mount;
-- installer stale-agent recovery also requires exact process identity and no active FSKit filesystem.
+`fskit_agent`, `fskitd` and ExtensionKit host lifecycles are system-owned. EDP does not restart, signal or kill them. Bridge timeout/extension-unavailable failures are recorded as typed transient failures; a later explicit/reconnect retry starts a new formal mount attempt and lets macOS manage the FSKit host lifecycle.
 
 ## 10. Recovery diagnostics
 
@@ -238,7 +219,7 @@ Runtime diagnostics expose seven non-sensitive UInt64 counters:
 
 - `rawBusyRecoveryCount`;
 - `forcedWholeUnmountCount`;
-- `fskitAgentRecoveryCount`;
+- `fskitTransientRetryCount`;
 - `diskImagesAttachRecoveryCount`;
 - `diskImagesDetachRecoveryCount`;
 - `mountRetryCount`;

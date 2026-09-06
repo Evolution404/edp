@@ -5,7 +5,6 @@ MOUNT_POINT="/Volumes/edp-macfuse-di2"
 WORK_DIR="${RUNNER_TEMP:-/tmp}/edp-macfuse-di2"
 SOURCE_FILE="${WORK_DIR}/blockfs.c"
 FUSE_BIN="${WORK_DIR}/blockfs"
-ATTACH_BIN="${WORK_DIR}/diskimages2-attach"
 SERVER_LOG="${WORK_DIR}/server.log"
 ATTACH_LOG="${WORK_DIR}/attach.log"
 REPORT_FILE="${WORK_DIR}/report.txt"
@@ -20,6 +19,13 @@ mkdir -p "${WORK_DIR}"
 : >"${REPORT_FILE}"
 
 log() { printf '%s\n' "$*" | tee -a "${REPORT_FILE}"; }
+
+attach_raw_image() {
+  local backing="$1"
+  local plist="$2"
+  /usr/bin/hdiutil attach -nomount -readwrite -plist "$backing" >"$plist"
+  /usr/bin/plutil -extract 'system-entities.0.dev-entry' raw -o - "$plist"
+}
 
 is_backing_mounted() {
   /sbin/mount | /usr/bin/grep -F " on ${MOUNT_POINT} " >/dev/null 2>&1
@@ -253,9 +259,6 @@ EOF
 FUSE_CFLAGS="$(pkg-config --cflags fuse)"
 FUSE_LIBS="$(pkg-config --libs fuse)"
 /usr/bin/cc "${SOURCE_FILE}" -D_FILE_OFFSET_BITS=64 ${FUSE_CFLAGS} ${FUSE_LIBS} -lpthread -o "${FUSE_BIN}"
-/usr/bin/clang -fobjc-arc -fblocks \
-  native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
-  -framework Foundation -o "${ATTACH_BIN}"
 log "RESULT=POC_TOOLS_BUILT"
 
 sudo -v
@@ -277,11 +280,11 @@ log "MOUNT_LINE=${MOUNT_LINE}"
 printf '%s\n' "${MOUNT_LINE}" | /usr/bin/grep -Eq '^macfuse://[^ ]+ on .+\(macfuse,.*fskit'
 log "RESULT=MACFUSE_FSKIT_BACKING_READY"
 
-"${ATTACH_BIN}" "${MOUNT_POINT}/volume.raw" | tee "${ATTACH_LOG}" | tee -a "${REPORT_FILE}"
-BSD_NAME="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "${ATTACH_LOG}" | /usr/bin/tail -1)"
-[[ -n "${BSD_NAME}" ]]
-[[ -b "/dev/${BSD_NAME}" ]]
-log "RESULT=DISKIMAGES2_CREATED_BLOCK_DEVICE"
+BSD_PATH="$(attach_raw_image "${MOUNT_POINT}/volume.raw" "${ATTACH_LOG}")"
+/bin/cat "${ATTACH_LOG}" >>"${REPORT_FILE}"
+[[ "${BSD_PATH}" =~ ^/dev/disk[0-9]+$ && -b "${BSD_PATH}" ]]
+BSD_NAME="${BSD_PATH#/dev/}"
+log "RESULT=HDIUTIL_CREATED_BLOCK_DEVICE"
 /usr/sbin/diskutil info "${BSD_NAME}" | tee -a "${REPORT_FILE}"
 
 /usr/sbin/diskutil eraseDisk ExFAT "${TEST_VOLUME}" MBRFormat "${BSD_NAME}" | tee -a "${REPORT_FILE}"
@@ -301,9 +304,9 @@ log "PROOF=${PROOF}"
 log "RESULT=NATIVE_EXFAT_MOUNT_READ_WRITE_OK"
 
 /usr/sbin/diskutil unmount "${VOLUME_PATH}" | tee -a "${REPORT_FILE}"
-/usr/sbin/diskutil eject "${BSD_NAME}" | tee -a "${REPORT_FILE}"
+/usr/bin/hdiutil detach "/dev/${BSD_NAME}" -force | tee -a "${REPORT_FILE}"
 BSD_NAME=""
-log "RESULT=DISKIMAGES2_TEARDOWN_OK"
+log "RESULT=HDIUTIL_TEARDOWN_OK"
 
 cleanup
 if is_backing_mounted; then

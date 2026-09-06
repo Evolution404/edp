@@ -52,13 +52,16 @@ for path in \
   "bin/edp-mfmount-local-readwrite" \
   "bin/edp-raw-metadata" \
   "bin/libEDPReadWriteBridge.dylib" \
-  "bin/diskimages2-attach" \
   "licenses/macfuse/LICENSE.txt"; do
   [[ -e "${ROOT}/${path}" ]] || {
     echo "required payload path missing: ${path}" >&2
     exit 3
   }
 done
+[[ ! -e "${ROOT}/bin/diskimages2-attach" ]] || {
+  echo "private DiskImages2 helper must not be packaged" >&2
+  exit 3
+}
 
 TRANSPORT_BINARIES="$(/usr/bin/find "${ROOT}/bin" -maxdepth 1 -type f -name 'edp-*readwrite*' -print | /usr/bin/sort)"
 [[ "${TRANSPORT_BINARIES}" == "${ROOT}/bin/edp-mfmount-local-readwrite" ]] || {
@@ -277,13 +280,15 @@ echo "RESULT=LEGACY_AUTHOPEN_UPGRADE_CLEANUP_PACKAGED"
 
 if [[ "${EDP_INSTALLER_SYSTEM_TESTS:-0}" == "1" ]]; then
   IMAGE="${VERIFY_ROOT}/raw.img"
+  ATTACH_PLIST="${VERIFY_ROOT}/attach.plist"
   /usr/bin/truncate -s 16777216 "${IMAGE}"
-  ATTACH_OUTPUT="$("${ROOT}/bin/diskimages2-attach" --writable-noautomount "${IMAGE}")"
-  BSD_NAME="$(printf '%s\n' "${ATTACH_OUTPUT}" | /usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' | /usr/bin/tail -1)"
-  [[ -n "${BSD_NAME}" && -b "/dev/${BSD_NAME}" ]]
+  /usr/bin/hdiutil attach -nomount -readwrite -plist "${IMAGE}" >"${ATTACH_PLIST}"
+  BSD_PATH="$(/usr/bin/plutil -extract 'system-entities.0.dev-entry' raw -o - "${ATTACH_PLIST}")"
+  [[ "${BSD_PATH}" =~ ^/dev/disk[0-9]+$ && -b "${BSD_PATH}" ]]
+  BSD_NAME="${BSD_PATH#/dev/}"
   /usr/sbin/diskutil info "${BSD_NAME}" | /usr/bin/grep -Eq \
     'Media Read-Only:[[:space:]]+No'
-  /usr/sbin/diskutil eject "${BSD_NAME}" >/dev/null
+  /usr/bin/hdiutil detach "${BSD_PATH}" -force >/dev/null
 fi
 
 echo "RESULT=EDP_CLEAN_INSTALLER_VERIFIED"

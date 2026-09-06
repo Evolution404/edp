@@ -230,14 +230,6 @@ legacy_orphan_pid_for_backing() {
   return 0
 }
 
-validate_diskimagesiod_pid() {
-  local pid="$1"
-  local owner command
-  owner="$(/bin/ps -p "${pid}" -o user= 2>/dev/null | /usr/bin/xargs || true)"
-  command="$(/bin/ps -p "${pid}" -o comm= 2>/dev/null | /usr/bin/xargs || true)"
-  [[ "${owner}" == "_diskimagesiod" && "${command}" == "/usr/libexec/diskimagesiod" ]]
-}
-
 is_edp_storage_test_backing_path() {
   local path="$1"
   [[ "${path}" != *'/../'* && "${path}" != *'/..' ]] || return 1
@@ -308,28 +300,14 @@ recover_edp_storage_test_diskimages2_orphans() {
         exit 1
       fi
       pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
-      if [[ -n "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
-        # Refresh immediately before signalling so a recycled PID/backing tuple
-        # can never inherit authority from the earlier enumeration.
+      if [[ -n "${pid}" ]]; then
+        # The owner is a macOS disk-image service. Re-enumerate immediately to
+        # close PID/backing reuse races, but never signal or kill that system
+        # process. A live owner-only test publication is an unsafe upgrade state.
         run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
         refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
-        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
-          echo "EDP Drive upgrade recovering storage-test DiskImages2 orphan (${pid})."
-          /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
-          /bin/sleep 0.5
-        fi
-
-        run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-        refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
-        if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
-          /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
-          /bin/sleep 0.5
-        fi
-
-        run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-        refreshed_pid="$(test_orphan_pid_for_backing "${info}" "${image_path}" "${console_uid}")"
-        if [[ -n "${refreshed_pid}" ]]; then
-          echo "EDP Drive upgrade could not recover storage-test DiskImages2 orphan; restart macOS and retry." >&2
+        if [[ "${refreshed_pid}" == "${pid}" ]] && /bin/kill -0 "${pid}" >/dev/null 2>&1; then
+          echo "EDP Drive upgrade found a live storage-test disk-image owner (${pid}); restart macOS and retry." >&2
           exit 1
         fi
       fi
@@ -338,26 +316,6 @@ recover_edp_storage_test_diskimages2_orphans() {
   done
   /bin/rm -f "${info}"
   trap - EXIT
-}
-
-wait_for_device_to_disappear() {
-  local bsd="$1"
-  local attempts="$2"
-  local i
-  for ((i = 0; i < attempts; i++)); do
-    [[ ! -e "/dev/${bsd}" ]] && return 0
-    /bin/sleep 0.1
-  done
-  [[ ! -e "/dev/${bsd}" ]]
-}
-
-validate_diskimages_helper_pid() {
-  local pid="$1"
-  local owner command
-  owner="$(/bin/ps -p "${pid}" -o user= 2>/dev/null | /usr/bin/xargs || true)"
-  command="$(/bin/ps -p "${pid}" -o command= 2>/dev/null | /usr/bin/xargs || true)"
-  [[ "${owner}" == "root" \
-    && "${command}" == /System/Library/PrivateFrameworks/DiskImages.framework/Resources/diskimages-helper\ -uuid\ *\ -post-exec\ 4 ]]
 }
 
 is_uuid_dmg_path() {
@@ -454,34 +412,12 @@ recover_macfuse_scratch_orphans() {
       continue
     fi
 
-    # A live, exact diskimages-helper scratch can be detached independently of
-    # unrelated FSKit filesystems. EDP never restarts or kills macOS FSKit host
-    # processes during installer recovery.
-    if validate_diskimages_helper_pid "${pid}"; then
-      echo "EDP Drive upgrade recovering macFUSE scratch orphan ${device} (${pid})."
-      run_bounded 12 /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
+    # The disk-image helper is owned by macOS. The installer may request a
+    # bounded public detach for this exact synthetic device, but it must never
+    # signal or kill the helper process itself.
+    echo "EDP Drive upgrade detaching macFUSE scratch orphan ${device}."
+    run_bounded 12 /usr/bin/hdiutil detach "${device}" -force >/dev/null 2>&1 || true
 
-      run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-      refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-      if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
-        /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
-        /bin/sleep 0.2
-      fi
-
-      run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-      refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-      if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimages_helper_pid "${pid}"; then
-        /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
-        /bin/sleep 0.2
-      fi
-    else
-      echo "EDP Drive upgrade found macFUSE scratch ${device} with stale helper record (${pid})."
-    fi
-
-    # macOS can keep the 4 KiB scratch IOMedia alive after diskimages-helper has
-    # exited, leaving hdiutil's hdid-pid field stale. That system-owned FSKit
-    # state is not recoverable by EDP; only re-prove the exact backing/device
-    # tuple and fail closed if the orphan remains.
     run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
     refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
     if [[ -z "${refreshed_pid}" ]]; then
@@ -491,15 +427,7 @@ recover_macfuse_scratch_orphans() {
       continue
     fi
 
-    if ! validate_diskimages_helper_pid "${pid}"; then
-      run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-      refreshed_pid="$(macfuse_scratch_pid_for_identity "${info}" "${image_path}" "${device}")"
-      if [[ -z "${refreshed_pid}" ]]; then
-        continue
-      fi
-    fi
-
-    echo "EDP Drive upgrade could not recover macFUSE scratch orphan ${device}; restart macOS and retry." >&2
+    echo "EDP Drive upgrade could not detach macFUSE scratch orphan ${device} with public hdiutil; restart macOS and retry." >&2
     exit 1
   done
   /bin/rm -f "${info}"
@@ -521,19 +449,15 @@ recover_legacy_root_diskimages2_orphans() {
     if [[ -n "${bridge}" && -n "${exposed}" && "${bridge}" == /Volumes/.edp-block-* && "${exposed}" =~ ^disk[0-9]+$ ]]; then
       backing="${bridge}/volume.raw"
       pid="$(legacy_orphan_pid_for_backing "${info}" "${backing}")"
-      if [[ -n "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
-        echo "EDP Drive upgrade recovering legacy DiskImages2 orphan ${exposed} (${pid})."
-        /bin/kill -TERM "${pid}" >/dev/null 2>&1 || true
-        if ! wait_for_device_to_disappear "${exposed}" 20; then
-          run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
-          refreshed_pid="$(legacy_orphan_pid_for_backing "${info}" "${backing}")"
-          if [[ "${refreshed_pid}" == "${pid}" ]] && validate_diskimagesiod_pid "${pid}"; then
-            /bin/kill -KILL "${pid}" >/dev/null 2>&1 || true
-          fi
-          if ! wait_for_device_to_disappear "${exposed}" 20; then
-            echo "EDP Drive upgrade could not recover legacy DiskImages2 orphan ${exposed}; restart macOS and retry." >&2
-            exit 1
-          fi
+      if [[ -n "${pid}" ]]; then
+        # Legacy metadata can outlive its IOMedia. Never terminate the macOS
+        # owner process. Revalidate the exact backing/PID tuple and refuse the
+        # upgrade only while that owner is still alive.
+        run_bounded 8 /usr/bin/hdiutil info -plist >"${info}" 2>/dev/null || true
+        refreshed_pid="$(legacy_orphan_pid_for_backing "${info}" "${backing}")"
+        if [[ "${refreshed_pid}" == "${pid}" ]] && /bin/kill -0 "${pid}" >/dev/null 2>&1; then
+          echo "EDP Drive upgrade found a live legacy disk-image owner for ${exposed}; restart macOS and retry." >&2
+          exit 1
         fi
       fi
     fi
@@ -608,7 +532,8 @@ fi
 # identity. Recover only those exact persisted orphans before stopping their
 # now-unpublished macFUSE transports. Storage regression interruptions can leave
 # the same owner-only shape under the hardware-free edp-storage-e2e namespace;
-# revalidate its exact temp backing and console-user owner before signalling.
+# revalidate its exact temp backing and console-user owner without signalling
+# any macOS-owned disk-image process.
 recover_legacy_root_diskimages2_orphans
 recover_edp_storage_test_diskimages2_orphans
 

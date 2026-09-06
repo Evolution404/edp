@@ -50,11 +50,14 @@ private func doctor() -> Int32 {
     print("TRANSPORT_BACKEND=\(runtimeStatus?.backend.rawValue ?? "unavailable")")
     ok = ok && runtimeStatus != nil
     let binaryRoot = runtimeBinaryRoot()
+    let publicationBackend = EDPBlockDevicePublisherFactory.selectedBackend()
+    print("BLOCK_PUBLICATION_BACKEND=\(publicationBackend.rawValue)")
+    print("BLOCK_PUBLICATION_DISKIMAGEKIT_HOST_ATTACH=AWAITING_PUBLIC_API")
     let transportBackend = runtimeStatus?.backend ?? .macFUSELocal
     let transportTools = [false, true].map {
         EDPTransportProvider.executableName(for: transportBackend, readOnly: $0)
     }
-    for tool in transportTools + ["edp-console-exec", "edp-raw-metadata", "diskimages2-attach"] {
+    for tool in transportTools + ["edp-console-exec", "edp-raw-metadata"] {
         let path = binaryRoot + "/" + tool
         let present = FileManager.default.isExecutableFile(atPath: path)
         print("TOOL_\(tool.uppercased().replacingOccurrences(of: ".", with: "_"))=\(present ? "OK" : "MISSING")")

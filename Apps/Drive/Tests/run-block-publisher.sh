@@ -33,5 +33,6 @@ xcrun swiftc -Onone -swift-version 6 -warnings-as-errors -D EDP_REGRESSION_TESTS
 
 OUTPUT="$($BINARY 2>&1)"
 printf '%s\n' "$OUTPUT"
+grep -Fq 'RESULT=BLOCK_PUBLICATION_PROVIDER_POLICY_OK' <<<"$OUTPUT"
 grep -Fq 'RESULT=MACFUSE_SCRATCH_CLEANUP_CONTRACT_OK' <<<"$OUTPUT"
 printf '%s\n' 'RESULT=DRIVE_BLOCK_PUBLISHER_OK'

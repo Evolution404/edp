@@ -22,7 +22,7 @@ service id: com.edp.drive.service
         ├── raw-FD broker through foreground App identity
         ├── Packages/EDPCore
         ├── macFUSE Local FSKit transport
-        └── DiskImages2 publication
+        └── Apple hdiutil raw-image publication
 ```
 
 The product deliberately keeps one visible App plus one embedded service. There is no second Raw Access App.
@@ -45,7 +45,7 @@ The App does **not** own:
 - physical USB discovery;
 - long-lived raw leases;
 - mount sessions;
-- DiskImages2 lifecycle;
+- disk-image publication lifecycle;
 - physical eject orchestration.
 
 Those belong to the service.
@@ -61,7 +61,7 @@ The service owns the managed-device lifecycle:
 - credential validation against EDP metadata;
 - mount/unmount sessions;
 - automatic-mount policy execution;
-- DiskImages2 publication lifecycle;
+- public hdiutil / IOMedia publication lifecycle;
 - physical safe eject;
 - startup recovery and graceful shutdown;
 - structured activity/journal/metrics snapshots.
@@ -150,8 +150,8 @@ Encrypted partitions use `Packages/EDPCore` for transparent block translation an
 EDP logical block view
   -> macFUSE Local FSKit transport
   -> hidden volume.raw
-  -> fixed diskimages2-attach helper
-  -> DiskImages2 synthetic media
+  -> /usr/bin/hdiutil attach -nomount -readwrite -plist
+  -> synthetic IOMedia
   -> Disk Arbitration
   -> Apple filesystem stack
   -> Finder
@@ -169,28 +169,40 @@ Only the Local FSKit transport is supported. There is no runtime backend selecto
 
 Transport children receive only the fixed raw FD needed for their EDP session and run in the console-user context after privilege setup.
 
-## 8. DiskImages2 boundary
+## 8. Disk-image publication boundary
 
-### 8.1 Normal publish
+### 8.1 Provider policy
 
-Normal publish uses the fixed helper:
+`EDPBlockDevicePublisher` is the stable host-block-publication boundary. `EDPBlockDevicePublisherFactory` owns backend selection so mount/session code never depends directly on one disk-image mechanism.
+
+Current policy:
 
 ```text
-/Library/Application Support/EDP Drive/bin/diskimages2-attach
+macOS 26
+  -> hdiutil compatibility provider
+
+macOS 27+
+  -> DiskImageKit host-attachment provider only after a public host-IOMedia API is implemented and positively validated
+  -> otherwise hdiutil compatibility provider
 ```
 
-The helper is invoked only through an exact console-exec allowlist. Arbitrary executables are rejected.
+Private DiskImages2 APIs are permanently forbidden and are not a fallback backend.
 
-### 8.2 hdiutil use
+### 8.2 macOS 26 compatibility provider
 
-`hdiutil` is not the normal attach mechanism.
+The current provider invokes Apple `/usr/bin/hdiutil` through the exact console-exec allowlist using only documented options:
 
-Allowed bounded uses are limited to:
+```text
+hdiutil attach -nomount -readwrite -plist <volume.raw>
+```
 
-- publication metadata discovery via `hdiutil info -plist`;
-- narrowly scoped scratch-orphan detach during recovery/installer cleanup.
+The returned plist identifies the whole `/dev/diskN`; EDP immediately resolves its IOKit registryEntryID and never treats the reusable BSD name as lifecycle authority.
 
-Normal block publication remains the private DiskImages2 helper path.
+### 8.3 Teardown and compatibility metadata
+
+Normal teardown requests exact-generation Disk Arbitration eject. If the same IOMedia generation remains, a bounded `hdiutil detach /dev/diskN -force` is allowed after immediate generation revalidation. EDP never signals or kills Apple `diskimagesiod`/disk-image helper processes. `hdiutil info -plist` is restricted to legacy persisted-session and narrowly scoped scratch metadata reconciliation.
+
+Production and active regression code must not load `PrivateFrameworks/DiskImages2.framework` or call private DiskImages2 classes/selectors.
 
 ## 9. Runtime ownership components
 
@@ -298,7 +310,7 @@ A healthy session tears down from upper layers toward lower ownership:
 
 ```text
 user filesystem
-  -> DiskImages2 publication
+  -> exact IOMedia disk-image publication
   -> hidden macFUSE Local bridge
   -> transport process
   -> raw lease when no session still needs it
@@ -319,9 +331,9 @@ Real macOS 26 evidence showed synchronous unmount/force-unmount can block indefi
 
 Therefore production refuses synchronous VFS teardown when it detects this combination. It journals a teardown failure and retains the failed session state for explicit recovery/reboot rather than risking a permanently blocked lifecycle queue.
 
-## 14. DiskImages2 tombstone retirement
+## 14. Legacy disk-image metadata tombstone retirement
 
-A stale metadata-only record can remain after `diskimagesiod` has exited.
+A stale `hdiutil info -plist` metadata-only record can remain after its IOMedia and owner process have exited. EDP never terminates that system-owned process.
 
 The record is retired only if:
 
@@ -376,25 +388,21 @@ All production external-process use must be one of:
 
 Foreground App external tools are async, typed, bounded and Task-cancellable.
 
-Installer `hdiutil` use is also bounded and escalates TERM -> KILL only inside the wrapper.
+Installer `hdiutil` use is also bounded. Timeout escalation may terminate only the exact EDP-launched `hdiutil` child process owned by that wrapper; it never signals Apple disk-image or FSKit host processes.
 
-## 19. FSKit agent reset policy
+## 19. FSKit host ownership policy
 
-No component may recycle user FSKit agents while an FSKit volume is active.
+`fskit_agent`, `fskitd` and ExtensionKit host processes are system-owned. No App, daemon, installer or recovery path may restart, signal or kill them.
 
-Foreground App:
+Bridge timeout / extension-unavailable handling is therefore:
 
-- checks global `MNT_EXT_FSKIT` state;
-- skips reset if any FSKit mount exists.
+```text
+current mount attempt -> typed failure -> fail closed
+later explicit/XPC reconnect retry -> new formal mount attempt
+macOS -> owns FSKit host lifecycle throughout
+```
 
-Daemon recovery:
-
-- requires root;
-- identifies the exact console user;
-- refuses if any FSKit mount exists;
-- only then restarts the exact console-user `fskit_agent`.
-
-Installer recovery follows the same fail-closed principle.
+A retry is never implemented by recycling a system host process.
 
 ## 20. Observability
 

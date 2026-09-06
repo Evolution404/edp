@@ -27,7 +27,7 @@ static int allowed_executable(const char *path) {
     static const char *allowed[] = {
         "/Library/Application Support/EDP Drive/bin/edp-mfmount-local-readwrite",
         "/Library/Application Support/EDP Drive/bin/edp-mfmount-local-readonly",
-        "/Library/Application Support/EDP Drive/bin/diskimages2-attach",
+        "/usr/bin/hdiutil",
     };
     for (size_t index = 0; index < sizeof(allowed) / sizeof(allowed[0]); ++index) {
         if (strcmp(path, allowed[index]) == 0) return 1;

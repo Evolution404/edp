@@ -5,7 +5,6 @@ MOUNT_POINT="/Volumes/edp-crypto-readonly"
 WORK_DIR="${RUNNER_TEMP:-/tmp}/edp-crypto-di2"
 PLAIN_IMAGE="${WORK_DIR}/plain.img"
 CIPHER_IMAGE="${WORK_DIR}/cipher.img"
-ATTACH_BIN="${WORK_DIR}/diskimages2-attach"
 ENCRYPT_BIN="${WORK_DIR}/prepare-encrypted-image"
 SWIFT_LIB="${WORK_DIR}/libEDPReadOnlyBridge.dylib"
 FUSE_BIN="${WORK_DIR}/edp-readonly-fuse"
@@ -24,6 +23,16 @@ mkdir -p "${WORK_DIR}"
 : >"${REPORT_FILE}"
 
 log() { printf '%s\n' "$*" | tee -a "${REPORT_FILE}"; }
+
+attach_raw_image() {
+  local backing="$1"
+  local mode="$2"
+  local plist="$3"
+  local access="-readwrite"
+  [[ "$mode" == "readonly" ]] && access="-readonly"
+  /usr/bin/hdiutil attach -nomount "$access" -plist "$backing" >"$plist"
+  /usr/bin/plutil -extract 'system-entities.0.dev-entry' raw -o - "$plist"
+}
 
 cleanup() {
   if [[ -n "${DECRYPTED_BSD}" ]]; then
@@ -46,10 +55,6 @@ log "=== EDP encrypted reader -> macFUSE FSKit -> DiskImages2 -> native filesyst
 log "macOS=$(/usr/bin/sw_vers -productVersion)"
 log "arch=$(/usr/bin/uname -m)"
 log "libfuse=$(pkg-config --modversion fuse)"
-
-/usr/bin/clang -fobjc-arc -fblocks \
-  native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
-  -framework Foundation -o "${ATTACH_BIN}"
 
 xcrun swiftc -O \
   native/EDPFSKitPoC/Extension/EDPCrypto.swift \
@@ -89,9 +94,10 @@ with open(sys.argv[1], "wb") as handle:
     handle.truncate(128 * 1024 * 1024)
 PY
 
-"${ATTACH_BIN}" "${PLAIN_IMAGE}" | tee "${ATTACH_PLAIN_LOG}" | tee -a "${REPORT_FILE}"
-PLAIN_BSD="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "${ATTACH_PLAIN_LOG}" | /usr/bin/tail -1)"
-[[ -n "${PLAIN_BSD}" && -b "/dev/${PLAIN_BSD}" ]]
+PLAIN_PATH="$(attach_raw_image "${PLAIN_IMAGE}" readwrite "${ATTACH_PLAIN_LOG}")"
+/bin/cat "${ATTACH_PLAIN_LOG}" >>"${REPORT_FILE}"
+[[ "${PLAIN_PATH}" =~ ^/dev/disk[0-9]+$ && -b "${PLAIN_PATH}" ]]
+PLAIN_BSD="${PLAIN_PATH#/dev/}"
 /usr/sbin/diskutil eraseDisk ExFAT "${TEST_VOLUME}" MBRFormat "${PLAIN_BSD}" | tee -a "${REPORT_FILE}"
 
 PLAIN_VOLUME="/Volumes/${TEST_VOLUME}"
@@ -159,9 +165,10 @@ with open(plain, "rb", buffering=0) as lhs, open(exposed, "rb", buffering=0) as 
 print("RESULT=EDP_ENCRYPTED_READER_RANDOM_WINDOWS_MATCH")
 PY
 
-"${ATTACH_BIN}" --readonly "${MOUNT_POINT}/volume.raw" | tee "${ATTACH_CIPHER_LOG}" | tee -a "${REPORT_FILE}"
-DECRYPTED_BSD="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "${ATTACH_CIPHER_LOG}" | /usr/bin/tail -1)"
-[[ -n "${DECRYPTED_BSD}" && -b "/dev/${DECRYPTED_BSD}" ]]
+DECRYPTED_PATH="$(attach_raw_image "${MOUNT_POINT}/volume.raw" readonly "${ATTACH_CIPHER_LOG}")"
+/bin/cat "${ATTACH_CIPHER_LOG}" >>"${REPORT_FILE}"
+[[ "${DECRYPTED_PATH}" =~ ^/dev/disk[0-9]+$ && -b "${DECRYPTED_PATH}" ]]
+DECRYPTED_BSD="${DECRYPTED_PATH#/dev/}"
 log "DECRYPTED_BSD=${DECRYPTED_BSD}"
 DISK_INFO="$(/usr/sbin/diskutil info "${DECRYPTED_BSD}")"
 printf '%s\n' "${DISK_INFO}" | tee -a "${REPORT_FILE}"

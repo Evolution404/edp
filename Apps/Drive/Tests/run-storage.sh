@@ -81,7 +81,6 @@ ACTIVE_MOUNTS="$WORK_DIR/active-mounts.txt"
 mkdir -p "$BUILD_DIR" "$MOUNT_ROOT" "$LOG_ROOT"
 touch "$ACTIVE_DEVICES" "$ACTIVE_FIXTURE_DEVICES" "$ACTIVE_PROCESSES" "$ACTIVE_MOUNTS"
 
-ATTACH_BIN="$BUILD_DIR/diskimages2-attach"
 PREPARE_BIN="$BUILD_DIR/prepare-edp-filesystem-fixture"
 ADAPTER_BIN="$BUILD_DIR/edp-mfmount-fixture"
 FSKIT_GUARD_BIN="$BUILD_DIR/edp-assert-no-fskit-mounts"
@@ -670,14 +669,15 @@ attach_image() {
   local output_variable="$2"
   local tag="$3"
   local attach_log="$LOG_ROOT/attach-$tag.log"
-  "$ATTACH_BIN" --writable-noautomount "$backing" >"$attach_log"
+  bounded 15 /usr/bin/hdiutil attach -nomount \
+    -imagekey diskimage-class=CRawDiskImage "$backing" >"$attach_log"
   local attached_bsd
-  attached_bsd="$(/usr/bin/awk -F= '/^DI_BSD_NAME=/{print $2}' "$attach_log" | /usr/bin/tail -1)"
+  attached_bsd="$(/usr/bin/awk '$1 ~ /^\/dev\/disk[0-9]+$/ { gsub("/dev/", "", $1); print $1; exit }' "$attach_log")"
   [[ -n "$attached_bsd" && -b "/dev/$attached_bsd" ]]
   assert_synthetic_device "$attached_bsd" "$backing"
-  # DiskImages2 can return the BSD name a few milliseconds before the raw
-  # device is openable. Exact backing + DiskImages2 provenance already proves
-  # this is synthetic; use a direct raw-read readiness check instead of
+  # hdiutil can return the BSD name a few milliseconds before the raw device is
+  # openable. Exact backing + DiskImages2 provenance already proves this is
+  # synthetic; use a direct raw-read readiness check instead of
   # diskutil metadata queries, which can enter an uninterruptible FSKit wait.
   local ready=0
   for _ in $(/usr/bin/seq 1 100); do
@@ -1187,7 +1187,7 @@ require_prepared_fixture() {
 }
 
 ensure_tools() {
-  if [[ -x "$ATTACH_BIN" && -x "$PREPARE_BIN" && -x "$ADAPTER_BIN" && -x "$FSKIT_GUARD_BIN" && -x "$DA_MOUNT_BIN" && -x "$FAILURE_BIN" ]]; then
+  if [[ -x "$PREPARE_BIN" && -x "$ADAPTER_BIN" && -x "$FSKIT_GUARD_BIN" && -x "$DA_MOUNT_BIN" && -x "$FAILURE_BIN" ]]; then
     return 0
   fi
   build_tools
@@ -1217,9 +1217,6 @@ build_failure_contract_tool() {
 build_tools() {
   local include_failure_contracts="${1:-1}"
   log "=== Build storage E2E tools ==="
-  xcrun clang -std=c17 -Wall -Wextra -Werror -fobjc-arc -fblocks \
-    native/EDPFSKitPoC/Tools/DiskImages2Attach.m \
-    -framework Foundation -o "$ATTACH_BIN"
   xcrun clang -std=c17 -Wall -Wextra -Werror \
     native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c \
     -o "$FSKIT_GUARD_BIN"

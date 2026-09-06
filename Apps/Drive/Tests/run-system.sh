@@ -208,10 +208,10 @@ echo 'RESULT=DRIVE_SYSTEM_RELEASE_SIGNING_GATE_OK'
 # which is easy to miss in ordinary smoke testing.
 /usr/bin/grep -Fq 'edp-mfmount-local-readwrite' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 /usr/bin/grep -Fq 'edp-mfmount-local-readonly' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
-/usr/bin/grep -Fq '"/Library/Application Support/EDP Drive/bin/diskimages2-attach"' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
-[[ "$(/usr/bin/grep -Fc 'diskimages2-attach' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c")" -eq 1 ]]
+/usr/bin/grep -Fq '"/usr/bin/hdiutil"' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
+! /usr/bin/grep -Fq 'diskimages2-attach' "${ROOT}/Apps/Drive/product/EDPConsoleExec.c"
 echo 'RESULT=DRIVE_SYSTEM_CONSOLE_TRANSPORT_ALLOWLIST_OK'
-echo 'RESULT=DRIVE_SYSTEM_DISKIMAGES_HELPER_ALLOWLIST_OK'
+echo 'RESULT=DRIVE_SYSTEM_PUBLIC_DISK_IMAGE_TOOL_ALLOWLIST_OK'
 
 # The Animation Hitches performance gate is compositor-sensitive and therefore
 # release-authoritative only on the GitHub Actions runner. Local runs may still
@@ -335,16 +335,15 @@ SERVICE_BOOTOUT_LINE="$(/usr/bin/grep -nF '/bin/launchctl bootout "system/${SERV
 /usr/bin/grep -Fq 'EDP Drive upgrade stopping the currently running foreground UI before bundle replacement.' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'recover_edp_storage_test_diskimages2_orphans' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'is_edp_storage_test_backing_path' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'Refresh immediately before signalling so a recycled PID/backing tuple' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'macfuse_scratch_pid_for_identity' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'exact backing + device identity' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'found macFUSE scratch ${device} with stale helper record' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'A live, exact diskimages-helper scratch can be detached independently of' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'EDP never restarts or kills macOS FSKit host' "${PREINSTALL_SOURCE}"
-/usr/bin/grep -Fq 'system-owned FSKit' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'bounded public detach for this exact synthetic device' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'but it must never' "${PREINSTALL_SOURCE}"
+/usr/bin/grep -Fq 'signal or kill the helper process itself' "${PREINSTALL_SOURCE}"
 ! /usr/bin/grep -Fq 'recover_stale_console_fskit_agent' "${PREINSTALL_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/libexec/fskit_agent' "${PREINSTALL_SOURCE}"
-! /usr/bin/grep -Fq 'kill -KILL "${agent_pid}"' "${PREINSTALL_SOURCE}"
+! /usr/bin/grep -Fq 'validate_diskimagesiod_pid' "${PREINSTALL_SOURCE}"
+! /usr/bin/grep -Fq 'validate_diskimages_helper_pid' "${PREINSTALL_SOURCE}"
 ! /usr/bin/grep -Fq 'refreshed_pid="$(hdi_value "${info}" "${image_index}" hdid-pid)"' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'run_bounded() {' "${PREINSTALL_SOURCE}"
 /usr/bin/grep -Fq 'run_bounded 8 /usr/bin/hdiutil info -plist' "${PREINSTALL_SOURCE}"
@@ -550,11 +549,9 @@ for marker in \
 done
 echo 'RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK'
 
-# DiskImages2 publication teardown is event-driven on exact synthetic IOMedia
-# generations. hdiutil is allowed only as a one-shot abnormal recovery inspector;
-# neither normal teardown nor owner recovery may poll it on a timer. Recovery
-# also binds diskimagesiod to PID + process start time before TERM/KILL so PID
-# reuse can never become a signal target.
+# Production disk-image publication is event-driven on exact synthetic IOMedia
+# generations. It uses documented hdiutil attach/detach options and never treats
+# an Apple disk-image helper PID as a recovery authority or signal target.
 ! /usr/bin/grep -Fq 'Thread.sleep' "${PUBLISHER_SOURCE}"
 ! /usr/bin/grep -Fq 'waitUntilExit()' "${PUBLISHER_SOURCE}"
 ! /usr/bin/grep -Fq 'waitForPublicationToDisappearAsync' "${PUBLISHER_SOURCE}"
@@ -562,11 +559,12 @@ echo 'RESULT=DRIVE_SYSTEM_PHYSICAL_EJECT_GENERATION_RATCHET_OK'
 ! /usr/bin/grep -Fq 'func publishWritableImage(' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'func publishWritableImageAsync(' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'private final class EDPPublicationTerminationOperation' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'private struct EDPProcessGeneration' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'info.pbi_start_tvsec' "${PUBLISHER_SOURCE}"
-/usr/bin/grep -Fq 'DispatchSource.makeProcessSource' "${PUBLISHER_SOURCE}"
+! /usr/bin/grep -Fq 'private struct EDPProcessGeneration' "${PUBLISHER_SOURCE}"
+! /usr/bin/grep -Fq '/usr/libexec/diskimagesiod' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'private final class EDPExactResourceTerminationWaiter' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'registryEntryID: generation.registryEntryID' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'label: "hdiutil exact-generation detach"' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'arguments: ["detach", "/dev/\(device.bsdName)", "-force"]' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'EDPIOMediaTerminationMonitor' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'EDPIOKitMediaLifecycle.registryEntryExists' "${PUBLISHER_SOURCE}"
 /usr/bin/grep -Fq 'func cleanupNewOrphansAsync(' "${PUBLISHER_SOURCE}"
@@ -996,13 +994,33 @@ echo 'RESULT=DRIVE_SYSTEM_APP_REOPEN_RESTORES_SERVICE_OK'
 /usr/bin/grep -Fq 'macFUSELocalRuntimeReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'macFUSELocalEnablementReady()' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq '/usr/bin/pluginkit' "${RUNTIME_SOURCE}" "${MOUNT_LIFECYCLE_SOURCE}" "${PUBLISHER_SOURCE}"
-DISKIMAGES_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPDiskImages2Publisher/{found=1} found {print}' "${PUBLISHER_SOURCE}")"
-/usr/bin/grep -Fq 'helperPath = binaryRoot + "/diskimages2-attach"' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
-/usr/bin/grep -Fq 'helperPath, "--writable-noautomount", path' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
-/usr/bin/grep -Fq 'arguments: ["info", "-plist"]' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
-! /usr/bin/grep -Fq 'hdiutil attach' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
-! /usr/bin/grep -Fq 'hdiutil detach' <<<"${DISKIMAGES_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'enum EDPBlockPublicationBackend: String, Sendable' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'case hdiutilCompatibility = "hdiutil-compatibility"' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'case diskImageKitHostAttachment = "diskimagekit-host-attachment"' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'operatingSystemVersion.majorVersion >= 27' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'diskImageKitHostAttachmentAvailable: Bool = false' "${PUBLISHER_SOURCE}"
+/usr/bin/grep -Fq 'blockPublisher = try EDPBlockDevicePublisherFactory.make(' "${RUNTIME_SOURCE}"
+! /usr/bin/grep -Fq 'blockPublisher = EDPHdiutilBlockDevicePublisher(' "${RUNTIME_SOURCE}"
+/usr/bin/grep -Fq 'BLOCK_PUBLICATION_BACKEND=' "${ROOT}/Apps/Drive/product/EDPServiceMain.swift"
+/usr/bin/grep -Fq 'BLOCK_PUBLICATION_DISKIMAGEKIT_HOST_ATTACH=AWAITING_PUBLIC_API' "${ROOT}/Apps/Drive/product/EDPServiceMain.swift"
+HDIUTIL_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPHdiutilBlockDevicePublisher/{found=1} found {print}' "${PUBLISHER_SOURCE}")"
+/usr/bin/grep -Fq 'private let hdiutilPath = "/usr/bin/hdiutil"' <<<"${HDIUTIL_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'hdiutilPath, "attach", "-nomount", "-readwrite", "-plist", path' <<<"${HDIUTIL_PUBLISHER_SECTION}"
+! /usr/bin/grep -Fq 'diskimage-class=CRawDiskImage' <<<"${HDIUTIL_PUBLISHER_SECTION}"
+/usr/bin/grep -Fq 'arguments: ["info", "-plist"]' <<<"${HDIUTIL_PUBLISHER_SECTION}"
 /usr/bin/grep -Fq 'runHdiutilAsync(["detach", device, "-force"])' "${PUBLISHER_SOURCE}"
+! /usr/bin/grep -Fq 'diskimages2-attach' "${PUBLISHER_SOURCE}" "${ROOT}/Apps/Drive/installer/build-native-installer.sh" "${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
+! test -e "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/DiskImages2Attach.m"
+! /usr/bin/grep -Fq 'DiskImages2Attach.m' "${ROOT}/Apps/Drive/installer/build-native-installer.sh" "${ROOT}/Apps/Drive/installer/build-clean-installer.sh" "${STORAGE_RUNNER}"
+if /usr/bin/grep -R -E 'PrivateFrameworks/DiskImages2|DICommonAttach|DIAttachParams' \
+  "${ROOT}/Apps/Drive/product" \
+  "${ROOT}/Apps/Drive/installer" \
+  "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools" \
+  "${ROOT}/Apps/Drive/scripts" >/dev/null 2>&1; then
+  echo 'private DiskImages2 API re-entered active Drive source' >&2
+  exit 1
+fi
+echo 'RESULT=DRIVE_SYSTEM_PUBLIC_DISK_IMAGE_PUBLICATION_OK'
 "${APP_SERVICE_SUPPORT_RUNNER}" | /usr/bin/grep -Fq 'RESULT=DRIVE_APP_USER_TOOL_BOUNDED_TYPED_CANCELLABLE_OK'
 echo 'RESULT=DRIVE_SYSTEM_EXTERNAL_DEPENDENCY_BOUNDARIES_OK'
 
@@ -1050,8 +1068,9 @@ ARCHITECTURE_DOC="${ROOT}/Apps/Drive/docs/ARCHITECTURE.md"
 TESTING_DOC="${ROOT}/Apps/Drive/docs/TESTING.md"
 RELEASE_DOC="${ROOT}/Apps/Drive/docs/RELEASE-CHECKLIST.md"
 NTFS_ADR_DOC="${ROOT}/Apps/Drive/docs/ADR-2026-09-03-ntfs-rw.md"
+PUBLICATION_ADR_DOC="${ROOT}/Apps/Drive/docs/ADR-2026-09-06-block-publication-provider.md"
 HISTORICAL_DOC="${ROOT}/Apps/Drive/docs/HISTORICAL.md"
-for doc in "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}" "${NTFS_ADR_DOC}" "${HISTORICAL_DOC}"; do
+for doc in "${STATUS_DOC}" "${ARCHITECTURE_DOC}" "${TESTING_DOC}" "${RELEASE_DOC}" "${NTFS_ADR_DOC}" "${PUBLICATION_ADR_DOC}" "${HISTORICAL_DOC}"; do
   [[ -s "${doc}" ]]
 done
 /usr/bin/grep -Fq 'Current exact-head CI:' "${STATUS_DOC}"
@@ -1082,6 +1101,12 @@ done
 /usr/bin/grep -Fq 'EDP Drive adopts an **A + C** strategy:' "${NTFS_ADR_DOC}"
 /usr/bin/grep -Fq 'Do not restore `ntfs-3g`.' "${NTFS_ADR_DOC}"
 /usr/bin/grep -Fq 'NTFS RW is **not a blocker** for the current EDP Drive release candidate.' "${NTFS_ADR_DOC}"
+/usr/bin/grep -Fq 'Status: Accepted' "${PUBLICATION_ADR_DOC}"
+/usr/bin/grep -Fq 'macOS 26: `hdiutil-compatibility`.' "${PUBLICATION_ADR_DOC}"
+/usr/bin/grep -Fq '`diskimagekit-host-attachment` is a reserved future backend identifier only' "${PUBLICATION_ADR_DOC}"
+/usr/bin/grep -Fq 'Private DiskImages2 APIs are permanently prohibited' "${PUBLICATION_ADR_DOC}"
+/usr/bin/grep -Fq 'hdiutil-compatibility' "${STATUS_DOC}" "${ARCHITECTURE_DOC}"
+/usr/bin/grep -Fq 'DiskImageKit' "${STATUS_DOC}" "${ARCHITECTURE_DOC}"
 ! /usr/bin/grep -Fq 'NTFS RW ADR                         NOT YET DECIDED' "${RELEASE_DOC}"
 /usr/bin/grep -Fq 'Historical Document Index' "${HISTORICAL_DOC}"
 echo 'RESULT=DRIVE_SYSTEM_CURRENT_DOCS_OK'
