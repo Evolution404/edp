@@ -30,6 +30,18 @@
 - [x] fresh physical replug retained raw access PASS，type2/type4 credential persistence PASS。
 - [x] 当前分支起点 clean 且 `HEAD == origin/codex/ui-macos26-liquid-glass == 3463295b1e6f86a315075732543ef3f53c510d18`。
 
+## 2026-09-06 — 当前 release candidate 收口
+
+- [x] `f703621` 将健康 transport 正常 teardown 从 `umount -f` 收口为 bounded ordinary VFS unmount，继续以 exact IOMedia generation termination 为完成边界；metadata-only hdiutil tombstone 不再误报为 live device leak。
+- [x] `8450725` 将 release-only xctrace gate 收口为 fresh-runner A/B，并仅在 A/B 都未产生完整 hitch count 时启动第三个 fresh runner C；20 toggles、8 s trace、33 ms 阈值均未放宽。
+- [x] exact-head `84507259ec35f3ade234ab31f2caa256115dc124` / GitHub Actions run `34029328625` 全部 PASS：native、fast+VirtualUSB、deterministic UI、UI release gate、storage core、storage lifecycle 全绿。
+- [x] release storage 证据：M10 5/5 无 mount/device/process/fd leak；M12 crash/remount PASS；M14 exchange/boot/secure 均 ordinary VFS unmount `status=0` 并完成 adapter teardown；此前 forced-unmount M14 secure wedge 未复现。
+- [x] UI release 证据：probe A 完整 trace，`UI_HITCH_COUNT_GT33MS=0`；probe B 在 trace 完成前发生 xctrace infrastructure failure；由于 A 已提供权威证据，probe C 正确 skipped，aggregator PASS。
+- [x] exact-head Clean.pkg 已构建并通过 strict release verifier：`artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`322ce7aff9f18a680f62d6675a5e951a1e0e9bb681a8d1cc8a04984409ef8117`。
+- [x] 本机已执行完整 EDP/macFUSE 环境清理并确认 `RESULT=DRIVE_ENVIRONMENT_CLEAN`；安装上述 exact package 后 App/service 自动启动，LaunchDaemon、签名、XPC roundtrip、version 0.6.0 snapshot 均 PASS，且验证时无外接物理盘。
+- [ ] 当前 HEAD 标准加密真实 EDP 盘最小 release acceptance：fresh insert/claim/raw ready → mount → normal unmount/safe eject → no residue → physical reinsert。
+- [ ] 当前 HEAD mandatory reboot gate：重启后 service/FDA/FSKit/device claim/mount/eject 状态复核。
+
 ## Phase A — Sidebar 33 ms 性能收口
 
 状态：DONE（CI-only gate PASS）

@@ -1,6 +1,6 @@
 # EDP Drive — Release Checklist
 
-Updated: 2026-09-05
+Updated: 2026-09-06
 
 > Use this checklist for an actual release candidate. A prior green commit does not substitute for exact-head verification of the package being released.
 
@@ -9,19 +9,20 @@ Updated: 2026-09-05
 Record before release testing:
 
 ```text
-Status: RELEASE-READY — standard encrypted physical path and exact-head reboot gate PASS; missing negative physical media remain BLOCKED_BY_FIXTURE
+Status: AUTOMATED RELEASE GATES PASS / CLEAN-INSTALL VERIFIED — exact-head standard encrypted physical path and reboot gate still pending; missing negative physical media remain BLOCKED_BY_FIXTURE
 Branch: codex/ui-macos26-liquid-glass
-Release code/package HEAD: a2fb8745295adf9d84422f91802c868dd95ca16c
+Release code/package HEAD: 84507259ec35f3ade234ab31f2caa256115dc124
 Latest invalidated release HEAD: 193ef5a8cd53ed2547779c1bc30b6cdf1cbe56a2
 Version: 0.6.0
 Release Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
-Release Clean.pkg SHA-256: 54eba1d6a1e9cb36555dafe58eeccd25740142af61207fa10fa6e2209eed843c
-Exact-head GitHub Actions run: 33960406329 — five core jobs 5/5 PASS
-Physical acceptance: PASS — fresh insertion mount approval dissented before any child mount success; Pause/Resume/Restart kept one service PID and zero recovery counters; safe eject suppression and physical reinsert PASS
-Exact-head reboot acceptance: PASS — booted 2026-09-05 18:44:02; before EDP Drive starts macOS may own/mount the FAT boot partition normally; after EDP Drive/XPC starts it unmounts the system volume, claims the whole EDP disk and restores retained raw access with zero recovery counters
+Release Clean.pkg SHA-256: 322ce7aff9f18a680f62d6675a5e951a1e0e9bb681a8d1cc8a04984409ef8117
+Exact-head GitHub Actions run: 34029328625 — all release jobs PASS; M10 5/5, M12 and M14 PASS; UI probe A complete with 0 hitches >33 ms, probe B infrastructure failure before trace completion, probe C correctly skipped
+Clean-install acceptance: PASS — full EDP/macFUSE cleanup, exact package install, App/service strict signatures, LaunchDaemon load, XPC roundtrip and version 0.6.0 snapshot PASS with no external physical disk attached
+Physical acceptance: PENDING on current HEAD; prior 9b5a859 physical acceptance remains historical baseline only
+Exact-head reboot acceptance: PENDING on current HEAD; prior 9b5a859 reboot acceptance remains historical baseline only
 Remaining documented exceptions: ordinaryUSB / legacyNoPassword / currentNoPassword / unrecognizedEDP physical negatives are BLOCKED_BY_FIXTURE
-Date: 2026-09-05
-Tester: automated local + GitHub Actions + macOS upgrade + physical Lexar acceptance
+Date: 2026-09-06
+Tester: automated local + GitHub Actions; current-head physical/reboot acceptance pending
 ```
 
 Earlier candidates remain historical invalidations: `51a6c9c` reacquired a logically safe-ejected still-inserted USB after App restart; `f7d7dde` closed that tombstone bug but a fresh replug exposed `fskitd` child-partition EBUSY; `54c048f` physically proved early standard-EDP `DADiskClaim` can prevent that insertion race, but a true privileged-process stop/start destroyed the claim session and recreated the EBUSY window. `9b5a859` closed that lifecycle gap by keeping routine Stop/Start/Restart inside the same privileged process/DA owner. On 2026-09-05, `7dda539` exposed a narrower insertion race: FSKit queued the child FAT mount before asynchronous whole-disk claim completed, forcing EBUSY recovery. `193ef5a` then armed a mount-denial gate before `DADiskClaim`, eliminating the EBUSY counters, but physical logs still showed `disk26s1` successfully mounted before the whole-media peek/claim path ran. `a2fb874` closes that remaining race by synchronously classifying the exact owning USB generation inside mount approval itself; physical fresh insertion and physical reinsert both showed mount approval dissent before whole-disk claim, no child mount success, `rawBusyRecoveryCount=0`, and `forcedWholeUnmountCount=0`.
