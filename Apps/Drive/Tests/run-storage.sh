@@ -789,44 +789,62 @@ stop_adapter() {
   local bridge="$2"
   local tag="$3"
   local forced_exit=0
+  local unmount_status=0
 
-  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
-    /bin/kill -TERM "$pid"
-  fi
-  if ! wait_for_child_exit_bounded "$pid" 50 "adapter-term-$tag"; then
-    echo "adapter ignored bounded SIGTERM teardown: $tag" >&2
+  # Mirror the production EDPTransportSession ordering exactly: while the
+  # EDP-owned transport is still alive, first ask VFS to unmount the bridge in
+  # an isolated bounded helper. Only after the mount is authoritatively gone
+  # may teardown escalate the EDP child with TERM/KILL. Sending SIGTERM while
+  # the bridge is still mounted exercises a different lifecycle and previously
+  # hid stale-mount failures behind transport self-unmount workarounds.
+  if is_mounted "$bridge"; then
+    "$FSKIT_GUARD_BIN" --is-macfuse-mount "$bridge" >/dev/null 2>&1 || {
+      echo "refusing production-order teardown for non-macFUSE bridge: $bridge" >&2
+      return 1
+    }
+    log "STORAGE_BRIDGE_VFS_UNMOUNT_REQUESTED=$tag"
+    set +e
+    bounded 10 /sbin/umount -f "$bridge" >/dev/null 2>&1
+    unmount_status=$?
+    set -e
     if is_mounted "$bridge"; then
-      log "STORAGE_ADAPTER_BRIDGE_RECOVERY=$tag"
-      cleanup_crashed_local_mount "$bridge" || true
-      if wait_for_child_exit_bounded "$pid" 20 "adapter-post-bridge-recovery-$tag"; then
-        wait "$pid" >/dev/null 2>&1 || true
-        return 0
-      fi
-    fi
-    /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-    forced_exit=1
-    if ! wait_for_child_exit_bounded "$pid" 20 "adapter-kill-$tag"; then
-      echo "EDP-owned adapter remained after SIGKILL; refusing system-host recovery: $tag" >&2
-      /usr/bin/tail -80 "$LOG_ROOT/adapter-$tag.log" >&2 || true
+      echo "production-order VFS unmount left bridge mounted: $tag status=$unmount_status" >&2
+      /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
       return 1
     fi
+    log "STORAGE_BRIDGE_VFS_UNMOUNT_COMPLETE=$tag status=$unmount_status"
   fi
+
+  if /bin/kill -0 "$pid" >/dev/null 2>&1 &&
+     ! wait_for_child_exit_bounded "$pid" 50 "adapter-natural-exit-$tag"; then
+    log "STORAGE_ADAPTER_TERM_AFTER_UNMOUNT=$tag"
+    /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
+    if ! wait_for_child_exit_bounded "$pid" 20 "adapter-term-$tag"; then
+      /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
+      forced_exit=1
+      if ! wait_for_child_exit_bounded "$pid" 20 "adapter-kill-$tag"; then
+        echo "EDP-owned adapter remained after SIGKILL; refusing system-host recovery: $tag" >&2
+        /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
+        return 1
+      fi
+    fi
+  fi
+
   if ! wait "$pid"; then
     if (( forced_exit == 1 )) && ! is_mounted "$bridge"; then
       log "STORAGE_ADAPTER_FORCED_EXIT_OK=$tag"
     else
       echo "adapter returned failure during teardown: $tag" >&2
-      /usr/bin/tail -80 "$LOG_ROOT/adapter-$tag.log" >&2 || true
+      /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
       return 1
     fi
   fi
-  for _ in $(/usr/bin/seq 1 100); do
-    is_mounted "$bridge" || return 0
-    /bin/sleep 0.1
-  done
-  log "M10_STALE_FSKIT_RECOVERY=$tag"
-  /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
-  cleanup_crashed_local_mount "$bridge"
+
+  if is_mounted "$bridge"; then
+    echo "bridge remounted or remained after adapter teardown: $tag" >&2
+    return 1
+  fi
+  log "STORAGE_ADAPTER_TEARDOWN_COMPLETE=$tag"
 }
 
 mount_native() {
