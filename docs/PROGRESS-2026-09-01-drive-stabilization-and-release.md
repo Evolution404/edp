@@ -42,7 +42,7 @@
 - [x] 当前 HEAD 标准加密 Lexar physical core path：fresh insertion 五因素身份/claim/raw ready PASS，无 `fskitd` child raw holder；type1 FAT16 RO mount PASS；旧包可复现的 `FAIL/PASS/FAIL/PASS/FAIL` immediate-unmount 序列在 `a7667d0` 上变为 **8/8 mount PASS + 8/8 immediate ordinary-unmount PASS**；最近 8 次均 `transportTeardownComplete`，无 hidden mount/transport residue，`rawBusyRecoveryCount=0`、`forcedWholeUnmountCount=0`。
 - [x] 当前 HEAD product safe eject PASS：`privilegedAccessReady=false`，无 EDP mount、transport 或 raw holder，recovery counters 仍为 0；safe-eject 后 foreground App restart 与 routine runtime restart 均未误 reacquire。
 - [x] 当前 HEAD physical remove/reinsert PASS：真实拔出后 external physical、`/dev/disk26`、IOKit Lexar generation 均消失，`manualUnmountSuppressions=[]`；fresh reinsert 自动恢复同一五因素 identity 与 `privilegedAccessReady=true`，无 child raw holder。随后 final type1 mount/immediate-unmount 与 final safe eject 再次 PASS，最终 `rawBusyRecoveryCount=0`、`forcedWholeUnmountCount=0`、`fskitTransientRetryCount=0` 且无 mount/transport/raw-holder residue。
-- [ ] 当前 HEAD credentialed type2/type4 physical acceptance：factory cleanup 后真实密码未重新保存，因此暂不宣称三分区完整验收。
+- [x] 当前 HEAD credentialed type2/type4 physical acceptance：用户已在 App UI 重新验证并保存真实密码；credential checkpoint / policy round-trip PASS；type1 RO remount PASS；type2 交换区与 type4 保密区均完成真实 RW 写入、卸载、重挂、SHA-256 持久化校验与清理，最终 `RESULT=ALL_THREE_PARTITIONS_CAPABILITY_PERSISTENCE_OK`。最终 safe eject 后无 EDP mount/transport/raw holder，`rawBusyRecoveryCount=0`、`forcedWholeUnmountCount=0`、`fskitTransientRetryCount=0`。
 - [ ] 当前 HEAD mandatory reboot gate：用户明确要求暂不重启；只有获得明确授权后才执行。
 
 ## Phase A — Sidebar 33 ms 性能收口

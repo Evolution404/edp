@@ -9,7 +9,7 @@ Updated: 2026-09-06
 Record before release testing:
 
 ```text
-Status: AUTOMATED RELEASE GATES PASS / CLEAN-INSTALL VERIFIED / STANDARD-EDP PHYSICAL CORE PATH PASS — credentialed type2/type4 and reboot gate still pending; missing negative physical media remain BLOCKED_BY_FIXTURE
+Status: AUTOMATED RELEASE GATES PASS / CLEAN-INSTALL VERIFIED / STANDARD-EDP THREE-PARTITION PHYSICAL ACCEPTANCE PASS — reboot gate still pending; missing negative physical media remain BLOCKED_BY_FIXTURE
 Branch: codex/ui-macos26-liquid-glass
 Release code/package HEAD: a7667d003279e31c1fd932b9180f32bd427c0bc0
 Latest invalidated release HEAD: 4ed0325c5f393375e7f8ffb3bf44afcb778e3d11
@@ -18,7 +18,7 @@ Release Clean.pkg path: artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg
 Release Clean.pkg SHA-256: e1abc47aa69a463e37a2046cfe06bdd2729ae3072141dfbe0daf52d578c230f8
 Exact-head GitHub Actions run: 34031734671 — native, fast+VirtualUSB, deterministic UI, storage core, storage lifecycle M10-M14 and the 33 ms UI release gate all PASS; conditional perf C skipped because A/B supplied sufficient evidence
 Clean-install acceptance: PASS — exact package installed with service/XPC/macFUSE FSKit health intact; installed --help/-h both exit 0 with identical output and no App/UI lifecycle startup
-Physical acceptance: PARTIAL PASS on current HEAD — fresh standard Lexar identity/claim/raw-ready PASS; type1 FAT16 RO mount PASS; the old immediate-unmount FAIL/PASS alternation became 8/8 mount PASS + 8/8 immediate ordinary-unmount PASS after a single bounded healthy-teardown retry was added. Safe eject PASS; App restart and routine runtime restart did not reacquire the logically-ejected device; exact physical removal retired the suppression state and removed the old disk/IOKit generation; fresh reinsert automatically restored the same five-factor identity and privileged raw access; final type1 mount/immediate-unmount and final safe eject PASS. Final residue audit shows no EDP mount/transport/raw holder with rawBusyRecoveryCount=0, forcedWholeUnmountCount=0 and fskitTransientRetryCount=0. Type2/type4 remain unverified because factory cleanup intentionally removed their saved credentials.
+Physical acceptance: PASS on current HEAD — fresh standard Lexar identity/claim/raw-ready PASS; type1 FAT16 RO mount PASS; the old immediate-unmount FAIL/PASS alternation became 8/8 mount PASS + 8/8 immediate ordinary-unmount PASS after a single bounded healthy-teardown retry was added. Safe eject PASS; App restart and routine runtime restart did not reacquire the logically-ejected device; exact physical removal retired the suppression state and removed the old disk/IOKit generation; fresh reinsert automatically restored the same five-factor identity and privileged raw access. After the real type2/type4 credentials were revalidated and saved in the UI, credential checkpoint and policy round-trip PASSed; type1 RO remount PASSed; type2 exchange and type4 secret both passed RW write/unmount/remount/SHA-256 persistence/cleanup through the production path, ending in `RESULT=ALL_THREE_PARTITIONS_CAPABILITY_PERSISTENCE_OK`. Final safe eject/residue audit shows no EDP mount/transport/raw holder with rawBusyRecoveryCount=0, forcedWholeUnmountCount=0 and fskitTransientRetryCount=0.
 Exact-head reboot acceptance: PENDING by explicit user instruction; do not reboot until authorized
 Remaining documented exceptions: ordinaryUSB / legacyNoPassword / currentNoPassword / unrecognizedEDP physical negatives are BLOCKED_BY_FIXTURE
 Date: 2026-09-06
