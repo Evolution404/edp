@@ -1012,6 +1012,10 @@ HDIUTIL_PUBLISHER_SECTION="$(/usr/bin/awk '/^final class EDPHdiutilBlockDevicePu
 ! /usr/bin/grep -Fq 'diskimages2-attach' "${PUBLISHER_SOURCE}" "${ROOT}/Apps/Drive/installer/build-native-installer.sh" "${ROOT}/Apps/Drive/installer/build-clean-installer.sh"
 ! test -e "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/DiskImages2Attach.m"
 ! /usr/bin/grep -Fq 'DiskImages2Attach.m' "${ROOT}/Apps/Drive/installer/build-native-installer.sh" "${ROOT}/Apps/Drive/installer/build-clean-installer.sh" "${STORAGE_RUNNER}"
+STORAGE_ATTACH_SECTION="$(/usr/bin/awk '/^attach_image\(\)/,/^eject_image\(\)/' "${STORAGE_RUNNER}")"
+/usr/bin/grep -Fq '/usr/sbin/diskutil image attach --plist --noMount' <<<"${STORAGE_ATTACH_SECTION}"
+! /usr/bin/grep -Fq 'diskimage-class=CRawDiskImage' <<<"${STORAGE_ATTACH_SECTION}"
+echo 'RESULT=DRIVE_SYSTEM_DISKUTIL_IMAGE_PUBLICATION_PROBE_OK'
 if /usr/bin/grep -R -E 'PrivateFrameworks/DiskImages2|DICommonAttach|DIAttachParams' \
   "${ROOT}/Apps/Drive/product" \
   "${ROOT}/Apps/Drive/installer" \

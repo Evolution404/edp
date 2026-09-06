@@ -161,8 +161,10 @@ jobs:
           ! grep -Fq 'DIRECT_OPCODE opcode=' Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c
           grep -Fq 'runBoundedProcess' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'timeout: 15' Apps/Drive/product/EDPBlockDevicePublisher.swift
-          grep -Fq 'DispatchSource.makeProcessSource' Apps/Drive/product/EDPBlockDevicePublisher.swift
-          grep -Fq 'info.pbi_start_tvsec' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          grep -Fq 'EDPBlockDevicePublisherFactory.make(' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'case .hdiutilCompatibility:' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          ! grep -Fq 'Darwin.kill(ownerGeneration.pid' Apps/Drive/product/EDPBlockDevicePublisher.swift
+          ! grep -Fq 'Darwin.kill(currentOwner.pid' Apps/Drive/product/EDPBlockDevicePublisher.swift
           ! grep -Fq 'waitForPublicationToDisappearAsync' Apps/Drive/product/EDPBlockDevicePublisher.swift
           ! grep -Fq '@Sendable func poll()' Apps/Drive/product/EDPBlockDevicePublisher.swift
           grep -Fq 'process.forceTerminate()' Apps/Drive/product/EDPTransportProvider.swift

@@ -668,11 +668,15 @@ attach_image() {
   local backing="$1"
   local output_variable="$2"
   local tag="$3"
-  local attach_log="$LOG_ROOT/attach-$tag.log"
-  bounded 15 /usr/bin/hdiutil attach -nomount \
-    -imagekey diskimage-class=CRawDiskImage "$backing" >"$attach_log"
-  local attached_bsd
-  attached_bsd="$(/usr/bin/awk '$1 ~ /^\/dev\/disk[0-9]+$/ { gsub("/dev/", "", $1); print $1; exit }' "$attach_log")"
+  local attach_log="$LOG_ROOT/attach-$tag.plist"
+  bounded 15 /usr/sbin/diskutil image attach --plist --noMount "$backing" >"$attach_log"
+  local attached_device attached_bsd
+  attached_device="$(
+    /usr/bin/plutil -convert json -o - "$attach_log" \
+      | /usr/bin/grep -Eo '/dev/disk[0-9]+' \
+      | /usr/bin/head -1
+  )"
+  attached_bsd="${attached_device#/dev/}"
   [[ -n "$attached_bsd" && -b "/dev/$attached_bsd" ]]
   assert_synthetic_device "$attached_bsd" "$backing"
   # hdiutil can return the BSD name a few milliseconds before the raw device is
@@ -689,7 +693,13 @@ attach_image() {
     /bin/sleep 0.05
   done
   [[ "$ready" -eq 1 ]] || {
-    echo "synthetic device did not become diskutil-ready: $attached_bsd" >&2
+    echo "synthetic device did not become raw-readable after diskutil image attach: $attached_bsd" >&2
+    echo "DISKUTIL_IMAGE_ATTACH_PLIST_BEGIN" >&2
+    /usr/bin/plutil -p "$attach_log" >&2 || true
+    echo "DISKUTIL_IMAGE_ATTACH_PLIST_END" >&2
+    bounded 5 /usr/sbin/diskutil info "$attached_bsd" >&2 || true
+    capture_hdiutil_info "$LOG_ROOT/hdiutil-info-$tag.plist" 3 >/dev/null 2>&1 || true
+    /usr/bin/plutil -p "$LOG_ROOT/hdiutil-info-$tag.plist" >&2 || true
     return 1
   }
   printf '%s|%s\n' "$attached_bsd" "$backing" >>"$ACTIVE_DEVICES"
