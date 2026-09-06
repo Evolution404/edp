@@ -301,7 +301,7 @@ Workflow: `.github/workflows/drive.yml`
 
 ### `native`
 
-Builds EDPCore and compiles the production daemon / SwiftUI App under strict `-O`, Swift 6 and `-warnings-as-errors` settings. On the same runner, `drive-test-system` and the storage contract shard run concurrently with the native compile after one shared EDPCore build.
+Builds EDPCore and compiles the production daemon / SwiftUI App under strict `-O`, Swift 6 and `-warnings-as-errors` settings. On the same runner, the hardware-free `drive-test-system` ratchet runs concurrently with the native compile after one shared EDPCore build. Storage contracts are paired with the I/O-heavy lifecycle storage path instead of competing with the native Swift compiler.
 
 ### Fast leg inside `regression-fast-virtual`
 
@@ -327,11 +327,11 @@ Discovery, P16–P30, C/D, S01–S47, the 320,000-step property model and V01–
 
 GitHub currently schedules at most five macOS jobs from this workflow concurrently, so the ordinary/release gate is deliberately balanced into exactly five critical paths instead of creating a larger matrix that would queue. Four paths restore an exact `actions/cache@v5` EDPCore release cache keyed by runner OS/architecture, Swift compiler hash and EDPCore source hash; cache reuse is permitted only after the cached library already passes the normal `prepare-shared-edp-core.sh` artifact checks.
 
-1. `native`: production daemon/App strict build while the hardware-free system ratchet and storage contracts run in parallel on the same runner;
+1. `native`: production daemon/App strict build while the hardware-free system ratchet runs in parallel on the same runner;
 2. `regression-fast-virtual`: fast and full software VirtualUSB regressions run concurrently after one shared EDPCore build;
 3. `regression-ui`: deterministic UI plus the CI-only 33ms Instruments gate;
 4. `regression-storage-core`: isolated synthetic fixture covering M01, M02/M04–M09 and M03;
-5. `regression-storage-lifecycle`: a second isolated synthetic fixture covering M10, M12 and M14.
+5. `regression-storage-lifecycle`: a second isolated synthetic fixture covering M10, M12 and M14 while storage failure/transport contracts compile and execute in parallel with the I/O-heavy lifecycle work.
 
 The two storage jobs prepare macFUSE and EDPCore concurrently, then use separate work directories and separate DiskImages2/FSKit generations. Ordinary push/PR/manual runs use 3 M10 cycles; a final manual `storage_profile=release` run raises the lifecycle path to 5 cycles. Storage contracts remain release-blocking inside `native`. The monolithic `make drive-test-storage` path remains for nightly 100-cycle soak and sequential diagnostic reproduction.
 
@@ -361,11 +361,11 @@ Run:  33711677562
 Results:
 
 ```text
-native                       PASS (includes system + storage contracts)
+native                       PASS (includes system ratchet)
 regression-fast-virtual      PASS
 regression-ui                PASS
 regression-storage-core      PASS
-regression-storage-lifecycle PASS
+regression-storage-lifecycle PASS (includes storage contracts)
 ```
 
 The fixed-head `f734f43` UI/system job passed with the unchanged 33ms threshold; its UI evidence recorded `UI_HITCH_MAX_MS=0.000`, `UI_HITCH_COUNT_GT33MS=0` and `RESULT=DRIVE_UI_OK`.

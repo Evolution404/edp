@@ -203,27 +203,18 @@ jobs:
           bash -n Apps/Drive/installer/build-native-installer.sh
           bash -n Apps/Drive/installer/build-transport-backends.sh
           echo 'RESULT=EDP_DRIVE_MONOREPO_CONTRACT_OK'
-      - name: Prepare shared core and macFUSE contracts
+      - name: Prepare shared EDPCore
         run: |
           set -euo pipefail
-          (
-            Apps/Drive/Tests/CI/install-macfuse-fskit.sh
-          ) &
-          macfuse_pid=$!
-          (
-            export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-            cd Apps/Drive
-            REPO_ROOT="$PWD"
-            if [[ "${{ steps.edpcore-cache.outputs.cache-hit }}" == "true" ]]; then
-              export EDP_CORE_SKIP_BUILD=1
-            fi
-            . scripts/prepare-shared-edp-core.sh
-          ) &
-          core_pid=$!
-          wait "$macfuse_pid"
-          wait "$core_pid"
-          echo 'RESULT=EDP_NATIVE_PARALLEL_PREREQUISITES_OK'
-      - name: Compile native daemon with system and contracts
+          export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+          cd Apps/Drive
+          REPO_ROOT="$PWD"
+          if [[ "${{ steps.edpcore-cache.outputs.cache-hit }}" == "true" ]]; then
+            export EDP_CORE_SKIP_BUILD=1
+          fi
+          . scripts/prepare-shared-edp-core.sh
+          echo 'RESULT=EDP_NATIVE_SHARED_CORE_READY'
+      - name: Compile native daemon with system ratchet
         run: |
           set -euo pipefail
           export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -231,20 +222,6 @@ jobs:
           REPO_ROOT="$PWD"
           EDP_CORE_SKIP_BUILD=1 . scripts/prepare-shared-edp-core.sh
           mkdir -p "${RUNNER_TEMP}/drive-native-parallel"
-          storage_profile="${{ inputs.storage_profile || 'smoke' }}"
-          storage_loops=3
-          if [[ "$storage_profile" == "release" ]]; then
-            storage_loops=5
-          fi
-          (
-            EDP_CORE_SKIP_BUILD=1 \
-            EDP_STORAGE_PROFILE="$storage_profile" \
-            EDP_STORAGE_LOOP_COUNT="$storage_loops" \
-            EDP_STORAGE_PHASE=shard-contracts \
-              Tests/run-storage.sh \
-              | tee "${RUNNER_TEMP}/drive-native-parallel/storage-contracts.log"
-          ) &
-          contracts_pid=$!
           (
             cd ../..
             make drive-test-system \
@@ -328,14 +305,9 @@ jobs:
             | tee "${RUNNER_TEMP}/credential-store.txt"
           grep -Fq 'RESULT=KEYCHAIN_NAMESPACE_MIGRATION_ATOMIC_OK' \
             "${RUNNER_TEMP}/credential-store.txt"
-          contracts_status=0
           system_status=0
-          wait "$contracts_pid" || contracts_status=$?
           wait "$system_pid" || system_status=$?
-          test "$contracts_status" -eq 0
           test "$system_status" -eq 0
-          grep -Fq 'RESULT=DRIVE_STORAGE_SHARD_CONTRACTS_OK' \
-            "${RUNNER_TEMP}/drive-native-parallel/storage-contracts.log"
           grep -Fq 'RESULT=DRIVE_SYSTEM_OK' \
             "${RUNNER_TEMP}/drive-native-parallel/system.log"
           echo 'RESULT=EDP_DRIVE_NATIVE_BUILD_OK'

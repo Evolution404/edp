@@ -1192,6 +1192,27 @@ ensure_tools() {
   build_tools
 }
 
+build_failure_contract_tool() {
+  local core_sources=(
+    native/EDPFSKitPoC/Extension/EDPRawIO.swift
+    native/EDPFSKitPoC/Extension/EDPMetadataProbe.swift
+    native/EDPFSKitPoC/Extension/EDPCrypto.swift
+    native/EDPFSKitPoC/Extension/EDPVolumeMetadata.swift
+    native/EDPFSKitPoC/Extension/EDPEncryptedPartitionReader.swift
+    native/EDPFSKitPoC/Extension/EDPBlockDevice.swift
+    native/EDPFSKitPoC/Extension/EDPFileRawDevice.swift
+  )
+  xcrun swiftc -O -swift-version 6 -warnings-as-errors \
+    -D EDP_REGRESSION_TESTS \
+    "${EDP_CORE_SWIFTC_FLAGS[@]}" \
+    "${core_sources[@]}" \
+    native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift \
+    Tests/VirtualUSB/EDPFaultPlan.swift \
+    Tests/VirtualUSB/EDPVirtualRawDevice.swift \
+    Tests/Storage/ValidateStorageFailureContracts.swift \
+    -o "$FAILURE_BIN"
+}
+
 build_tools() {
   local include_failure_contracts="${1:-1}"
   log "=== Build storage E2E tools ==="
@@ -1259,15 +1280,7 @@ PY
     -o "$ADAPTER_BIN"
 
   if [[ "$include_failure_contracts" == "1" ]]; then
-    xcrun swiftc -O -swift-version 6 -warnings-as-errors \
-      -D EDP_REGRESSION_TESTS \
-      "${EDP_CORE_SWIFTC_FLAGS[@]}" \
-      "${core_sources[@]}" \
-      native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift \
-      Tests/VirtualUSB/EDPFaultPlan.swift \
-      Tests/VirtualUSB/EDPVirtualRawDevice.swift \
-      Tests/Storage/ValidateStorageFailureContracts.swift \
-      -o "$FAILURE_BIN"
+    build_failure_contract_tool
   fi
   log "RESULT=DRIVE_STORAGE_TOOLS_BUILT_C17_SWIFT6_STRICT"
 }
@@ -1611,12 +1624,40 @@ case "$STORAGE_PHASE" in
     ;;
   shard-lifecycle)
     build_tools 0
-    prepare_fixture
-    run_m10
-    run_m12
-    run_m14
+    failure_build_log="$LOG_ROOT/shard-failure-build.log"
+    (
+      build_failure_contract_tool
+    ) >"$failure_build_log" 2>&1 &
+    failure_build_pid=$!
+    prepare_status=0
+    failure_build_status=0
+    prepare_fixture || prepare_status=$?
+    wait "$failure_build_pid" || failure_build_status=$?
+    /bin/cat "$failure_build_log"
+    test "$prepare_status" -eq 0
+    test "$failure_build_status" -eq 0
+
+    contracts_log="$LOG_ROOT/shard-contracts.log"
+    (
+      validate_failure_and_build_contracts
+    ) >"$contracts_log" 2>&1 &
+    contracts_pid=$!
+    lifecycle_status=0
+    run_m10 || lifecycle_status=$?
+    if (( lifecycle_status == 0 )); then
+      run_m12 || lifecycle_status=$?
+    fi
+    if (( lifecycle_status == 0 )); then
+      run_m14 || lifecycle_status=$?
+    fi
+    contracts_status=0
+    wait "$contracts_pid" || contracts_status=$?
+    /bin/cat "$contracts_log"
+    test "$lifecycle_status" -eq 0
+    test "$contracts_status" -eq 0
     assert_no_test_artifacts shard-lifecycle
     log "RESULT=DRIVE_STORAGE_SHARD_LIFECYCLE_OK"
+    log "RESULT=DRIVE_STORAGE_SHARD_CONTRACTS_OK"
     ;;
   shard-boot)
     build_tools 0

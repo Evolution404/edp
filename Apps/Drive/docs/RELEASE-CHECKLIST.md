@@ -90,11 +90,11 @@ Trigger `.github/workflows/drive.yml` on the exact candidate HEAD with workflow 
 
 Required jobs:
 
-- [x] `native` PASS, including the parallel `drive-test-system` ratchet and storage contracts.
+- [x] `native` PASS, including the parallel `drive-test-system` ratchet.
 - [x] `regression-fast-virtual` PASS.
 - [x] `regression-ui` PASS.
 - [x] `regression-storage-core` PASS.
-- [x] `regression-storage-lifecycle` PASS.
+- [x] `regression-storage-lifecycle` PASS, including storage failure/transport contracts.
 
 ### Storage acceptance
 

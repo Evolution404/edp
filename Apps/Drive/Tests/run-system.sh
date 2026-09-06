@@ -467,7 +467,7 @@ STORAGE_CONTRACT_SECTION="$(/usr/bin/awk '/^validate_failure_and_build_contracts
 /usr/bin/grep -Fq 'RESULT=DRIVE_STORAGE_TRANSPORT_SWIFT6_C17_STRICT_OK' <<<"${STORAGE_CONTRACT_SECTION}"
 ! /usr/bin/grep -Fq 'product/EDPVaultRuntime.swift' <<<"${STORAGE_CONTRACT_SECTION}"
 ! /usr/bin/grep -Fq 'edp-drive-service' <<<"${STORAGE_CONTRACT_SECTION}"
-/usr/bin/grep -Fq 'Compile native daemon with system and contracts' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'Compile native daemon with system ratchet' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'xcrun swiftc -O -swift-version 6 -warnings-as-errors' "${DRIVE_WORKFLOW}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_STRICT_BUILD_DEDUP_OK'
 
@@ -1127,7 +1127,7 @@ done
 [[ "$(/usr/bin/grep -Fc 'Prepare macFUSE and shared core in parallel' "${DRIVE_WORKFLOW}")" -eq 2 ]]
 /usr/bin/grep -Fq 'EDP_STORAGE_PHASE=shard-core' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'EDP_STORAGE_PHASE=shard-lifecycle' "${DRIVE_WORKFLOW}"
-/usr/bin/grep -Fq 'EDP_STORAGE_PHASE=shard-contracts' "${DRIVE_WORKFLOW}"
+/usr/bin/grep -Fq 'RESULT=DRIVE_STORAGE_SHARD_CONTRACTS_OK' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'EDP_CORE_SKIP_BUILD=1 make drive-test-fast' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'EDP_CORE_SKIP_BUILD=1 make drive-test-virtual-usb' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'regression-ui:' "${DRIVE_WORKFLOW}"
@@ -1136,7 +1136,7 @@ done
 /usr/bin/grep -Fq 'make drive-test-ui' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-system' "${DRIVE_WORKFLOW}"
 /usr/bin/grep -Fq 'make drive-test-storage' "${DRIVE_WORKFLOW}"
-for storage_shard_spec in 'core:CORE' 'lifecycle:LIFECYCLE' 'contracts:CONTRACTS'; do
+for storage_shard_spec in 'core:CORE' 'lifecycle:LIFECYCLE'; do
   storage_shard="${storage_shard_spec%%:*}"
   storage_marker="${storage_shard_spec##*:}"
   /usr/bin/grep -Fq "shard-${storage_shard})" "${STORAGE_RUNNER}"
