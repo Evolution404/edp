@@ -266,7 +266,7 @@ Do not close unrelated user apps, change product animation behavior, or adjust t
 
 ### GitHub Actions
 
-Ordinary smoke CI still runs the complete deterministic UI render/layout/accessibility suite on GitHub, but sets `EDP_UI_PERF_REQUIRED=0` so hosted-runner Instruments stalls do not sit on every development critical path. The explicit manual `storage_profile=release` run sets `EDP_UI_PERF_REQUIRED=1` and remains the release-authoritative UI performance gate on a GitHub macOS 26 runner.
+Ordinary smoke CI still runs the complete deterministic UI render/layout/accessibility suite on GitHub with `EDP_UI_PERF_REQUIRED=0`, so hosted-runner Instruments stalls do not sit on every development critical path. The explicit manual `storage_profile=release` run launches two independent macOS 26 performance probes on fresh hosted runners. A separate release-gate job requires at least one probe to produce a complete trace and pass the unchanged 33 ms parser; if neither fresh runner produces a valid passing trace, the release run fails.
 
 Current release gate is fixed:
 
@@ -279,13 +279,14 @@ THRESHOLD_NS = 33_000_000
 Current process-level watchdogs:
 
 ```text
-xctrace record attempt = 45 s, up to 3 fresh attempts
+xctrace record attempt = 45 s
 xctrace list/export = 30 s
+release = 2 independent fresh-runner probes, 1 record attempt each
 ```
 
 These watchdogs bound Instruments startup/export. They do not change the 33ms performance threshold or the workload.
 
-The hitch target is started by the test runner itself and `xctrace` attaches to its PID. `xctrace --notify-tracing-started` opens an explicit gate before sidebar toggles begin. The target then stays alive past the 8-second trace limit so Instruments owns recording termination instead of racing an early target exit during trace finalization. The parser still scopes performance strictly to the toggle begin/end timestamps, so the post-toggle hold is excluded from hitch scoring. Hosted macOS runners can still occasionally wedge inside Instruments recording; a timed-out attempt is therefore killed as an isolated process group and retried with a fresh target, notification and trace path. A retry is never accepted unless a complete trace is exported and the unchanged 33 ms parser passes.
+The hitch target is started by the test runner itself and `xctrace` attaches to its PID. `xctrace --notify-tracing-started` opens an explicit gate before sidebar toggles begin. The target then stays alive past the 8-second trace limit so Instruments owns recording termination instead of racing an early target exit during trace finalization. The parser still scopes performance strictly to the toggle begin/end timestamps, so the post-toggle hold is excluded from hitch scoring. Hosted macOS runners can wedge for an entire Instruments session; repeating `xctrace record` on the same poisoned runner did not improve reliability. Release retry therefore occurs at the hosted-runner boundary: two independent probes each get a fresh macOS runner and a single bounded record attempt. The aggregator accepts a probe only when a complete trace is exported and the unchanged 33 ms parser passes.
 
 A performance PASS requires:
 
@@ -329,7 +330,7 @@ GitHub currently schedules at most five macOS jobs from this workflow concurrent
 
 1. `native`: production daemon/App strict build while the hardware-free system ratchet runs in parallel on the same runner;
 2. `regression-fast-virtual`: fast and full software VirtualUSB regressions run concurrently after one shared EDPCore build;
-3. `regression-ui`: deterministic UI on smoke runs; explicit release runs additionally enforce the unchanged CI-only 33ms Instruments gate;
+3. `regression-ui`: deterministic UI on every non-nightly run; explicit release runs additionally start two fresh-runner `regression-ui-perf-*` probes and require `regression-ui-release-gate` to accept at least one complete 33 ms pass;
 4. `regression-storage-core`: isolated synthetic fixture covering M01, M02/M04–M09 and M03;
 5. `regression-storage-lifecycle`: a second isolated synthetic fixture covering M10, M12 and M14 while storage failure/transport contracts compile and execute in parallel with the I/O-heavy lifecycle work.
 
