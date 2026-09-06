@@ -1,6 +1,4 @@
 #include <MFMount/MFMount.h>
-#include <CoreFoundation/CoreFoundation.h>
-#include <DiskArbitration/DiskArbitration.h>
 
 #include <errno.h>
 #include <pthread.h>
@@ -26,23 +24,13 @@ struct termination_wait_args {
     sigset_t signals;
 };
 
-struct da_unmount_context {
-    bool completed;
-    DAReturn status;
-};
-
 extern void EDPDirectMFMountSignalReady(void);
 
 static atomic_bool g_teardown_active = false;
-static atomic_bool g_receive_exit_allowed = false;
 static atomic_bool g_transport_released = false;
 
 bool EDPDirectMFMountTeardownActive(void) {
     return atomic_load_explicit(&g_teardown_active, memory_order_acquire);
-}
-
-bool EDPDirectMFMountReceiveExitAllowed(void) {
-    return atomic_load_explicit(&g_receive_exit_allowed, memory_order_acquire);
 }
 
 void EDPDirectMFMountMarkTransportReleased(void) {
@@ -96,98 +84,6 @@ static bool wait_for_transport_release(void) {
     return false;
 }
 
-static void da_unmount_callback(DADiskRef disk,
-                                DADissenterRef dissenter,
-                                void *opaque) {
-    (void)disk;
-    struct da_unmount_context *context = opaque;
-    context->status = dissenter == NULL
-        ? kDAReturnSuccess
-        : DADissenterGetStatus(dissenter);
-    context->completed = true;
-    CFRunLoopStop(CFRunLoopGetCurrent());
-}
-
-static bool wait_for_da_unmount(struct da_unmount_context *context) {
-    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 30.0;
-    while (!context->completed) {
-        CFTimeInterval remaining = deadline - CFAbsoluteTimeGetCurrent();
-        if (remaining <= 0.0) {
-            break;
-        }
-        CFRunLoopRunInMode(
-            kCFRunLoopDefaultMode,
-            remaining < 1.0 ? remaining : 1.0,
-            true
-        );
-    }
-    return context->completed;
-}
-
-static int unmount_exact_volume(const char *mountpoint) {
-    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
-    if (session == NULL) {
-        return ENOMEM;
-    }
-
-    CFRunLoopRef run_loop = CFRunLoopGetCurrent();
-    DASessionScheduleWithRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-    CFURLRef volume_url = CFURLCreateFromFileSystemRepresentation(
-        kCFAllocatorDefault,
-        (const UInt8 *)mountpoint,
-        strlen(mountpoint),
-        true
-    );
-    if (volume_url == NULL) {
-        DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-        CFRelease(session);
-        return ENOMEM;
-    }
-
-    DADiskRef disk = DADiskCreateFromVolumePath(
-        kCFAllocatorDefault,
-        session,
-        volume_url
-    );
-    CFRelease(volume_url);
-    if (disk == NULL) {
-        DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-        CFRelease(session);
-        return ENODEV;
-    }
-
-    struct da_unmount_context context = {
-        .completed = false,
-        .status = kDAReturnError,
-    };
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_DA_UNMOUNT_REQUESTED=1 mountpoint=%s whole=0\n",
-            mountpoint);
-    DADiskUnmount(
-        disk,
-        kDADiskUnmountOptionDefault,
-        da_unmount_callback,
-        &context
-    );
-
-    bool completed = wait_for_da_unmount(&context);
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_DA_UNMOUNT_STATUS=%#x completed=%d mountpoint=%s\n",
-            (unsigned int)context.status,
-            completed ? 1 : 0,
-            mountpoint);
-
-    DASessionUnscheduleFromRunLoop(session, run_loop, kCFRunLoopDefaultMode);
-    CFRelease(disk);
-    CFRelease(session);
-
-    if (!completed) {
-        return ETIMEDOUT;
-    }
-    return context.status == kDAReturnSuccess ||
-           context.status == kDAReturnNotMounted ? 0 : EBUSY;
-}
-
 static void *termination_wait_worker(void *opaque) {
     struct termination_wait_args *args = opaque;
     int signal_number = 0;
@@ -200,45 +96,27 @@ static void *termination_wait_worker(void *opaque) {
         return NULL;
     }
 
-    /* Match macFUSE's public Darwin teardown model: request a default
-     * Disk Arbitration unmount for the exact mounted volume while the receive
-     * loop remains alive to answer FUSE_DESTROY. Only after DA completes do we
-     * interrupt the receive side so the server thread can close the channel and
-     * release EDP-owned resources. */
+    /* MFMount's public contract ties the channel lifetime to the mounted
+     * volume and explicitly directs callers to MFChannelClose() when
+     * unmounting. Keep the receive loop alive while this call executes so it
+     * can answer FUSE_DESTROY; a signal-induced EINTR is therefore only a wake
+     * up, not permission for the receive loop to exit early. */
     atomic_store_explicit(&g_teardown_active, true, memory_order_release);
-    atomic_store_explicit(&g_receive_exit_allowed, false, memory_order_release);
     atomic_store_explicit(&g_transport_released, false, memory_order_release);
     fprintf(stderr,
             "DIRECT_MFMOUNT_TERMINATION_SIGNAL=%d mountpoint=%s\n",
             signal_number,
             args->mountpoint);
 
-    int unmount_result = unmount_exact_volume(args->mountpoint);
-    if (unmount_result != 0) {
-        fprintf(stderr,
-                "DIRECT_MFMOUNT_DA_UNMOUNT_FAILED=%d mountpoint=%s\n",
-                unmount_result,
-                args->mountpoint);
-        atomic_store_explicit(&g_receive_exit_allowed, false, memory_order_release);
-        atomic_store_explicit(&g_teardown_active, false, memory_order_release);
-        destroy_termination_args(args);
-        return NULL;
-    }
-
-    atomic_store_explicit(&g_receive_exit_allowed, true, memory_order_release);
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_RECEIVE_EXIT_ALLOWED=1 mountpoint=%s\n",
-            args->mountpoint);
-
     errno = 0;
-    bool interrupted = MFChannelInterrupt(args->channel);
-    int interrupt_errno = errno;
+    bool closed = MFChannelClose(args->channel);
+    int close_errno = errno;
     fprintf(stderr,
-            "DIRECT_MFMOUNT_CHANNEL_INTERRUPT_RESULT=%d errno=%d mountpoint=%s\n",
-            interrupted ? 1 : 0,
-            interrupt_errno,
+            "DIRECT_MFMOUNT_TEARDOWN_CHANNEL_CLOSE_RESULT=%d errno=%d mountpoint=%s\n",
+            closed ? 1 : 0,
+            close_errno,
             args->mountpoint);
-    if (!interrupted) {
+    if (!closed) {
         atomic_store_explicit(&g_teardown_active, false, memory_order_release);
         destroy_termination_args(args);
         return NULL;
@@ -249,7 +127,6 @@ static void *termination_wait_worker(void *opaque) {
             "DIRECT_MFMOUNT_TRANSPORT_RELEASED=%d mountpoint=%s\n",
             transport_released ? 1 : 0,
             args->mountpoint);
-    atomic_store_explicit(&g_receive_exit_allowed, false, memory_order_release);
     atomic_store_explicit(&g_teardown_active, false, memory_order_release);
     destroy_termination_args(args);
     return NULL;

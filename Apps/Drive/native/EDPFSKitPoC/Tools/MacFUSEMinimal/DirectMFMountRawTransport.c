@@ -19,12 +19,10 @@
 
 #if defined(__APPLE__)
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak_import));
-extern bool EDPDirectMFMountReceiveExitAllowed(void) __attribute__((weak_import));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak_import));
 
 #else
 extern bool EDPDirectMFMountTeardownActive(void) __attribute__((weak));
-extern bool EDPDirectMFMountReceiveExitAllowed(void) __attribute__((weak));
 extern void EDPDirectMFMountMarkTransportReleased(void) __attribute__((weak));
 
 #endif
@@ -732,18 +730,13 @@ int main(int argc, char **argv) {
             if (errno == EINTR) {
                 bool teardown_active = EDPDirectMFMountTeardownActive != NULL &&
                     EDPDirectMFMountTeardownActive();
-                bool exit_allowed = EDPDirectMFMountReceiveExitAllowed != NULL &&
-                    EDPDirectMFMountReceiveExitAllowed();
                 fprintf(stderr,
-                        "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d exit_allowed=%d\n",
-                        teardown_active ? 1 : 0,
-                        exit_allowed ? 1 : 0);
-                if (teardown_active && exit_allowed) {
-                    break;
-                }
+                        "DIRECT_MFMOUNT_RECEIVE_INTERRUPTED=1 teardown=%d\n",
+                        teardown_active ? 1 : 0);
                 continue;
             }
             if (errno == ENODEV) {
+                fprintf(stderr, "DIRECT_MFMOUNT_RECEIVE_CHANNEL_CLOSED=1\n");
                 break;
             }
             perror("MFChannelCopyNextMessage");
@@ -779,16 +772,19 @@ int main(int argc, char **argv) {
         if (exit_code == 0) exit_code = 5;
     }
 
-    errno = 0;
-    bool channel_closed = MFChannelClose(channel);
-    int channel_close_errno = errno;
-    fprintf(stderr,
-            "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d lifecycle=%d\n",
-            channel_closed ? 1 : 0,
-            channel_close_errno,
-            lifecycle_teardown ? 1 : 0);
-    if (!channel_closed && exit_code == 0) {
-        exit_code = 6;
+    if (!lifecycle_teardown) {
+        errno = 0;
+        bool channel_closed = MFChannelClose(channel);
+        int channel_close_errno = errno;
+        fprintf(stderr,
+                "DIRECT_MFMOUNT_CHANNEL_CLOSE_RESULT=%d errno=%d lifecycle=0\n",
+                channel_closed ? 1 : 0,
+                channel_close_errno);
+        if (!channel_closed && exit_code == 0) {
+            exit_code = 6;
+        }
+    } else {
+        fprintf(stderr, "DIRECT_MFMOUNT_CHANNEL_CLOSE_OWNED_BY_TEARDOWN=1\n");
     }
 
     MFRelease(channel);
