@@ -297,6 +297,12 @@ jobs:
             product/App/MenuBar/EDPMenuBarView.swift \
             "${RUNNER_TEMP}/EDPRawValidation.o" "${RUNNER_TEMP}/EDPRawFDBroker.o" \
             -o "${RUNNER_TEMP}/edp-drive-app"
+          "${RUNNER_TEMP}/edp-drive-app" --help > "${RUNNER_TEMP}/edp-drive-help.txt"
+          "${RUNNER_TEMP}/edp-drive-app" -h > "${RUNNER_TEMP}/edp-drive-help-short.txt"
+          cmp "${RUNNER_TEMP}/edp-drive-help.txt" "${RUNNER_TEMP}/edp-drive-help-short.txt"
+          grep -Fq 'Show this help and exit without starting the App/UI lifecycle.' \
+            "${RUNNER_TEMP}/edp-drive-help.txt"
+          echo 'RESULT=EDP_DRIVE_CLI_HELP_OK'
           xcrun swiftc -O -swift-version 6 -warnings-as-errors \
             -Xfrontend -disable-availability-checking \
             -framework CryptoKit -framework Security \

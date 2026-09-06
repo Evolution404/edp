@@ -315,6 +315,12 @@ echo 'RESULT=DRIVE_SYSTEM_UI_PAGE_SPLIT_OK'
 echo 'RESULT=DRIVE_SYSTEM_UI_SERVICE_SUPPORT_SPLIT_OK'
 /usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_VIEW_MODEL_SOURCE}"
 ! /usr/bin/grep -Fq 'final class EDPVaultViewModel: ObservableObject' "${APP_SOURCE}"
+/usr/bin/grep -Fq '@StateObject private var model: EDPVaultViewModel' "${APP_SOURCE}"
+! /usr/bin/grep -Fq '@StateObject private var model = EDPVaultViewModel()' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'commandArguments == ["--help"] || commandArguments == ["-h"]' "${APP_SOURCE}"
+/usr/bin/grep -Fq 'Show this help and exit without starting the App/UI lifecycle.' "${APP_SOURCE}"
+/usr/bin/grep -Fq '_model = StateObject(wrappedValue: EDPVaultViewModel())' "${APP_SOURCE}"
+echo 'RESULT=DRIVE_SYSTEM_CLI_EARLY_EXIT_OK'
 /usr/bin/grep -Fq 'final class EDPXPCSmokeResult: @unchecked Sendable' "${APP_SMOKE_SUPPORT_SOURCE}"
 /usr/bin/grep -Fq 'enum EDPXPCPolicySmokeRunner' "${APP_SMOKE_SUPPORT_SOURCE}"
 ! /usr/bin/grep -Fq 'final class EDPXPCSmokeResult: @unchecked Sendable' "${APP_SOURCE}"

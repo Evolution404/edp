@@ -13,9 +13,51 @@ private func edpRawFDBrokerRunChild(_ socketFD: Int32, _ rawPath: UnsafePointer<
 @main
 #endif
 struct EDPUSBVaultApp: App {
-    @StateObject private var model = EDPVaultViewModel()
+    @StateObject private var model: EDPVaultViewModel
+
+    private static let commandLineHelp = """
+    EDP Drive command-line options:
+
+      --help, -h
+          Show this help and exit without starting the App/UI lifecycle.
+      --xpc-smoke
+          Verify the privileged XPC diagnostics contract.
+      --xpc-snapshot
+          Print the current privileged service/device snapshot.
+      --xpc-health
+          Verify privileged service health.
+      --xpc-diagnostics
+          Print privileged service diagnostics.
+      --refresh-raw-access-smoke
+          Request a retained raw-access refresh through XPC.
+      --xpc-policy-smoke DEVICE_ID
+          Exercise policy round-trip for one device.
+      --xpc-mount-smoke {1|2|4} DEVICE_ID
+          Mount one EDP partition through the production XPC path.
+      --xpc-unmount-smoke {1|2|4} DEVICE_ID
+          Unmount one EDP partition through the production XPC path.
+      --xpc-eject-smoke DEVICE_ID
+          Safe-eject one EDP device through the production XPC path.
+      --xpc-runtime-control-smoke {pause|resume|restart}
+          Exercise claim-continuous runtime control.
+      --xpc-graceful-stop
+          Request graceful privileged-service shutdown.
+      --register-service
+          Register the configured privileged service.
+      --reregister-service
+          Re-register the SMAppService daemon when that service mode is active.
+
+    With no command-line option, EDP Drive launches normally.
+    """
 
     init() {
+#if !EDP_UI_AUTOMATION
+        let commandArguments = Array(CommandLine.arguments.dropFirst())
+        if commandArguments == ["--help"] || commandArguments == ["-h"] {
+            print(Self.commandLineHelp)
+            exit(0)
+        }
+#endif
 #if !EDP_UI_AUTOMATION
         if let brokerIndex = CommandLine.arguments.firstIndex(of: "--raw-fd-broker"),
            CommandLine.arguments.count > brokerIndex + 2,
@@ -500,6 +542,8 @@ struct EDPUSBVaultApp: App {
                 exit(1)
             }
         }
+
+        _model = StateObject(wrappedValue: EDPVaultViewModel())
     }
 
     var body: some Scene {
