@@ -137,7 +137,10 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 ! /usr/bin/grep -Fq 'io.macfuse.app.fsmodule.macfuse-local' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'diskimages-helper' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'bounded 12 "$DA_MOUNT_BIN" --unmount "$bsd"' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'bounded 10 /sbin/umount -f "$bridge"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'bounded 15 /sbin/umount "$bridge"' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'bounded 15 /sbin/umount -f "$bridge"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'production-order VFS unmount timed out before helper completion' "${STORAGE_RUNNER}"
+[[ "$(/usr/bin/grep -Fc 'force: false,' "${RUNTIME_SOURCE}")" -eq 2 ]]
 /usr/bin/grep -Fq 'STORAGE_BRIDGE_VFS_UNMOUNT_REQUESTED=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_BRIDGE_VFS_UNMOUNT_COMPLETE=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_ADAPTER_TERM_AFTER_UNMOUNT=' "${STORAGE_RUNNER}"
@@ -469,6 +472,7 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_METADATA_ONLY_TEARDOWN_OK'
 # lower macFUSE bridge is retired through the same isolated VFS unmount order as
 # EDPTransportSession. Crash cleanup is not part of the success path.
 /usr/bin/grep -Fq 'image.get("diskimages2") is True and devices' "${STORAGE_RUNNER}"
+[[ "$(/usr/bin/grep -Fc 'if path.startswith(prefix) and devices:' "${STORAGE_RUNNER}")" -eq 1 ]]
 /usr/bin/grep -Fq 'bounded 12 /usr/sbin/diskutil eject "$bsd"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'unmount_bridge_production_order "$bridge" "$tag"' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'recover_synthetic_publication() {' "${STORAGE_RUNNER}"
@@ -531,7 +535,6 @@ echo 'RESULT=DRIVE_SYSTEM_ASYNC_LIFECYCLE_RATCHET_OK'
 /usr/bin/grep -Fq '"$DA_MOUNT_BIN" --mount "$bsd"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq '"$DA_MOUNT_BIN" --unmount "$bsd"' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Eq '/usr/sbin/diskutil[[:space:]]+mount([[:space:]]|$)' "${STORAGE_RUNNER}"
-! /usr/bin/grep -Eq '^[[:space:]]*bounded .* /sbin/umount' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'executable: "/sbin/mount_msdos"' "${RUNTIME_SOURCE}"
 ! /usr/bin/grep -Eq '^[[:space:]]*bounded .* /sbin/mount_msdos' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_FAT16_FSKIT_READONLY_OK'

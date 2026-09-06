@@ -788,6 +788,7 @@ unmount_bridge_production_order() {
   local bridge="$1"
   local tag="$2"
   local unmount_status=0
+  local unmount_log="$LOG_ROOT/umount-$tag.log"
 
   is_mounted "$bridge" || return 0
   "$FSKIT_GUARD_BIN" --is-macfuse-mount "$bridge" >/dev/null 2>&1 || {
@@ -796,9 +797,15 @@ unmount_bridge_production_order() {
   }
   log "STORAGE_BRIDGE_VFS_UNMOUNT_REQUESTED=$tag"
   set +e
-  bounded 10 /sbin/umount -f "$bridge" >/dev/null 2>&1
+  bounded 15 /sbin/umount "$bridge" >/dev/null 2>"$unmount_log"
   unmount_status=$?
   set -e
+  if [[ "$unmount_status" -eq 124 ]]; then
+    echo "production-order VFS unmount timed out before helper completion: $tag" >&2
+    /bin/cat "$unmount_log" >&2 || true
+    /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
+    return 1
+  fi
   if is_mounted "$bridge"; then
     echo "production-order VFS unmount left bridge mounted: $tag status=$unmount_status" >&2
     /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
@@ -911,7 +918,12 @@ prefix = os.path.abspath(os.path.normpath(sys.argv[2])) + os.sep
 leaks = []
 for image in root.get("images", []):
     path = os.path.abspath(os.path.normpath(image.get("image-path", "")))
-    if path.startswith(prefix):
+    devices = [
+        item.get("dev-entry")
+        for item in image.get("system-entities", [])
+        if isinstance(item.get("dev-entry"), str)
+    ]
+    if path.startswith(prefix) and devices:
         leaks.append(path)
 if leaks:
     print("LEAKED_DISKIMAGES=" + ",".join(leaks), file=sys.stderr)

@@ -1677,9 +1677,12 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         transportSession.stopAsync(
             on: lifecycleQueue,
             unmountAsync: { [lifecycleQueue] mountpoint, completion in
+                // Healthy transport teardown starts with an ordinary VFS unmount so
+                // FSKit can complete its normal DESTROY/deactivate handshake. Forced
+                // unmount is reserved for abnormal stale-resource cleanup.
                 EDPNativeMountTable.unmountPathAsync(
                     mountpoint,
-                    force: true,
+                    force: false,
                     requireSourceTermination: true,
                     on: lifecycleQueue
                 ) { error in
@@ -2238,9 +2241,12 @@ private final class EDPMountCoordinator: EDPDaemonMountManaging, @unchecked Send
         session.transport.stopAsync(
             on: lifecycleQueue,
             unmountAsync: { [lifecycleQueue] mountpoint, completion in
+                // Healthy transport teardown starts with an ordinary VFS unmount so
+                // FSKit can complete its normal DESTROY/deactivate handshake. Forced
+                // unmount is reserved for abnormal stale-resource cleanup.
                 EDPNativeMountTable.unmountPathAsync(
                     mountpoint,
-                    force: true,
+                    force: false,
                     requireSourceTermination: true,
                     on: lifecycleQueue
                 ) { error in

@@ -81,8 +81,10 @@ legacy device-ID migration, synchronous mount/unmount/eject/shutdown fallbacks,
 and regressions away from the native `NSSplitViewController`/window-style menu
 bar architecture. It also locks normal runtime control to native APIs: macFUSE
 signature validation uses Security.framework rather than `codesign`, daemon
-liveness uses SMAppService/XPC rather than `launchctl`, and VFS teardown uses
-`unmount(2)` rather than `/sbin/umount`.
+liveness uses SMAppService/XPC rather than `launchctl`, and healthy FSKit bridge
+teardown uses a bounded isolated `/sbin/umount` helper with exact IOMedia
+generation termination as the completion boundary. Normal transport teardown
+does not start with forced unmount.
 
 The phase targets are intentionally independent so CI can isolate failures. Ordinary CI balances storage across two isolated macOS runners: `shard-core` covers M01/M02/M03/M04–M09, while `shard-lifecycle` covers M10/M12/M14; storage contracts run concurrently with the native build on a third runner. Only M10 changes from 3 smoke cycles to 5 release cycles. `drive-test-all` remains the aggregate sequential target. Longer soak runs may explicitly raise `EDP_STORAGE_LOOP_COUNT` up to 100 when a lifecycle change specifically warrants it; they are not a release-blocking default.
 
