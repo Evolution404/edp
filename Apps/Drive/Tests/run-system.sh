@@ -141,6 +141,12 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 ! /usr/bin/grep -Fq 'bounded 15 /sbin/umount -f "$bridge"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'production-order VFS unmount timed out before helper completion' "${STORAGE_RUNNER}"
 [[ "$(/usr/bin/grep -Fc 'force: false,' "${RUNTIME_SOURCE}")" -eq 2 ]]
+/usr/bin/grep -Fq 'enum EDPVFSUnmountRetryPolicy' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'static let maximumAttempts = 2' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'static let retryDelay: TimeInterval = 0.1' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'attempt < maximumAttempts' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq '&& helperStatus != 0' "${NATIVE_SYSTEM_SOURCE}"
+/usr/bin/grep -Fq 'RESULT=VFS_ORDINARY_UNMOUNT_SINGLE_RETRY_POLICY_OK' "${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/ValidateBoundedVFS.swift"
 /usr/bin/grep -Fq 'STORAGE_BRIDGE_VFS_UNMOUNT_REQUESTED=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_BRIDGE_VFS_UNMOUNT_COMPLETE=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_ADAPTER_TERM_AFTER_UNMOUNT=' "${STORAGE_RUNNER}"

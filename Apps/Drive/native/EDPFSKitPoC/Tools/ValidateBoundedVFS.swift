@@ -63,6 +63,58 @@ enum ValidateBoundedVFS {
             )
 
             print("EVENT_DRIVEN_VFS_NOOP_SECONDS=\(elapsed)")
+
+            try require(
+                EDPVFSUnmountRetryPolicy.shouldRetry(
+                    force: false,
+                    requireSourceTermination: true,
+                    attempt: 1,
+                    helperStatus: 1,
+                    stillMounted: true
+                ),
+                "healthy exact-generation teardown must retry one transient ordinary-unmount failure"
+            )
+            try require(
+                !EDPVFSUnmountRetryPolicy.shouldRetry(
+                    force: true,
+                    requireSourceTermination: true,
+                    attempt: 1,
+                    helperStatus: 1,
+                    stillMounted: true
+                ),
+                "forced teardown must never enter the ordinary-unmount retry path"
+            )
+            try require(
+                !EDPVFSUnmountRetryPolicy.shouldRetry(
+                    force: false,
+                    requireSourceTermination: false,
+                    attempt: 1,
+                    helperStatus: 1,
+                    stillMounted: true
+                ),
+                "non-generation teardown must not inherit the transport retry policy"
+            )
+            try require(
+                !EDPVFSUnmountRetryPolicy.shouldRetry(
+                    force: false,
+                    requireSourceTermination: true,
+                    attempt: 2,
+                    helperStatus: 1,
+                    stillMounted: true
+                ),
+                "ordinary-unmount retry must remain single-shot"
+            )
+            try require(
+                !EDPVFSUnmountRetryPolicy.shouldRetry(
+                    force: false,
+                    requireSourceTermination: true,
+                    attempt: 1,
+                    helperStatus: 0,
+                    stillMounted: true
+                ),
+                "successful helper exit must not launch a duplicate unmount"
+            )
+            print("RESULT=VFS_ORDINARY_UNMOUNT_SINGLE_RETRY_POLICY_OK")
             print("RESULT=EVENT_DRIVEN_VFS_UNMOUNT_GUARD_OK")
             // Keep the historical marker for downstream release jobs while the
             // implementation contract is now event-driven rather than polling.

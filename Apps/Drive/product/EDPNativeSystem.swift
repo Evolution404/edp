@@ -1228,6 +1228,25 @@ private func statfsString<T>(_ field: inout T) -> String {
 
 typealias EDPVFSUnmountCompletion = @Sendable (RuntimeNativeError?) -> Void
 
+enum EDPVFSUnmountRetryPolicy {
+    static let maximumAttempts = 2
+    static let retryDelay: TimeInterval = 0.1
+
+    static func shouldRetry(
+        force: Bool,
+        requireSourceTermination: Bool,
+        attempt: Int,
+        helperStatus: Int32,
+        stillMounted: Bool
+    ) -> Bool {
+        !force
+            && requireSourceTermination
+            && attempt < maximumAttempts
+            && helperStatus != 0
+            && stillMounted
+    }
+}
+
 private final class EDPIsolatedVFSUnmountOperation: @unchecked Sendable {
     private let queue: DispatchQueue
     private let path: String
@@ -1240,6 +1259,7 @@ private final class EDPIsolatedVFSUnmountOperation: @unchecked Sendable {
     private var sourceTerminated = false
     private var helperExited = false
     private var helperStatus: Int32?
+    private var helperAttempt = 0
     private var finished = false
     private var keepAlive: EDPIsolatedVFSUnmountOperation?
 
@@ -1293,26 +1313,7 @@ private final class EDPIsolatedVFSUnmountOperation: @unchecked Sendable {
                 sourceTerminated = true
             }
 
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/sbin/umount")
-            process.arguments = force ? ["-f", path] : [path]
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            process.terminationHandler = { [weak self] process in
-                guard let self else { return }
-                self.queue.async { [weak self] in
-                    self?.helperDidExit(status: process.terminationStatus)
-                }
-            }
-            self.process = process
-            do {
-                try process.run()
-            } catch {
-                finish(RuntimeNativeError(
-                    "isolated VFS unmount launch failed for \(path): \(error)"
-                ))
-                return
-            }
+            launchHelper()
 
             queue.asyncAfter(deadline: .now() + timeout) { [weak self] in
                 self?.timeoutExpired()
@@ -1320,13 +1321,55 @@ private final class EDPIsolatedVFSUnmountOperation: @unchecked Sendable {
         }
     }
 
+    private func launchHelper() {
+        guard !finished else { return }
+        helperAttempt += 1
+        helperExited = false
+        helperStatus = nil
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/sbin/umount")
+        process.arguments = force ? ["-f", path] : [path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] process in
+            guard let self else { return }
+            self.queue.async { [weak self] in
+                self?.helperDidExit(status: process.terminationStatus)
+            }
+        }
+        self.process = process
+        do {
+            try process.run()
+        } catch {
+            finish(RuntimeNativeError(
+                "isolated VFS unmount launch failed for \(path): \(error)"
+            ))
+        }
+    }
+
     private func helperDidExit(status: Int32) {
         guard !finished else { return }
         helperExited = true
         helperStatus = status
-        guard !EDPNativeMountTable.isMountpoint(path) else {
+        let stillMounted = EDPNativeMountTable.isMountpoint(path)
+        if EDPVFSUnmountRetryPolicy.shouldRetry(
+            force: force,
+            requireSourceTermination: requireSourceTermination,
+            attempt: helperAttempt,
+            helperStatus: status,
+            stillMounted: stillMounted
+        ) {
+            process?.terminationHandler = nil
+            process = nil
+            queue.asyncAfter(deadline: .now() + EDPVFSUnmountRetryPolicy.retryDelay) { [weak self] in
+                self?.launchHelper()
+            }
+            return
+        }
+        guard !stillMounted else {
             finish(RuntimeNativeError(
-                "isolated VFS unmount left mounted path \(path): status=\(status)"
+                "isolated VFS unmount left mounted path \(path): status=\(status) attempt=\(helperAttempt)"
             ))
             return
         }
