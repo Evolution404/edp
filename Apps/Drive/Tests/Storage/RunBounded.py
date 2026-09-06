@@ -28,7 +28,17 @@ def main() -> None:
                 pass
         else:
             process.kill()
-        process.wait()
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            # A macOS filesystem/disk process can remain in an uninterruptible
+            # kernel wait even after SIGKILL. Never turn a bounded helper into
+            # an unbounded CI hang while waiting for that process to reap.
+            print(
+                f"BOUNDED_COMMAND_STUCK_AFTER_KILL=1 pid={process.pid} "
+                f"command={args.command[0]}",
+                file=sys.stderr,
+            )
         print(
             f"BOUNDED_COMMAND_TIMEOUT={args.timeout:g} command={args.command[0]}",
             file=sys.stderr,

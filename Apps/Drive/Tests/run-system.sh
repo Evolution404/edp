@@ -256,6 +256,9 @@ echo 'RESULT=DRIVE_SYSTEM_PUBLIC_DISK_IMAGE_TOOL_ALLOWLIST_OK'
 /usr/bin/grep -Fq 'UI_XCTRACE_RECORD_ALL_ATTEMPTS_FAILED=1' "${UI_RUNNER}"
 /usr/bin/grep -Fq 'parser.add_argument("--kill-process-group", action="store_true")' "${UI_BOUNDED}"
 /usr/bin/grep -Fq 'os.killpg(process.pid, signal.SIGKILL)' "${UI_BOUNDED}"
+/usr/bin/grep -Fq 'process.wait(timeout=2.0)' "${UI_BOUNDED}"
+/usr/bin/grep -Fq 'BOUNDED_COMMAND_STUCK_AFTER_KILL=1' "${UI_BOUNDED}"
+! /usr/bin/grep -Fq '        process.wait()' "${UI_BOUNDED}"
 [[ "$(/usr/bin/grep -Fc 'python3 "${UI_BOUNDED}" --timeout "${UI_XCTRACE_EXPORT_TIMEOUT_SECONDS}"' "${UI_RUNNER}")" -eq 4 ]]
 for marker in LIST RECORD TOC_EXPORT FRAME_EXPORT EVENT_EXPORT; do
   /usr/bin/grep -Fq "UI_XCTRACE_${marker}_BEGIN" "${UI_RUNNER}"
