@@ -82,7 +82,7 @@ fi
 /usr/bin/grep -Fq 'synthetic backing escaped test root' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'image.get("diskimages2") is False' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'image.get("owner-uid") == os.getuid()' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'Teardown is metadata-only.' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'A metadata-only hdiutil tombstone is already terminal' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'bounded 15 /usr/bin/hdiutil detach "/dev/$bsd" -force' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_fixture_publication_gone "$path" 100' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'successful detach call is not enough' "${STORAGE_RUNNER}"
@@ -95,21 +95,17 @@ fi
 DA_MOUNT_SOURCE="${ROOT}/Apps/Drive/Tests/Storage/DiskArbitrationMountHelper.c"
 EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_completed\(\)/' "${STORAGE_RUNNER}")"
 /usr/bin/grep -Fq 'bounded 25 "$DA_MOUNT_BIN" --eject "$bsd"' <<<"${EJECT_IMAGE_SECTION}"
-/usr/bin/grep -Fq 'recover_synthetic_publication "$bsd" "$backing"' <<<"${EJECT_IMAGE_SECTION}"
+/usr/bin/grep -Fq 'bounded 12 /usr/sbin/diskutil eject "$bsd"' <<<"${EJECT_IMAGE_SECTION}"
+/usr/bin/grep -Fq 'assert_synthetic_device "$bsd" "$backing"' <<<"${EJECT_IMAGE_SECTION}"
 ! /usr/bin/grep -Fq '/usr/bin/hdiutil detach' <<<"${EJECT_IMAGE_SECTION}"
-! /usr/bin/grep -Fq '/usr/sbin/diskutil eject' <<<"${EJECT_IMAGE_SECTION}"
+! /usr/bin/grep -Fq 'recover_synthetic_publication' <<<"${EJECT_IMAGE_SECTION}"
 ! /usr/bin/grep -Fq 'diskutil unmountDisk' <<<"${EJECT_IMAGE_SECTION}"
-/usr/bin/grep -Fq 'image.get("diskimages2") is True' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'image.get("diskimages2") is True and devices' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'image.get("owner-uid") == os.getuid()' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'synthetic_publication_owner_snapshot() {' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 're.fullmatch(r"/dev/disk' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq '[[ "$revalidated_snapshot" == "$owner_snapshot" ]]' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq -- '--assert-process-path "$pid" /usr/libexec/diskimagesiod' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq '[[ "$final_snapshot" == "$owner_snapshot" ]]' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq '[[ -z "$devices" ]]' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-still-alive' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'synthetic_publication_owner_snapshot() {' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'recover_synthetic_publication() {' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq '/usr/libexec/diskimagesiod' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'STORAGE_DISKIMAGES_OWNER_RECOVERY' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'proc_pidpath(' "${DA_MOUNT_SOURCE}"
 ! /usr/bin/grep -Fq 'REMOUNT_QUIESCENCE_SECONDS' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'wait_for_native_filesystem_quiescence' "${STORAGE_RUNNER}"
@@ -428,30 +424,26 @@ PUBLISH_PARSE_SECTION="$(/usr/bin/awk '
 echo 'RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK'
 
 # The storage regression harness must obey the same teardown rule as product
-# code. Comparing DiskImages2 image-path values is lexical/metadata-only; never
-# resolve the macFUSE volume.raw path or stat a transient synthetic /dev/diskN.
-/usr/bin/grep -Fq 'Teardown is metadata-only.' "${STORAGE_RUNNER}"
+# code. Identity checks remain metadata-only and must never resolve the macFUSE
+# volume.raw path or stat a transient synthetic /dev/diskN during teardown.
+/usr/bin/grep -Fq 'A metadata-only hdiutil tombstone is already terminal' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'os.path.realpath(' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Eq '\[\[[^]]*(-e|! -e)[[:space:]]+"/dev/\$bsd"' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_METADATA_ONLY_TEARDOWN_OK'
-/usr/bin/grep -Fq 'STORAGE_LAST_PUBLICATION_RECOVERY_MODE="stable-dead-owner"' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_ADAPTER_DEAD_OWNER_RECOVERY_BEGIN=' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'adapter-dead-owner-kill-' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' "${STORAGE_RUNNER}"
-echo 'RESULT=DRIVE_SYSTEM_STORAGE_DEAD_OWNER_ADAPTER_RECOVERY_OK'
 
-# Storage DiskImages2 recovery must follow the exact owner process lifecycle.
-# Once the proven diskimagesiod PID is gone, metadata-only tombstones are
-# stabilized with exact snapshots instead of repeatedly polling hdiutil. A
-# changed generation or remaining system entity must still fail closed.
-STORAGE_RECOVERY_SECTION="$(/usr/bin/awk '/^recover_synthetic_publication\(\)/,/^fixture_publication_exists\(\)/' "${STORAGE_RUNNER}")"
-/usr/bin/grep -Fq 'wait_for_process_exit_quiet "$pid" 15' <<<"${STORAGE_RECOVERY_SECTION}"
-/usr/bin/grep -Fq 'wait_for_process_exit_quiet "$pid" 20' <<<"${STORAGE_RECOVERY_SECTION}"
-/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner' <<<"${STORAGE_RECOVERY_SECTION}"
-/usr/bin/grep -Fq 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=system-entities-remained' <<<"${STORAGE_RECOVERY_SECTION}"
-! /usr/bin/grep -Fq 'wait_for_synthetic_publication_gone "$backing" 15' <<<"${STORAGE_RECOVERY_SECTION}"
-! /usr/bin/grep -Fq 'wait_for_synthetic_publication_gone "$backing" 20' <<<"${STORAGE_RECOVERY_SECTION}"
-echo 'RESULT=DRIVE_SYSTEM_STORAGE_OWNER_EVENT_RECOVERY_OK'
+# Storage normal teardown mirrors production: Disk Arbitration eject first,
+# exact backing identity revalidation, then bounded public diskutil eject. A
+# metadata-only hdiutil tombstone is terminal and must never trigger signals to
+# Apple disk-image helper processes or force-kill the adapter.
+/usr/bin/grep -Fq 'image.get("diskimages2") is True and devices' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'bounded 12 /usr/sbin/diskutil eject "$bsd"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'recover_synthetic_publication() {' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'synthetic_publication_owner_snapshot() {' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq '/usr/libexec/diskimagesiod' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'STORAGE_LAST_PUBLICATION_RECOVERY_MODE' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'adapter-dead-owner-kill-' "${STORAGE_RUNNER}"
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLIC_EJECT_RECOVERY_OK'
 
 # Production daemon/App strict compilation belongs to the native CI job. The
 # storage contracts retain their own failure binary and macFUSE transport
@@ -664,6 +656,7 @@ echo 'RESULT=DRIVE_SYSTEM_DEVICE_OPERATIONS_SPLIT_OK'
 # dedicated discovery controller. The daemon controller retains only the current
 # connected-device business snapshot.
 /usr/bin/grep -Fq 'final class EDPDeviceDiscoveryController' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
+! /usr/bin/grep -Fq 'EDPDeviceDiscoveryController: @unchecked Sendable' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
 /usr/bin/grep -Fq 'func scan() throws -> [PhysicalDisk]' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
 /usr/bin/grep -Fq 'private(set) var scanCount: UInt64 = 0' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
 /usr/bin/grep -Fq 'diagnostics = ["discovery_error:' "${DEVICE_DISCOVERY_CONTROLLER_SOURCE}"
@@ -694,6 +687,7 @@ echo 'RESULT=DRIVE_SYSTEM_RAW_ACCESS_SPLIT_OK'
 # suppressions are a single owner-queue-confined state object, not four mutable
 # dictionaries spread across the daemon controller.
 /usr/bin/grep -Fq 'final class EDPAutomationState' "${AUTOMATION_STATE_SOURCE}"
+! /usr/bin/grep -Fq 'EDPAutomationState: @unchecked Sendable' "${AUTOMATION_STATE_SOURCE}"
 /usr/bin/grep -Fq 'func recordFailure(' "${AUTOMATION_STATE_SOURCE}"
 /usr/bin/grep -Fq 'func suppressManualRemount(' "${AUTOMATION_STATE_SOURCE}"
 /usr/bin/grep -Fq 'func suppressDefaultProbe(' "${AUTOMATION_STATE_SOURCE}"
@@ -715,6 +709,7 @@ echo 'RESULT=DRIVE_SYSTEM_ACTIVITY_STORE_SPLIT_OK'
 # Startup-recovery and shutdown single-flight state belong to one owner-queue
 # lifecycle state object. The controller owns actual teardown actions only.
 /usr/bin/grep -Fq 'final class EDPServiceLifecycleState' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
+! /usr/bin/grep -Fq 'EDPServiceLifecycleState: @unchecked Sendable' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
 /usr/bin/grep -Fq 'func completeStartupRecovery(errorMessage:' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
 /usr/bin/grep -Fq 'func beginShutdown(completion:' "${SERVICE_LIFECYCLE_STATE_SOURCE}"
 /usr/bin/grep -Fq 'func beginTeardownIfReady(hasActiveEjects:' "${SERVICE_LIFECYCLE_STATE_SOURCE}"

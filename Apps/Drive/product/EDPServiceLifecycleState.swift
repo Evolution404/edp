@@ -1,6 +1,6 @@
 import Foundation
 
-final class EDPServiceLifecycleState: @unchecked Sendable {
+final class EDPServiceLifecycleState {
     // All state is confined to EDPServiceController's owner queue. This type is
     // deliberately lock-free so lifecycle ordering remains identical to the
     // pre-extraction controller implementation.

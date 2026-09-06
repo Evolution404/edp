@@ -270,7 +270,12 @@ expected = os.path.abspath(os.path.normpath(sys.argv[2]))
 for image in root.get("images", []):
     if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected:
         continue
-    if image.get("diskimages2") is True:
+    devices = [
+        item.get("dev-entry")
+        for item in image.get("system-entities", [])
+        if isinstance(item.get("dev-entry"), str)
+    ]
+    if image.get("diskimages2") is True and devices:
         raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -283,150 +288,6 @@ wait_for_synthetic_publication_gone() {
     synthetic_publication_exists "$backing" || return 0
     /bin/sleep 0.1
   done
-  return 1
-}
-
-synthetic_publication_owner_snapshot() {
-  local bsd="$1"
-  local backing="$2"
-  local info="$WORK_DIR/hdiutil-synthetic-owner.plist"
-  [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
-  [[ "$backing" == "$WORK_DIR"/* || "$backing" == "$MOUNT_ROOT"/* ]] || return 1
-  capture_hdiutil_info "$info" 10 >/dev/null 2>&1 || return 1
-  /usr/bin/python3 - "$info" "$backing" <<'PY'
-import os
-import plistlib
-import re
-import sys
-with open(sys.argv[1], "rb") as handle:
-    root = plistlib.load(handle)
-expected_path = os.path.abspath(os.path.normpath(sys.argv[2]))
-for image in root.get("images", []):
-    if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected_path:
-        continue
-    devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
-    pid = image.get("hdid-pid")
-    synthetic_devices = all(
-        isinstance(device, str)
-        and re.fullmatch(r"/dev/disk\d+(?:s\d+)*", device) is not None
-        for device in devices
-    )
-    valid = (
-        synthetic_devices
-        and image.get("diskimages2") is True
-        and image.get("autodiskmount") is False
-        and image.get("image-encrypted") is False
-        and image.get("owner-uid") == os.getuid()
-        and image.get("owner-mode") == 0o600
-        and isinstance(pid, int)
-        and pid > 1
-    )
-    if not valid:
-        raise SystemExit(1)
-    print(f"{pid}|{','.join(devices)}")
-    raise SystemExit(0)
-raise SystemExit(1)
-PY
-}
-
-STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
-
-recover_synthetic_publication() {
-  local bsd="$1"
-  local backing="$2"
-  local owner_snapshot="" pid="" devices=""
-  STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
-  owner_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing")" || return 1
-  IFS='|' read -r pid devices <<<"$owner_snapshot"
-  echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_BEGIN=pid=$pid devices=${devices:-none}" >&2
-
-  "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || {
-    echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=process-path" >&2
-    return 1
-  }
-
-  /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
-  if ! wait_for_process_exit_quiet "$pid" 15; then
-    local revalidated_snapshot=""
-    revalidated_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
-    if [[ -z "$revalidated_snapshot" ]]; then
-      if synthetic_publication_exists "$backing"; then
-        echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=revalidation-missing" >&2
-        return 1
-      fi
-      echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=term-publication-gone' >&2
-      return 0
-    fi
-    [[ "$revalidated_snapshot" == "$owner_snapshot" ]] || {
-      echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=identity-changed" >&2
-      return 1
-    }
-    "$DA_MOUNT_BIN" --assert-process-path "$pid" /usr/libexec/diskimagesiod >/dev/null || {
-      echo "STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=process-path-changed" >&2
-      return 1
-    }
-    /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-    if ! wait_for_process_exit_quiet "$pid" 20; then
-      local process_state
-      process_state="$(/bin/ps -p "$pid" -o state=,stat=,command= 2>/dev/null | /usr/bin/xargs || true)"
-      echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=alive pid=$pid state=${process_state:-unknown}" >&2
-      return 1
-    fi
-    echo "STORAGE_DISKIMAGES_OWNER_POSTKILL_PROCESS=gone pid=$pid" >&2
-  else
-    echo "STORAGE_DISKIMAGES_OWNER_TERM_PROCESS=gone pid=$pid" >&2
-  fi
-
-  local final_snapshot=""
-  final_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
-  if [[ -z "$final_snapshot" ]]; then
-    if synthetic_publication_exists "$backing"; then
-      echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY_REFUSED=publication-remained-without-owner-snapshot' >&2
-      return 1
-    fi
-    echo 'STORAGE_DISKIMAGES_OWNER_RECOVERY=owner-exit-publication-gone' >&2
-    return 0
-  fi
-
-  [[ "$final_snapshot" == "$owner_snapshot" ]] || {
-    echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=generation-changed snapshot=$final_snapshot" >&2
-    return 1
-  }
-  [[ -z "$devices" ]] || {
-    echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=system-entities-remained devices=$devices" >&2
-    return 1
-  }
-  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
-    echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-still-alive' >&2
-    return 1
-  fi
-
-  # macOS 26 may retain only the hdiutil metadata record after the exact
-  # diskimagesiod process and all system entities are gone. Stabilize that exact
-  # owner snapshot once; do not repeatedly poll hdiutil after process death.
-  /bin/sleep 0.5
-  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
-    echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=pid-reused' >&2
-    return 1
-  fi
-  local stable_snapshot=""
-  stable_snapshot="$(synthetic_publication_owner_snapshot "$bsd" "$backing" 2>/dev/null || true)"
-  if [[ -z "$stable_snapshot" ]]; then
-    if synthetic_publication_exists "$backing"; then
-      echo 'STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=metadata-invalid-after-stabilization' >&2
-      return 1
-    fi
-    STORAGE_LAST_PUBLICATION_RECOVERY_MODE="dead-owner-metadata-disappeared"
-    echo 'STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=metadata-disappeared' >&2
-    return 0
-  fi
-  if [[ "$stable_snapshot" == "$owner_snapshot" ]]; then
-    STORAGE_LAST_PUBLICATION_RECOVERY_MODE="stable-dead-owner"
-    echo "STORAGE_DISKIMAGES_STALE_OWNER_RETIRED=stable-dead-owner pid=$pid" >&2
-    return 0
-  fi
-
-  echo "STORAGE_DISKIMAGES_STALE_OWNER_REFUSED=generation-changed snapshot=$stable_snapshot" >&2
   return 1
 }
 
@@ -753,7 +614,6 @@ attach_image() {
 eject_image() {
   local bsd="$1"
   local backing="$2"
-  STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
   [[ "$bsd" =~ ^disk[0-9]+$ ]] || {
     echo "unsafe synthetic BSD name during eject: $bsd" >&2
     return 1
@@ -763,29 +623,31 @@ eject_image() {
     return 1
   }
 
-  # Teardown is metadata-only. Never stat the bridge backing or /dev/diskN
-  # while nested FSKit/LIFS generations are deactivating: either lookup can
-  # enter an uninterruptible filesystem wait. Exact DiskImages2 image-path +
-  # system-entity identity is authoritative before any detach/eject action.
+  # Mirror the production publisher contract. Prove the current synthetic
+  # backing/device identity before any destructive action, request Disk
+  # Arbitration eject first, then use Apple's public diskutil eject only if the
+  # same publication still exposes a live IOMedia entity.
+  # A metadata-only hdiutil tombstone is already terminal and must never trigger process signals.
   if ! synthetic_publication_exists "$backing"; then
     return 0
   fi
   assert_synthetic_device "$bsd" "$backing"
 
-  # Mirror the production publisher contract: exact synthetic identity is
-  # proven above, Disk Arbitration performs the eject handoff, and success is
-  # not reported until the exact DiskImages2 backing publication disappears.
-  # If the callback succeeds but the owner remains, recover only the exact
-  # current-user diskimagesiod proven by the same hdiutil owner snapshot.
   bounded 25 "$DA_MOUNT_BIN" --eject "$bsd" >/dev/null 2>&1 || true
   if wait_for_synthetic_publication_gone "$backing" 25; then
     return 0
   fi
-  if recover_synthetic_publication "$bsd" "$backing"; then
+
+  # Revalidate immediately before the fallback. BSD names are reusable; never
+  # send diskutil eject to a replacement generation that no longer matches the
+  # exact EDP backing metadata.
+  assert_synthetic_device "$bsd" "$backing"
+  bounded 12 /usr/sbin/diskutil eject "$bsd" >/dev/null 2>&1 || true
+  if wait_for_synthetic_publication_gone "$backing" 50; then
     return 0
   fi
 
-  echo "synthetic DiskImages2 publication remained after exact DA eject/owner recovery: $bsd backing=$backing" >&2
+  echo "synthetic publication remained after exact DA/diskutil eject: $bsd backing=$backing" >&2
   return 1
 }
 
@@ -1058,31 +920,6 @@ stop_adapter() {
   local pid="$1"
   local bridge="$2"
   local tag="$3"
-
-  # If exact DiskImages2 recovery had to retire a stable dead-owner tombstone,
-  # the publication owner has already been killed. Do not ask the still-live
-  # adapter to enter its normal synchronous unmount path afterward: on macOS 26
-  # that ordering can leave the adapter blocked in an uninterruptible VFS wait.
-  # The native filesystem is already unmounted before eject_image() is called,
-  # so it is safe to terminate the exact test adapter first and then let the
-  # identity-checked macFUSE Local crash cleanup release only this test bridge.
-  if [[ "$STORAGE_LAST_PUBLICATION_RECOVERY_MODE" == "stable-dead-owner" ]]; then
-    log "STORAGE_ADAPTER_DEAD_OWNER_RECOVERY_BEGIN=$tag"
-    if /bin/kill -0 "$pid" >/dev/null 2>&1; then
-      /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-    fi
-    if ! wait_for_child_exit_bounded "$pid" 100 "adapter-dead-owner-kill-$tag"; then
-      echo "adapter remained alive after dead-owner publication recovery: $tag" >&2
-      return 1
-    fi
-    wait "$pid" >/dev/null 2>&1 || true
-    if is_mounted "$bridge"; then
-      cleanup_crashed_local_mount "$bridge"
-    fi
-    log "STORAGE_ADAPTER_DEAD_OWNER_RECOVERY_END=$tag"
-    STORAGE_LAST_PUBLICATION_RECOVERY_MODE=""
-    return 0
-  fi
 
   if /bin/kill -0 "$pid" >/dev/null 2>&1; then
     /bin/kill -TERM "$pid"

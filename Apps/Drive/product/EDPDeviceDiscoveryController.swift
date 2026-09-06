@@ -1,6 +1,6 @@
 import Foundation
 
-final class EDPDeviceDiscoveryController: @unchecked Sendable {
+final class EDPDeviceDiscoveryController {
     private let mediaProvider: any EDPWholeUSBMediaProviding
     private let metadataReader: any EDPRawMetadataReading
 
