@@ -40,7 +40,8 @@
 - [x] release storage 证据仍保持：M10 5/5 无 mount/device/process/fd leak；M12 crash/remount PASS；M14 concurrent sessions PASS；新增 `RESULT=VFS_ORDINARY_UNMOUNT_SINGLE_RETRY_POLICY_OK` 锁定最多一次健康 ordinary-unmount retry。
 - [x] exact-head Clean.pkg 已重新构建并通过 strict release verifier：`artifacts/EDP-Drive-0.6.0-arm64-Clean.pkg`，SHA-256=`e1abc47aa69a463e37a2046cfe06bdd2729ae3072141dfbe0daf52d578c230f8`，并已安装到验收 Mac。
 - [x] 当前 HEAD 标准加密 Lexar physical core path：fresh insertion 五因素身份/claim/raw ready PASS，无 `fskitd` child raw holder；type1 FAT16 RO mount PASS；旧包可复现的 `FAIL/PASS/FAIL/PASS/FAIL` immediate-unmount 序列在 `a7667d0` 上变为 **8/8 mount PASS + 8/8 immediate ordinary-unmount PASS**；最近 8 次均 `transportTeardownComplete`，无 hidden mount/transport residue，`rawBusyRecoveryCount=0`、`forcedWholeUnmountCount=0`。
-- [x] 当前 HEAD product safe eject PASS：`privilegedAccessReady=false`，无 EDP mount、transport 或 raw holder，recovery counters 仍为 0。
+- [x] 当前 HEAD product safe eject PASS：`privilegedAccessReady=false`，无 EDP mount、transport 或 raw holder，recovery counters 仍为 0；safe-eject 后 foreground App restart 与 routine runtime restart 均未误 reacquire。
+- [x] 当前 HEAD physical remove/reinsert PASS：真实拔出后 external physical、`/dev/disk26`、IOKit Lexar generation 均消失，`manualUnmountSuppressions=[]`；fresh reinsert 自动恢复同一五因素 identity 与 `privilegedAccessReady=true`，无 child raw holder。随后 final type1 mount/immediate-unmount 与 final safe eject 再次 PASS，最终 `rawBusyRecoveryCount=0`、`forcedWholeUnmountCount=0`、`fskitTransientRetryCount=0` 且无 mount/transport/raw-holder residue。
 - [ ] 当前 HEAD credentialed type2/type4 physical acceptance：factory cleanup 后真实密码未重新保存，因此暂不宣称三分区完整验收。
 - [ ] 当前 HEAD mandatory reboot gate：用户明确要求暂不重启；只有获得明确授权后才执行。
 
