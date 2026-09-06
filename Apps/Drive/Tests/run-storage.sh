@@ -825,6 +825,7 @@ stop_adapter() {
     /bin/sleep 0.1
   done
   log "M10_STALE_FSKIT_RECOVERY=$tag"
+  /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
   cleanup_crashed_local_mount "$bridge"
 }
 
