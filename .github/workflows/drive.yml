@@ -66,7 +66,7 @@ jobs:
           ! grep -Fq '<key>RunAtLoad</key>' Apps/Drive/product/App/com.edp.drive.service.plist
           grep -Fq 'requestGracefulShutdown' Apps/Drive/product/EDPXPCProtocol.swift
           grep -Fq 'retryTransientAutomaticMounts' Apps/Drive/product/EDPXPCProtocol.swift
-          grep -Fq 'case .bridgeExtensionUnavailable, .bridgeTimeout:' Apps/Drive/product/EDPVaultRuntime.swift
+          grep -Fq 'failureCode == .bridgeExtensionUnavailable || failureCode == .bridgeTimeout' Apps/Drive/product/EDPVaultRuntime.swift
           ! grep -Fq 'failure.contains("File system extension' Apps/Drive/product/EDPVaultRuntime.swift
           grep -Fq 'case bridgeExtensionRequiresApproval' Apps/Drive/product/EDPMountLifecycle.swift
           grep -Fq 'direct_mfmount_async_result=4' Apps/Drive/product/EDPMountLifecycle.swift

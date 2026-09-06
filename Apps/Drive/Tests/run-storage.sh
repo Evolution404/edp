@@ -669,7 +669,21 @@ attach_image() {
   local output_variable="$2"
   local tag="$3"
   local attach_log="$LOG_ROOT/attach-$tag.plist"
-  bounded 15 /usr/sbin/diskutil image attach --plist --noMount "$backing" >"$attach_log"
+  local attach_error_log="$LOG_ROOT/attach-$tag.stderr"
+  local attach_status=0
+  set +e
+  bounded 15 /usr/sbin/diskutil image attach --plist --noMount "$backing" \
+    >"$attach_log" 2>"$attach_error_log"
+  attach_status=$?
+  set -e
+  if (( attach_status != 0 )); then
+    echo "DISKUTIL_IMAGE_ATTACH_FAILED tag=$tag status=$attach_status backing=$backing" >&2
+    /bin/cat "$attach_error_log" >&2 || true
+    if [[ -s "$attach_log" ]]; then
+      /usr/bin/plutil -p "$attach_log" >&2 || /bin/cat "$attach_log" >&2 || true
+    fi
+    return "$attach_status"
+  fi
   local attached_device attached_bsd
   attached_device="$(
     /usr/bin/plutil -convert json -o - "$attach_log" \
