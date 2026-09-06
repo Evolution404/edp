@@ -684,14 +684,21 @@ attach_image() {
     fi
     return "$attach_status"
   fi
-  local attached_device attached_bsd
-  attached_device="$(
-    /usr/bin/plutil -convert json -o - "$attach_log" \
-      | /usr/bin/grep -Eo '/dev/disk[0-9]+' \
-      | /usr/bin/head -1
+  local attached_token attached_bsd
+  attached_token="$(
+    /usr/bin/plutil -convert json -o - "$attach_log" 2>/dev/null \
+      | /usr/bin/grep -Eo '(/dev/)?disk[0-9]+' \
+      | /usr/bin/head -1 \
+      || true
   )"
-  attached_bsd="${attached_device#/dev/}"
-  [[ -n "$attached_bsd" && -b "/dev/$attached_bsd" ]]
+  attached_bsd="${attached_token#/dev/}"
+  if [[ -z "$attached_bsd" || ! -b "/dev/$attached_bsd" ]]; then
+    echo "DISKUTIL_IMAGE_ATTACH_BSD_PARSE_FAILED tag=$tag token=$attached_token" >&2
+    echo "DISKUTIL_IMAGE_ATTACH_PLIST_BEGIN" >&2
+    /usr/bin/plutil -p "$attach_log" >&2 || /bin/cat "$attach_log" >&2 || true
+    echo "DISKUTIL_IMAGE_ATTACH_PLIST_END" >&2
+    return 1
+  fi
   if ! assert_synthetic_device "$attached_bsd" "$backing"; then
     echo "DISKUTIL_IMAGE_IDENTITY_ASSERT_FAILED tag=$tag bsd=$attached_bsd backing=$backing" >&2
     echo "DISKUTIL_IMAGE_ATTACH_PLIST_BEGIN" >&2
