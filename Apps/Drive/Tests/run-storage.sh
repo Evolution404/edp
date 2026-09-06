@@ -1040,7 +1040,7 @@ PY
     native/EDPFSKitPoC/Tools/EDPReadWriteBlockCBridge.swift \
     "$BUILD_DIR/fixture-adapter.o" "$BUILD_DIR/async-shim.o" \
     -F"$frameworks" -Xlinker -rpath -Xlinker "$frameworks" \
-    -framework MFMount -framework CoreFoundation \
+    -framework MFMount -framework CoreFoundation -framework DiskArbitration \
     -o "$ADAPTER_BIN"
 
   if [[ "$include_failure_contracts" == "1" ]]; then
