@@ -784,36 +784,39 @@ start_adapter() {
   return 1
 }
 
+unmount_bridge_production_order() {
+  local bridge="$1"
+  local tag="$2"
+  local unmount_status=0
+
+  is_mounted "$bridge" || return 0
+  "$FSKIT_GUARD_BIN" --is-macfuse-mount "$bridge" >/dev/null 2>&1 || {
+    echo "refusing production-order teardown for non-macFUSE bridge: $bridge" >&2
+    return 1
+  }
+  log "STORAGE_BRIDGE_VFS_UNMOUNT_REQUESTED=$tag"
+  set +e
+  bounded 10 /sbin/umount -f "$bridge" >/dev/null 2>&1
+  unmount_status=$?
+  set -e
+  if is_mounted "$bridge"; then
+    echo "production-order VFS unmount left bridge mounted: $tag status=$unmount_status" >&2
+    /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
+    return 1
+  fi
+  log "STORAGE_BRIDGE_VFS_UNMOUNT_COMPLETE=$tag status=$unmount_status"
+}
+
 stop_adapter() {
   local pid="$1"
   local bridge="$2"
   local tag="$3"
   local forced_exit=0
-  local unmount_status=0
 
-  # Mirror the production EDPTransportSession ordering exactly: while the
-  # EDP-owned transport is still alive, first ask VFS to unmount the bridge in
-  # an isolated bounded helper. Only after the mount is authoritatively gone
-  # may teardown escalate the EDP child with TERM/KILL. Sending SIGTERM while
-  # the bridge is still mounted exercises a different lifecycle and previously
-  # hid stale-mount failures behind transport self-unmount workarounds.
-  if is_mounted "$bridge"; then
-    "$FSKIT_GUARD_BIN" --is-macfuse-mount "$bridge" >/dev/null 2>&1 || {
-      echo "refusing production-order teardown for non-macFUSE bridge: $bridge" >&2
-      return 1
-    }
-    log "STORAGE_BRIDGE_VFS_UNMOUNT_REQUESTED=$tag"
-    set +e
-    bounded 10 /sbin/umount -f "$bridge" >/dev/null 2>&1
-    unmount_status=$?
-    set -e
-    if is_mounted "$bridge"; then
-      echo "production-order VFS unmount left bridge mounted: $tag status=$unmount_status" >&2
-      /usr/bin/tail -160 "$LOG_ROOT/adapter-$tag.log" >&2 || true
-      return 1
-    fi
-    log "STORAGE_BRIDGE_VFS_UNMOUNT_COMPLETE=$tag status=$unmount_status"
-  fi
+  # Mirror production EDPTransportSession: retire the VFS bridge first. Only
+  # after the mount is authoritatively gone may teardown escalate the EDP-owned
+  # child with TERM/KILL.
+  unmount_bridge_production_order "$bridge" "$tag" || return 1
 
   if /bin/kill -0 "$pid" >/dev/null 2>&1 &&
      ! wait_for_child_exit_bounded "$pid" 50 "adapter-natural-exit-$tag"; then
@@ -1268,25 +1271,27 @@ run_m10() {
 }
 
 run_m12() {
-  log "=== M12 post-filesystem transport crash and bounded recovery ==="
+  log "=== M12 post-bridge transport crash and bounded recovery ==="
   local bridge="$MOUNT_ROOT/m12-crash-bridge"
   local pid="" bsd="" mountpoint=""
   start_adapter 2 "$bridge" m12-crash pid
   attach_image "$bridge/volume.raw" bsd m12-crash
   mount_native "$bsd" mountpoint
   [[ -f "$mountpoint/m02-exchange-proof.bin" ]]
-  # macOS 26 can block both DA unmount and unmount(2, MNT_FORCE) indefinitely
-  # if the lower transport is killed while the upper native filesystem is still
-  # mounted. Product code therefore fails closed before entering that syscall
-  # when transport liveness is already lost. This real storage leg validates the
-  # recoverable boundary: quiesce the upper filesystem first, then crash the
-  # lower transport and prove exact bridge/publication cleanup plus remount.
+  # A hard process death while its macFUSE Local VFS bridge is still mounted is
+  # intentionally fail-closed in product code and is covered by the deterministic
+  # VirtualUSB lifecycle gate. Real storage M12 exercises the last recoverable
+  # boundary instead: retire the user filesystem, exact publication and bridge
+  # through their normal production owners, then crash only the still-live EDP
+  # child. No Apple/macFUSE host recovery is permitted.
   unmount_path "$mountpoint"
-  /bin/kill -KILL "$pid"
-  wait_for_child_exit_bounded "$pid" 30 "m12-crash-kill" || return 1
-  wait "$pid" >/dev/null 2>&1 || true
-  cleanup_crashed_local_mount "$bridge"
   eject_image "$bsd" "$bridge/volume.raw"
+  unmount_bridge_production_order "$bridge" m12-crash
+  if /bin/kill -0 "$pid" >/dev/null 2>&1; then
+    /bin/kill -KILL "$pid"
+    wait_for_child_exit_bounded "$pid" 30 "m12-post-bridge-crash" || return 1
+  fi
+  wait "$pid" >/dev/null 2>&1 || true
   assert_no_test_artifacts M12-crash
 
   bridge="$MOUNT_ROOT/m12-recovery-bridge"
@@ -1298,7 +1303,7 @@ run_m12() {
   eject_image "$bsd" "$bridge/volume.raw"
   stop_adapter "$pid" "$bridge" m12-recovery
   assert_no_test_artifacts M12-recovery
-  log "SCENARIO=M12_OK transport_crash_bounded_cleanup_and_remount"
+  log "SCENARIO=M12_OK post_bridge_transport_crash_bounded_cleanup_and_remount"
 }
 
 run_m14() {

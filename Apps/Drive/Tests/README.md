@@ -59,11 +59,13 @@ reads only immutable fixture files and never opens `/dev/rdisk*`.
 `drive-test-storage-smoke` and `drive-test-storage` both cover M01–M14. The smoke profile runs 3 complete mount/attach/filesystem/unmount/eject/transport-remount M10 cycles; the release profile runs 5, and explicit soak runs may raise the release count to 100. Same-partition remounts preserve real filesystem access while exact publication teardown and unique mount generations provide the lifecycle boundary. The internal macFUSE Local bridge remains `local,nobrowse`; deadlock prevention comes from exact teardown rather than changing the bridge's established VFS semantics. It verifies boot FAT16 at both
 the native read-only mount and transport `EROFS` layers, encrypted persistence,
 Finder-style operations, large/random I/O, unmount failure propagation,
-transport crash recovery after the upper filesystem has quiesced, durability
-failure propagation, and concurrent type 1/2/4 session isolation. The virtual
-transport gate separately locks the live-mount crash boundary: if the transport
-has already exited while its VFS mount is still active, teardown must fail closed
-without entering a potentially uninterruptible VFS unmount or host reset. No
+post-bridge transport crash/remount recovery, durability failure propagation,
+and concurrent type 1/2/4 session isolation. The real storage crash leg retires
+the native filesystem, publication and bridge through their production owners
+before injecting process death. The virtual transport gate separately locks the
+live-mount crash boundary: if the transport has already exited while its VFS
+mount is still active, teardown must fail closed without entering a potentially
+uninterruptible VFS unmount or host reset. No
 sudo, physical USB, real raw node, or real EDP
 credential is used.
 

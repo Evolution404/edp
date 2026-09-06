@@ -113,9 +113,11 @@ EJECT_IMAGE_SECTION="$(/usr/bin/awk '/^eject_image\(\)/,/^filesystem_format_comp
 /usr/bin/grep -Fq 'DADiskEject(disk, kDADiskEjectOptionDefault' "${DA_MOUNT_SOURCE}"
 M12_SECTION="$(/usr/bin/awk '/^run_m12\(\)/,/^run_m14\(\)/' "${STORAGE_RUNNER}")"
 /usr/bin/grep -Fq 'unmount_path "$mountpoint"' <<<"${M12_SECTION}"
-/usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' <<<"${M12_SECTION}"
 /usr/bin/grep -Fq 'eject_image "$bsd" "$bridge/volume.raw"' <<<"${M12_SECTION}"
-/usr/bin/grep -Fq 'Product code therefore fails closed before entering that syscall' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'unmount_bridge_production_order "$bridge" m12-crash' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 30 "m12-post-bridge-crash"' <<<"${M12_SECTION}"
+/usr/bin/grep -Fq 'covered by the deterministic' <<<"${M12_SECTION}"
+! /usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' <<<"${M12_SECTION}"
 ! /usr/bin/grep -Fq 'force_unmount_synthetic_path' "${STORAGE_RUNNER}"
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'
@@ -148,7 +150,7 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 /usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 20 "adapter-kill-$tag"' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'M10_STALE_FSKIT_RECOVERY=' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'STORAGE_ADAPTER_BRIDGE_RECOVERY=' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 30 "m12-crash-kill"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 30 "m12-post-bridge-crash"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--mountpoint-for-source' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--assert-readonly' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--assert-writable' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
@@ -459,12 +461,12 @@ echo 'RESULT=DRIVE_SYSTEM_PUBLICATION_METADATA_ONLY_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_METADATA_ONLY_TEARDOWN_OK'
 
 # Storage normal teardown mirrors production: Disk Arbitration eject first,
-# exact backing identity revalidation, then bounded public diskutil eject. A
-# metadata-only hdiutil tombstone is terminal and must never trigger signals to
-# Apple disk-image helper processes or force-kill the adapter.
+# exact backing identity revalidation, bounded public diskutil eject, then the
+# lower macFUSE bridge is retired through the same isolated VFS unmount order as
+# EDPTransportSession. Crash cleanup is not part of the success path.
 /usr/bin/grep -Fq 'image.get("diskimages2") is True and devices' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'bounded 12 /usr/sbin/diskutil eject "$bsd"' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'cleanup_crashed_local_mount "$bridge"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'unmount_bridge_production_order "$bridge" "$tag"' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'recover_synthetic_publication() {' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq 'synthetic_publication_owner_snapshot() {' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq '/usr/libexec/diskimagesiod' "${STORAGE_RUNNER}"
