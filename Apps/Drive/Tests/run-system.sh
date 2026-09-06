@@ -121,24 +121,26 @@ echo 'RESULT=DRIVE_SYSTEM_STORAGE_PUBLICATION_TEARDOWN_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_HDIUTIL_SNAPSHOT_BOUNDED_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_DA_EJECT_OWNER_RECOVERY_OK'
 
-# Storage-only FSKit host recovery mirrors the production failure boundary. It
-# must use real MNT_EXT_FSKIT mount detection and is reserved for teardown/stuck
-# host recovery; extension registration/approval failures must never restart the
-# user agent or grow into a retry loop.
+# Storage teardown may signal only EDP-owned adapter children. Apple FSKit
+# hosts, macFUSE extension processes, and DiskImages helper processes are
+# system/third-party owned and must never be restarted or killed by regression
+# cleanup. A crashed bridge is recovered only through public Disk Arbitration.
 FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountUnmountHelper.c"
 /usr/bin/grep -Fq 'MNT_EXT_FSKIT' "${FSKIT_GUARD_SOURCE}"
 ! /usr/bin/grep -Fq 'MNT_FORCE' "${FSKIT_GUARD_SOURCE}"
 ! /usr/bin/grep -Fq 'DIRECT_MFMOUNT_PRIVILEGED_UNMOUNT_CALL' "${FSKIT_GUARD_SOURCE}"
-/usr/bin/grep -Fq -- '--assert-no-fskit-mounts' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
-! /usr/bin/grep -Fq 'for attempt in 1 2; do' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'command" == "/usr/libexec/fskit_agent"' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq '/usr/libexec/fskit_agent' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'STORAGE_FSKIT_HOST_RECOVERY=' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'STORAGE_ADAPTER_HOST_RECOVERY=' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'io.macfuse.app.fsmodule.macfuse-local' "${STORAGE_RUNNER}"
+! /usr/bin/grep -Fq 'diskimages-helper' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'bounded 12 "$DA_MOUNT_BIN" --unmount "$bsd"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'EDP-owned adapter remained after SIGKILL; refusing system-host recovery' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'STORAGE_ADAPTER_FORCED_EXIT_OK=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_child_exit_bounded()' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'STORAGE_CHILD_EXIT_TIMEOUT=' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_ADAPTER_BRIDGE_RECOVERY=' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'STORAGE_ADAPTER_HOST_RECOVERY=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 50 "adapter-term-$tag"' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 10 "adapter-kill-$tag"' "${STORAGE_RUNNER}"
-/usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 20 "adapter-post-host-recovery-$tag"' "${STORAGE_RUNNER}"
+/usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 20 "adapter-kill-$tag"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'wait_for_child_exit_bounded "$pid" 30 "m12-crash-kill"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--mountpoint-for-source' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq -- '--assert-readonly' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
@@ -146,12 +148,10 @@ FSKIT_GUARD_SOURCE="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/D
 /usr/bin/grep -Fq -- '--assert-no-mount-prefix' "${FSKIT_GUARD_SOURCE}" "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq '/usr/sbin/diskutil info' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Eq '/sbin/mount([[:space:]]|$)' "${STORAGE_RUNNER}"
-! /usr/bin/grep -Fq 'adapter_log_is_transient_fskit_failure' "${STORAGE_RUNNER}"
-! /usr/bin/grep -Fq 'STORAGE_FSKIT_HOST_RETRY=' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq 'candidate="$(/usr/bin/mktemp "${output}.tmp.XXXXXX")"' "${STORAGE_RUNNER}"
 /usr/bin/grep -Fq '/bin/mv -f "$candidate" "$output"' "${STORAGE_RUNNER}"
 ! /usr/bin/grep -Fq ': >"$output"' "${STORAGE_RUNNER}"
-echo 'RESULT=DRIVE_SYSTEM_STORAGE_FSKIT_BOUNDED_RECOVERY_OK'
+echo 'RESULT=DRIVE_SYSTEM_STORAGE_SYSTEM_HOST_OWNERSHIP_OK'
 echo 'RESULT=DRIVE_SYSTEM_STORAGE_ATOMIC_HDIUTIL_SNAPSHOT_OK'
 
 # The macFUSE Local FSKit block bridge keeps its established local,nobrowse VFS
@@ -162,6 +162,14 @@ TRANSPORT_BUILD="${ROOT}/Apps/Drive/installer/build-transport-backends.sh"
 TRANSPORT_PROVIDER="${ROOT}/Apps/Drive/product/EDPTransportProvider.swift"
 RAW_TRANSPORT="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountRawTransport.c"
 ASYNC_SHIM="${ROOT}/Apps/Drive/native/EDPFSKitPoC/Tools/MacFUSEMinimal/DirectMFMountAsyncShim.c"
+! /usr/bin/grep -Fq 'unmount(mountpoint, MNT_FORCE)' "${ASYNC_SHIM}"
+! /usr/bin/grep -Fq 'xpc_connection_create_mach_service' "${ASYNC_SHIM}"
+! /usr/bin/grep -Fq 'device/deactivate' "${ASYNC_SHIM}"
+! /usr/bin/grep -Fq 'DIRECT_MFMOUNT_MACFUSE_DEACTIVATE' "${ASYNC_SHIM}"
+/usr/bin/grep -Fq 'EDPDirectMFMountPrepareProcessExit' "${ASYNC_SHIM}" "${RAW_TRANSPORT}"
+/usr/bin/grep -Fq 'DIRECT_MFMOUNT_EDP_PROCESS_EXIT=1' "${ASYNC_SHIM}"
+/usr/bin/grep -Fq 'DIRECT_MFMOUNT_MOUNT_TABLE_GONE_AFTER_DA=' "${ASYNC_SHIM}"
+echo 'RESULT=DRIVE_SYSTEM_TRANSPORT_PUBLIC_TEARDOWN_ONLY_OK'
 /usr/bin/grep -Fq '"nobrowse,volname=%s"' "${RAW_TRANSPORT}"
 /usr/bin/grep -Fq 'localVolume: true' "${TRANSPORT_PROVIDER}"
 /usr/bin/grep -Fq 'EDP_MFMOUNT_OPTIONS": "local,nobrowse"' "${TRANSPORT_PROVIDER}"

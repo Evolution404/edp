@@ -112,7 +112,7 @@ is_mounted() {
 
 cleanup_crashed_local_mount() {
   local target="$1"
-  local source
+  local source bsd
   source="$("$FSKIT_GUARD_BIN" --mount-source "$target" 2>/dev/null || true)"
   [[ "$source" =~ ^/dev/disk[0-9]+$ ]] || {
     echo "refusing crash cleanup for unknown mount source: $target source=$source" >&2
@@ -122,74 +122,15 @@ cleanup_crashed_local_mount() {
     echo "refusing crash cleanup for non-macFUSE mount: $target" >&2
     return 1
   }
-  if ! "$FSKIT_GUARD_BIN" --assert-no-macfuse-mounts-outside "$WORK_DIR/"; then
-    echo "refusing macFUSE Local module restart while unrelated Local mounts exist" >&2
-    return 1
-  fi
 
-  local module_pattern='/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex/Contents/MacOS/io.macfuse.app.fsmodule.macfuse-local'
-  local found=0
-  local module_pid
-  for module_pid in $(/usr/bin/pgrep -f "$module_pattern" || true); do
-    [[ "$(/bin/ps -p "$module_pid" -o uid= | /usr/bin/tr -d ' ')" == "$(/usr/bin/id -u)" ]] || continue
-    /bin/ps -p "$module_pid" -o command= | /usr/bin/grep -Fq "$module_pattern" || continue
-    found=1
-    /bin/kill -TERM "$module_pid"
-  done
-  (( found == 1 )) || {
-    echo "no user-owned macFUSE Local module was available for bounded crash cleanup" >&2
-    return 1
-  }
+  bsd="${source#/dev/}"
+  bounded 12 "$DA_MOUNT_BIN" --unmount "$bsd" >/dev/null 2>&1 || true
   for _ in $(/usr/bin/seq 1 100); do
     is_mounted "$target" || return 0
     /bin/sleep 0.1
   done
-  echo "macFUSE Local crash mount remained after module restart: $target" >&2
+  echo "macFUSE Local crash mount remained after public Disk Arbitration cleanup: $target" >&2
   return 1
-}
-
-restart_console_fskit_agent_if_safe() {
-  [[ -x "$FSKIT_GUARD_BIN" ]] || {
-    echo "FSKit mount guard is unavailable" >&2
-    return 1
-  }
-  if ! "$FSKIT_GUARD_BIN" --assert-no-fskit-mounts; then
-    echo "refusing FSKit agent restart while an FSKit mount is active" >&2
-    return 1
-  fi
-
-  local uid
-  uid="$(/usr/bin/id -u)"
-  local pids=""
-  local pid command
-  for pid in $(/usr/bin/pgrep -U "$uid" -x fskit_agent || true); do
-    command="$(/bin/ps -p "$pid" -o command= 2>/dev/null | /usr/bin/xargs || true)"
-    [[ "$command" == "/usr/libexec/fskit_agent" ]] || continue
-    pids="${pids} ${pid}"
-  done
-  [[ -n "${pids// }" ]] || {
-    echo "no exact console-user fskit_agent process found for recovery" >&2
-    return 1
-  }
-
-  /bin/kill -KILL $pids >/dev/null 2>&1 || true
-  for _ in $(/usr/bin/seq 1 50); do
-    local alive=0
-    for pid in $pids; do
-      /bin/kill -0 "$pid" >/dev/null 2>&1 && alive=1
-    done
-    (( alive == 0 )) && break
-    /bin/sleep 0.05
-  done
-  for pid in $pids; do
-    /bin/kill -0 "$pid" >/dev/null 2>&1 && {
-      echo "console-user fskit_agent did not exit after bounded recovery" >&2
-      return 1
-    }
-  done
-  log "STORAGE_FSKIT_HOST_RECOVERY=console-agent-restarted"
-  /bin/sleep 1
-  return 0
 }
 
 capture_hdiutil_info() {
@@ -375,86 +316,13 @@ PY
 recover_fixture_image() {
   local bsd="$1"
   local backing="$2"
-  local info="$WORK_DIR/hdiutil-fixture-recovery.plist"
-  local pid=""
   [[ "$bsd" =~ ^disk[0-9]+$ ]] || return 1
   [[ "$backing" == "$WORK_DIR"/* ]] || return 1
 
-  capture_hdiutil_info "$info" 10 >/dev/null 2>&1 || return 1
-  pid="$(/usr/bin/python3 - "$info" "$bsd" "$backing" <<'PY'
-import os
-import plistlib
-import sys
-
-with open(sys.argv[1], "rb") as handle:
-    root = plistlib.load(handle)
-expected_device = "/dev/" + sys.argv[2]
-expected_path = os.path.abspath(os.path.normpath(sys.argv[3]))
-for image in root.get("images", []):
-    if os.path.abspath(os.path.normpath(image.get("image-path", ""))) != expected_path:
-        continue
-    devices = [item.get("dev-entry") for item in image.get("system-entities", [])]
-    pid = image.get("hdid-pid")
-    valid = (
-        image.get("diskimages2") is False
-        and image.get("autodiskmount") is False
-        and image.get("owner-uid") == os.getuid()
-        and image.get("writeable") is True
-        and image.get("removable") is True
-        and (not devices or expected_device in devices)
-        and isinstance(pid, int)
-        and pid > 1
-    )
-    if not valid:
-        raise SystemExit(1)
-    print(pid)
-    raise SystemExit(0)
-raise SystemExit(1)
-PY
-)" || return 1
-
-  local process_uid process_command
-  process_uid="$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')"
-  process_command="$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)"
-  [[ "$process_uid" == "$(/usr/bin/id -u)" ]] || return 1
-  [[ "$process_command" == /System/Library/PrivateFrameworks/DiskImages.framework/Resources/diskimages-helper* ]] || return 1
-
-  /bin/kill -TERM "$pid" >/dev/null 2>&1 || true
-  for _ in $(/usr/bin/seq 1 60); do
-    if capture_hdiutil_info "$info" 3 >/dev/null 2>&1 && ! /usr/bin/python3 - "$info" "$backing" <<'PY'
-import os
-import plistlib
-import sys
-with open(sys.argv[1], "rb") as handle:
-    root = plistlib.load(handle)
-expected = os.path.abspath(os.path.normpath(sys.argv[2]))
-raise SystemExit(0 if any(os.path.abspath(os.path.normpath(item.get("image-path", ""))) == expected for item in root.get("images", [])) else 1)
-PY
-    then
-      return 0
-    fi
-    /bin/sleep 0.1
-  done
-
-  [[ "$(/bin/ps -p "$pid" -o uid= 2>/dev/null | /usr/bin/tr -d ' ')" == "$(/usr/bin/id -u)" ]] || return 1
-  [[ "$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)" == /System/Library/PrivateFrameworks/DiskImages.framework/Resources/diskimages-helper* ]] || return 1
-  /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-  for _ in $(/usr/bin/seq 1 40); do
-    if capture_hdiutil_info "$info" 3 >/dev/null 2>&1 && ! /usr/bin/python3 - "$info" "$backing" <<'PY'
-import os
-import plistlib
-import sys
-with open(sys.argv[1], "rb") as handle:
-    root = plistlib.load(handle)
-expected = os.path.abspath(os.path.normpath(sys.argv[2]))
-raise SystemExit(0 if any(os.path.abspath(os.path.normpath(item.get("image-path", ""))) == expected for item in root.get("images", [])) else 1)
-PY
-    then
-      return 0
-    fi
-    /bin/sleep 0.1
-  done
-  return 1
+  bounded 12 /usr/sbin/diskutil unmountDisk "$bsd" >/dev/null 2>&1 || true
+  bounded 12 /usr/bin/hdiutil detach "/dev/$bsd" -force >/dev/null 2>&1 || \
+    bounded 12 /usr/bin/hdiutil detach "$backing" -force >/dev/null 2>&1 || true
+  wait_for_fixture_publication_gone "$backing" 100
 }
 
 bounded() {
@@ -920,6 +788,7 @@ stop_adapter() {
   local pid="$1"
   local bridge="$2"
   local tag="$3"
+  local forced_exit=0
 
   if /bin/kill -0 "$pid" >/dev/null 2>&1; then
     /bin/kill -TERM "$pid"
@@ -935,17 +804,22 @@ stop_adapter() {
       fi
     fi
     /bin/kill -KILL "$pid" >/dev/null 2>&1 || true
-    if ! wait_for_child_exit_bounded "$pid" 10 "adapter-kill-$tag"; then
-      log "STORAGE_ADAPTER_HOST_RECOVERY=$tag"
-      restart_console_fskit_agent_if_safe || return 1
-      wait_for_child_exit_bounded "$pid" 20 "adapter-post-host-recovery-$tag" || return 1
+    forced_exit=1
+    if ! wait_for_child_exit_bounded "$pid" 20 "adapter-kill-$tag"; then
+      echo "EDP-owned adapter remained after SIGKILL; refusing system-host recovery: $tag" >&2
+      /usr/bin/tail -80 "$LOG_ROOT/adapter-$tag.log" >&2 || true
+      return 1
     fi
   fi
-  wait "$pid" || {
-    echo "adapter returned failure during teardown: $tag" >&2
-    /usr/bin/tail -80 "$LOG_ROOT/adapter-$tag.log" >&2 || true
-    return 1
-  }
+  if ! wait "$pid"; then
+    if (( forced_exit == 1 )) && ! is_mounted "$bridge"; then
+      log "STORAGE_ADAPTER_FORCED_EXIT_OK=$tag"
+    else
+      echo "adapter returned failure during teardown: $tag" >&2
+      /usr/bin/tail -80 "$LOG_ROOT/adapter-$tag.log" >&2 || true
+      return 1
+    fi
+  fi
   for _ in $(/usr/bin/seq 1 100); do
     is_mounted "$bridge" || return 0
     /bin/sleep 0.1
